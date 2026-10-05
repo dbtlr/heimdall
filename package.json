@@ -1,0 +1,19 @@
+{
+  "name": "heimdall-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "fix": "vp check --fix",
+    "test": "bun test packages",
+    "verify": "bun run check && bun run test",
+    "build:collector": "bun build packages/collector/src/main.ts --compile --outfile dist/heimdall-collector"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "vite-plus": "^1.0.0"
+  }
+}
