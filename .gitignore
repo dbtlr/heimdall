@@ -2,3 +2,7 @@
 node_modules/
 dist/
 .claude/settings.local.json
+/heimdall-collector*
+.vite-plus/
+*.tsbuildinfo
+CLAUDE.local.md
