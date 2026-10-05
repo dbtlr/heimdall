@@ -16,3 +16,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0001 — Fleet declares, the Collector observes, the Hub remembers](0001-fleet-declares-collector-observes-hub-remembers.md)
 - [ADR-0002 — The Collector observes processes, never content](0002-collector-observes-processes-never-content.md)
 - [ADR-0003 — TypeScript on Bun for the Collector and the Hub](0003-typescript-on-bun-for-collector-and-hub.md)
+- [ADR-0004 — The Report grows additively, and samples are keyed by System and time](0004-report-grows-additively-samples-keyed-by-system-and-time.md)
