@@ -11,6 +11,6 @@ Heimdall is a Bun workspace with three packages: `packages/schema` (the Report w
 ```sh
 bun install
 bun run verify           # format, lint, typecheck (vp check), then bun test
-vp check --fix           # apply formatting and lint fixes
+bun run fix              # apply formatting and lint fixes
 bun run build:collector  # compile dist/heimdall-collector for this platform
 ```

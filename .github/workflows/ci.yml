@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,6 +16,7 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -24,4 +28,4 @@ jobs:
       - name: Compile the Collector binary
         run: |
           bun run build:collector
-          ./dist/heimdall-collector --version
+          ./dist/heimdall-collector --version | grep -E '^heimdall-collector [0-9]+\.[0-9]+\.[0-9]+ \(Report schema v[0-9]+\)$'

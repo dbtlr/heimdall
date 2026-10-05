@@ -10,6 +10,9 @@ const GENERATED_IGNORES = [
   '**/*.gen.{js,ts}',
   '**/*.generated.{js,ts}',
   '.claude/**',
+  '.codex/**',
+  '.superpowers/**',
+  'docs/superpowers/**',
 ];
 
 // Packages that run as Bun processes and may import `node:` builtins. The schema
@@ -27,6 +30,7 @@ const RELAXED_DEFAULTS = {
   'max-statements': 'off',
   'no-continue': 'off',
   'no-underscore-dangle': 'off',
+  // oxlint 1.85 moved one-var into `style`; it demands one combined declaration per scope.
   'one-var': 'off',
   'prefer-destructuring': 'off',
   'prefer-named-capture-group': 'off',
@@ -35,7 +39,8 @@ const RELAXED_DEFAULTS = {
   'unicorn/numeric-separators-style': 'off',
 } as const;
 
-const TEST_FILES = ['**/*.test.ts'];
+// Every file name `bun test` discovers.
+const TEST_FILES = ['**/*.test.ts', '**/*_test.ts', '**/*.spec.ts', '**/*_spec.ts'];
 
 export default defineConfig({
   fmt: {
