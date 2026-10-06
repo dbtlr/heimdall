@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Report, Vitals, Session, and Condition, plus the Fleet terms it borrows."
+description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Report, Vitals, Session, Condition, Last seen, and Timeline, plus the Fleet terms it borrows."
 ---
 
 # Glossary
@@ -33,9 +33,13 @@ One running Harness process and its descendants, observed from the process table
 _Avoid_: conversation, run
 
 **Condition**:
-A problem state the Hub derives by comparing observed against declared state, such as a Service down, a Backup Job overdue, Drift, a stale System, or low disk. The dashboard shows Conditions; a later alerting phase delivers them.
+A problem state the Hub derives for a System from what it receives and what Fleet declared, such as Reports rejected, a Service down, a Backup Job overdue, Drift, a stale System, or low disk. The dashboard shows open Conditions and the Timeline records each one raised and cleared; a later alerting phase delivers them.
 _Avoid_: alert (delivery, not the state), finding, incident
 
 **Last seen**:
-The time of the most recent Report from a System. A sleeping System shows its last-seen time and a gap; Heimdall does not treat absence alone as failure for Systems tagged `desktop`.
+The most recent time the Hub heard from a System under that System's token, whether it stored the Report or rejected it. A sleeping System shows its last-seen time and a gap; Heimdall does not treat absence alone as failure for Systems tagged `desktop`.
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
+
+**Timeline**:
+A System's history of Conditions being raised and cleared, newest Condition first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
+_Avoid_: event feed, event log (a Report is never an event)

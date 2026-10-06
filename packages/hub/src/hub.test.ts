@@ -1,60 +1,11 @@
 import { expect, test } from 'bun:test';
 
-import { MAX_SAMPLES_PER_REPORT, REPORT_SCHEMA_VERSION } from '@heimdall/schema';
-import type { Report } from '@heimdall/schema';
+import { MAX_SAMPLES_PER_REPORT } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
-import { createHub, MAX_REPORT_BYTES } from './hub.ts';
-import { migrate } from './migrations.ts';
+import { MAX_REPORT_BYTES } from './hub.ts';
 import { listSystems } from './store.ts';
-import { testDatabase } from './testing/postgres.ts';
-import { tokenTable } from './tokens.ts';
-
-const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
-
-// A Hub on a fresh, migrated database that knows two Systems' tokens. The
-// clock reads `clock.now`, so a test can move it between Reports.
-const startHub = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
-  const clock = { now: NOW };
-  const errors: unknown[] = [];
-  const hub = createHub({
-    now: () => clock.now,
-    onError: (error) => errors.push(error),
-    sql: db.sql,
-    tokens: tokenTable([
-      { system: 'asgard', token: 'asgard-token' },
-      { system: 'db-mbp', token: 'mbp-token' },
-    ]),
-  });
-  return { clock, db, errors, hub, [Symbol.asyncDispose]: () => db[Symbol.asyncDispose]() };
-};
-
-const report = (system: string, times: number[]): Report => ({
-  collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
-  samples: times.map(sample),
-  schemaVersion: REPORT_SCHEMA_VERSION,
-  sentAt: NOW,
-  system,
-});
-
-// Pushes a body to the ingest endpoint the way the Collector does.
-const push = (
-  hub: ReturnType<typeof createHub>,
-  body: unknown,
-  { token }: { token?: string } = {},
-) =>
-  hub.fetch(
-    new Request('http://hub.test/api/v1/reports', {
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-      headers: {
-        'content-type': 'application/json',
-        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-      },
-      method: 'POST',
-    }),
-  );
+import { NOW, page, push, report, startHub } from './testing/hub.ts';
 
 test('a Report without a token is refused as unauthenticated', async () => {
   await using h = await startHub();
@@ -169,13 +120,6 @@ test('samples are keyed by System, so two Systems may share a time', async () =>
 
   expect(await response.json()).toEqual({ skipped: 0, stored: 1 });
 });
-
-const page = async (hub: ReturnType<typeof createHub>) => {
-  const response = await hub.fetch(new Request('http://hub.test/'));
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-type')).toContain('text/html');
-  return response.text();
-};
 
 test('the page says so when no System has reported', async () => {
   await using h = await startHub();
@@ -293,7 +237,7 @@ test('sample times up to the last a Date can hold are stored exactly', async () 
 
   expect(await response.json()).toEqual({ skipped: 0, stored: MAX_SAMPLES_PER_REPORT });
   const [system] = await listSystems(h.db.sql);
-  expect(system?.latest.t).toBe(last - 1);
+  expect(system?.reported?.latest.t).toBe(last - 1);
 });
 
 test('a Report the database cannot take is answered 503, so the Collector retries it', async () => {

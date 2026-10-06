@@ -1,6 +1,7 @@
 import type { VitalsSample } from '@heimdall/schema';
 
-import type { SystemSummary } from './store.ts';
+import { TIMELINE_CONDITIONS } from './store.ts';
+import type { ConditionKind, OpenCondition, SystemSummary, TimelineEntry } from './store.ts';
 
 const ESCAPES: Record<string, string> = {
   '"': '&quot;',
@@ -46,29 +47,87 @@ const duration = (seconds: number) => {
   return `${String(days)}d ${String(hours)}h ${String(minutes)}m`;
 };
 
-const vitalsCells = (v: VitalsSample) => [
-  `${v.cpu.busyPercent.toFixed(1)}%`,
-  usage(v.memory),
-  v.disks.map((d) => `${escape(d.mount)} ${usage(d)}`).join('<br>'),
-  v.load.map((l) => l.toFixed(2)).join(' '),
-  duration(v.uptimeSeconds),
-];
+const vitalsCells = (v: VitalsSample | undefined) =>
+  v === undefined
+    ? Array.from({ length: 5 }, () => UNKNOWN)
+    : [
+        `${v.cpu.busyPercent.toFixed(1)}%`,
+        usage(v.memory),
+        v.disks.map((d) => `${escape(d.mount)} ${usage(d)}`).join('<br>'),
+        v.load.map((l) => l.toFixed(2)).join(' '),
+        duration(v.uptimeSeconds),
+      ];
+
+// What the page calls each Condition when it is raised and when it is cleared.
+const CONDITION_LABELS: Record<ConditionKind, { cleared: string; raised: string }> = {
+  reports_rejected: { cleared: 'Reports accepted again', raised: 'Reports rejected' },
+};
+
+const moment = (ms: number) => `<time datetime="${new Date(ms).toISOString()}">${utc(ms)}</time>`;
+
+// A reason may span several lines, as the schema's error report does.
+const reasonText = (reason: string) => `<span class="reason">${escape(reason)}</span>`;
+
+const status = (conditions: OpenCondition[]) =>
+  conditions.length === 0
+    ? 'No open Conditions'
+    : conditions
+        .map(
+          (c) =>
+            `<strong>${CONDITION_LABELS[c.kind].raised}</strong> since ${moment(c.raisedAt)}: ${reasonText(c.reason)}`,
+        )
+        .join('<br>');
+
+// Shown in place of Vitals for a System with no stored Report yet.
+const UNKNOWN = '—';
 
 const row = (system: SystemSummary, now: number) => {
-  const { arch, platform, version } = system.collector;
+  const reported =
+    system.reported === undefined
+      ? [...vitalsCells(undefined), UNKNOWN]
+      : [
+          ...vitalsCells(system.reported.latest),
+          escape(
+            `${system.reported.collector.version} ${system.reported.collector.platform}/${system.reported.collector.arch}`,
+          ),
+        ];
   const cells = [
     escape(system.name),
-    `<time datetime="${new Date(system.lastSeenAt).toISOString()}">${utc(system.lastSeenAt)}</time><br>${ago(now - system.lastSeenAt)}`,
-    ...vitalsCells(system.latest),
-    escape(`${version} ${platform}/${arch}`),
+    `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
+    status(system.conditions),
+    ...reported,
   ];
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
 };
 
-const HEADINGS = ['System', 'Last seen', 'CPU', 'Memory', 'Disks', 'Load', 'Uptime', 'Collector'];
+const timelineLine = (entry: TimelineEntry) => {
+  const label = CONDITION_LABELS[entry.condition];
+  return entry.kind === 'raised'
+    ? `<li>${moment(entry.at)} ${label.raised}: ${reasonText(entry.reason)}</li>`
+    : `<li>${moment(entry.at)} ${label.cleared}</li>`;
+};
 
-// The plain page that lists every System with its last-seen time and newest
-// Vitals. M5's dashboard replaces it.
+const timeline = (system: SystemSummary) =>
+  `<h3>${escape(system.name)}</h3>\n${
+    system.timeline.length === 0
+      ? '<p>No Conditions yet.</p>'
+      : `<ol>\n${system.timeline.map(timelineLine).join('\n')}\n</ol>`
+  }`;
+
+const HEADINGS = [
+  'System',
+  'Last seen',
+  'Status',
+  'CPU',
+  'Memory',
+  'Disks',
+  'Load',
+  'Uptime',
+  'Collector',
+];
+
+// The plain page that lists every System with its last-seen time, status, and
+// newest Vitals, then each System's Timeline. M5's dashboard replaces it.
 export const renderPage = ({ now, systems }: { now: number; systems: SystemSummary[] }) => {
   const body =
     systems.length === 0
@@ -78,7 +137,10 @@ export const renderPage = ({ now, systems }: { now: number; systems: SystemSumma
 <tbody>
 ${systems.map((s) => row(s, now)).join('\n')}
 </tbody>
-</table>`;
+</table>
+<h2>Timeline</h2>
+<p>Each System's latest ${String(TIMELINE_CONDITIONS)} Conditions, newest first.</p>
+${systems.map(timeline).join('\n')}`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -90,6 +152,7 @@ ${systems.map((s) => row(s, now)).join('\n')}
 body { font-family: system-ui, sans-serif; margin: 1rem; }
 table { border-collapse: collapse; }
 th, td { border-bottom: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+.reason { white-space: pre-wrap; }
 </style>
 </head>
 <body>
