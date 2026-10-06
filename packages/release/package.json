@@ -1,0 +1,11 @@
+{
+  "name": "@heimdall/release",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@loomcli/core": "0.8.0",
+    "@loomcli/plugins": "0.8.0",
+    "@loomcli/validators": "0.8.0"
+  }
+}

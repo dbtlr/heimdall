@@ -40,6 +40,7 @@ Size: medium. De-risks the wire schema, cross-platform sampling, and the offline
 
 Every System runs a Collector, and the Hub runs on Asgard as a Fleet-managed Service.
 
+- Tagged releases publish the Collector and Hub binaries for every platform, with install scripts Fleet runs to install and update them ([ADR-0006](decisions/0006-releases-ship-both-binaries-installed-by-script.md), [Releasing](releasing.md)).
 - The Hub ships as a Fleet Application with a native Service on Asgard (Fleet ADR-0021): its own systemd user service, Tailscale ingress, and health check.
 - PostgreSQL database and login role `heimdall` declared in Fleet's registry, plus a Backup Job.
 - The Collector ships as a Fleet Application on all four Systems, running as a launchd user agent on macOS and a systemd service on Linux.

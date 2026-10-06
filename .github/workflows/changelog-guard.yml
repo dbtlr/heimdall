@@ -1,0 +1,78 @@
+name: Changelog guard
+
+# A pull request that changes what a release builds carries a changelog
+# fragment in .changes/, and every fragment it adds or edits parses. The
+# release cut compiles fragments into CHANGELOG.md with the same parser, so a
+# fragment that passes here is one the cut can publish.
+#
+# Two shapes pass without a new fragment: the release-cut PR, which only deletes
+# fragments, and a PR labelled `skip-changelog` for a change with no effect on
+# what ships (a refactor, tests, CI).
+#
+# The guard runs on every PR and decides for itself whether it applies, so it
+# can be a required check. Label events re-run it when the label changes.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require a fragment for a change to what ships
+        id: gate
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
+
+          # Keep in step with release.yml's pull_request paths.
+          if ! grep -qE '^(packages/|package\.json$|bun\.lock$|bunfig\.toml$|mise\.toml$|install-[^/]+\.sh$)' <<< "$changed"; then
+            echo "Nothing that ships changed; no fragment needed."
+            exit 0
+          fi
+          if [ "$SKIP_LABEL" = true ]; then
+            echo "skip-changelog label present; fragment waived."
+            exit 0
+          fi
+
+          fragments=$(grep -E '^\.changes/[^/]+\.md$' <<< "$changed" | grep -vx '\.changes/README\.md' || true)
+          if [ -z "$fragments" ]; then
+            echo "::error::This PR changes what ships but adds no fragment. Add .changes/<task-id>.md (see .changes/README.md), or apply the skip-changelog label if nothing a user sees changes."
+            exit 1
+          fi
+
+          present=$(while IFS= read -r file; do if [ -f "$file" ]; then echo "$file"; fi; done <<< "$fragments")
+          if [ -z "$present" ]; then
+            echo "Fragments deleted only: the release cut."
+            exit 0
+          fi
+          {
+            echo 'fragments<<EOF'
+            echo "$present"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.fragments != ''
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.10.2
+      - if: steps.gate.outputs.fragments != ''
+        run: bun install --frozen-lockfile
+      - name: Parse the fragments
+        if: steps.gate.outputs.fragments != ''
+        env:
+          FRAGMENTS: ${{ steps.gate.outputs.fragments }}
+        run: |
+          mapfile -t files <<< "$FRAGMENTS"
+          bun run --silent release changelog check "${files[@]}"

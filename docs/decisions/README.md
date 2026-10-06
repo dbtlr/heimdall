@@ -18,3 +18,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0003 — TypeScript on Bun for the Collector and the Hub](0003-typescript-on-bun-for-collector-and-hub.md)
 - [ADR-0004 — The Report grows additively, and samples are keyed by System and time](0004-report-grows-additively-samples-keyed-by-system-and-time.md)
 - [ADR-0005 — A rejected Report still counts as seeing its System, and Conditions keep a Timeline](0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)
+- [ADR-0006 — Releases ship both binaries per platform, installed by one script each](0006-releases-ship-both-binaries-installed-by-script.md)

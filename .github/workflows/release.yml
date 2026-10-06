@@ -1,0 +1,171 @@
+name: Release
+
+# A `vX.Y.Z` tag builds the Collector and Hub binaries on each platform's native
+# runner and publishes them on a GitHub Release with SHA256SUMS and the notes
+# from CHANGELOG.md. A tag with a hyphen (`v0.2.0-rc.1`) publishes a
+# prerelease, which Fleet's stable channel skips. Pull requests that touch the
+# build run the same build without publishing, so the release path is proven
+# before a tag is cut. docs/releasing.md describes the cut.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'mise.toml'
+      - 'install-*.sh'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.10.2
+      - run: bun install --frozen-lockfile
+
+      # Each binary embeds its package version, so a tag that names another
+      # version would publish binaries that disagree with their release.
+      - name: Check the tag names the packaged version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(bun run --silent release version)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the packaged version v$version."
+            exit 1
+          fi
+
+      # The Collector's Vitals are platform code, so its tests run on every
+      # target. The Hub's tests need PostgreSQL and run in CI on linux-x64.
+      - name: Test on the target platform
+        run: bun test packages/schema packages/collector packages/release
+
+      - name: Compile
+        run: |
+          mkdir -p dist
+          for binary in collector hub; do
+            bun build "packages/$binary/src/main.ts" --compile \
+              --outfile "dist/heimdall-$binary-${{ matrix.target }}"
+          done
+
+      - name: Smoke-test the binaries
+        run: |
+          version=$(bun run --silent release version)
+          for binary in collector hub; do
+            line=$("./dist/heimdall-$binary-${{ matrix.target }}" --version)
+            echo "$line"
+            case "$line" in
+              "heimdall-$binary v$version (Report schema v"[0-9]*")") ;;
+              *) echo "::error::Unexpected version line from heimdall-$binary: $line"; exit 1 ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: heimdall-${{ matrix.target }}
+          path: dist/heimdall-*-${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.10.2
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum heimdall-* > SHA256SUMS
+          cat SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 6
+
+      - name: Release notes
+        run: bun run --silent release changelog notes --version "${TAG#v}" > release-notes.md
+
+      # Fleet ignores drafts, so the release stays a draft until every asset is
+      # uploaded and verified. A failed run leaves the draft, and a re-run
+      # resumes it. A published release is never overwritten.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$draft" = false ]; then
+            echo "::error::$TAG is already published."
+            exit 1
+          fi
+          if [ -z "$draft" ]; then
+            prerelease=()
+            case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" \
+              --notes-file release-notes.md "${prerelease[@]}"
+          fi
+          gh release upload "$TAG" dist/heimdall-* dist/SHA256SUMS --clobber
+
+          mkdir uploaded
+          gh release download "$TAG" --dir uploaded
+          (cd uploaded && sha256sum --check --strict SHA256SUMS)
+          test "$(find uploaded -type f | wc -l)" -eq 7
+
+          gh release edit "$TAG" --draft=false
+
+  # Installs each published binary through its install script on every
+  # platform, the way Fleet will.
+  verify:
+    needs: publish
+    name: install ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+    steps:
+      - name: Install and run each binary
+        env:
+          HEIMDALL_VERSION: ${{ github.ref_name }}
+          HEIMDALL_INSTALL_DIR: ${{ runner.temp }}/heimdall
+        run: |
+          for binary in collector hub; do
+            curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/$HEIMDALL_VERSION/install-$binary.sh" | sh
+            "$HEIMDALL_INSTALL_DIR/heimdall-$binary" --version | awk '{ print $2 }' | grep -Fx "$HEIMDALL_VERSION"
+          done
