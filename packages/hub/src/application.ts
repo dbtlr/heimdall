@@ -11,7 +11,8 @@ export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
   plugins: [help(), version()],
   version: packageJson.version,
-  // Loom's own line reads `<name> v<version>`; Fleet compares the Heimdall line instead.
+  // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
+  // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],
 })
   // Loom requires the root to act or route to a command. Until the first command
