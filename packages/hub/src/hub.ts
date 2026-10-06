@@ -77,7 +77,7 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
 // Report (ADR-0004). A Report the token attributes to a System counts as seeing
 // that System even when rejected, and raises its Reports-rejected Condition
 // (ADR-0005).
-const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) => {
+const ingest = async (request: Request, { now, onError, sql, tokens }: HubDependencies) => {
   const auth = authenticate(request, tokens);
   if (auth.kind === 'missing') {
     return answer(401, "Supply the System's ingest token as a bearer token.");
@@ -88,7 +88,9 @@ const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) =
   const { system } = auth;
   const reject = async (status: 403 | 422, reason: string) => {
     const shown = reason.slice(0, MAX_REASON_LENGTH);
-    await recordRejection(sql, { reason: shown, receivedAt: now(), system });
+    // The answer tells the Collector whether to drop the Report, so it stands
+    // even when the database cannot record the rejection (ADR-0004).
+    await recordRejection(sql, { reason: shown, receivedAt: now(), system }).catch(onError);
     return answer(status, shown);
   };
   const invalid = (reason: string) => reject(422, reason);

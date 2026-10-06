@@ -1,5 +1,6 @@
 import type { VitalsSample } from '@heimdall/schema';
 
+import { TIMELINE_CONDITIONS } from './store.ts';
 import type { ConditionKind, OpenCondition, SystemSummary, TimelineEntry } from './store.ts';
 
 const ESCAPES: Record<string, string> = {
@@ -69,7 +70,7 @@ const reasonText = (reason: string) => `<span class="reason">${escape(reason)}</
 
 const status = (conditions: OpenCondition[]) =>
   conditions.length === 0
-    ? 'OK'
+    ? 'No open Conditions'
     : conditions
         .map(
           (c) =>
@@ -138,6 +139,7 @@ ${systems.map((s) => row(s, now)).join('\n')}
 </tbody>
 </table>
 <h2>Timeline</h2>
+<p>Each System's latest ${String(TIMELINE_CONDITIONS)} Conditions, newest first.</p>
 ${systems.map(timeline).join('\n')}`;
   return `<!doctype html>
 <html lang="en">

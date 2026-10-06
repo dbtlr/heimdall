@@ -43,7 +43,7 @@ SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 13
 
 ## Running the Hub
 
-`heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports` and serves a page at `/` that lists every System with its last-seen time, status, and newest Vitals, followed by each System's Timeline of Conditions raised and cleared.
+`heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports` and serves a page at `/` that lists every System with its last-seen time, status, and newest Vitals, followed by each System's Timeline of its latest 10 Conditions raised and cleared.
 
 | Flag         | Variable                | File key   | Default     |
 | ------------ | ----------------------- | ---------- | ----------- |

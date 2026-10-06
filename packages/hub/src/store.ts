@@ -74,7 +74,8 @@ const REPORTS_REJECTED: ConditionKind = 'reports_rejected';
 
 // Records a Report from `system`, identified by its token, that the Hub
 // rejected at `receivedAt`: the System is seen, and its Reports-rejected
-// Condition is raised, or keeps the latest reason if already open (ADR-0005).
+// Condition is raised, or takes this reason if already open (ADR-0005). The
+// System's row lock orders rejections and stores, so the last to arrive wins.
 export const recordRejection = (
   sql: SQL,
   { reason, receivedAt, system }: { reason: string; receivedAt: number; system: string },
@@ -90,10 +91,9 @@ export const recordRejection = (
     await tx`
       INSERT INTO conditions (system, kind, raised_at, raised_reason, latest_at, latest_reason)
       VALUES (${system}, ${REPORTS_REJECTED}, ${at}, ${why}, ${at}, ${why})
-      ON CONFLICT (system, kind) WHERE cleared_at IS NULL DO UPDATE SET
+      ON CONFLICT (system, kind, subject) WHERE cleared_at IS NULL DO UPDATE SET
         latest_at = excluded.latest_at,
         latest_reason = excluded.latest_reason
-      WHERE conditions.latest_at <= excluded.latest_at
     `;
   });
 
@@ -118,7 +118,7 @@ export type SystemSummary = {
 };
 
 // How many of each System's most recent Conditions its Timeline shows.
-const TIMELINE_CONDITIONS = 10;
+export const TIMELINE_CONDITIONS = 10;
 
 type SystemRow = {
   collector_arch: string | null;
@@ -143,11 +143,12 @@ type SystemRow = {
 type ConditionRow = {
   cleared_at: Date | null;
   kind: ConditionKind;
-  latest_reason: string;
   raised_at: Date;
   raised_reason: string;
   system: string;
 };
+
+type OpenRow = { kind: ConditionKind; latest_reason: string; raised_at: Date; system: string };
 
 // The Collector build and newest sample of a System with a stored Report.
 const reportedOf = (row: SystemRow): SystemSummary['reported'] => {
@@ -188,39 +189,47 @@ const timelineOf = (row: ConditionRow): TimelineEntry[] => {
     : [{ at: row.cleared_at.getTime(), condition: row.kind, kind: 'cleared' }, raised];
 };
 
-// Every System the Hub has heard from, by name.
-export const listSystems = async (sql: SQL): Promise<SystemSummary[]> => {
-  const systems: SystemRow[] = await sql`
-    SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
-           v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
-           v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
-           v.collector_cpu_percent, v.collector_rss_bytes
-    FROM systems s
-    LEFT JOIN LATERAL (
-      SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
-    ) v ON true
-    ORDER BY s.name
-  `;
-  const conditions: ConditionRow[] = await sql`
-    SELECT system, kind, raised_at, raised_reason, latest_reason, cleared_at
-    FROM (
-      SELECT *, row_number() OVER (PARTITION BY system ORDER BY raised_at DESC, id DESC) AS n
-      FROM conditions
-    ) c
-    WHERE n <= ${TIMELINE_CONDITIONS}
-    ORDER BY raised_at DESC, id DESC
-  `;
-  return systems.map((row) => {
-    const own = conditions.filter((c) => c.system === row.name);
-    return {
-      conditions: own
-        .filter((c) => c.cleared_at === null)
+// Every System the Hub has heard from, by name. One read-only snapshot keeps
+// last seen, status, and Timeline consistent with each other.
+export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+    const systems: SystemRow[] = await tx`
+      SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
+             v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
+             v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
+             v.collector_cpu_percent, v.collector_rss_bytes
+      FROM systems s
+      LEFT JOIN LATERAL (
+        SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
+      ) v ON true
+      ORDER BY s.name
+    `;
+    // Status reads every open Condition, however far back the Timeline's cap reaches.
+    const open: OpenRow[] = await tx`
+      SELECT system, kind, raised_at, latest_reason FROM conditions
+      WHERE cleared_at IS NULL
+      ORDER BY raised_at, id
+    `;
+    const recent: ConditionRow[] = await tx`
+      SELECT system, kind, raised_at, raised_reason, cleared_at
+      FROM (
+        SELECT *, row_number() OVER (PARTITION BY system ORDER BY raised_at DESC, id DESC) AS n
+        FROM conditions
+      ) c
+      WHERE n <= ${TIMELINE_CONDITIONS}
+      ORDER BY raised_at DESC, id DESC
+    `;
+    return systems.map((row) => ({
+      conditions: open
+        .filter((c) => c.system === row.name)
         .map((c) => ({ kind: c.kind, raisedAt: c.raised_at.getTime(), reason: c.latest_reason })),
       lastSeenAt: row.last_seen_at.getTime(),
       name: row.name,
       reported: reportedOf(row),
       // Conditions of different kinds may overlap, so their lines interleave.
-      timeline: own.flatMap(timelineOf).toSorted((a, b) => b.at - a.at),
-    };
+      timeline: recent
+        .filter((c) => c.system === row.name)
+        .flatMap(timelineOf)
+        .toSorted((a, b) => b.at - a.at),
+    }));
   });
-};

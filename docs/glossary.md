@@ -37,9 +37,9 @@ A problem state the Hub derives for a System from what it receives and what Flee
 _Avoid_: alert (delivery, not the state), finding, incident
 
 **Last seen**:
-The time of the most recent Report whose token names a System, whether the Hub stored or rejected it. A sleeping System shows its last-seen time and a gap; Heimdall does not treat absence alone as failure for Systems tagged `desktop`.
+The most recent time the Hub heard from a System under that System's token, whether it stored the Report or rejected it. A sleeping System shows its last-seen time and a gap; Heimdall does not treat absence alone as failure for Systems tagged `desktop`.
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
 **Timeline**:
 A System's history of Conditions being raised and cleared, newest first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
-_Avoid_: event feed, event log (a Report is never an event), history
+_Avoid_: event feed, event log (a Report is never an event)
