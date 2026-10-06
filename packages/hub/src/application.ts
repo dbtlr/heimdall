@@ -6,10 +6,9 @@ import { version } from '@loomcli/plugins/version';
 import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
 import { integer, text, url } from '@loomcli/validators';
 
-import packageJson from '../package.json' with { type: 'json' };
 import { serveAction } from './serve.ts';
 import { TokenEntrySchema } from './tokens.ts';
-import { versionLine } from './version.ts';
+import { HUB_VERSION, versionLine } from './version.ts';
 
 // SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops
 // listening and closes its database connections.
@@ -59,7 +58,7 @@ export const serve = new Command('serve', {
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
   plugins: [help(), version(), config({ file: '.config/heimdall/hub.{toml,json}' }), signals()],
-  version: packageJson.version,
+  version: HUB_VERSION,
   // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
   // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],

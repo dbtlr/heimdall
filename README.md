@@ -48,6 +48,8 @@ SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 13
 
 `heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports` and serves a page at `/` that lists every System with its last-seen time, status, and newest Vitals, followed by each System's Timeline of its latest 10 Conditions raised and cleared.
 
+`GET /api/health` needs no token. It answers `200` with `{"database":"ok","version":"<version>"}` when the database answers a trivial query, and `503` with `{"database":"not answering","version":"<version>"}` when it fails or takes more than 2 seconds. Fleet's health check polls it, and `version` is the release `--version` prints.
+
 | Flag         | Variable                | File key   | Default     |
 | ------------ | ----------------------- | ---------- | ----------- |
 | `--database` | `HEIMDALL_DATABASE_URL` | `database` | none        |

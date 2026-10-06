@@ -5,8 +5,11 @@ import { z } from 'zod';
 import { renderPage } from './page.ts';
 import { listSystems, recordRejection, storeReport } from './store.ts';
 import type { TokenTable } from './tokens.ts';
+import { HUB_VERSION } from './version.ts';
 
 export type HubDependencies = {
+  // How long the health check waits for the database; defaults to HEALTH_TIMEOUT_MS.
+  healthTimeoutMs?: number;
   // The Hub's clock in epoch milliseconds: the time it receives each Report.
   now: () => number;
   // Told of each request the Hub could not answer, such as one the database refused.
@@ -24,6 +27,10 @@ export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
 
 // The reason a Report is rejected, short enough for the Collector to log.
 const MAX_REASON_LENGTH = 2000;
+
+// How long `GET /api/health` waits for the database. The statement timeout is
+// 30 s, far longer than Fleet's health-check poll window.
+const HEALTH_TIMEOUT_MS = 2000;
 
 const answer = (status: number, body: string) =>
   new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' }, status });
@@ -112,10 +119,30 @@ const ingest = async (request: Request, { now, onError, sql, tokens }: HubDepend
   return Response.json(await storeReport(sql, { receivedAt: now(), report: parsed.data }));
 };
 
+// `GET /api/health`: 200 when the database answers a trivial query within the
+// timeout, 503 when it does not. A failed check answers directly rather than
+// through `onError`, so an outage does not log on every poll.
+const health = async ({ healthTimeoutMs = HEALTH_TIMEOUT_MS, sql }: HubDependencies) => {
+  const answered = await Promise.race([
+    Promise.resolve(sql`SELECT 1`).then(
+      () => true,
+      () => false,
+    ),
+    Bun.sleep(healthTimeoutMs).then(() => false),
+  ]);
+  return Response.json(
+    { database: answered ? 'ok' : 'not answering', version: HUB_VERSION },
+    { status: answered ? 200 : 503 },
+  );
+};
+
 const route = async (request: Request, deps: HubDependencies) => {
   const { pathname } = new URL(request.url);
   if (pathname === '/api/v1/reports' && request.method === 'POST') {
     return ingest(request, deps);
+  }
+  if (pathname === '/api/health' && request.method === 'GET') {
+    return health(deps);
   }
   if (pathname === '/' && request.method === 'GET') {
     const html = renderPage({ now: deps.now(), systems: await listSystems(deps.sql) });
