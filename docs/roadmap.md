@@ -41,11 +41,12 @@ Size: medium. De-risks the wire schema, cross-platform sampling, and the offline
 Every System runs a Collector, and the Hub runs as a Fleet-managed Service.
 
 - Tagged releases publish the Collector and Hub binaries for every platform, with install scripts Fleet runs to install and update them ([ADR-0006](decisions/0006-releases-ship-both-binaries-installed-by-script.md), [Releasing](releasing.md)).
-- The Hub ships as a Fleet Application with a native Service on its System (Fleet ADR-0021): its own systemd user service, Tailscale ingress, and health check.
+- Both binaries install and supervise their own Service through `service` commands: a systemd user unit on Linux and a launchd user agent on macOS. Each reads its settings from `~/.config/heimdall/`, which Fleet renders ([ADR-0007](decisions/0007-binaries-own-their-service-config-file-holds-settings.md)).
+- The Hub ships as a Fleet Application with a native Service on its System (Fleet ADR-0021): its own systemd user unit, Tailscale ingress, and a health check against `/api/health`.
 - PostgreSQL database and login role `heimdall` declared in Fleet's registry, plus a Backup Job.
 - The Collector ships as a Fleet Application on all four Systems, running as a launchd user agent on macOS and a systemd service on Linux.
 - Per-System ingest tokens rendered from 1Password through the Application's config template.
-- Retention: raw Vitals pruned after 14 days, 5-minute rollups kept for a year.
+- Retention: raw Vitals pruned after 14 days, 5-minute rollups kept for a year. Rollups update as samples arrive, and the Hub prunes on a timer ([ADR-0008](decisions/0008-vitals-roll-up-as-they-arrive-serve-prunes.md)).
 
 Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwin native supervisor and an unprivileged account on the System that lacks one.
 
