@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -386,4 +386,21 @@ test('changelog guard fails a shipped change that deletes a fragment and adds no
   });
   const { code } = await invoke(['changelog', 'guard', '--base', base]);
   expect(code).toBe(1);
+});
+
+test('a symlinked fragment is refused by check, write, and the guard', async () => {
+  await fixture();
+  await write('notes/real.md', '### Added\n\n- Linked.\n');
+  await symlink('../notes/real.md', join(repo, '.changes/linked.md'));
+  const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x' });
+
+  const checked = await invoke(['changelog', 'check']);
+  const written = await invoke(['changelog', 'write', '--version', '0.2.0']);
+  const guarded = await invoke(['changelog', 'guard', '--base', base]);
+
+  for (const { code, stderr } of [checked, written, guarded]) {
+    expect(stderr).toContain('.changes/linked.md: not a regular file');
+    expect(code).toBe(1);
+  }
+  expect(await read('CHANGELOG.md')).toBe(HEADER);
 });

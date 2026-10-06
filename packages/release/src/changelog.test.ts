@@ -41,6 +41,9 @@ describe('parseFragment', () => {
     ['### Added\n\n-  \n', 'f.md:3: empty bullet'],
     ['### Added\n\n- ok\n\u00a0more\n', 'f.md:4: prose outside a bullet'],
     ['### Added\r\n\r\n- ok\r\n', 'f.md:1: control character'],
+    ['### Added\n\n- a\u009b31m\n', 'f.md:3: control character'],
+    ['### Added\n\n- a\u202eb\n', 'f.md:3: control character'],
+    ['### Added\n\n- \u200b\n', 'f.md:3: control character'],
   ])('rejects %j', (text, message) => {
     expect(() => parseFragment('f.md', text)).toThrow(message);
   });

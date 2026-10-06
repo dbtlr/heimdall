@@ -59,11 +59,17 @@ export const setReleaseVersion = async (root: string, version: string): Promise<
 };
 
 // The pending fragments' paths relative to the root, sorted by name. The guide
-// `README.md` is not a fragment.
+// `README.md` is not a fragment. A symbolic link is listed so that parsing
+// refuses it rather than the cut skipping it unseen.
 export const pendingFragments = async (root: string): Promise<string[]> => {
   const entries = await readdir(join(root, CHANGES_DIR), { withFileTypes: true });
   return entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'README.md')
+    .filter(
+      (entry) =>
+        (entry.isFile() || entry.isSymbolicLink()) &&
+        entry.name.endsWith('.md') &&
+        entry.name !== 'README.md',
+    )
     .map((entry) => join(CHANGES_DIR, entry.name))
     .toSorted();
 };

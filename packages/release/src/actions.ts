@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { escapeControlCharacters } from '@loomcli/core';
@@ -31,15 +31,28 @@ const describeError = (error: unknown) => (error instanceof Error ? error.messag
 
 const fragmentCount = (n: number) => `${String(n)} ${n === 1 ? 'fragment' : 'fragments'}`;
 
+// A fragment's text. A fragment is a regular file: a symbolic link would point
+// the cut at content outside .changes/.
+const readFragment = async (root: string, path: string) => {
+  if (!(await lstat(join(root, path))).isFile()) {
+    throw new Error(`${path}: not a regular file`);
+  }
+  return readFile(join(root, path), 'utf8');
+};
+
 // Parses each fragment, collecting every failure rather than stopping at the
 // first, so one run lists all that need fixing.
 const parseAll = async (root: string, paths: readonly string[]) => {
-  const texts = await Promise.all(paths.map((path) => readFile(join(root, path), 'utf8')));
+  const texts = await Promise.allSettled(paths.map((path) => readFragment(root, path)));
   const parsed: FragmentSections[] = [];
   const failures: string[] = [];
   for (const [index, path] of paths.entries()) {
     try {
-      parsed.push(parseFragment(path, texts[index] ?? ''));
+      const text = texts[index];
+      if (text?.status !== 'fulfilled') {
+        throw text?.reason ?? new Error(`${path}: unreadable`);
+      }
+      parsed.push(parseFragment(path, text.value));
     } catch (error) {
       failures.push(describeError(error));
     }

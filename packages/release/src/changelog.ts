@@ -20,11 +20,14 @@ export type FragmentSections = Partial<Record<Category, string[]>>;
 const isCategory = (heading: string): heading is Category =>
   (CATEGORIES as readonly string[]).includes(heading);
 
-// Characters that would change how CHANGELOG.md renders or prints: a lone CR
-// is a Markdown line break, and terminal escapes survive into release notes.
-// A tab is allowed.
-// oxlint-disable-next-line no-control-regex -- matching control characters is the point.
-const CONTROL_CHARACTER = /[\u0000-\u0008\u000B-\u001F\u007F\u0085\u2028\u2029]/u;
+// Characters that would change how CHANGELOG.md renders or prints, or hide
+// what an entry says: C0 and C1 controls (a lone CR is a Markdown line break,
+// and terminal escapes survive into release notes), zero-width and
+// direction-changing marks, line and paragraph separators, and the BOM. A tab
+// is allowed.
+const CONTROL_CHARACTER =
+  // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/u;
 
 const BLANK = /^[ \t]*$/u;
 const INDENTED = /^[ \t]/u;
@@ -53,7 +56,11 @@ export const parseFragment = (file: string, text: string): FragmentSections => {
   for (const [index, line] of text.split('\n').entries()) {
     const at = index + 1;
     if (CONTROL_CHARACTER.test(line)) {
-      fail(file, at, 'control character; fragments hold plain text with LF line endings');
+      fail(
+        file,
+        at,
+        'control character or invisible mark; fragments hold plain text with LF line endings',
+      );
     }
     const heading = /^### (?<name>.*)$/u.exec(line)?.groups?.name?.trim();
     if (heading !== undefined) {
