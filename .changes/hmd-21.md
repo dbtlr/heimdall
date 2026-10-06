@@ -1,0 +1,3 @@
+### Added
+
+- **Collector and Hub install and supervise their own launchd user agent on macOS** (HMD-21). The same `service` commands work on macOS: `install` writes `~/Library/LaunchAgents/com.dbtlr.heimdall.<hub|collector>.plist` only when it changed, loads it into the user's GUI domain, and restarts the binary, which logs to the same `~/.local/state/heimdall/` path as on Linux. The agent runs while the user is logged in. `stop` unloads the agent, so launchd does not relaunch it, and `status` reads its state from `launchctl print` and always exits 0. See [ADR-0007](docs/decisions/0007-binaries-own-their-service-config-file-holds-settings.md).

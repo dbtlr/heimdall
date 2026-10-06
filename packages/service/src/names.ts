@@ -33,6 +33,10 @@ export const servicePaths = (binary: Binary, home: string): ServicePaths => {
 export const systemdUnitPath = (home: string, label: string): string =>
   join(home, '.config', 'systemd', 'user', `${label}.service`);
 
+// Where launchd finds a user's own agents, loaded again at each login.
+export const launchdPlistPath = (home: string, label: string): string =>
+  join(home, 'Library', 'LaunchAgents', `${label}.plist`);
+
 // What a supervisor runs, independent of its unit format: launchd renders the
 // same definition as a property list.
 export type ServiceDefinition = {

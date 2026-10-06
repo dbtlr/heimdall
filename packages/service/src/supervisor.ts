@@ -13,8 +13,8 @@ export type UnitStatus = {
 };
 
 // One binary's unit in the user's service manager: a systemd user unit on
-// Linux, and a launchd user agent on macOS once that backend exists. `install`
-// converges: it rewrites the unit only when it changed, and always restarts.
+// Linux, and a launchd user agent on macOS. `install` converges: it rewrites
+// the unit only when it changed, and always restarts.
 export type Supervisor = {
   install: (definition: ServiceDefinition) => Promise<{ unitWritten: boolean }>;
   restart: () => Promise<void>;
