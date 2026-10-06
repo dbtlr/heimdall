@@ -32,7 +32,7 @@ One Collector reports Vitals to a running Hub, end to end.
 - The Collector samples Vitals on macOS and Linux, queues locally, and Pushes batches to the ingest endpoint with a per-System token.
 - The Hub authenticates the token, writes Reports to PostgreSQL through versioned migrations, and serves a plain page listing Systems with last-seen time and current Vitals.
 - A rejected Report still counts as seeing its System and raises the first Condition, Reports rejected; each System's Timeline records Conditions raised and cleared ([ADR-0005](decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
-- Proven on `db-mbp` against a Hub running locally or on Asgard.
+- Proven on Valhalla, a macOS System, against a Hub on Asgard: every Vital sampled, and no sample lost across a Hub outage.
 
 Size: medium. De-risks the wire schema, cross-platform sampling, and the offline queue before anything depends on them.
 
