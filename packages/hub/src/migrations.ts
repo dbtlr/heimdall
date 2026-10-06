@@ -67,6 +67,75 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 2,
   },
+  {
+    // Vitals roll up into 5-minute buckets, aligned to UTC, as samples arrive,
+    // so raw samples can be pruned (ADR-0008). A bucket keeps the count, min,
+    // sum, and max of each rolled-up Vital; average is sum over count. Byte
+    // sums are numeric: a bucket may hold a sample per millisecond, which
+    // could overflow bigint. The smallest uptime marks a reboot in the bucket.
+    // Disks roll up per mount. The rollups are backfilled from the samples
+    // already stored, which can outlast the usual statement timeout.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE TABLE vitals_rollups (
+        system text NOT NULL REFERENCES systems (name),
+        bucket timestamptz NOT NULL,
+        samples integer NOT NULL,
+        cpu_busy_min double precision NOT NULL,
+        cpu_busy_sum double precision NOT NULL,
+        cpu_busy_max double precision NOT NULL,
+        memory_used_min bigint NOT NULL,
+        memory_used_sum numeric NOT NULL,
+        memory_used_max bigint NOT NULL,
+        memory_total_max bigint NOT NULL,
+        load_1_min double precision NOT NULL,
+        load_1_sum double precision NOT NULL,
+        load_1_max double precision NOT NULL,
+        uptime_min double precision NOT NULL,
+        collector_cpu_sum double precision NOT NULL,
+        collector_cpu_max double precision NOT NULL,
+        collector_rss_sum numeric NOT NULL,
+        collector_rss_max bigint NOT NULL,
+        PRIMARY KEY (system, bucket)
+      );
+
+      CREATE TABLE disk_rollups (
+        system text NOT NULL REFERENCES systems (name),
+        bucket timestamptz NOT NULL,
+        mount text NOT NULL,
+        used_max bigint NOT NULL,
+        total_max bigint NOT NULL,
+        PRIMARY KEY (system, bucket, mount)
+      );
+
+      INSERT INTO vitals_rollups
+      SELECT
+        system,
+        date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00'),
+        count(*),
+        min(cpu_busy_percent), sum(cpu_busy_percent), max(cpu_busy_percent),
+        min(memory_used_bytes), sum(memory_used_bytes), max(memory_used_bytes),
+        max(memory_total_bytes),
+        min(load_1), sum(load_1), max(load_1),
+        min(uptime_seconds),
+        sum(collector_cpu_percent), max(collector_cpu_percent),
+        sum(collector_rss_bytes), max(collector_rss_bytes)
+      FROM vitals_samples
+      GROUP BY 1, 2;
+
+      INSERT INTO disk_rollups
+      SELECT
+        system,
+        date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00'),
+        d->>'mount',
+        max((d->>'usedBytes')::bigint),
+        max((d->>'totalBytes')::bigint)
+      FROM vitals_samples, jsonb_array_elements(disks) AS d
+      GROUP BY 1, 2, 3;
+    `,
+    version: 3,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
@@ -74,8 +143,9 @@ export const MIGRATIONS: readonly Migration[] = [
 const MIGRATION_LOCK = 'heimdall-migrations';
 
 // Brings the database to the latest version in one transaction and answers the
-// versions it applied, oldest first.
-export const migrate = (sql: SQL): Promise<number[]> =>
+// versions it applied, oldest first. Tests pass `migrations` to stop at an
+// earlier version.
+export const migrate = (sql: SQL, migrations = MIGRATIONS): Promise<number[]> =>
   sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     await tx`
@@ -87,7 +157,7 @@ export const migrate = (sql: SQL): Promise<number[]> =>
     const rows: { version: number }[] = await tx`SELECT version FROM schema_migrations`;
     const done = new Set(rows.map((row) => row.version));
     const applied: number[] = [];
-    for (const migration of MIGRATIONS) {
+    for (const migration of migrations) {
       if (done.has(migration.version)) {
         continue;
       }

@@ -29,34 +29,90 @@ export const storeReport = (
         collector_platform = excluded.collector_platform,
         collector_arch = excluded.collector_arch
     `;
-    // The samples travel as one JSON parameter, so a Report of any size is one statement.
+    // The samples travel as one JSON parameter, so a Report of any size is one
+    // statement. The samples the insert stored, and only those, roll up into
+    // their 5-minute buckets, so a resent sample never counts twice (ADR-0008).
     const stored: unknown[] = await tx`
-      INSERT INTO vitals_samples (
-        system, t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
-        load_1, load_5, load_15, uptime_seconds, disks,
-        collector_cpu_percent, collector_rss_bytes
+      WITH stored AS (
+        INSERT INTO vitals_samples (
+          system, t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
+          load_1, load_5, load_15, uptime_seconds, disks,
+          collector_cpu_percent, collector_rss_bytes
+        )
+        SELECT
+          ${report.system},
+          -- Whole days, then the milliseconds left over: interval arithmetic runs
+          -- in double precision, which would round a large count of a smaller
+          -- unit. A timestamp without time zone keeps a day 24 hours long.
+          (timestamp 'epoch'
+            + ((s->>'t')::bigint / 86400000) * interval '1 day'
+            + ((s->>'t')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
+          (s->'cpu'->>'busyPercent')::double precision,
+          (s->'memory'->>'totalBytes')::bigint,
+          (s->'memory'->>'usedBytes')::bigint,
+          (s->'load'->>0)::double precision,
+          (s->'load'->>1)::double precision,
+          (s->'load'->>2)::double precision,
+          (s->>'uptimeSeconds')::double precision,
+          s->'disks',
+          (s->'collector'->>'cpuPercent')::double precision,
+          (s->'collector'->>'rssBytes')::bigint
+        FROM jsonb_array_elements(${storableJson(report.samples)}::text::jsonb) AS s
+        ON CONFLICT (system, t) DO NOTHING
+        RETURNING *, date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00') AS bucket
+      ),
+      vitals AS (
+        INSERT INTO vitals_rollups AS r (
+          system, bucket, samples,
+          cpu_busy_min, cpu_busy_sum, cpu_busy_max,
+          memory_used_min, memory_used_sum, memory_used_max,
+          memory_total_max,
+          load_1_min, load_1_sum, load_1_max,
+          uptime_min,
+          collector_cpu_sum, collector_cpu_max,
+          collector_rss_sum, collector_rss_max
+        )
+        SELECT
+          system, bucket, count(*),
+          min(cpu_busy_percent), sum(cpu_busy_percent), max(cpu_busy_percent),
+          min(memory_used_bytes), sum(memory_used_bytes), max(memory_used_bytes),
+          max(memory_total_bytes),
+          min(load_1), sum(load_1), max(load_1),
+          min(uptime_seconds),
+          sum(collector_cpu_percent), max(collector_cpu_percent),
+          sum(collector_rss_bytes), max(collector_rss_bytes)
+        FROM stored
+        GROUP BY system, bucket
+        ON CONFLICT (system, bucket) DO UPDATE SET
+          samples = r.samples + excluded.samples,
+          cpu_busy_min = LEAST(r.cpu_busy_min, excluded.cpu_busy_min),
+          cpu_busy_sum = r.cpu_busy_sum + excluded.cpu_busy_sum,
+          cpu_busy_max = GREATEST(r.cpu_busy_max, excluded.cpu_busy_max),
+          memory_used_min = LEAST(r.memory_used_min, excluded.memory_used_min),
+          memory_used_sum = r.memory_used_sum + excluded.memory_used_sum,
+          memory_used_max = GREATEST(r.memory_used_max, excluded.memory_used_max),
+          memory_total_max = GREATEST(r.memory_total_max, excluded.memory_total_max),
+          load_1_min = LEAST(r.load_1_min, excluded.load_1_min),
+          load_1_sum = r.load_1_sum + excluded.load_1_sum,
+          load_1_max = GREATEST(r.load_1_max, excluded.load_1_max),
+          uptime_min = LEAST(r.uptime_min, excluded.uptime_min),
+          collector_cpu_sum = r.collector_cpu_sum + excluded.collector_cpu_sum,
+          collector_cpu_max = GREATEST(r.collector_cpu_max, excluded.collector_cpu_max),
+          collector_rss_sum = r.collector_rss_sum + excluded.collector_rss_sum,
+          collector_rss_max = GREATEST(r.collector_rss_max, excluded.collector_rss_max)
+      ),
+      disks AS (
+        INSERT INTO disk_rollups AS r (system, bucket, mount, used_max, total_max)
+        SELECT
+          system, bucket, d->>'mount',
+          max((d->>'usedBytes')::bigint), max((d->>'totalBytes')::bigint)
+        FROM stored, jsonb_array_elements(stored.disks) AS d
+        GROUP BY system, bucket, d->>'mount'
+        ON CONFLICT (system, bucket, mount) DO UPDATE SET
+          used_max = GREATEST(r.used_max, excluded.used_max),
+          total_max = GREATEST(r.total_max, excluded.total_max)
       )
-      SELECT
-        ${report.system},
-        -- Whole days, then the milliseconds left over: interval arithmetic runs
-        -- in double precision, which would round a large count of a smaller
-        -- unit. A timestamp without time zone keeps a day 24 hours long.
-        (timestamp 'epoch'
-          + ((s->>'t')::bigint / 86400000) * interval '1 day'
-          + ((s->>'t')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
-        (s->'cpu'->>'busyPercent')::double precision,
-        (s->'memory'->>'totalBytes')::bigint,
-        (s->'memory'->>'usedBytes')::bigint,
-        (s->'load'->>0)::double precision,
-        (s->'load'->>1)::double precision,
-        (s->'load'->>2)::double precision,
-        (s->>'uptimeSeconds')::double precision,
-        s->'disks',
-        (s->'collector'->>'cpuPercent')::double precision,
-        (s->'collector'->>'rssBytes')::bigint
-      FROM jsonb_array_elements(${storableJson(report.samples)}::text::jsonb) AS s
-      ON CONFLICT (system, t) DO NOTHING
-      RETURNING t
+      SELECT t FROM stored
     `;
     // A stored Report ends a run of rejections (ADR-0005).
     await tx`
