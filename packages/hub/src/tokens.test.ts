@@ -3,30 +3,33 @@ import { expect, test } from 'bun:test';
 import { TokenEntrySchema, tokenTable } from './tokens.ts';
 
 test('a token entry names a System and its token', () => {
-  expect(TokenEntrySchema.parse('db-mbp=s3cr=t')).toEqual({ system: 'db-mbp', token: 's3cr=t' });
+  expect(TokenEntrySchema.parse('laptop-1=s3cr=t')).toEqual({
+    system: 'laptop-1',
+    token: 's3cr=t',
+  });
 });
 
 test.each([
-  ['no separator', 'db-mbp'],
-  ['an empty token', 'db-mbp='],
-  ['a System outside Fleet names', 'DB_MBP=s3cret'],
-  ['whitespace in the token, which HTTP would trim from the header', 'db-mbp=s3cret '],
+  ['no separator', 'laptop-1'],
+  ['an empty token', 'laptop-1='],
+  ['a System outside Fleet names', 'LAPTOP_1=s3cret'],
+  ['whitespace in the token, which HTTP would trim from the header', 'laptop-1=s3cret '],
 ])('a token entry with %s is invalid', (_, entry) => {
   expect(TokenEntrySchema.safeParse(entry).success).toBe(false);
 });
 
 test('the table answers the System a token belongs to', () => {
   const table = tokenTable([
-    { system: 'asgard', token: 'a-token' },
-    { system: 'db-mbp', token: 'm-token' },
+    { system: 'server-1', token: 'a-token' },
+    { system: 'laptop-1', token: 'm-token' },
   ]);
 
-  expect(table.systemFor('m-token')).toBe('db-mbp');
-  expect(table.systemFor('a-token')).toBe('asgard');
+  expect(table.systemFor('m-token')).toBe('laptop-1');
+  expect(table.systemFor('a-token')).toBe('server-1');
 });
 
 test('the table answers no System for an unknown token', () => {
-  const table = tokenTable([{ system: 'asgard', token: 'a-token' }]);
+  const table = tokenTable([{ system: 'server-1', token: 'a-token' }]);
 
   expect(table.systemFor('a-toke')).toBeUndefined();
   expect(table.systemFor('')).toBeUndefined();
@@ -35,17 +38,17 @@ test('the table answers no System for an unknown token', () => {
 test('a token shared by two Systems is refused', () => {
   expect(() =>
     tokenTable([
-      { system: 'asgard', token: 'same' },
-      { system: 'db-mbp', token: 'same' },
+      { system: 'server-1', token: 'same' },
+      { system: 'laptop-1', token: 'same' },
     ]),
-  ).toThrow('asgard and db-mbp share a token');
+  ).toThrow('server-1 and laptop-1 share a token');
 });
 
 test('a System with two tokens is refused', () => {
   expect(() =>
     tokenTable([
-      { system: 'asgard', token: 'one' },
-      { system: 'asgard', token: 'two' },
+      { system: 'server-1', token: 'one' },
+      { system: 'server-1', token: 'two' },
     ]),
-  ).toThrow('asgard has more than one token');
+  ).toThrow('server-1 has more than one token');
 });

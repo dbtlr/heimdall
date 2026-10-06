@@ -13,7 +13,7 @@ The process that runs on each System, observes it, and sends Reports to the Hub.
 _Avoid_: agent (reserved for the AI driving a Harness), exporter, daemon
 
 **Hub**:
-The service on Asgard that receives Reports, stores them in PostgreSQL, derives Conditions, and serves the web dashboard.
+The service that receives Reports, stores them in PostgreSQL, derives Conditions, and serves the web dashboard.
 _Avoid_: server, backend, center (a Center is a Fleet role)
 
 **Inventory**:

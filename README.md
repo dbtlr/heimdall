@@ -1,6 +1,6 @@
 # Heimdall
 
-Observability for a small personal fleet. A Collector on each machine reports host vitals, agent sessions, and the state of everything Fleet manages to a Hub on Asgard, which serves a dashboard inside the tailnet.
+Observability for a small personal fleet. A Collector on each machine reports host vitals, agent sessions, and the state of everything Fleet manages to a Hub, which serves a dashboard inside the tailnet.
 
 Status: M1 (walking skeleton) is complete; M2 (Fleet rollout) is next. See [docs/roadmap.md](docs/roadmap.md).
 
@@ -38,7 +38,7 @@ The configuration file is the one `--config` names, or else `.heimdall-collector
 
 ```toml
 hub = "https://heimdall.example.ts.net/"
-system = "db-mbp"
+system = "laptop-1"
 token = "…"
 ```
 
@@ -59,7 +59,7 @@ The configuration file is the one `--config` names, or else `.heimdall-hub.toml`
 
 ```toml
 database = "postgres://heimdall@localhost/heimdall"
-tokens = ["db-mbp=…", "asgard=…"]
+tokens = ["laptop-1=…", "server-1=…"]
 ```
 
 The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing token, 403 for a token no System holds or a Report that names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)). A Report rejected with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports rejected Condition until a Report from it is stored ([ADR-0005](docs/decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).

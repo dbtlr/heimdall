@@ -7,14 +7,14 @@ import { z } from 'zod';
 // after the first `=`, so it may hold `=` itself.
 export const TokenEntrySchema = z
   .string()
-  .regex(/^[^=]+=.+$/su, 'Use system=token, such as db-mbp=<token>.')
+  .regex(/^[^=]+=.+$/su, 'Use system=token, such as laptop-1=<token>.')
   .transform((entry) => {
     const at = entry.indexOf('=');
     return { system: entry.slice(0, at), token: entry.slice(at + 1) };
   })
   .pipe(
     z.object({
-      system: z.string().regex(SYSTEM_NAME, 'Use a Fleet System name, such as db-mbp.'),
+      system: z.string().regex(SYSTEM_NAME, 'Use a Fleet System name, such as laptop-1.'),
       // HTTP trims a header's trailing whitespace, so a token holding any could never match.
       token: z.string().regex(/^\S+$/u, 'A token holds no whitespace.'),
     }),

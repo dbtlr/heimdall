@@ -97,7 +97,7 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
     `database = "${db.url.href}"`,
     'host = "127.0.0.1"',
     'port = 0',
-    'tokens = ["db-mbp=mbp-s3cret"]',
+    'tokens = ["laptop-1=laptop-s3cret"]',
   ]);
   let ingested = 0;
   let html = '';
@@ -110,9 +110,9 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
           samples: [sample(Date.now())],
           schemaVersion: REPORT_SCHEMA_VERSION,
           sentAt: Date.now(),
-          system: 'db-mbp',
+          system: 'laptop-1',
         }),
-        headers: { authorization: 'Bearer mbp-s3cret', 'content-type': 'application/json' },
+        headers: { authorization: 'Bearer laptop-s3cret', 'content-type': 'application/json' },
         method: 'POST',
       });
       ingested = response.status;
@@ -121,13 +121,13 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
   });
 
   expect(ingested).toBe(200);
-  expect(html).toContain('db-mbp');
-  expect(stderr).not.toContain('mbp-s3cret');
+  expect(html).toContain('laptop-1');
+  expect(stderr).not.toContain('laptop-s3cret');
   expect(code).toBe(130);
 });
 
 test('serve without a database is a usage error that names the option', async () => {
-  const { code, stderr } = await invoke(['serve', '--token', 'db-mbp=t']);
+  const { code, stderr } = await invoke(['serve', '--token', 'laptop-1=t']);
 
   expect(stderr).toContain('--database');
   expect(code).toBe(2);
@@ -152,12 +152,12 @@ test('serve refuses two Systems that share a token', async () => {
     '--database',
     'postgres://localhost/heimdall',
     '--token',
-    'asgard=same',
+    'server-1=same',
     '--token',
-    'db-mbp=same',
+    'laptop-1=same',
   ]);
 
-  expect(stderr).toContain('asgard and db-mbp share a token');
+  expect(stderr).toContain('server-1 and laptop-1 share a token');
   expect(code).not.toBe(0);
 });
 
@@ -167,7 +167,7 @@ test('serve names the database as the problem when it cannot reach it', async ()
     '--database',
     'postgres://heimdall:db-s3cret@127.0.0.1:1/heimdall',
     '--token',
-    'db-mbp=t',
+    'laptop-1=t',
   ]);
 
   expect(stderr).toContain('Could not prepare the database');

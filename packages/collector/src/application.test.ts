@@ -76,7 +76,7 @@ test('run reads its settings from the configuration file', async () => {
     configFile,
     [
       'hub = "http://heimdall.example:8080/"',
-      'system = "asgard"',
+      'system = "server-1"',
       'token = "s3cret"',
       `stateDir = "${join(dir.path, 'state')}"`,
     ].join('\n'),
@@ -84,7 +84,7 @@ test('run reads its settings from the configuration file', async () => {
 
   const { code, stderr } = await startAndStop(['run', '--config', configFile]);
 
-  expect(stderr).toContain('Sampling asgard every 15 seconds for http://heimdall.example:8080/');
+  expect(stderr).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
   expect(stderr).not.toContain('s3cret');
   expect(await Bun.file(join(dir.path, 'state', 'queue.sqlite')).exists()).toBe(true);
   expect(code).toBe(130);
@@ -95,14 +95,19 @@ test('run settings from the environment override the configuration file', async 
   const configFile = join(dir.path, 'collector.json');
   await writeFile(
     configFile,
-    JSON.stringify({ hub: 'http://a.example/', stateDir: dir.path, system: 'asgard', token: 't' }),
+    JSON.stringify({
+      hub: 'http://a.example/',
+      stateDir: dir.path,
+      system: 'server-1',
+      token: 't',
+    }),
   );
 
   const { stderr } = await startAndStop(['run', '--config', configFile], {
-    HEIMDALL_SYSTEM: 'bifrost',
+    HEIMDALL_SYSTEM: 'server-2',
   });
 
-  expect(stderr).toContain('Sampling bifrost every');
+  expect(stderr).toContain('Sampling server-2 every');
 });
 
 test('run without a Hub is a usage error that names the option', async () => {
@@ -110,7 +115,7 @@ test('run without a Hub is a usage error that names the option', async () => {
   const { code, stderr } = await startAndStop([
     'run',
     '--system',
-    'asgard',
+    'server-1',
     '--token',
     't',
     '--state-dir',
@@ -122,8 +127,8 @@ test('run without a Hub is a usage error that names the option', async () => {
 });
 
 test.each([
-  ['a System outside Fleet names', ['--system', 'DB_MBP', '--hub', 'http://h.example/']],
-  ['a Hub that is not an http URL', ['--system', 'asgard', '--hub', 'ftp://h.example/']],
+  ['a System outside Fleet names', ['--system', 'LAPTOP_1', '--hub', 'http://h.example/']],
+  ['a Hub that is not an http URL', ['--system', 'server-1', '--hub', 'ftp://h.example/']],
 ])('run with %s is a usage error', async (_, settings) => {
   await using dir = await tempStateDir();
   const { code } = await startAndStop([

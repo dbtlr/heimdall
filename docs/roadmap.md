@@ -8,8 +8,8 @@ Heimdall gives one view of where every Fleet System stands: whether it is up, it
 
 ## Shape of v1
 
-- A Collector on every System (`db-mbp`, Valhalla, Asgard, Bifrost) Pushes Reports to the Hub on Asgard ([ADR-0001](decisions/0001-fleet-declares-collector-observes-hub-remembers.md)).
-- The Hub stores Reports in its own PostgreSQL database on Asgard and serves a web dashboard inside the tailnet that works on a phone.
+- A Collector on every System Pushes Reports to the Hub ([ADR-0001](decisions/0001-fleet-declares-collector-observes-hub-remembers.md)).
+- The Hub stores Reports in its own PostgreSQL database on the System that hosts it and serves a web dashboard inside the tailnet that works on a phone.
 - Desired state comes only from Fleet's per-System Inventory Artifact and `manifest.json`.
 - Vitals are CPU, memory, disk, load, and uptime, sampled every 15 seconds. Raw samples are kept for 14 days and 5-minute min/avg/max rollups for a year.
 - Sessions are observed from the process table, never from content ([ADR-0002](decisions/0002-collector-observes-processes-never-content.md)).
@@ -19,7 +19,7 @@ Heimdall gives one view of where every Fleet System stands: whether it is up, it
 ## Out of v1
 
 - Alerting and its delivery channel. A later milestone delivers Conditions the Hub already derives.
-- A watcher outside Asgard. While the Hub lives on Asgard, it cannot report Asgard's own outage.
+- A watcher outside the System that hosts the Hub. The Hub cannot report an outage of its own System.
 - Session IDs linked to transcripts through Harness hooks.
 - General-purpose metrics, logs, or traces. Heimdall is not Prometheus.
 
@@ -32,22 +32,22 @@ One Collector reports Vitals to a running Hub, end to end.
 - The Collector samples Vitals on macOS and Linux, queues locally, and Pushes batches to the ingest endpoint with a per-System token.
 - The Hub authenticates the token, writes Reports to PostgreSQL through versioned migrations, and serves a plain page listing Systems with last-seen time and current Vitals.
 - A rejected Report still counts as seeing its System and raises the first Condition, Reports rejected; each System's Timeline records Conditions raised and cleared ([ADR-0005](decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
-- Proven on Valhalla, a macOS System, against a Hub on Asgard: every Vital sampled, and no sample lost across a Hub outage.
+- Proven on a macOS System reporting to a Hub on another System: every Vital sampled, and no sample lost across a Hub outage.
 
 Size: medium. De-risks the wire schema, cross-platform sampling, and the offline queue before anything depends on them.
 
 ## M2: Fleet rollout
 
-Every System runs a Collector, and the Hub runs on Asgard as a Fleet-managed Service.
+Every System runs a Collector, and the Hub runs as a Fleet-managed Service.
 
 - Tagged releases publish the Collector and Hub binaries for every platform, with install scripts Fleet runs to install and update them ([ADR-0006](decisions/0006-releases-ship-both-binaries-installed-by-script.md), [Releasing](releasing.md)).
-- The Hub ships as a Fleet Application with a native Service on Asgard (Fleet ADR-0021): its own systemd user service, Tailscale ingress, and health check.
+- The Hub ships as a Fleet Application with a native Service on its System (Fleet ADR-0021): its own systemd user service, Tailscale ingress, and health check.
 - PostgreSQL database and login role `heimdall` declared in Fleet's registry, plus a Backup Job.
 - The Collector ships as a Fleet Application on all four Systems, running as a launchd user agent on macOS and a systemd service on Linux.
 - Per-System ingest tokens rendered from 1Password through the Application's config template.
 - Retention: raw Vitals pruned after 14 days, 5-minute rollups kept for a year.
 
-Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwin native supervisor and a Bifrost account.
+Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwin native supervisor and an unprivileged account on the System that lacks one.
 
 ## M3: Fleet state
 
@@ -82,5 +82,5 @@ Size: large. M1's plain page carries the project until here. Mocks can start any
 ## Later
 
 - Alerting: deliver Conditions through a chosen channel, with silencing.
-- An external watcher for Asgard itself.
+- An external watcher for the System that hosts the Hub.
 - Harness hook enrichment that links Sessions to transcripts.
