@@ -9,7 +9,14 @@ import { versionLine } from './version.ts';
 const invoke = async (argv: string[]) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
-  const code = await app.run({ host: { argv, stderr, stdout } });
+  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
+  const runnerExitCode = process.exitCode;
+  let code: number;
+  try {
+    code = await app.run({ host: { argv, stderr, stdout } });
+  } finally {
+    process.exitCode = runnerExitCode;
+  }
   stdout.end();
   stderr.end();
   return { code, stderr: await text(stderr), stdout: await text(stdout) };
