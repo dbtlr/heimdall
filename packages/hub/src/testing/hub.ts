@@ -23,8 +23,8 @@ export const startHub = async () => {
     onError: (error) => errors.push(error),
     sql: db.sql,
     tokens: tokenTable([
-      { system: 'asgard', token: 'asgard-token' },
-      { system: 'db-mbp', token: 'mbp-token' },
+      { system: 'server-1', token: 'server-token' },
+      { system: 'laptop-1', token: 'laptop-token' },
     ]),
   });
   return { clock, db, errors, hub, [Symbol.asyncDispose]: () => db[Symbol.asyncDispose]() };

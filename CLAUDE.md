@@ -1,6 +1,6 @@
 # Heimdall
 
-Fleet observability: a Collector on each Fleet System Pushes Reports to a Hub on Asgard, which stores them in PostgreSQL and serves a dashboard of every System's Vitals, managed Services and Backup Jobs, and drift from what Fleet declared. The vocabulary lives in [docs/glossary.md](docs/glossary.md). Heimdall borrows Fleet's terms (System, Service, Push, Drift, and others) unchanged.
+Fleet observability: a Collector on each Fleet System Pushes Reports to a Hub, which stores them in PostgreSQL and serves a dashboard of every System's Vitals, managed Services and Backup Jobs, and drift from what Fleet declared. The vocabulary lives in [docs/glossary.md](docs/glossary.md). Heimdall borrows Fleet's terms (System, Service, Push, Drift, and others) unchanged.
 
 ## Where things are decided
 

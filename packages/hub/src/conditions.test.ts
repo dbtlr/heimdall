@@ -15,10 +15,10 @@ const count = (text: string, part: string) => text.split(part).length - 1;
 
 test('an invalid Report still counts as seeing its System', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
   h.clock.now = NOW + 60 * 60_000;
 
-  const response = await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  const response = await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
   expect(response.status).toBe(422);
   expect((await sections(h.hub)).systems).toContain('2026-10-06 13:00:00 UTC');
@@ -27,19 +27,19 @@ test('an invalid Report still counts as seeing its System', async () => {
 test("a Report naming another System counts as seeing the token's System, not the named one", async () => {
   await using h = await startHub();
 
-  const response = await push(h.hub, report('asgard', [NOW]), { token: 'mbp-token' });
+  const response = await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
 
   expect(response.status).toBe(403);
   const { systems } = await sections(h.hub);
-  expect(systems).toContain('<td>db-mbp</td>');
-  expect(systems).not.toContain('<td>asgard</td>');
+  expect(systems).toContain('<td>laptop-1</td>');
+  expect(systems).not.toContain('<td>server-1</td>');
 });
 
 test('requests without a known token see no System', async () => {
   await using h = await startHub();
 
-  await push(h.hub, report('db-mbp', [NOW]));
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'guess' });
+  await push(h.hub, report('laptop-1', [NOW]));
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'guess' });
 
   expect(await page(h.hub)).toContain('No System has reported yet.');
 });
@@ -47,10 +47,10 @@ test('requests without a known token see no System', async () => {
 test('a System heard only through rejections is listed with its status and no Vitals', async () => {
   await using h = await startHub();
 
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
   const { systems } = await sections(h.hub);
-  expect(systems).toContain('db-mbp');
+  expect(systems).toContain('laptop-1');
   expect(systems).toContain('2026-10-06 12:00:00 UTC');
   expect(systems).toContain('Reports rejected');
   expect(systems).not.toContain('GiB');
@@ -59,24 +59,24 @@ test('a System heard only through rejections is listed with its status and no Vi
 
 test('repeated rejections raise one Condition; the page shows the latest reason, the Timeline the first', async () => {
   await using h = await startHub();
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
   h.clock.now = NOW + 60_000;
 
-  await push(h.hub, report('asgard', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
 
   const { systems, timeline } = await sections(h.hub);
-  expect(systems).toContain('This token belongs to db-mbp, not asgard.');
+  expect(systems).toContain('This token belongs to laptop-1, not server-1.');
   expect(count(timeline, 'Reports rejected')).toBe(1);
   expect(timeline).toContain('samples');
-  expect(timeline).not.toContain('not asgard');
+  expect(timeline).not.toContain('not server-1');
 });
 
 test('a stored Report clears the Condition, and the Timeline shows when it was raised and cleared', async () => {
   await using h = await startHub();
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
   h.clock.now = NOW + 5 * 60_000;
 
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
   const { systems, timeline } = await sections(h.hub);
   expect(systems).not.toContain('Reports rejected');
@@ -92,10 +92,10 @@ test('a stored Report clears the Condition, and the Timeline shows when it was r
 
 test('a rejection after recovery raises the Condition again', async () => {
   await using h = await startHub();
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
   const { systems, timeline } = await sections(h.hub);
   expect(systems).toContain('Reports rejected');
@@ -106,7 +106,7 @@ test('a rejection after recovery raises the Condition again', async () => {
 test('a stored Report with no Condition open adds nothing to the Timeline', async () => {
   await using h = await startHub();
 
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
   const { timeline } = await sections(h.hub);
   expect(timeline).not.toContain('<li>');
@@ -118,25 +118,25 @@ const timelineOf = (timeline: string, system: string) =>
 
 test("one System's Reports neither clear nor show another System's Conditions", async () => {
   await using h = await startHub();
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
-  await push(h.hub, report('asgard', [NOW]), { token: 'asgard-token' });
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
 
   const { systems, timeline } = await sections(h.hub);
   const rowOf = (system: string) =>
     systems.split('<tr>').find((r) => r.startsWith(`<td>${system}</td>`)) ?? '';
-  expect(rowOf('db-mbp')).toContain('Reports rejected');
-  expect(rowOf('asgard')).toContain('No open Conditions');
-  expect(timelineOf(timeline, 'asgard')).toContain('No Conditions yet.');
-  expect(timelineOf(timeline, 'db-mbp')).toContain('Reports rejected');
+  expect(rowOf('laptop-1')).toContain('Reports rejected');
+  expect(rowOf('server-1')).toContain('No open Conditions');
+  expect(timelineOf(timeline, 'server-1')).toContain('No Conditions yet.');
+  expect(timelineOf(timeline, 'laptop-1')).toContain('Reports rejected');
 });
 
 test('a rejection the Hub clock places earlier does not move last seen back', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
   h.clock.now = NOW - 60 * 60_000;
 
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
   expect((await sections(h.hub)).systems).toContain('2026-10-06 12:00:00 UTC');
 });
@@ -144,10 +144,10 @@ test('a rejection the Hub clock places earlier does not move last seen back', as
 test('a Condition is never cleared before it was raised, even when the Hub clock steps back', async () => {
   await using h = await startHub();
   h.clock.now = NOW + 60 * 60_000;
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
   h.clock.now = NOW;
 
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
   const { timeline } = await sections(h.hub);
   expect(timeline).not.toContain('2026-10-06 12:00:00 UTC');
@@ -157,37 +157,39 @@ test('a Condition is never cleared before it was raised, even when the Hub clock
 test('the latest rejection to arrive sets the reason, whatever the Hub clock says', async () => {
   await using h = await startHub();
   h.clock.now = NOW + 60_000;
-  await push(h.hub, 'garbage', { token: 'mbp-token' });
+  await push(h.hub, 'garbage', { token: 'laptop-token' });
   h.clock.now = NOW;
 
-  await push(h.hub, report('asgard', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
 
-  expect((await sections(h.hub)).systems).toContain('This token belongs to db-mbp, not asgard.');
+  expect((await sections(h.hub)).systems).toContain(
+    'This token belongs to laptop-1, not server-1.',
+  );
 });
 
 test("the Timeline shows each System's latest 10 Conditions, and the status every open one", async () => {
   await using h = await startHub();
-  await push(h.hub, invalid('asgard'), { token: 'asgard-token' });
+  await push(h.hub, invalid('server-1'), { token: 'server-token' });
   for (let i = 0; i < 11; i += 1) {
     h.clock.now = NOW + i * 60_000;
     // oxlint-disable-next-line no-await-in-loop -- each Condition is raised and cleared in turn.
-    await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+    await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
     // oxlint-disable-next-line no-await-in-loop -- as above.
-    await push(h.hub, report('db-mbp', [NOW + i]), { token: 'mbp-token' });
+    await push(h.hub, report('laptop-1', [NOW + i]), { token: 'laptop-token' });
   }
   // The clock steps back, so the newest Condition carries the oldest time.
   h.clock.now = NOW - 60_000;
-  await push(h.hub, 'garbage', { token: 'mbp-token' });
+  await push(h.hub, 'garbage', { token: 'laptop-token' });
 
   const { systems, timeline } = await sections(h.hub);
-  const mbp = timelineOf(timeline, 'db-mbp');
-  expect(count(mbp, 'Reports rejected')).toBe(10);
+  const laptop = timelineOf(timeline, 'laptop-1');
+  expect(count(laptop, 'Reports rejected')).toBe(10);
   // Latest by arrival: the open Condition leads, the two oldest cycles drop out.
-  expect(mbp.indexOf('The Report is not JSON.')).toBeLessThan(mbp.indexOf('12:10:00 UTC'));
-  expect(mbp).toContain('2026-10-06 12:02:00 UTC');
-  expect(mbp).not.toContain('2026-10-06 12:01:00 UTC');
-  expect(mbp).not.toContain('2026-10-06 12:00:00 UTC');
-  expect(timelineOf(timeline, 'asgard')).toContain('Reports rejected');
+  expect(laptop.indexOf('The Report is not JSON.')).toBeLessThan(laptop.indexOf('12:10:00 UTC'));
+  expect(laptop).toContain('2026-10-06 12:02:00 UTC');
+  expect(laptop).not.toContain('2026-10-06 12:01:00 UTC');
+  expect(laptop).not.toContain('2026-10-06 12:00:00 UTC');
+  expect(timelineOf(timeline, 'server-1')).toContain('Reports rejected');
   expect(systems).toContain('The Report is not JSON.');
   expect(timeline).toContain('latest 10 Conditions');
 });
@@ -195,7 +197,7 @@ test("the Timeline shows each System's latest 10 Conditions, and the status ever
 test('reasons are escaped on the page and the Timeline', async () => {
   await using h = await startHub();
 
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
 
   const html = await page(h.hub);
   expect(html).toContain('&gt;=1');
@@ -206,8 +208,8 @@ test('a rejection the database cannot record is still answered as rejected', asy
   await using h = await startHub();
   await h.db.sql.close();
 
-  const invalidReport = await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
-  const otherSystem = await push(h.hub, report('asgard', [NOW]), { token: 'mbp-token' });
+  const invalidReport = await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
+  const otherSystem = await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
 
   expect(invalidReport.status).toBe(422);
   expect(otherSystem.status).toBe(403);
@@ -217,16 +219,16 @@ test('a rejection the database cannot record is still answered as rejected', asy
 test("each Condition's lines stay together, newest Condition first, whatever the Hub clock says", async () => {
   await using h = await startHub();
   h.clock.now = NOW;
-  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
   h.clock.now = NOW + 30 * 60_000;
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
   // The clock steps back for a second Condition inside the first one's span.
   h.clock.now = NOW + 10 * 60_000;
-  await push(h.hub, 'garbage', { token: 'mbp-token' });
+  await push(h.hub, 'garbage', { token: 'laptop-token' });
   h.clock.now = NOW + 20 * 60_000;
-  await push(h.hub, report('db-mbp', [NOW + 1]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW + 1]), { token: 'laptop-token' });
 
-  const lines = timelineOf((await sections(h.hub)).timeline, 'db-mbp')
+  const lines = timelineOf((await sections(h.hub)).timeline, 'laptop-1')
     .split('<li>')
     .slice(1)
     .map((line) => line.replace(/<[^>]+>/gu, ''));

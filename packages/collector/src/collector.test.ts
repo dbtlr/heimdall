@@ -10,7 +10,7 @@ import { tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },
-  system: 'asgard',
+  system: 'server-1',
 } as const;
 
 // A Hub that records every sample time it accepts, and can go down and come back

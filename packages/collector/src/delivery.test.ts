@@ -12,7 +12,7 @@ import { tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
-  system: 'db-mbp',
+  system: 'laptop-1',
 } as const;
 
 const report = (): Report => ({

@@ -34,7 +34,7 @@ export const run = new Command('run', {
     extensions: [configInput({ path: 'system' })],
     required: true,
     type: 'string',
-    validate: text({ message: 'Use a Fleet System name, such as db-mbp.', pattern: SYSTEM_NAME }),
+    validate: text({ message: 'Use a Fleet System name, such as laptop-1.', pattern: SYSTEM_NAME }),
   })
   .option('token', {
     description: "The System's ingest token. Prefer the file or the variable to this flag.",

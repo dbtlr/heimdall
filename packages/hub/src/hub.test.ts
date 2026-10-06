@@ -10,7 +10,7 @@ import { NOW, page, push, report, startHub } from './testing/hub.ts';
 test('a Report without a token is refused as unauthenticated', async () => {
   await using h = await startHub();
 
-  const response = await push(h.hub, report('db-mbp', [NOW]));
+  const response = await push(h.hub, report('laptop-1', [NOW]));
 
   expect(response.status).toBe(401);
 });
@@ -20,7 +20,7 @@ test('a Report without a token is refused as unauthenticated', async () => {
 test('a Report with an unknown token is forbidden', async () => {
   await using h = await startHub();
 
-  const response = await push(h.hub, report('db-mbp', [NOW]), { token: 'guess' });
+  const response = await push(h.hub, report('laptop-1', [NOW]), { token: 'guess' });
 
   expect(response.status).toBe(403);
 });
@@ -30,8 +30,8 @@ test('the bearer scheme is read in any case', async () => {
 
   const response = await h.hub.fetch(
     new Request('http://hub.test/api/v1/reports', {
-      body: JSON.stringify(report('db-mbp', [NOW])),
-      headers: { authorization: 'bearer mbp-token' },
+      body: JSON.stringify(report('laptop-1', [NOW])),
+      headers: { authorization: 'bearer laptop-token' },
       method: 'POST',
     }),
   );
@@ -42,19 +42,19 @@ test('the bearer scheme is read in any case', async () => {
 test("a Report for another System than the token's is forbidden", async () => {
   await using h = await startHub();
 
-  const response = await push(h.hub, report('asgard', [NOW]), { token: 'mbp-token' });
+  const response = await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
 
   expect(response.status).toBe(403);
 });
 
 test.each([
-  ['a body that is not JSON', '{"system": "db-mbp",'],
-  ['a Report that fails the schema', { ...report('db-mbp', [NOW]), samples: [] }],
-  ['a Report of an unknown schema version', { ...report('db-mbp', [NOW]), schemaVersion: 99 }],
+  ['a body that is not JSON', '{"system": "laptop-1",'],
+  ['a Report that fails the schema', { ...report('laptop-1', [NOW]), samples: [] }],
+  ['a Report of an unknown schema version', { ...report('laptop-1', [NOW]), schemaVersion: 99 }],
 ])('%s is rejected as invalid, with the reason', async (_, body) => {
   await using h = await startHub();
 
-  const response = await push(h.hub, body, { token: 'mbp-token' });
+  const response = await push(h.hub, body, { token: 'laptop-token' });
 
   expect(response.status).toBe(422);
   expect(await response.text()).not.toBe('');
@@ -66,8 +66,8 @@ test('a body over the size cap is rejected as invalid', async () => {
 
   const response = await push(
     h.hub,
-    { ...report('db-mbp', [NOW]), padding },
-    { token: 'mbp-token' },
+    { ...report('laptop-1', [NOW]), padding },
+    { token: 'laptop-token' },
   );
 
   expect(response.status).toBe(422);
@@ -76,7 +76,7 @@ test('a body over the size cap is rejected as invalid', async () => {
 test('the largest Report the schema allows fits under the size cap', async () => {
   await using h = await startHub();
   const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => NOW + i * 15_000);
-  const largest = report('db-mbp', times);
+  const largest = report('laptop-1', times);
   for (const s of largest.samples) {
     s.disks = Array.from({ length: 8 }, (_, i) => ({
       mount: `/Volumes/A Rather Long Volume Name ${String(i)}`,
@@ -85,7 +85,7 @@ test('the largest Report the schema allows fits under the size cap', async () =>
     }));
   }
 
-  const response = await push(h.hub, largest, { token: 'mbp-token' });
+  const response = await push(h.hub, largest, { token: 'laptop-token' });
 
   expect(response.status).toBe(200);
 });
@@ -93,8 +93,8 @@ test('the largest Report the schema allows fits under the size cap', async () =>
 test('an accepted Report answers how many samples it stored', async () => {
   await using h = await startHub();
 
-  const response = await push(h.hub, report('db-mbp', [NOW - 15_000, NOW]), {
-    token: 'mbp-token',
+  const response = await push(h.hub, report('laptop-1', [NOW - 15_000, NOW]), {
+    token: 'laptop-token',
   });
 
   expect(response.status).toBe(200);
@@ -103,10 +103,10 @@ test('an accepted Report answers how many samples it stored', async () => {
 
 test('samples the Hub already holds are skipped, and the rest stored', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW - 30_000, NOW - 15_000]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW - 30_000, NOW - 15_000]), { token: 'laptop-token' });
 
-  const response = await push(h.hub, report('db-mbp', [NOW - 15_000, NOW]), {
-    token: 'mbp-token',
+  const response = await push(h.hub, report('laptop-1', [NOW - 15_000, NOW]), {
+    token: 'laptop-token',
   });
 
   expect(await response.json()).toEqual({ skipped: 1, stored: 1 });
@@ -114,9 +114,9 @@ test('samples the Hub already holds are skipped, and the rest stored', async () 
 
 test('samples are keyed by System, so two Systems may share a time', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
-  const response = await push(h.hub, report('asgard', [NOW]), { token: 'asgard-token' });
+  const response = await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
 
   expect(await response.json()).toEqual({ skipped: 0, stored: 1 });
 });
@@ -139,18 +139,18 @@ test("the page lists each System with its last-seen time and newest sample's Vit
   };
   await push(
     h.hub,
-    { ...report('db-mbp', [NOW - 15_000]), samples: [sample(NOW - 15_000), newest] },
+    { ...report('laptop-1', [NOW - 15_000]), samples: [sample(NOW - 15_000), newest] },
     {
-      token: 'mbp-token',
+      token: 'laptop-token',
     },
   );
   h.clock.now = NOW + 5 * 60_000;
-  await push(h.hub, report('asgard', [NOW]), { token: 'asgard-token' });
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
 
   const html = await page(h.hub);
 
-  expect(html).toContain('asgard');
-  expect(html).toContain('db-mbp');
+  expect(html).toContain('server-1');
+  expect(html).toContain('laptop-1');
   expect(html).toContain('2026-10-06 12:00:00 UTC');
   expect(html).toContain('5 min ago');
   expect(html).toContain('61.3%');
@@ -163,18 +163,18 @@ test("the page lists each System with its last-seen time and newest sample's Vit
 
 test('a Report the Hub clock places earlier does not move last seen back', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
   h.clock.now = NOW - 60 * 60_000;
-  await push(h.hub, report('db-mbp', [NOW + 15_000]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW + 15_000]), { token: 'laptop-token' });
 
   expect(await page(h.hub)).toContain('2026-10-06 12:00:00 UTC');
 });
 
 test('a Report of samples the Hub already holds still counts as seeing the System', async () => {
   await using h = await startHub();
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
   h.clock.now = NOW + 60 * 60_000;
-  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
   expect(await page(h.hub)).toContain('2026-10-06 13:00:00 UTC');
 });
@@ -188,11 +188,11 @@ test('the page escapes what Collectors report', async () => {
   await push(
     h.hub,
     {
-      ...report('db-mbp', [NOW]),
+      ...report('laptop-1', [NOW]),
       collector: { arch: '<i>arm64</i>', platform: 'darwin', version: '0.1.0' },
       samples: [hostile],
     },
-    { token: 'mbp-token' },
+    { token: 'laptop-token' },
   );
 
   const html = await page(h.hub);
@@ -215,11 +215,11 @@ test('text PostgreSQL cannot store is kept as a replacement character', async ()
   const response = await push(
     h.hub,
     {
-      ...report('db-mbp', [NOW]),
+      ...report('laptop-1', [NOW]),
       collector: { arch: 'arm\u000064', platform: 'darwin', version: '0.1\u0000' },
       samples: [odd],
     },
-    { token: 'mbp-token' },
+    { token: 'laptop-token' },
   );
 
   expect(response.status).toBe(200);
@@ -233,7 +233,7 @@ test('sample times up to the last a Date can hold are stored exactly', async () 
   const last = 8_640_000_000_000_000;
   const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => last - 1000 + i);
 
-  const response = await push(h.hub, report('db-mbp', times), { token: 'mbp-token' });
+  const response = await push(h.hub, report('laptop-1', times), { token: 'laptop-token' });
 
   expect(await response.json()).toEqual({ skipped: 0, stored: MAX_SAMPLES_PER_REPORT });
   const [system] = await listSystems(h.db.sql);
@@ -244,7 +244,7 @@ test('a Report the database cannot take is answered 503, so the Collector retrie
   await using h = await startHub();
   await h.db.sql.close();
 
-  const response = await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  const response = await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
   expect(response.status).toBe(503);
   expect(h.errors).toHaveLength(1);

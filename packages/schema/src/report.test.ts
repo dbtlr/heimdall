@@ -9,7 +9,7 @@ const report = (): Report => ({
   samples: [sample(1_759_700_000_000), sample(1_759_700_015_000)],
   schemaVersion: 1,
   sentAt: 1_759_700_030_000,
-  system: 'db-mbp',
+  system: 'laptop-1',
 });
 
 describe('a Report', () => {
@@ -81,7 +81,7 @@ describe('a Report is rejected', () => {
 
   test.each([
     ['from an unknown schema version', { ...report(), schemaVersion: 2 }],
-    ['naming a System outside Fleet names', { ...report(), system: 'DB_MBP' }],
+    ['naming a System outside Fleet names', { ...report(), system: 'LAPTOP_1' }],
     ['naming a System with a trailing hyphen', { ...report(), system: 'db-' }],
     [
       'from an unsupported platform',
