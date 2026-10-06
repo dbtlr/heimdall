@@ -16,6 +16,8 @@ bun run fix              # apply formatting and lint fixes
 bun run build:collector  # compile dist/heimdall-collector for this platform
 ```
 
+The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database.
+
 ## Running the Collector
 
 `heimdall-collector run` samples the System's Vitals every 15 seconds and Pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, with the System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
@@ -38,3 +40,25 @@ token = "…"
 ```
 
 SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 130; queued samples stay on disk for the next start.
+
+## Running the Hub
+
+`heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports` and serves a page at `/` that lists every System with its last-seen time and newest Vitals.
+
+| Flag         | Variable                | File key   | Default     |
+| ------------ | ----------------------- | ---------- | ----------- |
+| `--database` | `HEIMDALL_DATABASE_URL` | `database` | none        |
+| `--host`     | `HEIMDALL_HOST`         | `host`     | `127.0.0.1` |
+| `--port`     | `HEIMDALL_PORT`         | `port`     | `8080`      |
+| `--token`    | none                    | `tokens`   | none        |
+
+The configuration file is the one `--config` names, or else `.heimdall-hub.toml` or `.heimdall-hub.json` in the working directory and then the home directory. Each token entry is `system=token`, one per System, and no two Systems may share a token. Supply tokens through the file.
+
+```toml
+database = "postgres://heimdall@localhost/heimdall"
+tokens = ["db-mbp=…", "asgard=…"]
+```
+
+The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing or unknown token, 403 when the Report names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
+
+SIGTERM or SIGINT stops the Hub with exit status 143 or 130.
