@@ -19,3 +19,5 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0004 — The Report grows additively, and samples are keyed by System and time](0004-report-grows-additively-samples-keyed-by-system-and-time.md)
 - [ADR-0005 — A rejected Report still counts as seeing its System, and Conditions keep a Timeline](0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)
 - [ADR-0006 — Releases ship both binaries per platform, installed by one script each](0006-releases-ship-both-binaries-installed-by-script.md)
+- [ADR-0007 — Each binary installs and supervises its own Service, and its config file is the one home for its settings](0007-binaries-own-their-service-config-file-holds-settings.md)
+- [ADR-0008 — Vitals roll up into 5-minute buckets as they arrive, and serve prunes on a timer](0008-vitals-roll-up-as-they-arrive-serve-prunes.md)
