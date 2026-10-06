@@ -16,6 +16,7 @@
         "@heimdall/schema": "workspace:*",
         "@loomcli/core": "0.8.0",
         "@loomcli/plugins": "0.8.0",
+        "@loomcli/validators": "0.8.0",
       },
     },
     "packages/hub": {
@@ -59,6 +60,8 @@
     "@loomcli/core": ["@loomcli/core@0.8.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-BUEPAoC9jhNRZce3xHdmRbNlm3dSgNWPxJiC098TqBxfbkzTYahvbwp5H2uaugJAXdv4Bzs/5mkOdd7KlMK9Zw=="],
 
     "@loomcli/plugins": ["@loomcli/plugins@0.8.0", "", { "dependencies": { "smol-toml": "^1.9.0", "yaml": "^2.9.1", "zod": "^4.6.5" }, "peerDependencies": { "@loomcli/core": "0.8.0" } }, "sha512-nQqXra0kMhBfd3Ds91fhNq6XtDlJ37+SQXGfLDCKZO0d9KFE2769LZb8KdxNQNrTJGvIvcDjg+sRpnE9LrktVA=="],
+
+    "@loomcli/validators": ["@loomcli/validators@0.8.0", "", { "peerDependencies": { "@loomcli/core": "0.8.0" } }, "sha512-PpCgwOS+qZ/SaxYsDVoB1mzpvZXWpX90Uc+jYwOsam7yG9uzv6ol/QY8qOeTK2HdPl1WWhYKs1v7iYrxyBCJTw=="],
 
     "@oxc-project/runtime": ["@oxc-project/runtime@0.151.0", "", {}, "sha512-fNuliiqGTseerW2FTbxq6UOQavKL/NvNh9K3peJZZVNi1NbM4Ehscwp3MX9nu+9bfbSfmPUEivF779XQU5exiw=="],
 
