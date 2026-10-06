@@ -58,24 +58,74 @@ export const storeReport = (
       ON CONFLICT (system, t) DO NOTHING
       RETURNING t
     `;
+    // A stored Report ends a run of rejections (ADR-0005).
+    await tx`
+      UPDATE conditions SET cleared_at = GREATEST(raised_at, ${seenAt})
+      WHERE system = ${report.system} AND kind = ${REPORTS_REJECTED} AND cleared_at IS NULL
+    `;
     return { skipped: report.samples.length - stored.length, stored: stored.length };
   });
 
-// One System as the page shows it: when the Hub last heard from it, which
-// Collector build reported, and its newest Vitals sample.
+// The kinds of Condition the Hub derives. M3 adds Service, Backup Job, Drift,
+// and stale-System Conditions to the same Timeline.
+export type ConditionKind = 'reports_rejected';
+
+const REPORTS_REJECTED: ConditionKind = 'reports_rejected';
+
+// Records a Report from `system`, identified by its token, that the Hub
+// rejected at `receivedAt`: the System is seen, and its Reports-rejected
+// Condition is raised, or keeps the latest reason if already open (ADR-0005).
+export const recordRejection = (
+  sql: SQL,
+  { reason, receivedAt, system }: { reason: string; receivedAt: number; system: string },
+): Promise<void> =>
+  sql.begin(async (tx) => {
+    const at = new Date(receivedAt);
+    const why = storable(reason);
+    await tx`
+      INSERT INTO systems (name, last_seen_at) VALUES (${system}, ${at})
+      ON CONFLICT (name) DO UPDATE SET
+        last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at)
+    `;
+    await tx`
+      INSERT INTO conditions (system, kind, raised_at, raised_reason, latest_at, latest_reason)
+      VALUES (${system}, ${REPORTS_REJECTED}, ${at}, ${why}, ${at}, ${why})
+      ON CONFLICT (system, kind) WHERE cleared_at IS NULL DO UPDATE SET
+        latest_at = excluded.latest_at,
+        latest_reason = excluded.latest_reason
+      WHERE conditions.latest_at <= excluded.latest_at
+    `;
+  });
+
+// A Condition that is raised now, with when it was raised and its latest reason.
+export type OpenCondition = { kind: ConditionKind; raisedAt: number; reason: string };
+
+// One line of a System's Timeline: a Condition raised, with the reason it was
+// raised for, or cleared.
+export type TimelineEntry =
+  | { at: number; condition: ConditionKind; kind: 'raised'; reason: string }
+  | { at: number; condition: ConditionKind; kind: 'cleared' };
+
+// One System as the page shows it: when the Hub last heard from it, its open
+// Conditions and its Timeline, newest first, and, once a Report from it is
+// stored, the Collector build that sent it and its newest Vitals sample.
 export type SystemSummary = {
-  collector: Report['collector'];
+  conditions: OpenCondition[];
   lastSeenAt: number;
-  latest: VitalsSample;
   name: string;
+  reported: { collector: Report['collector']; latest: VitalsSample } | undefined;
+  timeline: TimelineEntry[];
 };
 
-type SummaryRow = {
-  collector_arch: string;
+// How many of each System's most recent Conditions its Timeline shows.
+const TIMELINE_CONDITIONS = 10;
+
+type SystemRow = {
+  collector_arch: string | null;
   collector_cpu_percent: number;
-  collector_platform: Report['collector']['platform'];
+  collector_platform: Report['collector']['platform'] | null;
   collector_rss_bytes: string;
-  collector_version: string;
+  collector_version: string | null;
   cpu_busy_percent: number;
   disks: VitalsSample['disks'];
   last_seen_at: Date;
@@ -85,30 +135,28 @@ type SummaryRow = {
   memory_total_bytes: string;
   memory_used_bytes: string;
   name: string;
-  t: Date;
+  // Null when no sample from the System is stored.
+  t: Date | null;
   uptime_seconds: number;
 };
 
-// Every System the Hub has heard from, by name, each with its newest sample.
-export const listSystems = async (sql: SQL): Promise<SystemSummary[]> => {
-  const rows: SummaryRow[] = await sql`
-    SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
-           v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
-           v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
-           v.collector_cpu_percent, v.collector_rss_bytes
-    FROM systems s
-    JOIN LATERAL (
-      SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
-    ) v ON true
-    ORDER BY s.name
-  `;
-  return rows.map((row) => ({
-    collector: {
-      arch: row.collector_arch,
-      platform: row.collector_platform,
-      version: row.collector_version,
-    },
-    lastSeenAt: row.last_seen_at.getTime(),
+type ConditionRow = {
+  cleared_at: Date | null;
+  kind: ConditionKind;
+  latest_reason: string;
+  raised_at: Date;
+  raised_reason: string;
+  system: string;
+};
+
+// The Collector build and newest sample of a System with a stored Report.
+const reportedOf = (row: SystemRow): SystemSummary['reported'] => {
+  const { collector_arch: arch, collector_platform: platform, collector_version: version } = row;
+  if (row.t === null || arch === null || platform === null || version === null) {
+    return undefined;
+  }
+  return {
+    collector: { arch, platform, version },
     latest: {
       collector: {
         cpuPercent: row.collector_cpu_percent,
@@ -124,6 +172,55 @@ export const listSystems = async (sql: SQL): Promise<SystemSummary[]> => {
       t: row.t.getTime(),
       uptimeSeconds: row.uptime_seconds,
     },
-    name: row.name,
-  }));
+  };
+};
+
+// A Condition's lines on the Timeline, newest first.
+const timelineOf = (row: ConditionRow): TimelineEntry[] => {
+  const raised: TimelineEntry = {
+    at: row.raised_at.getTime(),
+    condition: row.kind,
+    kind: 'raised',
+    reason: row.raised_reason,
+  };
+  return row.cleared_at === null
+    ? [raised]
+    : [{ at: row.cleared_at.getTime(), condition: row.kind, kind: 'cleared' }, raised];
+};
+
+// Every System the Hub has heard from, by name.
+export const listSystems = async (sql: SQL): Promise<SystemSummary[]> => {
+  const systems: SystemRow[] = await sql`
+    SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
+           v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
+           v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
+           v.collector_cpu_percent, v.collector_rss_bytes
+    FROM systems s
+    LEFT JOIN LATERAL (
+      SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
+    ) v ON true
+    ORDER BY s.name
+  `;
+  const conditions: ConditionRow[] = await sql`
+    SELECT system, kind, raised_at, raised_reason, latest_reason, cleared_at
+    FROM (
+      SELECT *, row_number() OVER (PARTITION BY system ORDER BY raised_at DESC, id DESC) AS n
+      FROM conditions
+    ) c
+    WHERE n <= ${TIMELINE_CONDITIONS}
+    ORDER BY raised_at DESC, id DESC
+  `;
+  return systems.map((row) => {
+    const own = conditions.filter((c) => c.system === row.name);
+    return {
+      conditions: own
+        .filter((c) => c.cleared_at === null)
+        .map((c) => ({ kind: c.kind, raisedAt: c.raised_at.getTime(), reason: c.latest_reason })),
+      lastSeenAt: row.last_seen_at.getTime(),
+      name: row.name,
+      reported: reportedOf(row),
+      // Conditions of different kinds may overlap, so their lines interleave.
+      timeline: own.flatMap(timelineOf).toSorted((a, b) => b.at - a.at),
+    };
+  });
 };

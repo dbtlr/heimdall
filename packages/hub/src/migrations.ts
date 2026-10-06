@@ -37,6 +37,33 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 1,
   },
+  {
+    // A System may be seen before any Report from it is stored, through a
+    // rejected one, so its Collector build can be unknown (ADR-0005). Each
+    // Condition is raised once and cleared once; a System holds at most one
+    // open Condition of each kind. The Timeline is read from these rows.
+    sql: `
+      ALTER TABLE systems
+        ALTER COLUMN collector_version DROP NOT NULL,
+        ALTER COLUMN collector_platform DROP NOT NULL,
+        ALTER COLUMN collector_arch DROP NOT NULL;
+
+      CREATE TABLE conditions (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text NOT NULL REFERENCES systems (name),
+        kind text NOT NULL,
+        raised_at timestamptz NOT NULL,
+        raised_reason text NOT NULL,
+        latest_at timestamptz NOT NULL,
+        latest_reason text NOT NULL,
+        cleared_at timestamptz
+      );
+
+      CREATE UNIQUE INDEX conditions_open ON conditions (system, kind) WHERE cleared_at IS NULL;
+      CREATE INDEX conditions_by_system ON conditions (system, raised_at DESC);
+    `,
+    version: 2,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

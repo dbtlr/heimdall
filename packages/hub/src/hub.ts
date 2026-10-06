@@ -3,7 +3,7 @@ import type { SQL } from 'bun';
 import { z } from 'zod';
 
 import { renderPage } from './page.ts';
-import { listSystems, storeReport } from './store.ts';
+import { listSystems, recordRejection, storeReport } from './store.ts';
 import type { TokenTable } from './tokens.ts';
 
 export type HubDependencies = {
@@ -72,11 +72,11 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
   }
 };
 
-const invalid = (reason: string) => answer(422, reason.slice(0, MAX_REASON_LENGTH));
-
 // `POST /api/v1/reports`: 401 without a token, 403 for a token the Hub does not
 // know or a Report from another System than the token's, 422 for an invalid
-// Report (ADR-0004).
+// Report (ADR-0004). A Report the token attributes to a System counts as seeing
+// that System even when rejected, and raises its Reports-rejected Condition
+// (ADR-0005).
 const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) => {
   const auth = authenticate(request, tokens);
   if (auth.kind === 'missing') {
@@ -86,6 +86,12 @@ const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) =
     return answer(403, 'No System holds this token.');
   }
   const { system } = auth;
+  const reject = async (status: 403 | 422, reason: string) => {
+    const shown = reason.slice(0, MAX_REASON_LENGTH);
+    await recordRejection(sql, { reason: shown, receivedAt: now(), system });
+    return answer(status, shown);
+  };
+  const invalid = (reason: string) => reject(422, reason);
   const body = await readCapped(request, MAX_REPORT_BYTES);
   if (body === undefined) {
     return invalid(`The Report exceeds ${String(MAX_REPORT_BYTES)} bytes.`);
@@ -99,7 +105,7 @@ const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) =
     return invalid(z.prettifyError(parsed.error));
   }
   if (parsed.data.system !== system) {
-    return answer(403, `This token belongs to ${system}, not ${parsed.data.system}.`);
+    return reject(403, `This token belongs to ${system}, not ${parsed.data.system}.`);
   }
   return Response.json(await storeReport(sql, { receivedAt: now(), report: parsed.data }));
 };

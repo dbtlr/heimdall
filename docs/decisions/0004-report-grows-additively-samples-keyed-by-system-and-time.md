@@ -4,7 +4,7 @@ title: ADR-0004 - The Report grows additively, and samples are keyed by System a
 description: "Report schema versions bump only on breaking changes; the Hub drops unknown fields. Samples are deduplicated by System and timestamp. An invalid Report is answered 422 and dropped; every other failed delivery is retried."
 status: accepted
 created: 2026-10-05
-modified: 2026-10-05
+modified: 2026-10-06
 ---
 
 # The Report grows additively, and samples are keyed by System and time
@@ -38,3 +38,7 @@ A Collector newer than the Hub has its new sections silently dropped until the H
 A breaking change is the exception: a Hub that does not know a Collector's `schemaVersion` answers 422 to all of its Reports and the Collector drops them, so the Hub must accept the new version before any Collector sends it.
 Each later section needs its own natural key so the Hub can deduplicate it the same way.
 A Collector bug that produces an invalid sample loses that whole Report, at most 1,000 samples.
+
+## Changelog
+
+- 2026-10-06: Addendum. A Report the Hub rejects with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports-rejected Condition; see [ADR-0005](0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md). The answers and the Collector's handling of them are unchanged.

@@ -31,6 +31,7 @@ One Collector reports Vitals to a running Hub, end to end.
 - Report schema v1: System identity, Collector version, Vitals samples, and the Collector's own footprint.
 - The Collector samples Vitals on macOS and Linux, queues locally, and Pushes batches to the ingest endpoint with a per-System token.
 - The Hub authenticates the token, writes Reports to PostgreSQL through versioned migrations, and serves a plain page listing Systems with last-seen time and current Vitals.
+- A rejected Report still counts as seeing its System and raises the first Condition, Reports rejected; each System's Timeline records Conditions raised and cleared ([ADR-0005](decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
 - Proven on `db-mbp` against a Hub running locally or on Asgard.
 
 Size: medium. De-risks the wire schema, cross-platform sampling, and the offline queue before anything depends on them.
@@ -53,7 +54,7 @@ The dashboard answers "does each System match what Fleet declared?"
 
 - Fleet compiles and Pushes the Inventory Artifact (Fleet-side work; see the asks document in the Fleet repository).
 - The Collector reads the Inventory and `manifest.json` and reports: last Push or Apply and its commit, Drift per Managed path, each declared Service's supervisor state and health, each Backup Job's last run, exit status, and next due time, each Application's installed release against the selected release, and each Harness version.
-- The Hub derives Conditions: Service down, Backup Job overdue or failing, Drift, release mismatch, stale System, low disk, unknown Inventory version.
+- The Hub derives Conditions: Service down, Backup Job overdue or failing, Drift, release mismatch, stale System, low disk, unknown Inventory version. Each joins the Timeline M1 started.
 
 Size: large. The Inventory contract is the main risk; land and version it before building the Collector side.
 
@@ -72,7 +73,7 @@ The full UI, designed before it is built.
 
 - Static mock variants first. One is chosen before any component is written.
 - Fleet overview: every System with last seen, headline Vitals, and open Conditions.
-- System detail: Vitals charts with min/max ranges and Session overlays, managed Services and Backup Jobs with their schedules, Applications and releases, Drift.
+- System detail: Vitals charts with min/max ranges and Session overlays, managed Services and Backup Jobs with their schedules, Applications and releases, Drift, and the Timeline.
 - Readable on a phone.
 
 Size: large. M1's plain page carries the project until here. Mocks can start any time after M3 fixes the data shape.
