@@ -2,7 +2,7 @@
 type: adr
 title: ADR-0008 - Vitals roll up into 5-minute buckets as they arrive, and serve prunes on a timer
 description: "The Hub upserts each stored sample into its 5-minute rollup in the same transaction, so late and resent samples roll up correctly with no rollup job. A timer inside serve deletes raw samples after 14 days and rollups after a year."
-status: proposed
+status: accepted
 created: 2026-10-06
 modified: 2026-10-06
 ---
@@ -30,3 +30,7 @@ Fleet declares the Hub as one native Service ([ADR-0007](0007-binaries-own-their
 Ingest does a little more work per sample, one upsert per bucket a Report touches.
 A Hub that stays down keeps old rows until it runs again, which costs disk only.
 A sample older than 14 days still rolls up when it arrives, and the next prune removes its raw row.
+
+## Changelog
+
+- 2026-10-06: Accepted. Rollups at ingest landed in HMD-22 and pruning in HMD-23.

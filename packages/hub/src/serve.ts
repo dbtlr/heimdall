@@ -7,9 +7,11 @@ import { SQL } from 'bun';
 import type { serve } from './application.ts';
 import { createHub } from './hub.ts';
 import { migrate } from './migrations.ts';
+import { every, pruneVitals } from './retention.ts';
 import { tokenTable } from './tokens.ts';
 
 const STATEMENT_TIMEOUT_MS = 30_000;
+const PRUNE_INTERVAL_MS = 3_600_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -52,14 +54,25 @@ export const serveAction: ActionHandler<typeof serve> = async ({ options, out, s
       tokens,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
+    // Pruning is routine, so only a failure is logged, and the next hour tries again.
+    let stopPruning: (() => Promise<void>) | undefined;
     try {
       await out.info(
         clean(`Listening on ${server.url.href} for ${systemCount(options.token.length)}.`),
       );
+      stopPruning = every({
+        intervalMs: PRUNE_INTERVAL_MS,
+        onError: (error) => {
+          void out.warn(clean(`Could not prune old Vitals: ${describeError(error)}`));
+        },
+        task: () => pruneVitals(sql, Date.now()),
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
+      // A prune still running must finish before the database closes.
+      await stopPruning?.();
       await server.stop();
     }
   } finally {
