@@ -34,7 +34,7 @@ Each setting comes from its flag, then its environment variable, then the config
 | `--token`     | `HEIMDALL_TOKEN`     | `token`    | none                                                                    |
 | `--state-dir` | `HEIMDALL_STATE_DIR` | `stateDir` | `~/Library/Application Support/heimdall` on macOS, `$XDG_STATE_HOME/heimdall` on Linux |
 
-The configuration file is the one `--config` names, or else `.heimdall-collector.toml` or `.heimdall-collector.json` in the working directory and then the home directory. Supply the token through the file or the variable, because a flag is visible in the process table.
+The configuration file is the one `--config` names, or else `.config/heimdall/collector.toml` or `.config/heimdall/collector.json` in the working directory and then the home directory, which is `~/.config/heimdall/collector.toml`. Supply the token through the file or the variable, because a flag is visible in the process table.
 
 ```toml
 hub = "https://heimdall.example.ts.net/"
@@ -55,7 +55,7 @@ SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 13
 | `--port`     | `HEIMDALL_PORT`         | `port`     | `8080`      |
 | `--token`    | none                    | `tokens`   | none        |
 
-The configuration file is the one `--config` names, or else `.heimdall-hub.toml` or `.heimdall-hub.json` in the working directory and then the home directory. Each token entry is `system=token`, one per System. No two Systems may share a token, and a token holds no whitespace. Supply tokens through the file, because a flag is visible in the process table.
+The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Each token entry is `system=token`, one per System. No two Systems may share a token, and a token holds no whitespace. Supply tokens through the file, because a flag is visible in the process table.
 
 ```toml
 database = "postgres://heimdall@localhost/heimdall"

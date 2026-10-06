@@ -56,7 +56,12 @@ export const run = new Command('run', {
 // The `heimdall-collector` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-collector', {
   description: 'Sample this System and push Reports to the Hub.',
-  plugins: [help(), version(), config({ file: '.heimdall-collector.{toml,json}' }), signals()],
+  plugins: [
+    help(),
+    version(),
+    config({ file: '.config/heimdall/collector.{toml,json}' }),
+    signals(),
+  ],
   version: packageJson.version,
   // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
   // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.

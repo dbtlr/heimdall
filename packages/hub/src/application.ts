@@ -58,7 +58,7 @@ export const serve = new Command('serve', {
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
-  plugins: [help(), version(), config({ file: '.heimdall-hub.{toml,json}' }), signals()],
+  plugins: [help(), version(), config({ file: '.config/heimdall/hub.{toml,json}' }), signals()],
   version: packageJson.version,
   // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
   // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.

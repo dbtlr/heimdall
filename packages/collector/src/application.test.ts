@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { text } from 'node:stream/consumers';
@@ -11,7 +11,10 @@ import { versionLine } from './version.ts';
 // Runs the Collector command line in-process and captures what it prints. A run
 // that starts collecting is cancelled once stderr shows it started, or after a
 // few seconds, so a `run` test ends either way.
-const invoke = async (argv: string[], { env = {} }: { env?: Record<string, string> } = {}) => {
+const invoke = async (
+  argv: string[],
+  { cwd, env = {} }: { cwd?: string; env?: Record<string, string> } = {},
+) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const controller = new AbortController();
@@ -27,7 +30,10 @@ const invoke = async (argv: string[], { env = {} }: { env?: Record<string, strin
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
-    code = await app.run({ host: { argv, env, stderr, stdout }, signal: controller.signal });
+    code = await app.run({
+      host: { argv, env, stderr, stdout, ...(cwd === undefined ? {} : { cwd }) },
+      signal: controller.signal,
+    });
   } finally {
     process.exitCode = runnerExitCode;
     clearTimeout(safety);
@@ -87,6 +93,29 @@ test('run reads its settings from the configuration file', async () => {
   expect(stderr).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
   expect(stderr).not.toContain('s3cret');
   expect(await Bun.file(join(dir.path, 'state', 'queue.sqlite')).exists()).toBe(true);
+  expect(code).toBe(130);
+});
+
+test('run finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
+  await using home = await tempStateDir();
+  await using elsewhere = await tempStateDir();
+  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+  await writeFile(
+    join(home.path, '.config', 'heimdall', 'collector.toml'),
+    [
+      'hub = "http://heimdall.example:8080/"',
+      'system = "server-1"',
+      'token = "s3cret"',
+      `stateDir = "${join(home.path, 'state')}"`,
+    ].join('\n'),
+  );
+
+  const { code, stderr } = await invoke(['run'], {
+    cwd: elsewhere.path,
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
   expect(code).toBe(130);
 });
 
