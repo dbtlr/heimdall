@@ -175,14 +175,17 @@ test("the Timeline shows each System's latest 10 Conditions, and the status ever
     // oxlint-disable-next-line no-await-in-loop -- as above.
     await push(h.hub, report('db-mbp', [NOW + i]), { token: 'mbp-token' });
   }
-  // The clock steps back: the open Condition sorts below older ones by time.
+  // The clock steps back, so the newest Condition carries the oldest time.
   h.clock.now = NOW - 60_000;
   await push(h.hub, 'garbage', { token: 'mbp-token' });
 
   const { systems, timeline } = await sections(h.hub);
   const mbp = timelineOf(timeline, 'db-mbp');
   expect(count(mbp, 'Reports rejected')).toBe(10);
-  expect(mbp).toContain('2026-10-06 12:10:00 UTC');
+  // Latest by arrival: the open Condition leads, the two oldest cycles drop out.
+  expect(mbp.indexOf('The Report is not JSON.')).toBeLessThan(mbp.indexOf('12:10:00 UTC'));
+  expect(mbp).toContain('2026-10-06 12:02:00 UTC');
+  expect(mbp).not.toContain('2026-10-06 12:01:00 UTC');
   expect(mbp).not.toContain('2026-10-06 12:00:00 UTC');
   expect(timelineOf(timeline, 'asgard')).toContain('Reports rejected');
   expect(systems).toContain('The Report is not JSON.');
@@ -209,4 +212,29 @@ test('a rejection the database cannot record is still answered as rejected', asy
   expect(invalidReport.status).toBe(422);
   expect(otherSystem.status).toBe(403);
   expect(h.errors).toHaveLength(2);
+});
+
+test("each Condition's lines stay together, newest Condition first, whatever the Hub clock says", async () => {
+  await using h = await startHub();
+  h.clock.now = NOW;
+  await push(h.hub, invalid('db-mbp'), { token: 'mbp-token' });
+  h.clock.now = NOW + 30 * 60_000;
+  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  // The clock steps back for a second Condition inside the first one's span.
+  h.clock.now = NOW + 10 * 60_000;
+  await push(h.hub, 'garbage', { token: 'mbp-token' });
+  h.clock.now = NOW + 20 * 60_000;
+  await push(h.hub, report('db-mbp', [NOW + 1]), { token: 'mbp-token' });
+
+  const lines = timelineOf((await sections(h.hub)).timeline, 'db-mbp')
+    .split('<li>')
+    .slice(1)
+    .map((line) => line.replace(/<[^>]+>/gu, ''));
+
+  expect(lines.map((line) => line.slice(11, 19))).toEqual([
+    '12:20:00',
+    '12:10:00',
+    '12:30:00',
+    '12:00:00',
+  ]);
 });

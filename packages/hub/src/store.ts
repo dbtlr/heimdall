@@ -107,7 +107,7 @@ export type TimelineEntry =
   | { at: number; condition: ConditionKind; kind: 'cleared' };
 
 // One System as the page shows it: when the Hub last heard from it, its open
-// Conditions and its Timeline, newest first, and, once a Report from it is
+// Conditions and its Timeline, newest Condition first, and, once a Report from it is
 // stored, the Collector build that sent it and its newest Vitals sample.
 export type SystemSummary = {
   conditions: OpenCondition[];
@@ -210,14 +210,16 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       WHERE cleared_at IS NULL
       ORDER BY raised_at, id
     `;
+    // Latest by arrival: ids are assigned under the System's row lock, so
+    // they order Conditions even when the Hub clock steps back.
     const recent: ConditionRow[] = await tx`
       SELECT system, kind, raised_at, raised_reason, cleared_at
       FROM (
-        SELECT *, row_number() OVER (PARTITION BY system ORDER BY raised_at DESC, id DESC) AS n
+        SELECT *, row_number() OVER (PARTITION BY system ORDER BY id DESC) AS n
         FROM conditions
       ) c
       WHERE n <= ${TIMELINE_CONDITIONS}
-      ORDER BY raised_at DESC, id DESC
+      ORDER BY id DESC
     `;
     return systems.map((row) => ({
       conditions: open
@@ -226,10 +228,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       lastSeenAt: row.last_seen_at.getTime(),
       name: row.name,
       reported: reportedOf(row),
-      // Conditions of different kinds may overlap, so their lines interleave.
-      timeline: recent
-        .filter((c) => c.system === row.name)
-        .flatMap(timelineOf)
-        .toSorted((a, b) => b.at - a.at),
+      // Each Condition's lines stay together, the newest Condition first.
+      timeline: recent.filter((c) => c.system === row.name).flatMap(timelineOf),
     }));
   });
