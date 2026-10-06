@@ -16,7 +16,7 @@ bun run fix              # apply formatting and lint fixes
 bun run build:collector  # compile dist/heimdall-collector for this platform
 ```
 
-The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database.
+The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. Run `bun test` from the repository root or from `packages/hub`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`.
 
 ## Running the Collector
 

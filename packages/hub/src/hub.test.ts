@@ -6,6 +6,7 @@ import { sample } from '@heimdall/schema/testing';
 
 import { createHub, MAX_REPORT_BYTES } from './hub.ts';
 import { migrate } from './migrations.ts';
+import { listSystems } from './store.ts';
 import { testDatabase } from './testing/postgres.ts';
 import { tokenTable } from './tokens.ts';
 
@@ -271,7 +272,7 @@ test('text PostgreSQL cannot store is kept as a replacement character', async ()
     h.hub,
     {
       ...report('db-mbp', [NOW]),
-      collector: { arch: 'arm64', platform: 'darwin', version: '0.1\u0000' },
+      collector: { arch: 'arm\u000064', platform: 'darwin', version: '0.1\u0000' },
       samples: [odd],
     },
     { token: 'mbp-token' },
@@ -280,19 +281,19 @@ test('text PostgreSQL cannot store is kept as a replacement character', async ()
   expect(response.status).toBe(200);
   const html = await page(h.hub);
   expect(html).toContain('/a�b�c');
-  expect(html).toContain('0.1� darwin');
+  expect(html).toContain('0.1� darwin/arm�64');
 });
 
 test('sample times up to the last a Date can hold are stored exactly', async () => {
   await using h = await startHub();
   const last = 8_640_000_000_000_000;
-  const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => last - 999 + i);
+  const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => last - 1000 + i);
 
   const response = await push(h.hub, report('db-mbp', times), { token: 'mbp-token' });
 
   expect(await response.json()).toEqual({ skipped: 0, stored: MAX_SAMPLES_PER_REPORT });
-  // The newest sample is the one the page reads back.
-  expect(await page(h.hub)).toContain('db-mbp');
+  const [system] = await listSystems(h.db.sql);
+  expect(system?.latest.t).toBe(last - 1);
 });
 
 test('a Report the database cannot take is answered 503, so the Collector retries it', async () => {

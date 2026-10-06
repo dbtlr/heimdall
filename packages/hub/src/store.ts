@@ -38,11 +38,12 @@ export const storeReport = (
       )
       SELECT
         ${report.system},
-        -- Seconds and milliseconds apart: interval arithmetic runs in double
-        -- precision, which would round a large millisecond count.
-        timestamptz 'epoch'
-          + ((s->>'t')::bigint / 1000) * interval '1 second'
-          + ((s->>'t')::bigint % 1000) * interval '1 millisecond',
+        -- Whole days, then the milliseconds left over: interval arithmetic runs
+        -- in double precision, which would round a large count of a smaller
+        -- unit. A timestamp without time zone keeps a day 24 hours long.
+        (timestamp 'epoch'
+          + ((s->>'t')::bigint / 86400000) * interval '1 day'
+          + ((s->>'t')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
         (s->'cpu'->>'busyPercent')::double precision,
         (s->'memory'->>'totalBytes')::bigint,
         (s->'memory'->>'usedBytes')::bigint,
