@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -19,7 +19,15 @@ const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
 // the run is cancelled; a safety timeout cancels it after a few seconds anyway.
 const invoke = async (
   argv: string[],
-  { whileServing }: { whileServing?: (hub: URL) => Promise<void> } = {},
+  {
+    cwd,
+    env = {},
+    whileServing,
+  }: {
+    cwd?: string;
+    env?: Record<string, string>;
+    whileServing?: (hub: URL) => Promise<void>;
+  } = {},
 ) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -44,7 +52,10 @@ const invoke = async (
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
-    code = await app.run({ host: { argv, env: {}, stderr, stdout }, signal: controller.signal });
+    code = await app.run({
+      host: { argv, env, stderr, stdout, ...(cwd === undefined ? {} : { cwd }) },
+      signal: controller.signal,
+    });
     await serving;
   } finally {
     process.exitCode = runnerExitCode;
@@ -124,6 +135,39 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
   expect(html).toContain('laptop-1');
   expect(stderr).not.toContain('laptop-s3cret');
   expect(code).toBe(130);
+});
+
+test('serve finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
+  await using db = await testDatabase();
+  const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
+  const elsewhere = await mkdtemp(join(tmpdir(), 'heimdall-hub-cwd-'));
+  try {
+    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+    await writeFile(
+      join(home, '.config', 'heimdall', 'hub.toml'),
+      [
+        `database = "${db.url.href}"`,
+        'host = "127.0.0.1"',
+        'port = 0',
+        'tokens = ["laptop-1=laptop-s3cret"]',
+      ].join('\n'),
+    );
+    let html = '';
+
+    const { code } = await invoke(['serve'], {
+      cwd: elsewhere,
+      env: { HOME: home },
+      whileServing: async (hub) => {
+        html = await (await fetch(hub)).text();
+      },
+    });
+
+    expect(html).toContain('Heimdall');
+    expect(code).toBe(130);
+  } finally {
+    await rm(home, { force: true, recursive: true });
+    await rm(elsewhere, { force: true, recursive: true });
+  }
 });
 
 test('serve without a database is a usage error that names the option', async () => {
