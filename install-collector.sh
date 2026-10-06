@@ -62,6 +62,8 @@ mkdir -p "$install_dir"
 download="$install_dir/.$binary.download.$$"
 sums="$install_dir/.$binary.SHA256SUMS.$$"
 trap 'rm -f "$download" "$sums"' EXIT
+# dash runs no EXIT trap when a signal ends it, so a signal exits explicitly.
+trap 'exit 1' HUP INT TERM
 
 fetch() {
   curl -fsSL --proto-redir '=https' --tlsv1.2 "$1" -o "$2" || fail "download failed: $1"
@@ -76,5 +78,8 @@ expected=$(awk -v asset="$asset" '$2 == asset { print $1 }' "$sums")
 [ "$(sha256 "$download")" = "$expected" ] || fail "checksum mismatch for $asset"
 
 chmod 755 "$download"
+# A binary built for another C library or CPU passes its checksum but cannot
+# run. Refuse it before it replaces the one that works.
+version_line=$("$download" --version) || fail "the downloaded $asset does not run on this System"
 mv -f "$download" "$install_dir/$binary"
-printf 'Installed %s\n' "$("$install_dir/$binary" --version)" >&2
+printf 'Installed %s\n' "$version_line" >&2

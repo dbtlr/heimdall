@@ -11,18 +11,18 @@ modified: 2026-10-06
 
 ## Context
 
-Fleet installs Heimdall as two Applications from one repository: `heimdall` (the Hub, on Asgard) and `heimdall-collector` (every System).
+Fleet installs Heimdall as two Applications from one repository: `heimdall` (the Hub, on one System) and `heimdall-collector` (every System).
 Fleet does not download release assets itself. Each Application names an install script by URL at the selected tag, which Fleet pipes into `sh` with one version variable set, and an update command that takes the version.
 Fleet decides whether a System is current by comparing the Application's version command output with the tag, ignoring a leading `v`.
 
 ## Decision
 
-- A `vX.Y.Z` tag publishes one GitHub Release carrying `heimdall-collector-<os>-<arch>` and `heimdall-hub-<os>-<arch>` for darwin-arm64, linux-x64, and linux-arm64, each built on its native runner, plus `SHA256SUMS` and notes compiled from `CHANGELOG.md`. A tag with a hyphen publishes a prerelease.
+- A `vX.Y.Z` tag publishes one GitHub Release carrying `heimdall-collector-<os>-<arch>` and `heimdall-hub-<os>-<arch>` for darwin-arm64, linux-x64, and linux-arm64, each built on its native runner, plus `SHA256SUMS` and notes compiled from `CHANGELOG.md`. A tag with a hyphen publishes a prerelease, whose notes are the fragments still pending for the release it leads up to.
 - The tag must equal the version in `packages/collector/package.json` and `packages/hub/package.json`, which carry one shared version. Each binary embeds that version, so no build-time stamp exists to drift from it.
 - `install-collector.sh` and `install-hub.sh` at the repository root each install one binary into `~/.local/bin`, pinned by `HEIMDALL_VERSION`, and refuse a download that `SHA256SUMS` does not vouch for. The two scripts are identical except for the binary name, and a test holds them so.
 - The binaries have no `self-update` command. Fleet updates an Application by running its install script again at the new tag.
-- The version line is `<binary> v<version> (Report schema v<n>)`, Loom's standard form plus a postfix. Fleet reads the second word.
-- Releases are cut by hand. No automation tags prereleases from `main`.
+- The version line is `<binary> v<version> (Report schema v<n>)`, Loom's standard form plus a postfix. Fleet's version command prints its second word.
+- Releases are cut by hand with `packages/release`, the release tooling. No automation tags prereleases from `main`.
 
 ## Considered options
 

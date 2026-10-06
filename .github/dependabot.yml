@@ -6,6 +6,8 @@ updates:
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 5
+    # A dependency update needs no changelog entry; the label tells the guard.
+    labels: ['dependencies', 'skip-changelog']
     commit-message:
       prefix: 'chore(deps)'
 
@@ -14,5 +16,6 @@ updates:
     directory: '/'
     schedule:
       interval: 'weekly'
+    labels: ['dependencies', 'skip-changelog']
     commit-message:
       prefix: 'chore(ci)'

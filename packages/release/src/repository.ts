@@ -1,6 +1,8 @@
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { Change } from './guard.ts';
+
 // The packages a release ships as binaries. They carry one shared version,
 // which each binary prints and which the release tag must match.
 export const RELEASED_PACKAGES = ['collector', 'hub'] as const;
@@ -18,13 +20,16 @@ const isManifest = (value: unknown): value is Manifest =>
   'version' in value &&
   typeof value.version === 'string';
 
-const readManifest = async (root: string, pkg: string): Promise<Manifest> => {
-  const manifest: unknown = JSON.parse(await readFile(manifestPath(root, pkg), 'utf8'));
+const parseManifest = (pkg: string, text: string): Manifest => {
+  const manifest: unknown = JSON.parse(text);
   if (!isManifest(manifest)) {
     throw new Error(`packages/${pkg}/package.json has no version.`);
   }
   return manifest;
 };
+
+const readManifest = async (root: string, pkg: string): Promise<Manifest> =>
+  parseManifest(pkg, await readFile(manifestPath(root, pkg), 'utf8'));
 
 // The version every released package carries. Packages that disagree are a
 // broken cut, so this throws and names each package's version.
@@ -104,4 +109,27 @@ export const removeFragments = async (root: string, paths: readonly string[]): P
 // bun.lock records each workspace's version, so a version change rewrites it.
 export const refreshLockfile = async (root: string): Promise<void> => {
   await runIn(root, [process.execPath, 'install', '--lockfile-only']);
+};
+
+const STATUSES: Record<string, Change['status']> = { A: 'added', D: 'deleted', M: 'modified' };
+
+// The files a pull request changes, from the merge base with `base` to HEAD.
+// NUL-separated output keeps every path verbatim, whatever its characters.
+export const changesSince = async (root: string, base: string): Promise<Change[]> => {
+  const fields = (
+    await runIn(root, ['git', 'diff', '-z', '--name-status', '--no-renames', `${base}...HEAD`])
+  ).split('\0');
+  const changes: Change[] = [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const path = fields[index + 1] ?? '';
+    changes.push({ path, status: STATUSES[fields[index] ?? ''] ?? 'modified' });
+  }
+  return changes;
+};
+
+// The Collector's version at `ref`: the base side of a release cut.
+export const releaseVersionAt = async (root: string, ref: string): Promise<string> => {
+  const [pkg] = RELEASED_PACKAGES;
+  const text = await runIn(root, ['git', 'show', `${ref}:packages/${pkg}/package.json`]);
+  return parseManifest(pkg, text).version;
 };

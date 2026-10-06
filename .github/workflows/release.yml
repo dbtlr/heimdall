@@ -6,6 +6,9 @@ name: Release
 # prerelease, which Fleet's stable channel skips. Pull requests that touch the
 # build run the same build without publishing, so the release path is proven
 # before a tag is cut. docs/releasing.md describes the cut.
+#
+# The pull_request paths are what ships; packages/release/src/guard.ts keeps
+# the same list for the changelog guard.
 on:
   push:
     tags: ['v*']
@@ -40,6 +43,8 @@ jobs:
           - { os: ubuntu-24.04-arm, target: linux-arm64 }
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.10.2
@@ -99,6 +104,8 @@ jobs:
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.10.2
@@ -146,10 +153,11 @@ jobs:
           gh release edit "$TAG" --draft=false
 
   # Installs each published binary through its install script on every
-  # platform, the way Fleet will.
-  verify:
+  # platform, the way Fleet will. It runs once the release is public, because
+  # the scripts download from public URLs, so a failure here reports a broken
+  # release rather than stopping one.
+  install:
     needs: publish
-    name: install ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:

@@ -20,6 +20,15 @@ export type FragmentSections = Partial<Record<Category, string[]>>;
 const isCategory = (heading: string): heading is Category =>
   (CATEGORIES as readonly string[]).includes(heading);
 
+// Characters that would change how CHANGELOG.md renders or prints: a lone CR
+// is a Markdown line break, and terminal escapes survive into release notes.
+// A tab is allowed.
+// oxlint-disable-next-line no-control-regex -- matching control characters is the point.
+const CONTROL_CHARACTER = /[\u0000-\u0008\u000B-\u001F\u007F\u0085\u2028\u2029]/u;
+
+const BLANK = /^[ \t]*$/u;
+const INDENTED = /^[ \t]/u;
+
 const fail = (file: string, line: number, message: string): never => {
   throw new Error(`${file}:${String(line)}: ${message}`);
 };
@@ -32,7 +41,7 @@ export const parseFragment = (file: string, text: string): FragmentSections => {
   let entry: string[] = [];
 
   const flush = () => {
-    while (entry.length > 0 && entry.at(-1)?.trim() === '') {
+    while (entry.length > 0 && BLANK.test(entry.at(-1) ?? '')) {
       entry.pop();
     }
     if (category !== undefined && entry.length > 0) {
@@ -43,6 +52,9 @@ export const parseFragment = (file: string, text: string): FragmentSections => {
 
   for (const [index, line] of text.split('\n').entries()) {
     const at = index + 1;
+    if (CONTROL_CHARACTER.test(line)) {
+      fail(file, at, 'control character; fragments hold plain text with LF line endings');
+    }
     const heading = /^### (?<name>.*)$/u.exec(line)?.groups?.name?.trim();
     if (heading !== undefined) {
       if (!isCategory(heading)) {
@@ -56,13 +68,16 @@ export const parseFragment = (file: string, text: string): FragmentSections => {
       if (category === undefined) {
         fail(file, at, 'bullet outside a category heading');
       }
+      if (BLANK.test(line.slice(2))) {
+        fail(file, at, 'empty bullet');
+      }
       flush();
       entry.push(line);
-    } else if (line.trim() === '') {
+    } else if (BLANK.test(line)) {
       if (entry.length > 0) {
         entry.push(line);
       }
-    } else if (/^\s/u.test(line)) {
+    } else if (INDENTED.test(line)) {
       if (entry.length === 0) {
         fail(file, at, 'continuation line outside a bullet');
       }
@@ -81,14 +96,10 @@ export const parseFragment = (file: string, text: string): FragmentSections => {
 
 const heading = (version: string, date: string) => `## v${version} - ${date}`;
 
-// Renders one release section. Categories follow Keep a Changelog's order, and
+// Renders a release's entries. Categories follow Keep a Changelog's order, and
 // within a category the entries keep the order of the fragments given.
-export const renderSection = (
-  version: string,
-  date: string,
-  fragments: readonly FragmentSections[],
-): string => {
-  const parts = [heading(version, date)];
+export const renderEntries = (fragments: readonly FragmentSections[]): string => {
+  const parts: string[] = [];
   for (const category of CATEGORIES) {
     const entries = fragments.flatMap((sections) => sections[category] ?? []);
     if (entries.length > 0) {
@@ -97,6 +108,17 @@ export const renderSection = (
   }
   return `${parts.join('\n\n')}\n`;
 };
+
+// Renders one release section: its heading, then its entries.
+export const renderSection = (
+  version: string,
+  date: string,
+  fragments: readonly FragmentSections[],
+): string => `${heading(version, date)}\n\n${renderEntries(fragments)}`;
+
+// A prerelease (X.Y.Z-pre) gets no section of its own; its fragments stay
+// pending for the release it leads up to.
+export const isPrerelease = (version: string): boolean => version.includes('-');
 
 const RELEASE_HEADING = /^## v(?<version>\S+) - /u;
 
@@ -118,7 +140,7 @@ export const releaseNotes = (changelog: string, version: string): string | undef
   if (start === -1) {
     return undefined;
   }
-  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  const next = lines.findIndex((line, index) => index > start && RELEASE_HEADING.test(line));
   const body = lines.slice(start + 1, next === -1 ? undefined : next).join('\n');
   return `${body.trim()}\n`;
 };

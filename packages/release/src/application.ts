@@ -3,11 +3,15 @@ import { help } from '@loomcli/plugins/help';
 import { text } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
-import { checkAction, notesAction, versionAction, writeAction } from './actions.ts';
+import { checkAction, guardAction, notesAction, versionAction, writeAction } from './actions.ts';
 
-// A release version as the tag carries it without the `v`: X.Y.Z, or X.Y.Z-pre
-// for a prerelease.
-const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/u;
+// A release version as the tag carries it without the `v`: a Semantic Versioning
+// X.Y.Z, or X.Y.Z-pre for a prerelease. Build metadata (`+…`) is not allowed.
+const IDENTIFIER = String.raw`(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)`;
+const RELEASE_VERSION = new RegExp(
+  String.raw`^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-${IDENTIFIER}(?:\.${IDENTIFIER})*)?$`,
+  'u',
+);
 
 const releaseVersion = text({
   message: 'Use a release version without the v, such as 0.2.0 or 0.2.0-rc.1.',
@@ -24,7 +28,8 @@ export const check = new Command('check', {
   .action(checkAction);
 
 export const write = new Command('write', {
-  description: 'Cut a release: compile the fragments into CHANGELOG.md and set the version.',
+  description:
+    'Cut a release: compile the fragments into CHANGELOG.md and set the version. A prerelease only sets the version.',
 })
   .option('version', {
     description: 'The release version, such as 0.2.0.',
@@ -50,12 +55,28 @@ export const notes = new Command('notes', {
   })
   .action(notesAction);
 
+export const guard = new Command('guard', {
+  description: 'Check that a pull request carries the changelog fragment it needs.',
+})
+  .option('base', {
+    description: 'The ref the pull request merges into, such as origin/main.',
+    required: true,
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
+  .option('skip-label', {
+    description: 'The pull request carries the skip-changelog label.',
+    type: 'boolean',
+  })
+  .action(guardAction);
+
 const changelog = new Command('changelog', {
   description: 'Check, compile, and read changelog fragments.',
 })
   .command(check)
   .command(write)
-  .command(notes);
+  .command(notes)
+  .command(guard);
 
 export const version = new Command('version', {
   description: 'Print the version the Collector and Hub share.',

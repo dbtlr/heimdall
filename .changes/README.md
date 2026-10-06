@@ -16,4 +16,4 @@ Pending changelog entries, one file per pull request. The release cut compiles t
 - **Collector reports disk pressure** (HMD-99). One to three sentences on what an operator can now see or do.
 ```
 
-Check fragments with `bun run release changelog check`. The changelog guard runs the same parser on every pull request that changes what ships.
+Check fragments with `bun run release changelog check`. The changelog guard runs the same parser on every fragment a pull request adds or edits. A pull request that changes what ships needs a fragment unless it is a release cut or carries the `skip-changelog` label, which is for a change with no entry due: a refactor, tests, CI, or a dependency update.

@@ -14,6 +14,12 @@ describe('parseFragment', () => {
     });
   });
 
+  test('accepts tab-indented continuation lines', () => {
+    expect(parseFragment('f.md', '### Added\n\n- One\n\tmore.\n')).toEqual({
+      Added: ['- One\n\tmore.'],
+    });
+  });
+
   test('keeps each bullet of one category as its own entry', () => {
     expect(parseFragment('f.md', '### Changed\n\n- One.\n- Two.\n')).toEqual({
       Changed: ['- One.', '- Two.'],
@@ -29,6 +35,12 @@ describe('parseFragment', () => {
     ['### Added\n\n* x\n', 'f.md:3: prose outside a bullet'],
     ['', 'f.md:1: fragment has no entries'],
     ['### Added\n', 'f.md:1: fragment has no entries'],
+    ['### Added\n\n- ok\r## v9.9.9 - 2020-01-01\n', 'f.md:3: control character'],
+    ['### Added\n\n- \u001b[31mred\n', 'f.md:3: control character'],
+    ['### Added\n\n- \n', 'f.md:3: empty bullet'],
+    ['### Added\n\n-  \n', 'f.md:3: empty bullet'],
+    ['### Added\n\n- ok\n\u00a0more\n', 'f.md:4: prose outside a bullet'],
+    ['### Added\r\n\r\n- ok\r\n', 'f.md:1: control character'],
   ])('rejects %j', (text, message) => {
     expect(() => parseFragment('f.md', text)).toThrow(message);
   });
@@ -70,6 +82,12 @@ describe('releaseNotes', () => {
   test("returns one release's entries without its heading", () => {
     expect(releaseNotes(changelog, '0.2.0')).toBe('### Fixed\n\n- y\n');
     expect(releaseNotes(changelog, '0.1.0')).toBe('### Added\n\n- x\n');
+  });
+
+  test('keeps an H2 inside a release that is not a release heading', () => {
+    const withGuide =
+      '# Changelog\n\n## v0.2.0 - 2026-10-07\n\n- y\n\n## Upgrade guide\n\nSteps.\n\n## v0.1.0 - 2026-10-06\n\n- x\n';
+    expect(releaseNotes(withGuide, '0.2.0')).toBe('- y\n\n## Upgrade guide\n\nSteps.\n');
   });
 
   test('answers undefined for a release the changelog does not hold', () => {
