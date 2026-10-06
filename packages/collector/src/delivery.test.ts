@@ -2,12 +2,13 @@ import { afterAll, describe, expect, test } from 'bun:test';
 
 import { ReportSchema } from '@heimdall/schema';
 import type { Report } from '@heimdall/schema';
+import { sample } from '@heimdall/schema/testing';
 
 import { flushQueue, sendReport } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import type { SampleQueue } from './queue.ts';
-import { sample, tempStateDir } from './testing/fixtures.ts';
+import { tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },

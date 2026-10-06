@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
 
 import { ReportSchema } from '@heimdall/schema';
+import { sample } from '@heimdall/schema/testing';
 
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import { openQueue } from './queue.ts';
-import { sample, tempStateDir } from './testing/fixtures.ts';
+import { tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },

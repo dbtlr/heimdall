@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const REPORT_SCHEMA_VERSION = 1;
 
 // Fleet's System name: a DNS label, matching Fleet's own validation.
-const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+export const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
 // About four hours of 15-second samples. The Collector splits a longer
 // backlog into several Reports.
