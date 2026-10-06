@@ -64,7 +64,9 @@ const startThrowawayCluster = async (): Promise<URL> => {
 const testServer = () => {
   const configured = process.env.HEIMDALL_TEST_DATABASE_URL;
   server ??=
-    configured === undefined ? startThrowawayCluster() : Promise.resolve(new URL(configured));
+    configured === undefined || configured === ''
+      ? startThrowawayCluster()
+      : Promise.resolve(new URL(configured));
   return server;
 };
 
@@ -83,6 +85,8 @@ export const testDatabase = async () => {
   const name = `heimdall_test_${crypto.randomUUID().replaceAll('-', '')}`;
   const admin = new SQL(serverUrl.href);
   await admin.unsafe(`CREATE DATABASE ${name}`);
+  // A zone with DST, so nothing passes only because the session happens to be UTC.
+  await admin.unsafe(`ALTER DATABASE ${name} SET TimeZone TO 'America/New_York'`);
   const url = new URL(serverUrl);
   url.pathname = `/${name}`;
   const sql = new SQL(url.href);
