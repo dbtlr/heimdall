@@ -41,5 +41,5 @@ The most recent time the Hub heard from a System under that System's token, whet
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
 **Timeline**:
-A System's history of Conditions being raised and cleared, newest first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
+A System's history of Conditions being raised and cleared, newest Condition first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
 _Avoid_: event feed, event log (a Report is never an event)
