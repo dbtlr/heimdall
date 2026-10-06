@@ -122,14 +122,14 @@ export const serviceCommand = (
 
   // Install and uninstall change the real supervisor, which only a compiled
   // binary may do: a source run, such as a test, never installs a real unit.
+  // The check comes before the platform's, so it holds on every platform.
   const compiledSupervisor = (place: ReturnType<typeof io>) => {
-    const chosen = supervisorFor(place);
-    if (!chosen.env.compiled()) {
+    if (!settings().compiled()) {
       return place.fail(
         `This ${program} is not a compiled binary, and only a compiled binary may install or uninstall its Service. Compile it with bun run build:${binary}, then run the compiled binary.`,
       );
     }
-    return chosen;
+    return supervisorFor(place);
   };
 
   const install = async (context: Context, port: number | undefined) => {

@@ -1,9 +1,10 @@
 import type { ServiceDefinition } from './names.ts';
 
-// A line break would end the directive and start another, so it is refused.
+// A line break would end the directive and start another, and systemd cannot
+// read a NUL byte, so both are refused.
 const singleLine = (value: string) => {
-  if (/[\r\n]/u.test(value)) {
-    throw new Error(`A unit file value cannot hold a line break: ${JSON.stringify(value)}`);
+  if (/[\r\n\0]/u.test(value)) {
+    throw new Error(`A unit file value cannot hold a line break or NUL: ${JSON.stringify(value)}`);
   }
   return value;
 };

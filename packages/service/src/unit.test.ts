@@ -86,6 +86,12 @@ test('a path with a line break is refused rather than written into the unit', ()
   ).toThrow('line break');
 });
 
+test('a path with a NUL byte is refused rather than written into the unit', () => {
+  expect(() =>
+    renderSystemdUnit(serviceDefinition({ binary: 'hub', executable: '/opt/x\0y', home: HOME })),
+  ).toThrow('NUL');
+});
+
 test('a binary stopped by SIGTERM or SIGINT exits cleanly in the unit', () => {
   const unit = renderSystemdUnit(
     serviceDefinition({ binary: 'collector', executable: '/opt/heimdall-collector', home: HOME }),
