@@ -2,10 +2,13 @@ import { expect, test } from 'bun:test';
 
 import { MAX_SAMPLES_PER_REPORT } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
+import { SQL } from 'bun';
 
-import { MAX_REPORT_BYTES } from './hub.ts';
+import packageJson from '../package.json' with { type: 'json' };
+import { MAX_REPORT_BYTES, createHub } from './hub.ts';
 import { listSystems } from './store.ts';
-import { NOW, page, push, report, startHub } from './testing/hub.ts';
+import { NOW, page, push, report, silentServer, startHub } from './testing/hub.ts';
+import { tokenTable } from './tokens.ts';
 
 test('a Report without a token is refused as unauthenticated', async () => {
   await using h = await startHub();
@@ -248,4 +251,65 @@ test('a Report the database cannot take is answered 503, so the Collector retrie
 
   expect(response.status).toBe(503);
   expect(h.errors).toHaveLength(1);
+});
+
+const getHealth = (hub: Awaited<ReturnType<typeof startHub>>['hub']) =>
+  hub.fetch(new Request('http://hub.test/api/health'));
+
+test('the health check answers 200 with the Hub version when the database answers', async () => {
+  await using h = await startHub();
+
+  const response = await getHealth(h.hub);
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toContain('application/json');
+  expect(await response.json()).toEqual({ database: 'ok', version: packageJson.version });
+});
+
+test('the health check answers 503 when the database does not answer, without logging it', async () => {
+  await using h = await startHub();
+  await h.db.sql.close();
+
+  const response = await getHealth(h.hub);
+
+  expect(response.status).toBe(503);
+  expect(response.headers.get('content-type')).toContain('application/json');
+  expect(await response.json()).toEqual({
+    database: 'not answering',
+    version: packageJson.version,
+  });
+  expect(h.errors).toHaveLength(0);
+});
+
+// A server that accepts the connection and never replies stands in for a
+// database that hangs; the check must give up long before the 30 s statement timeout.
+test('the health check gives up on a database that hangs', async () => {
+  await using h = await startHub();
+  await using silent = silentServer();
+  const sql = new SQL(`postgres://heimdall@localhost:${String(silent.port)}/heimdall`);
+  const hub = createHub({
+    healthTimeoutMs: 50,
+    now: () => NOW,
+    onError: (error) => h.errors.push(error),
+    sql,
+    tokens: tokenTable([]),
+  });
+
+  // Closing a connection stuck in its handshake would hang too, so it is not awaited.
+  const response = await getHealth(hub).finally(() => void sql.close({ timeout: 0 }));
+
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    database: 'not answering',
+    version: packageJson.version,
+  });
+  expect(h.errors).toHaveLength(0);
+});
+
+test('only GET reaches the health check', async () => {
+  await using h = await startHub();
+
+  const response = await h.hub.fetch(new Request('http://hub.test/api/health', { method: 'POST' }));
+
+  expect(response.status).toBe(404);
 });

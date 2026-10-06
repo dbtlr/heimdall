@@ -62,3 +62,9 @@ export const page = async (hub: ReturnType<typeof createHub>) => {
   expect(response.headers.get('content-type')).toContain('text/html');
   return response.text();
 };
+
+// A TCP server on a free port that accepts connections and never replies.
+export const silentServer = () => {
+  const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {}, open() {} } });
+  return { port: server.port, [Symbol.asyncDispose]: async () => server.stop(true) };
+};
