@@ -85,8 +85,14 @@ export const testDatabase = async () => {
   const name = `heimdall_test_${crypto.randomUUID().replaceAll('-', '')}`;
   const admin = new SQL(serverUrl.href);
   await admin.unsafe(`CREATE DATABASE ${name}`);
-  // A zone with DST, so nothing passes only because the session happens to be UTC.
-  await admin.unsafe(`ALTER DATABASE ${name} SET TimeZone TO 'America/New_York'`);
+  try {
+    // A zone with DST, so nothing passes only because the session happens to be UTC.
+    await admin.unsafe(`ALTER DATABASE ${name} SET TimeZone TO 'America/New_York'`);
+  } catch (error) {
+    await admin.unsafe(`DROP DATABASE ${name}`);
+    await admin.close();
+    throw error;
+  }
   const url = new URL(serverUrl);
   url.pathname = `/${name}`;
   const sql = new SQL(url.href);

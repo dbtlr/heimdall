@@ -9,6 +9,8 @@ import { createHub } from './hub.ts';
 import { migrate } from './migrations.ts';
 import { tokenTable } from './tokens.ts';
 
+const STATEMENT_TIMEOUT_MS = 30_000;
+
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -27,7 +29,12 @@ export const serveAction: ActionHandler<typeof serve> = async ({ options, out, s
   };
   const tokens = loadTokens();
 
-  const sql = new SQL(options.database.href);
+  // The Collector gives up on a Push after 30 seconds, so a statement still
+  // running past that, such as one waiting on a lock, only holds a connection.
+  const sql = new SQL({
+    connection: { statement_timeout: STATEMENT_TIMEOUT_MS },
+    url: options.database.href,
+  });
   try {
     // PostgreSQL's messages name the host and role, never the password.
     const applied = await migrate(sql).catch((error: unknown) =>

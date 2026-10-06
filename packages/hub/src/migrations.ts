@@ -1,7 +1,8 @@
 import type { SQL } from 'bun';
 
 // One schema change. Versions strictly increase, and an applied migration is
-// never edited: a later change is a new migration.
+// never edited: a later change is a new migration. `serve` runs migrations
+// under a 30-second statement timeout; a longer one raises it with SET LOCAL.
 export type Migration = { sql: string; version: number };
 
 export const MIGRATIONS: readonly Migration[] = [
