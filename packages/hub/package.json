@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@heimdall/schema": "workspace:*",
+    "@heimdall/service": "workspace:*",
     "@loomcli/core": "0.8.0",
     "@loomcli/plugins": "0.8.0",
     "@loomcli/validators": "0.8.0",

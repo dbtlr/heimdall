@@ -1,4 +1,5 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
+import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { configInput } from '@loomcli/plugins/config/extension';
@@ -8,7 +9,9 @@ import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
 import { text, url } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { countWaiting } from './queue.ts';
 import { runAction } from './run.ts';
+import { defaultStateDir } from './state-dir.ts';
 import { versionLine } from './version.ts';
 
 // SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, so
@@ -66,4 +69,13 @@ export const app = new Application('heimdall-collector', {
   // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
   // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],
-}).command(run);
+})
+  .command(run)
+  .command(
+    serviceCommand({
+      binary: 'collector',
+      defaultStateDir,
+      queueDepth: countWaiting,
+      version: packageJson.version,
+    }),
+  );

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { text } from 'node:stream/consumers';
@@ -9,8 +9,9 @@ import { tempStateDir } from './testing/fixtures.ts';
 import { versionLine } from './version.ts';
 
 // Runs the Collector command line in-process and captures what it prints. A run
-// that starts collecting is cancelled once stderr shows it started, or after a
-// few seconds, so a `run` test ends either way.
+// that starts collecting is cancelled once its log shows it started, or after a
+// few seconds, so a `run` test ends either way. HOME is a fresh directory unless
+// `env` names one, so `run` never rotates a real log.
 const invoke = async (
   argv: string[],
   { cwd, env = {} }: { cwd?: string; env?: Record<string, string> } = {},
@@ -19,19 +20,27 @@ const invoke = async (
   const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
-  let printed = '';
-  stderr.on('data', (chunk: Buffer) => {
-    printed += chunk.toString();
-    if (printed.includes('Sampling ')) {
+  await using home = await tempStateDir();
+  let logged = '';
+  stdout.on('data', (chunk: Buffer) => {
+    logged += chunk.toString();
+    if (logged.includes('Sampling ')) {
       controller.abort();
     }
   });
+  const errors = text(stderr);
   // Loom sets process.exitCode even for an injected host; keep it off the test runner.
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
     code = await app.run({
-      host: { argv, env, stderr, stdout, ...(cwd === undefined ? {} : { cwd }) },
+      host: {
+        argv,
+        env: { HOME: home.path, ...env },
+        stderr,
+        stdout,
+        ...(cwd === undefined ? {} : { cwd }),
+      },
       signal: controller.signal,
     });
   } finally {
@@ -40,7 +49,7 @@ const invoke = async (
   }
   stdout.end();
   stderr.end();
-  return { code, stderr: printed, stdout: await text(stdout) };
+  return { code, stderr: await errors, stdout: logged };
 };
 
 test('--version prints the version line Fleet compares and exits 0', async () => {
@@ -88,9 +97,10 @@ test('run reads its settings from the configuration file', async () => {
     ].join('\n'),
   );
 
-  const { code, stderr } = await startAndStop(['run', '--config', configFile]);
+  const { code, stderr, stdout } = await startAndStop(['run', '--config', configFile]);
 
-  expect(stderr).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
+  expect(stdout).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
+  expect(stdout).not.toContain('s3cret');
   expect(stderr).not.toContain('s3cret');
   expect(await Bun.file(join(dir.path, 'state', 'queue.sqlite')).exists()).toBe(true);
   expect(code).toBe(130);
@@ -110,12 +120,12 @@ test('run finds the configuration file under ~/.config/heimdall/ when --config i
     ].join('\n'),
   );
 
-  const { code, stderr } = await invoke(['run'], {
+  const { code, stdout } = await invoke(['run'], {
     cwd: elsewhere.path,
     env: { HOME: home.path },
   });
 
-  expect(stderr).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
+  expect(stdout).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
   expect(code).toBe(130);
 });
 
@@ -132,11 +142,11 @@ test('run settings from the environment override the configuration file', async 
     }),
   );
 
-  const { stderr } = await startAndStop(['run', '--config', configFile], {
+  const { stdout } = await startAndStop(['run', '--config', configFile], {
     HEIMDALL_SYSTEM: 'server-2',
   });
 
-  expect(stderr).toContain('Sampling server-2 every');
+  expect(stdout).toContain('Sampling server-2 every');
 });
 
 test('run without a Hub is a usage error that names the option', async () => {
@@ -170,4 +180,67 @@ test.each([
   ]);
 
   expect(code).toBe(2);
+});
+
+// A home whose Collector config keeps the queue under it, for runs that start.
+const homeWithConfig = async () => {
+  const home = await tempStateDir();
+  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+  await writeFile(
+    join(home.path, '.config', 'heimdall', 'collector.toml'),
+    [
+      'hub = "http://heimdall.example:8080/"',
+      'system = "server-1"',
+      'token = "s3cret"',
+      `stateDir = "${join(home.path, 'state')}"`,
+    ].join('\n'),
+  );
+  return home;
+};
+
+test('run starts every runtime line with its ISO 8601 UTC time', async () => {
+  await using home = await homeWithConfig();
+
+  const { stdout } = await invoke(['run'], { cwd: home.path, env: { HOME: home.path } });
+
+  const lines = stdout.trimEnd().split('\n');
+  expect(lines[0]).toContain('Sampling server-1');
+  for (const line of lines) {
+    expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \S/u);
+  }
+});
+
+test('run rotates a log from before timestamps as it starts', async () => {
+  await using home = await homeWithConfig();
+  const logDir = join(home.path, '.local', 'state', 'heimdall');
+  await mkdir(logDir, { recursive: true });
+  await writeFile(join(logDir, 'collector.log'), 'Sampling server-1 every 15 seconds.\n');
+
+  const { code } = await invoke(['run'], { cwd: home.path, env: { HOME: home.path } });
+
+  expect(await readFile(join(logDir, 'collector.log.1'), 'utf8')).toBe(
+    'Sampling server-1 every 15 seconds.\n',
+  );
+  expect(await readFile(join(logDir, 'collector.log'), 'utf8')).toBe('');
+  expect(code).toBe(130);
+});
+
+test('service uninstall refuses to run from source', async () => {
+  const { code, stderr } = await invoke(['service', 'uninstall']);
+
+  expect(stderr).toContain('not a compiled binary');
+  expect(code).toBe(1);
+});
+
+test('service status counts the queue the way run finds it, and exits 0', async () => {
+  await using home = await homeWithConfig();
+
+  const { code, stdout } = await invoke(['service', 'status'], {
+    cwd: home.path,
+    env: { HOME: home.path },
+  });
+
+  expect(stdout).toStartWith('com.dbtlr.heimdall.collector: ');
+  expect(stdout).toContain('  queue    no queue yet; run has not started\n');
+  expect(code).toBe(0);
 });

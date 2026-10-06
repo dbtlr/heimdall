@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -17,8 +17,10 @@ import { versionLine } from './version.ts';
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
 
 // Runs the Hub command line in-process and captures what it prints. Once `serve`
-// prints the address it listens on, `whileServing` runs against that address and
+// logs the address it listens on, `whileServing` runs against that address and
 // the run is cancelled; a safety timeout cancels it after a few seconds anyway.
+// HOME is a fresh directory unless `env` names one, so `serve` never rotates a
+// real log.
 const invoke = async (
   argv: string[],
   {
@@ -35,11 +37,12 @@ const invoke = async (
   const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
-  let printed = '';
+  const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
+  let logged = '';
   let serving: Promise<void> | undefined;
-  stderr.on('data', (chunk: Buffer) => {
-    printed += chunk.toString();
-    const url = LISTENING.exec(printed)?.groups?.url;
+  stdout.on('data', (chunk: Buffer) => {
+    logged += chunk.toString();
+    const url = LISTENING.exec(logged)?.groups?.url;
     if (url !== undefined && serving === undefined) {
       serving = (async () => {
         try {
@@ -50,22 +53,30 @@ const invoke = async (
       })();
     }
   });
+  const errors = text(stderr);
   // Loom sets process.exitCode even for an injected host; keep it off the test runner.
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
     code = await app.run({
-      host: { argv, env, stderr, stdout, ...(cwd === undefined ? {} : { cwd }) },
+      host: {
+        argv,
+        env: { HOME: home, ...env },
+        stderr,
+        stdout,
+        ...(cwd === undefined ? {} : { cwd }),
+      },
       signal: controller.signal,
     });
     await serving;
   } finally {
     process.exitCode = runnerExitCode;
     clearTimeout(safety);
+    await rm(home, { force: true, recursive: true });
   }
   stdout.end();
   stderr.end();
-  return { code, stderr: printed, stdout: await text(stdout) };
+  return { code, stderr: await errors, stdout: logged };
 };
 
 // A configuration file in a fresh directory that removes itself when disposed.
@@ -115,7 +126,7 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
   let ingested = 0;
   let html = '';
 
-  const { code, stderr } = await invoke(['serve', '--config', config.path], {
+  const { code, stderr, stdout } = await invoke(['serve', '--config', config.path], {
     whileServing: async (hub) => {
       const response = await fetch(new URL('api/v1/reports', hub), {
         body: JSON.stringify({
@@ -135,6 +146,7 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
 
   expect(ingested).toBe(200);
   expect(html).toContain('laptop-1');
+  expect(stdout).not.toContain('laptop-s3cret');
   expect(stderr).not.toContain('laptop-s3cret');
   expect(code).toBe(130);
 });
@@ -169,10 +181,11 @@ test('serve prunes old Vitals as it starts, and says nothing about it', async ()
     'tokens = ["laptop-1=laptop-s3cret"]',
   ]);
 
-  const { code, stderr } = await invoke(serveArgs(config));
+  const { code, stderr, stdout } = await invoke(serveArgs(config));
 
   const remaining = await db.sql`SELECT count(*)::int AS n FROM vitals_samples`;
   expect(remaining[0].n).toBe(0);
+  expect(stdout).not.toContain('prune');
   expect(stderr).not.toContain('prune');
   expect(code).toBe(130);
 });
@@ -195,15 +208,80 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
   ]);
   let html = '';
 
-  const { code, stderr } = await invoke(serveArgs(config), {
+  const { code, stdout } = await invoke(serveArgs(config), {
     whileServing: async (hub) => {
       html = await (await fetch(hub)).text();
     },
   });
 
-  expect(stderr.match(/Could not prune old Vitals: .*delete refused/gu)).toHaveLength(1);
+  expect(stdout.match(/Could not prune old Vitals: .*delete refused/gu)).toHaveLength(1);
   expect(html).toContain('Heimdall');
   expect(code).toBe(130);
+});
+
+const TIMESTAMPED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \S/u;
+
+// A fatal line that starts with its time, like every runtime line.
+const timestampedFatal = (message: string) =>
+  new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z [^\\n]*${message}`, 'u');
+
+test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
+  await using db = await databaseWithOldSample();
+  await using config = await configFile([
+    `database = "${db.url.href}"`,
+    'host = "127.0.0.1"',
+    'port = 0',
+    'tokens = ["laptop-1=laptop-s3cret"]',
+  ]);
+
+  const { stdout } = await invoke(serveArgs(config));
+
+  const lines = stdout.trimEnd().split('\n');
+  expect(lines.some((line) => line.includes('Listening on'))).toBe(true);
+  for (const line of lines) {
+    expect(line).toMatch(TIMESTAMPED);
+  }
+});
+
+test('serve rotates a log from before timestamps as it starts', async () => {
+  await using db = await testDatabase();
+  await using config = await configFile([
+    `database = "${db.url.href}"`,
+    'host = "127.0.0.1"',
+    'port = 0',
+    'tokens = ["laptop-1=laptop-s3cret"]',
+  ]);
+  const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
+  const logDir = join(home, '.local', 'state', 'heimdall');
+  try {
+    await mkdir(logDir, { recursive: true });
+    await writeFile(join(logDir, 'hub.log'), 'Listening on http://127.0.0.1:8080/.\n');
+
+    const { code } = await invoke(serveArgs(config), { env: { HOME: home } });
+
+    expect(await readFile(join(logDir, 'hub.log.1'), 'utf8')).toBe(
+      'Listening on http://127.0.0.1:8080/.\n',
+    );
+    expect(await readFile(join(logDir, 'hub.log'), 'utf8')).toBe('');
+    expect(code).toBe(130);
+  } finally {
+    await rm(home, { force: true, recursive: true });
+  }
+});
+
+test('service install refuses to run from source', async () => {
+  const { code, stderr } = await invoke(['service', 'install', '--port', '9090']);
+
+  expect(stderr).toContain('not a compiled binary');
+  expect(code).toBe(1);
+});
+
+test("service status reports this binary's unit and exits 0", async () => {
+  const { code, stdout } = await invoke(['service', 'status']);
+
+  expect(stdout).toStartWith('com.dbtlr.heimdall.hub: ');
+  expect(stdout).toContain('~/.local/state/heimdall/hub.log');
+  expect(code).toBe(0);
 });
 
 test('serve finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
@@ -270,8 +348,8 @@ test('serve refuses two Systems that share a token', async () => {
     'laptop-1=same',
   ]);
 
-  expect(stderr).toContain('server-1 and laptop-1 share a token');
-  expect(code).not.toBe(0);
+  expect(stderr).toMatch(timestampedFatal('server-1 and laptop-1 share a token'));
+  expect(code).toBe(1);
 });
 
 test('serve names the database as the problem when it cannot reach it', async () => {
@@ -283,7 +361,7 @@ test('serve names the database as the problem when it cannot reach it', async ()
     'laptop-1=t',
   ]);
 
-  expect(stderr).toContain('Could not prepare the database');
+  expect(stderr).toMatch(timestampedFatal('Could not prepare the database'));
   expect(stderr).not.toContain('db-s3cret');
   expect(code).toBe(1);
 });

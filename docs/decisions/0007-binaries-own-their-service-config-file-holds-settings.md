@@ -2,7 +2,7 @@
 type: adr
 title: ADR-0007 - Each binary installs and supervises its own Service, and its config file is the one home for its settings
 description: "The Collector and the Hub each install, run, and report their own systemd user unit or launchd user agent through a shared service package. The unit carries no settings: both binaries read ~/.config/heimdall/, and service install writes a setting there only when its value changes."
-status: proposed
+status: accepted
 created: 2026-10-06
 modified: 2026-10-06
 ---
@@ -41,3 +41,7 @@ Both binaries look up their config file with Loom's configuration plugin: the fi
 Moving the config file is a breaking change for installs made before it, and the changelog tells operators to move theirs.
 The Hub loads its tokens only at start, so Fleet restarts the Hub when it renders a new token list.
 If `install` rewrote a Fleet-rendered file, Heimdall's own Drift check would report it. Writing only on change, with Fleet passing no settings, prevents that.
+
+## Changelog
+
+- 2026-10-06: Accepted. The Linux lifecycle landed in HMD-20; the launchd backend follows in HMD-21.

@@ -77,3 +77,22 @@ export const openQueue = async ({
     },
   };
 };
+
+// How many samples wait in the queue under `stateDir`, for `service status`, or
+// undefined when there is no queue yet. It opens the database read-only and
+// only reads, so it never creates the queue and, under WAL, never blocks the
+// running Collector's writes. SQLite may still create the -wal and -shm files
+// beside a queue that has none at that moment.
+export const countWaiting = async (stateDir: string): Promise<number | undefined> => {
+  const path = join(stateDir, 'queue.sqlite');
+  if (!(await Bun.file(path).exists())) {
+    return undefined;
+  }
+  const db = new Database(path, { readonly: true, strict: true });
+  try {
+    db.run('PRAGMA busy_timeout = 1000');
+    return db.query<{ n: number }, []>('SELECT count(*) AS n FROM samples').get()?.n ?? 0;
+  } finally {
+    db.close();
+  }
+};

@@ -14,6 +14,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@heimdall/schema": "workspace:*",
+        "@heimdall/service": "workspace:*",
         "@loomcli/core": "0.8.0",
         "@loomcli/plugins": "0.8.0",
         "@loomcli/validators": "0.8.0",
@@ -24,6 +25,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@heimdall/schema": "workspace:*",
+        "@heimdall/service": "workspace:*",
         "@loomcli/core": "0.8.0",
         "@loomcli/plugins": "0.8.0",
         "@loomcli/validators": "0.8.0",
@@ -46,6 +48,15 @@
         "zod": "^4.6.5",
       },
     },
+    "packages/service": {
+      "name": "@heimdall/service",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loomcli/core": "0.8.0",
+        "@loomcli/plugins": "0.8.0",
+        "@loomcli/validators": "0.8.0",
+      },
+    },
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
@@ -63,6 +74,8 @@
     "@heimdall/release": ["@heimdall/release@workspace:packages/release"],
 
     "@heimdall/schema": ["@heimdall/schema@workspace:packages/schema"],
+
+    "@heimdall/service": ["@heimdall/service@workspace:packages/service"],
 
     "@jridgewell/resolve-uri": ["@jridgewell/resolve-uri@3.1.2", "", {}, "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw=="],
 
