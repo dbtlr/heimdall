@@ -9,13 +9,13 @@ import { integer } from '@loomcli/validators';
 
 import { runsCompiled } from './compiled.ts';
 import { displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts';
+import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
 import { setPort } from './settings.ts';
 import { healthUrl, healthWords, probeHealth, queueWords, renderStatus } from './status.ts';
 import type { HealthFetch } from './status.ts';
 import { UnitNotInstalledError } from './supervisor.ts';
 import type { Supervisor, UnitStatus } from './supervisor.ts';
-import { systemdSupervisor } from './systemd.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -37,7 +37,8 @@ export type ServiceEnvironment = {
   executable: string;
   fetch: HealthFetch;
   platform: NodeJS.Platform;
-  supervisor: (place: { home: string; label: string }) => Supervisor;
+  // The backend for `platform`, which is a supported one.
+  supervisor: (place: { home: string; label: string; platform: NodeJS.Platform }) => Supervisor;
 };
 
 const defaultEnvironment = (): ServiceEnvironment => ({
@@ -45,21 +46,15 @@ const defaultEnvironment = (): ServiceEnvironment => ({
   executable: process.execPath,
   fetch: (url, init) => fetch(url, init),
   platform: process.platform,
-  supervisor: ({ home, label }) => {
+  supervisor: (place) => {
     const uid = process.getuid?.() ?? userInfo().uid;
-    return systemdSupervisor({
-      home,
-      label,
+    return platformSupervisor({
+      ...place,
       runner: createSpawnRunner({ env: process.env, uid }),
-      user: String(uid),
+      uid,
     });
   },
 });
-
-// The platforms with a supervisor backend. macOS gains launchd in HMD-21.
-const PLATFORM_NAMES: Partial<Record<NodeJS.Platform, string>> = { darwin: 'macOS' };
-const platformName = (platform: NodeJS.Platform) => PLATFORM_NAMES[platform] ?? platform;
-const supported = (platform: NodeJS.Platform) => platform === 'linux';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -113,11 +108,15 @@ export const serviceCommand = (
     const env = settings();
     if (!supported(env.platform)) {
       return place.fail(
-        `Service management on ${platformName(env.platform)} is not built yet. ${program} service works on Linux for now.`,
+        `Service management on ${env.platform} is not supported. ${program} service works on Linux and macOS.`,
       );
     }
     const { label } = servicePaths(binary, place.home);
-    return { env, label, supervisor: env.supervisor({ home: place.home, label }) };
+    return {
+      env,
+      label,
+      supervisor: env.supervisor({ home: place.home, label, platform: env.platform }),
+    };
   };
 
   // Install and uninstall change the real supervisor, which only a compiled
@@ -183,7 +182,7 @@ export const serviceCommand = (
         binary === 'collector' ? 'config file, log, and queue stay' : 'config file and log stay';
       await place.print(
         removed
-          ? `Removed ${label}: stopped, disabled, and deleted ${displayPath(supervisor.unit, place.home)}. Its ${kept}.`
+          ? `Removed ${label}: stopped it and deleted ${displayPath(supervisor.unit, place.home)}. Its ${kept}.`
           : `${label} is not installed; there is nothing to remove.`,
       );
     } catch (error) {
@@ -219,11 +218,11 @@ export const serviceCommand = (
         notes: [],
         running: false,
         stateKnown: true,
-        summary: `service management on ${platformName(env.platform)} is not built yet`,
+        summary: `service management on ${env.platform} is not supported`,
       };
     }
     try {
-      return await env.supervisor({ home: place.home, label }).status();
+      return await env.supervisor({ home: place.home, label, platform: env.platform }).status();
     } catch (error) {
       return {
         installed: false,

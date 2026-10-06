@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { text } from 'node:stream/consumers';
 
@@ -9,7 +9,8 @@ import { config } from '@loomcli/plugins/config';
 
 import { serviceCommand } from './command.ts';
 import type { ServiceEnvironment, ServiceSpec } from './command.ts';
-import { fakeSupervisor, tempHome } from './testing.ts';
+import { platformSupervisor } from './platform.ts';
+import { fakeLaunchd, fakeSupervisor, tempHome } from './testing.ts';
 
 const HUB: ServiceSpec = { binary: 'hub', version: '0.2.0' };
 const EXECUTABLE = '/opt/heimdall/bin/heimdall-hub';
@@ -205,20 +206,34 @@ test('the Collector install takes no port', async () => {
 });
 
 test.each(['install', 'uninstall', 'start', 'stop', 'restart'])(
-  '%s on macOS says the launchd backend is not built yet',
+  '%s on a platform with no supervisor backend names the platforms that have one',
   async (verb) => {
     await using home = await tempHome();
 
     const result = await invoke(HUB, ['service', verb], {
-      environment: { platform: 'darwin' },
+      environment: { platform: 'win32' },
       home: home.path,
     });
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain('macOS is not built yet');
+    expect(result.stderr).toContain(
+      'Service management on win32 is not supported. heimdall-hub service works on Linux and macOS.',
+    );
     expect(result.calls).toEqual([]);
   },
 );
+
+test('install from a source run names the compile requirement before the platform', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(HUB, ['service', 'install'], {
+    environment: { compiled: () => false, platform: 'win32' },
+    home: home.path,
+  });
+
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain('not a compiled binary');
+});
 
 test('uninstall removes the unit and says what stays', async () => {
   await using home = await tempHome();
@@ -228,8 +243,9 @@ test('uninstall removes the unit and says what stays', async () => {
 
   expect(result.code).toBe(0);
   expect(fake.calls).toEqual(['uninstall']);
-  expect(result.stdout).toContain('Removed com.dbtlr.heimdall.hub');
-  expect(result.stdout).toContain('config file and log stay');
+  expect(result.stdout).toBe(
+    'Removed com.dbtlr.heimdall.hub: stopped it and deleted /home/operator/.config/systemd/user/fake.service. Its config file and log stay.\n',
+  );
 });
 
 test('uninstall with nothing installed says so and succeeds', async () => {
@@ -421,17 +437,17 @@ test('status with a port setting that is not a port says so, and exits 0', async
   );
 });
 
-test('status on macOS says the backend is not built yet, and exits 0', async () => {
+test('status on a platform with no supervisor backend says so, and exits 0', async () => {
   await using home = await tempHome();
 
   const result = await invoke(HUB, ['service', 'status'], {
-    environment: { platform: 'darwin' },
+    environment: { platform: 'win32' },
     home: home.path,
   });
 
   expect(result.code).toBe(0);
   expect(result.stdout).toStartWith(
-    'com.dbtlr.heimdall.hub: service management on macOS is not built yet\n  log ',
+    'com.dbtlr.heimdall.hub: service management on win32 is not supported\n  log ',
   );
   expect(result.calls).toEqual([]);
 });
@@ -538,4 +554,175 @@ test('status asks for health when the unit state is unknown', async () => {
 
   expect(result.code).toBe(0);
   expect(result.stdout).toContain('  health   ok, v0.2.0 (http://127.0.0.1:8080/api/health)\n');
+});
+
+const AGENT = 'com.dbtlr.heimdall.collector';
+const PLIST_SHOWN = `~/Library/LaunchAgents/${AGENT}.plist`;
+
+// The shared factory on macOS, choosing its backend as a real run does, with
+// `launchd` answering in place of launchd for user 501.
+const onMacOS = (launchd: ReturnType<typeof fakeLaunchd>): Partial<ServiceEnvironment> => ({
+  executable: '/opt/heimdall/bin/heimdall-collector',
+  platform: 'darwin',
+  supervisor: (place) => platformSupervisor({ ...place, runner: launchd.runner, uid: 501 }),
+});
+
+// Runs `heimdall-collector service <verb>` on macOS against `launchd`.
+const onMac = (verb: string, launchd: ReturnType<typeof fakeLaunchd>, home: string) =>
+  invoke(COLLECTOR, ['service', verb], { environment: onMacOS(launchd), home });
+
+test('install on macOS writes a LaunchAgents plist and loads it into the GUI domain', async () => {
+  await using home = await tempHome();
+  const launchd = fakeLaunchd();
+  const plist = join(home.path, 'Library', 'LaunchAgents', `${AGENT}.plist`);
+
+  const result = await onMac('install', launchd, home.path);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(`Wrote ${PLIST_SHOWN}.
+Restarted ${AGENT}; it logs to ~/.local/state/heimdall/collector.log.
+`);
+  expect((await stat(join(home.path, '.local', 'state', 'heimdall'))).isDirectory()).toBe(true);
+  expect(await readFile(plist, 'utf8')).toContain(
+    '<string>/opt/heimdall/bin/heimdall-collector</string>\n    <string>run</string>',
+  );
+  expect(launchd.calls).toEqual([
+    `launchctl print gui/501/${AGENT}`,
+    `launchctl enable gui/501/${AGENT}`,
+    `launchctl bootstrap gui/501 ${plist}`,
+  ]);
+});
+
+test('Collector status on macOS names the agent state, plist, log, and queue, with no note', async () => {
+  await using home = await tempHome();
+  const launchd = fakeLaunchd();
+  await onMac('install', launchd, home.path);
+
+  const result = await onMac('status', launchd, home.path);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(`${AGENT}: loaded, running (pid 4182)
+  queue    12 samples waiting
+  unit     ${PLIST_SHOWN}
+  log      ~/.local/state/heimdall/collector.log
+  config   ~/.config/heimdall/collector.toml
+`);
+});
+
+test('stop on macOS boots the agent out, and status then reads it as stopped', async () => {
+  await using home = await tempHome();
+  const launchd = fakeLaunchd();
+  await onMac('install', launchd, home.path);
+  launchd.calls.length = 0;
+
+  const stopped = await onMac('stop', launchd, home.path);
+  const result = await onMac('status', launchd, home.path);
+
+  expect(stopped.code).toBe(0);
+  expect(stopped.stdout).toBe(`Stopped ${AGENT}.\n`);
+  expect(launchd.calls.slice(0, 2)).toEqual([
+    `launchctl bootout gui/501/${AGENT}`,
+    `launchctl print gui/501/${AGENT}`,
+  ]);
+  expect(result.stdout).toStartWith(`${AGENT}: not loaded, stopped\n`);
+  expect(result.stdout).not.toContain('note');
+});
+
+test('status on macOS notes when there is no GUI login session, and exits 0', async () => {
+  await using home = await tempHome();
+  const launchd = fakeLaunchd({ domain: false });
+  await onMac('install', fakeLaunchd(), home.path);
+
+  const result = await onMac('status', launchd, home.path);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toStartWith(`${AGENT}: not loaded, stopped\n`);
+  expect(result.stdout).toEndWith(
+    '  note     no GUI login session; the agent loads when the user logs in\n',
+  );
+});
+
+test.each(['start', 'stop', 'restart'])(
+  '%s on macOS with no agent installed fails with a message that names install',
+  async (verb) => {
+    await using home = await tempHome();
+    const launchd = fakeLaunchd();
+
+    const result = await onMac(verb, launchd, home.path);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      `${AGENT} is not installed. Run heimdall-collector service install first.`,
+    );
+    expect(launchd.calls).toEqual([]);
+  },
+);
+
+test('uninstall on macOS boots the agent out and deletes its plist, in words true on macOS', async () => {
+  await using home = await tempHome();
+  const launchd = fakeLaunchd();
+  await onMac('install', launchd, home.path);
+  launchd.calls.length = 0;
+
+  const result = await onMac('uninstall', launchd, home.path);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(
+    `Removed ${AGENT}: stopped it and deleted ${PLIST_SHOWN}. Its config file, log, and queue stay.\n`,
+  );
+  expect(launchd.calls).toEqual([
+    `launchctl bootout gui/501/${AGENT}`,
+    `launchctl print gui/501/${AGENT}`,
+  ]);
+  expect(
+    await Bun.file(join(home.path, 'Library', 'LaunchAgents', `${AGENT}.plist`)).exists(),
+  ).toBe(false);
+});
+
+test('install on macOS whose bootout fails exits 1 and leaves the old plist in place', async () => {
+  await using home = await tempHome();
+  const plist = join(home.path, 'Library', 'LaunchAgents', `${AGENT}.plist`);
+  await mkdir(dirname(plist), { recursive: true });
+  await writeFile(plist, 'the plist an older install wrote');
+  const launchd = fakeLaunchd({
+    answers: {
+      bootout: [{ code: 1, stderr: 'Boot-out failed: 1: Operation not permitted', stdout: '' }],
+    },
+    loaded: true,
+  });
+
+  const result = await onMac('install', launchd, home.path);
+
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain(`Could not install ${AGENT}: launchctl bootout failed (exit 1)`);
+  expect(await readFile(plist, 'utf8')).toBe('the plist an older install wrote');
+});
+
+test('status on macOS exits 0 with the state unknown when launchctl times out', async () => {
+  await using home = await tempHome();
+  await onMac('install', fakeLaunchd(), home.path);
+  const launchd = fakeLaunchd({
+    answers: { print: [{ code: 124, stderr: 'timed out after 5 s', stdout: '' }] },
+  });
+
+  const result = await onMac('status', launchd, home.path);
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toStartWith(
+    `${AGENT}: state unknown (launchctl print failed (exit 124))\n`,
+  );
+});
+
+test('Linux chooses the systemd backend and its user unit file', () => {
+  const supervisor = platformSupervisor({
+    home: '/home/operator',
+    label: 'com.dbtlr.heimdall.hub',
+    platform: 'linux',
+    runner: () => Promise.reject(new Error('not run')),
+    uid: 1000,
+  });
+
+  expect(supervisor.unit).toBe(
+    '/home/operator/.config/systemd/user/com.dbtlr.heimdall.hub.service',
+  );
 });

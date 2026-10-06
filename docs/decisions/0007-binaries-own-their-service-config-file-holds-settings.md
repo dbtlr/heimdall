@@ -45,3 +45,4 @@ If `install` rewrote a Fleet-rendered file, Heimdall's own Drift check would rep
 ## Changelog
 
 - 2026-10-06: Accepted. The Linux lifecycle landed in HMD-20; the launchd backend follows in HMD-21.
+- 2026-10-07: Addendum. The launchd backend landed in HMD-21.
