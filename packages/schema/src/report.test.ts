@@ -1,20 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
 import { ReportSchema } from './report.ts';
-import type { Report, VitalsSample } from './report.ts';
-
-// One sample as a Collector on macOS would take it.
-const sample = (t: number): VitalsSample => ({
-  collector: { cpuPercent: 0.4, rssBytes: 41_943_040 },
-  cpu: { busyPercent: 23.4 },
-  disks: [
-    { mount: '/System/Volumes/Data', totalBytes: 994_662_584_320, usedBytes: 412_316_860_416 },
-  ],
-  load: [1.2, 0.9, 0.7],
-  memory: { totalBytes: 34_359_738_368, usedBytes: 12_884_901_888 },
-  t,
-  uptimeSeconds: 86_400,
-});
+import type { Report } from './report.ts';
+import { sample } from './testing.ts';
 
 const report = (): Report => ({
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
@@ -136,6 +124,7 @@ describe('a Report is rejected', () => {
     ['with a NaN load', withSample({ load: [Number.NaN, 0.9, 0.7] })],
     ['with infinite memory bytes', withSample({ memory: { totalBytes: Infinity, usedBytes: 1 } })],
     ['with a sample time beyond safe integers', withSample({ t: 2 ** 53 })],
+    ['with a sample time past the last a Date can hold', withSample({ t: 8_640_000_000_000_001 })],
   ])('%s', (_, input) => {
     expect(ReportSchema.safeParse(input).success).toBe(false);
   });

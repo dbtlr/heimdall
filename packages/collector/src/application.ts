@@ -1,3 +1,4 @@
+import { SYSTEM_NAME } from '@heimdall/schema';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { configInput } from '@loomcli/plugins/config/extension';
@@ -9,9 +10,6 @@ import { text, url } from '@loomcli/validators';
 import packageJson from '../package.json' with { type: 'json' };
 import { runAction } from './run.ts';
 import { versionLine } from './version.ts';
-
-// Fleet's System name: a DNS label, matching the Report schema.
-const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
 // SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, so
 // `run` stops between samples with its queue closed cleanly.

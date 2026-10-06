@@ -1,0 +1,3 @@
+# `bun test` run from this package reads this file, not the root one.
+[test]
+preload = ["./src/testing/preload.ts"]

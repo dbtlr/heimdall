@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const REPORT_SCHEMA_VERSION = 1;
 
 // Fleet's System name: a DNS label, matching Fleet's own validation.
-const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+export const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
 // About four hours of 15-second samples. The Collector splits a longer
 // backlog into several Reports.
@@ -15,7 +15,9 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 // Checks catch Collector bugs, not operating-system quirks: used may exceed
 // total and percentages may exceed 100, so neither is bounded (ADR-0004).
 const bytes = z.int().nonnegative();
-const epochMs = z.int().nonnegative();
+// The last moment a JavaScript Date can hold; a later time is a Collector bug.
+const LAST_DATE_MS = 8_640_000_000_000_000;
+const epochMs = z.int().nonnegative().max(LAST_DATE_MS);
 const amount = z.number().nonnegative();
 
 const DiskSchema = z.object({ mount: z.string().min(1), totalBytes: bytes, usedBytes: bytes });

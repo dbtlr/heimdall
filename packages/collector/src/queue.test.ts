@@ -2,8 +2,10 @@ import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { join } from 'node:path';
 
+import { sample } from '@heimdall/schema/testing';
+
 import { openQueue } from './queue.ts';
-import { sample, tempStateDir } from './testing/fixtures.ts';
+import { tempStateDir } from './testing/fixtures.ts';
 
 test('hands back samples oldest first, at most the limit', async () => {
   await using dir = await tempStateDir();
