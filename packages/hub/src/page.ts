@@ -21,7 +21,11 @@ const usage = ({ totalBytes, usedBytes }: { totalBytes: number; usedBytes: numbe
   `${gib(usedBytes)} / ${gib(totalBytes)} GiB`;
 
 // `2026-10-06 12:00:00 UTC`: the same for every reader, whatever their zone.
-const utc = (ms: number) => `${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+const utc = (ms: number) =>
+  new Date(ms)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/u, ' UTC');
 
 const ago = (ms: number) => {
   const minutes = Math.floor(ms / 60_000);

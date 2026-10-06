@@ -15,7 +15,8 @@ export type HubDependencies = {
   tokens: TokenTable;
 };
 
-const BEARER = /^Bearer (?<token>.+)$/u;
+// RFC 9110 reads the scheme name in any case.
+const BEARER = /^Bearer +(?<token>\S+)$/iu;
 
 // The largest Report body the Hub reads. The schema's 1,000 samples, each with
 // several disks, come to about 1.5 MB; a larger body is a Collector bug.
@@ -27,11 +28,19 @@ const MAX_REASON_LENGTH = 2000;
 const answer = (status: number, body: string) =>
   new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' }, status });
 
-// The System whose token authorizes a request, or undefined when it carries no
-// token the Hub knows.
-const authenticate = (request: Request, tokens: TokenTable) => {
+type Authentication =
+  | { kind: 'missing' }
+  | { kind: 'unknown' }
+  | { kind: 'system'; system: string };
+
+// Who a request's bearer token says sent it.
+const authenticate = (request: Request, tokens: TokenTable): Authentication => {
   const token = BEARER.exec(request.headers.get('authorization') ?? '')?.groups?.token;
-  return token === undefined ? undefined : tokens.systemFor(token);
+  if (token === undefined) {
+    return { kind: 'missing' };
+  }
+  const system = tokens.systemFor(token);
+  return system === undefined ? { kind: 'unknown' } : { kind: 'system', system };
 };
 
 // The request body as text, or undefined when it exceeds `limit` bytes. A body
@@ -65,13 +74,18 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
 
 const invalid = (reason: string) => answer(422, reason.slice(0, MAX_REASON_LENGTH));
 
-// `POST /api/v1/reports`: 401 without a known token, 422 for an invalid Report,
-// 403 for a Report from another System than the token's (ADR-0004).
+// `POST /api/v1/reports`: 401 without a token, 403 for a token the Hub does not
+// know or a Report from another System than the token's, 422 for an invalid
+// Report (ADR-0004).
 const ingest = async (request: Request, { now, sql, tokens }: HubDependencies) => {
-  const system = authenticate(request, tokens);
-  if (system === undefined) {
+  const auth = authenticate(request, tokens);
+  if (auth.kind === 'missing') {
     return answer(401, "Supply the System's ingest token as a bearer token.");
   }
+  if (auth.kind === 'unknown') {
+    return answer(403, 'No System holds this token.');
+  }
+  const { system } = auth;
   const body = await readCapped(request, MAX_REPORT_BYTES);
   if (body === undefined) {
     return invalid(`The Report exceeds ${String(MAX_REPORT_BYTES)} bytes.`);

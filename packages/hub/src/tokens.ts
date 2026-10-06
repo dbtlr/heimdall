@@ -15,7 +15,8 @@ export const TokenEntrySchema = z
   .pipe(
     z.object({
       system: z.string().regex(SYSTEM_NAME, 'Use a Fleet System name, such as db-mbp.'),
-      token: z.string().min(1),
+      // HTTP trims a header's trailing whitespace, so a token holding any could never match.
+      token: z.string().regex(/^\S+$/u, 'A token holds no whitespace.'),
     }),
   );
 

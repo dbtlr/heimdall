@@ -63,12 +63,28 @@ test('a Report without a token is refused as unauthenticated', async () => {
   expect(response.status).toBe(401);
 });
 
-test('a Report with an unknown token is refused as unauthenticated', async () => {
+// A wrong token answers 403, like a token for another System, so the Collector
+// keeps its Reports until the token is fixed (ADR-0004).
+test('a Report with an unknown token is forbidden', async () => {
   await using h = await startHub();
 
   const response = await push(h.hub, report('db-mbp', [NOW]), { token: 'guess' });
 
-  expect(response.status).toBe(401);
+  expect(response.status).toBe(403);
+});
+
+test('the bearer scheme is read in any case', async () => {
+  await using h = await startHub();
+
+  const response = await h.hub.fetch(
+    new Request('http://hub.test/api/v1/reports', {
+      body: JSON.stringify(report('db-mbp', [NOW])),
+      headers: { authorization: 'bearer mbp-token' },
+      method: 'POST',
+    }),
+  );
+
+  expect(response.status).toBe(200);
 });
 
 test("a Report for another System than the token's is forbidden", async () => {
@@ -200,6 +216,15 @@ test("the page lists each System with its last-seen time and newest sample's Vit
   expect(html).toContain('0.1.0 darwin/arm64');
 });
 
+test('a Report the Hub clock places earlier does not move last seen back', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
+  h.clock.now = NOW - 60 * 60_000;
+  await push(h.hub, report('db-mbp', [NOW + 15_000]), { token: 'mbp-token' });
+
+  expect(await page(h.hub)).toContain('2026-10-06 12:00:00 UTC');
+});
+
 test('a Report of samples the Hub already holds still counts as seeing the System', async () => {
   await using h = await startHub();
   await push(h.hub, report('db-mbp', [NOW]), { token: 'mbp-token' });
@@ -213,14 +238,61 @@ test('the page escapes what Collectors report', async () => {
   await using h = await startHub();
   const hostile = {
     ...sample(NOW),
-    disks: [{ mount: '/Volumes/<b>x</b>', totalBytes: 1, usedBytes: 0 }],
+    disks: [{ mount: '/Volumes/<b>x</b> & "y"', totalBytes: 1, usedBytes: 0 }],
   };
-  await push(h.hub, { ...report('db-mbp', [NOW]), samples: [hostile] }, { token: 'mbp-token' });
+  await push(
+    h.hub,
+    {
+      ...report('db-mbp', [NOW]),
+      collector: { arch: '<i>arm64</i>', platform: 'darwin', version: '0.1.0' },
+      samples: [hostile],
+    },
+    { token: 'mbp-token' },
+  );
 
   const html = await page(h.hub);
 
-  expect(html).toContain('/Volumes/&lt;b&gt;x&lt;/b&gt;');
-  expect(html).not.toContain('<b>x</b>');
+  expect(html).toContain('/Volumes/&lt;b&gt;x&lt;/b&gt; &amp; &quot;y&quot;');
+  expect(html).toContain('darwin/&lt;i&gt;arm64&lt;/i&gt;');
+  expect(html).not.toContain('<b>');
+  expect(html).not.toContain('<i>');
+});
+
+// PostgreSQL cannot store NUL or a lone surrogate. Refusing the Report would
+// stall the Collector's queue behind it, so the Hub stores a replacement character.
+test('text PostgreSQL cannot store is kept as a replacement character', async () => {
+  await using h = await startHub();
+  const odd = {
+    ...sample(NOW),
+    disks: [{ mount: '/a\u0000b\uD800c', totalBytes: 1, usedBytes: 0 }],
+  };
+
+  const response = await push(
+    h.hub,
+    {
+      ...report('db-mbp', [NOW]),
+      collector: { arch: 'arm64', platform: 'darwin', version: '0.1\u0000' },
+      samples: [odd],
+    },
+    { token: 'mbp-token' },
+  );
+
+  expect(response.status).toBe(200);
+  const html = await page(h.hub);
+  expect(html).toContain('/a�b�c');
+  expect(html).toContain('0.1� darwin');
+});
+
+test('sample times up to the last a Date can hold are stored exactly', async () => {
+  await using h = await startHub();
+  const last = 8_640_000_000_000_000;
+  const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => last - 999 + i);
+
+  const response = await push(h.hub, report('db-mbp', times), { token: 'mbp-token' });
+
+  expect(await response.json()).toEqual({ skipped: 0, stored: MAX_SAMPLES_PER_REPORT });
+  // The newest sample is the one the page reads back.
+  expect(await page(h.hub)).toContain('db-mbp');
 });
 
 test('a Report the database cannot take is answered 503, so the Collector retries it', async () => {

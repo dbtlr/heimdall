@@ -16,8 +16,8 @@ import { versionLine } from './version.ts';
 const signals = () => plugin('@heimdall/hub/signals', { signals: ['SIGINT', 'SIGTERM'] });
 
 // Each `serve` setting comes from its flag, then its variable, then the
-// configuration file. The token list has no variable: Fleet renders it into the
-// file, which keeps tokens out of argv and the environment.
+// configuration file. The token list has no variable; Fleet renders it into the
+// file. The flag is for local runs and shows tokens in the process table.
 export const serve = new Command('serve', {
   description: 'Accept Reports from Collectors and serve the page of Systems.',
 })

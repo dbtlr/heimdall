@@ -37,18 +37,23 @@ const freePort = () => {
 const startThrowawayCluster = async (): Promise<URL> => {
   const dir = await mkdtemp(join(tmpdir(), 'heimdall-pg-'));
   const data = join(dir, 'data');
-  await run('initdb', ['--auth=trust', '--username=postgres', '--no-sync', '--pgdata', data]);
   const port = freePort();
-  await run('pg_ctl', [
-    'start',
-    '--pgdata',
-    data,
-    '--log',
-    join(dir, 'server.log'),
-    '--wait',
-    '--options',
-    `-c listen_addresses=127.0.0.1 -c port=${String(port)} -c unix_socket_directories='${dir}' -c fsync=off`,
-  ]);
+  try {
+    await run('initdb', ['--auth=trust', '--username=postgres', '--no-sync', '--pgdata', data]);
+    await run('pg_ctl', [
+      'start',
+      '--pgdata',
+      data,
+      '--log',
+      join(dir, 'server.log'),
+      '--wait',
+      '--options',
+      `-c listen_addresses=127.0.0.1 -c port=${String(port)} -c unix_socket_directories='${dir}' -c fsync=off`,
+    ]);
+  } catch (error) {
+    await rm(dir, { force: true, recursive: true });
+    throw error;
+  }
   stopThrowawayCluster = async () => {
     await run('pg_ctl', ['stop', '--pgdata', data, '--mode', 'immediate']);
     await rm(dir, { force: true, recursive: true });

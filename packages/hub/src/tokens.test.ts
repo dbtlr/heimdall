@@ -10,6 +10,7 @@ test.each([
   ['no separator', 'db-mbp'],
   ['an empty token', 'db-mbp='],
   ['a System outside Fleet names', 'DB_MBP=s3cret'],
+  ['whitespace in the token, which HTTP would trim from the header', 'db-mbp=s3cret '],
 ])('a token entry with %s is invalid', (_, entry) => {
   expect(TokenEntrySchema.safeParse(entry).success).toBe(false);
 });

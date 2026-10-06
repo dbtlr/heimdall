@@ -160,3 +160,17 @@ test('serve refuses two Systems that share a token', async () => {
   expect(stderr).toContain('asgard and db-mbp share a token');
   expect(code).not.toBe(0);
 });
+
+test('serve names the database as the problem when it cannot reach it', async () => {
+  const { code, stderr } = await invoke([
+    'serve',
+    '--database',
+    'postgres://heimdall:db-s3cret@127.0.0.1:1/heimdall',
+    '--token',
+    'db-mbp=t',
+  ]);
+
+  expect(stderr).toContain('Could not prepare the database');
+  expect(stderr).not.toContain('db-s3cret');
+  expect(code).toBe(1);
+});

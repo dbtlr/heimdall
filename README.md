@@ -52,13 +52,13 @@ SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 13
 | `--port`     | `HEIMDALL_PORT`         | `port`     | `8080`      |
 | `--token`    | none                    | `tokens`   | none        |
 
-The configuration file is the one `--config` names, or else `.heimdall-hub.toml` or `.heimdall-hub.json` in the working directory and then the home directory. Each token entry is `system=token`, one per System, and no two Systems may share a token. Supply tokens through the file.
+The configuration file is the one `--config` names, or else `.heimdall-hub.toml` or `.heimdall-hub.json` in the working directory and then the home directory. Each token entry is `system=token`, one per System. No two Systems may share a token, and a token holds no whitespace. Supply tokens through the file, because a flag is visible in the process table.
 
 ```toml
 database = "postgres://heimdall@localhost/heimdall"
 tokens = ["db-mbp=…", "asgard=…"]
 ```
 
-The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing or unknown token, 403 when the Report names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
+The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing token, 403 for a token no System holds or a Report that names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
 
 SIGTERM or SIGINT stops the Hub with exit status 143 or 130.

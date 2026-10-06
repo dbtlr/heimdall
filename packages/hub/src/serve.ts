@@ -29,7 +29,10 @@ export const serveAction: ActionHandler<typeof serve> = async ({ options, out, s
 
   const sql = new SQL(options.database.href);
   try {
-    const applied = await migrate(sql);
+    // PostgreSQL's messages name the host and role, never the password.
+    const applied = await migrate(sql).catch((error: unknown) =>
+      out.fatal(clean(`Could not prepare the database: ${describeError(error)}`)),
+    );
     if (applied.length > 0) {
       await out.info(`Applied database migrations ${applied.join(', ')}.`);
     }

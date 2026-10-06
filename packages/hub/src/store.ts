@@ -3,6 +3,13 @@ import type { SQL } from 'bun';
 
 export type StoreResult = { skipped: number; stored: number };
 
+// Text PostgreSQL can store: NUL and lone surrogates, which the Report schema
+// allows, become U+FFFD. Refusing them would stall the Collector's queue.
+const storable = (text: string) => text.toWellFormed().replaceAll('\0', '\uFFFD');
+
+const storableJson = (value: unknown) =>
+  JSON.stringify(value, (_, v: unknown) => (typeof v === 'string' ? storable(v) : v));
+
 // Records a Report received at `receivedAt` (epoch milliseconds): the System is
 // seen at that time, and each sample is stored unless the Hub already holds one
 // for the same System and time (ADR-0004).
@@ -14,8 +21,8 @@ export const storeReport = (
     const seenAt = new Date(receivedAt);
     await tx`
       INSERT INTO systems (name, last_seen_at, collector_version, collector_platform, collector_arch)
-      VALUES (${report.system}, ${seenAt}, ${report.collector.version},
-              ${report.collector.platform}, ${report.collector.arch})
+      VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
+              ${report.collector.platform}, ${storable(report.collector.arch)})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
         collector_version = excluded.collector_version,
@@ -31,7 +38,11 @@ export const storeReport = (
       )
       SELECT
         ${report.system},
-        timestamptz 'epoch' + (s->>'t')::bigint * interval '1 millisecond',
+        -- Seconds and milliseconds apart: interval arithmetic runs in double
+        -- precision, which would round a large millisecond count.
+        timestamptz 'epoch'
+          + ((s->>'t')::bigint / 1000) * interval '1 second'
+          + ((s->>'t')::bigint % 1000) * interval '1 millisecond',
         (s->'cpu'->>'busyPercent')::double precision,
         (s->'memory'->>'totalBytes')::bigint,
         (s->'memory'->>'usedBytes')::bigint,
@@ -42,7 +53,7 @@ export const storeReport = (
         s->'disks',
         (s->'collector'->>'cpuPercent')::double precision,
         (s->'collector'->>'rssBytes')::bigint
-      FROM jsonb_array_elements(${JSON.stringify(report.samples)}::text::jsonb) AS s
+      FROM jsonb_array_elements(${storableJson(report.samples)}::text::jsonb) AS s
       ON CONFLICT (system, t) DO NOTHING
       RETURNING t
     `;
