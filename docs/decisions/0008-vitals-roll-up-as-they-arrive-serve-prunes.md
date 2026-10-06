@@ -17,7 +17,7 @@ Fleet declares the Hub as one native Service ([ADR-0007](0007-binaries-own-their
 
 ## Decision
 
-- **Rollups update at ingest.** In the transaction that stores a Report's samples, the Hub upserts each sample's 5-minute bucket for its System, keeping min, max, sum, and count per rolled-up Vital. Average is sum over count. Only the rows the insert actually stored roll up, so a resent sample never counts twice, and a late sample lands in its own bucket whenever it arrives.
+- **Rollups update at ingest.** In the transaction that stores a Report's samples, the Hub upserts each sample's 5-minute bucket for its System, keeping min, max, sum, and count per rolled-up Vital. Average is sum over count. Only the rows the insert actually stored roll up, so a resent sample never counts twice, and a late sample lands in its own bucket whenever it arrives. The migration that adds the rollups backfills them from the raw samples already stored, so no history is lost once pruning begins.
 - **`serve` prunes on a timer.** About once an hour, `serve` deletes raw samples older than 14 days and rollups older than a year. Pruning runs only while the Hub runs, with no separate unit or command for Fleet to schedule.
 
 ## Considered options
