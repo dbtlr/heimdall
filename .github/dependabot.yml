@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Bun dependencies, read from bun.lock.
+  - package-ecosystem: 'bun'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    # A dependency update needs no changelog entry; the label tells the guard.
+    labels: ['dependencies', 'skip-changelog']
+    commit-message:
+      prefix: 'chore(deps)'
+
+  # The actions the workflows use.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    labels: ['dependencies', 'skip-changelog']
+    commit-message:
+      prefix: 'chore(ci)'

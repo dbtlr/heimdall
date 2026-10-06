@@ -43,4 +43,4 @@ jobs:
       - name: Compile the Collector binary
         run: |
           bun run build:collector
-          ./dist/heimdall-collector --version | grep -E '^heimdall-collector [0-9]+\.[0-9]+\.[0-9]+ \(Report schema v[0-9]+\)$'
+          ./dist/heimdall-collector --version | grep -E '^heimdall-collector v[0-9]+\.[0-9]+\.[0-9]+ \(Report schema v[0-9]+\)$'

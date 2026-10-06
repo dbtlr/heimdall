@@ -1,0 +1,39 @@
+name: Changelog guard
+
+# A pull request that changes what a release builds carries a changelog
+# fragment in .changes/, and every fragment it adds or edits parses with the
+# parser the release cut uses. `heimdall-release changelog guard` holds the
+# rule (packages/release/src/guard.ts): the release cut passes by its shape,
+# and the `skip-changelog` label waives the fragment for a change with no entry
+# due, such as a refactor, tests, CI, or a dependency update.
+#
+# The guard runs on every PR and decides for itself whether it applies, so it
+# can be a required check. Label events re-run it when the label changes.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.10.2
+      - run: bun install --frozen-lockfile
+      - name: Require a fragment for a change to what ships
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+        run: |
+          skip=()
+          if [ "$SKIP_LABEL" = true ]; then skip=(--skip-label); fi
+          bun run --silent release changelog guard --base "origin/$BASE_REF" "${skip[@]}"

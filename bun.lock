@@ -30,6 +30,15 @@
         "zod": "^4.6.5",
       },
     },
+    "packages/release": {
+      "name": "@heimdall/release",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loomcli/core": "0.8.0",
+        "@loomcli/plugins": "0.8.0",
+        "@loomcli/validators": "0.8.0",
+      },
+    },
     "packages/schema": {
       "name": "@heimdall/schema",
       "version": "0.0.0",
@@ -50,6 +59,8 @@
     "@heimdall/collector": ["@heimdall/collector@workspace:packages/collector"],
 
     "@heimdall/hub": ["@heimdall/hub@workspace:packages/hub"],
+
+    "@heimdall/release": ["@heimdall/release@workspace:packages/release"],
 
     "@heimdall/schema": ["@heimdall/schema@workspace:packages/schema"],
 

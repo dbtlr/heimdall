@@ -6,7 +6,7 @@ Status: M1 (walking skeleton) is complete; M2 (Fleet rollout) is next. See [docs
 
 ## Development
 
-Heimdall is a Bun workspace with three packages: `packages/schema` (the Report wire schema), `packages/collector`, and `packages/hub`. Tool versions are pinned in `mise.toml`.
+Heimdall is a Bun workspace with four packages: `packages/schema` (the Report wire schema), `packages/collector`, `packages/hub`, and `packages/release` (the release tooling). Tool versions are pinned in `mise.toml`.
 
 ```sh
 mise install
@@ -14,7 +14,10 @@ bun install
 bun run verify           # format, lint, typecheck (vp check), then bun test
 bun run fix              # apply formatting and lint fixes
 bun run build:collector  # compile dist/heimdall-collector for this platform
+bun run build:hub        # compile dist/heimdall-hub for this platform
 ```
+
+A pull request that changes what ships adds a changelog fragment in [`.changes/`](.changes/README.md). [Releasing](docs/releasing.md) covers fragments, cutting a release, and installing the binaries.
 
 The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. Run `bun test` from the repository root or from `packages/hub`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`.
 
