@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { sample } from '@heimdall/schema/testing';
 
-import { openQueue } from './queue.ts';
+import { countWaiting, openQueue } from './queue.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
 test('hands back samples oldest first, at most the limit', async () => {
@@ -105,4 +105,32 @@ test('discards a stored row that is not JSON', async () => {
 
   expect(queue.oldest(10)).toEqual([sample(3000)]);
   queue.close();
+});
+
+test('counts the samples waiting without blocking the open queue', async () => {
+  await using dir = await tempStateDir();
+  const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+  queue.append(sample(1000));
+  queue.append(sample(2000));
+
+  expect(await countWaiting(dir.path)).toBe(2);
+  queue.append(sample(3000));
+  expect(await countWaiting(dir.path)).toBe(3);
+  queue.close();
+});
+
+test('counts the samples of a queue that is closed', async () => {
+  await using dir = await tempStateDir();
+  const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+  queue.append(sample(1000));
+  queue.close();
+
+  expect(await countWaiting(dir.path)).toBe(1);
+});
+
+test('counts nothing, and creates nothing, when there is no queue yet', async () => {
+  await using dir = await tempStateDir();
+
+  expect(await countWaiting(join(dir.path, 'state'))).toBeUndefined();
+  expect(await Bun.file(join(dir.path, 'state')).exists()).toBe(false);
 });

@@ -1,3 +1,4 @@
+import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { configInput } from '@loomcli/plugins/config/extension';
@@ -62,4 +63,6 @@ export const app = new Application('heimdall-hub', {
   // Loom's line (`<name> v<version>`) has no room for the Report schema version yet;
   // HMD-13 swaps this override for Loom's version postfix once LM-s22 ships.
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],
-}).command(serve);
+})
+  .command(serve)
+  .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

@@ -25,39 +25,3 @@ export const pruneVitals = (sql: SQL, now: number): Promise<Pruned> =>
       vitalsRollups: vitalsRollups.count,
     };
   });
-
-// Runs `task` now and again `intervalMs` after each run finishes, so runs never
-// overlap. A failing run goes to `onError` and the timer carries on. The
-// returned function stops the timer and waits for a run still in flight, so the
-// caller can close what the task uses.
-export const every = ({
-  intervalMs,
-  onError,
-  task,
-}: {
-  intervalMs: number;
-  onError: (error: unknown) => void;
-  task: () => unknown;
-}): (() => Promise<void>) => {
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running: Promise<void>;
-  const run = async () => {
-    try {
-      await task();
-    } catch (error) {
-      onError(error);
-    }
-    if (!stopped) {
-      timer = setTimeout(() => {
-        running = run();
-      }, intervalMs);
-    }
-  };
-  running = run();
-  return async () => {
-    stopped = true;
-    clearTimeout(timer);
-    await running;
-  };
-};

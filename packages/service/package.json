@@ -1,14 +1,13 @@
 {
-  "name": "@heimdall/collector",
-  "version": "0.1.0",
+  "name": "@heimdall/service",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
   },
   "dependencies": {
-    "@heimdall/schema": "workspace:*",
-    "@heimdall/service": "workspace:*",
     "@loomcli/core": "0.8.0",
     "@loomcli/plugins": "0.8.0",
     "@loomcli/validators": "0.8.0"

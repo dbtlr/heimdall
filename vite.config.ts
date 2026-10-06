@@ -17,7 +17,12 @@ const GENERATED_IGNORES = [
 
 // Packages that run as Bun processes and may import `node:` builtins. The schema
 // package stays under the builtin-free baseline so both sides can share it.
-const RUNTIME_PACKAGES = ['packages/collector/**', 'packages/hub/**', 'packages/release/**'];
+const RUNTIME_PACKAGES = [
+  'packages/collector/**',
+  'packages/hub/**',
+  'packages/release/**',
+  'packages/service/**',
+];
 
 // Style preferences that catch no correctness issue.
 const RELAXED_DEFAULTS = {
