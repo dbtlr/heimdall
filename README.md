@@ -2,7 +2,7 @@
 
 Observability for a small personal fleet. A Collector on each machine reports host vitals, agent sessions, and the state of everything Fleet manages to a Hub, which serves a dashboard inside the tailnet.
 
-Status: M1 (walking skeleton) is complete; M2 (Fleet rollout) is next. See [docs/roadmap.md](docs/roadmap.md).
+Status: M1 (walking skeleton) and M2 (Fleet rollout) are complete; M3 (Fleet state) is next. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Development
 
