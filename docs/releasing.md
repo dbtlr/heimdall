@@ -1,5 +1,5 @@
 ---
-description: "How to cut a Heimdall release, what a release publishes, and how Fleet's Application declarations install and update the Collector and the Hub."
+description: "How to cut a Heimdall release, what a release publishes, and where Fleet's declarations that install and update the Collector and the Hub live."
 ---
 
 # Releasing
@@ -57,25 +57,6 @@ curl -fsSL https://raw.githubusercontent.com/dbtlr/heimdall/v0.2.0/install-colle
 
 `install-hub.sh` installs the Hub the same way. Each script installs into `~/.local/bin`, or into `HEIMDALL_INSTALL_DIR` when set. Without `HEIMDALL_VERSION`, it installs the latest release. It refuses a binary whose checksum `SHA256SUMS` does not list or does not match, and a binary that does not run on the System, and in both cases keeps the binary already installed.
 
-## Fleet's Application declarations
+## Fleet's declarations
 
-Fleet declares each binary as an Application in the Fleet repository. The Collector's declaration looks like this. The Hub's differs in its name, targets, and script.
-
-```toml
-[release]
-repository = "dbtlr/heimdall"
-default_channel = "stable"
-
-[install]
-script_url = "https://raw.githubusercontent.com/dbtlr/heimdall/{version}/install-collector.sh"
-version_env = "HEIMDALL_VERSION"
-
-[version]
-command = ["sh", "-c", "\"$HOME/.local/bin/heimdall-collector\" --version | awk '{ print $2 }'"]
-
-[update]
-command = ["sh", "-c", "curl -fsSL \"https://raw.githubusercontent.com/dbtlr/heimdall/$0/install-collector.sh\" | HEIMDALL_VERSION=\"$0\" sh"]
-version_args = ["{version}"]
-```
-
-The version line is `heimdall-collector v0.2.0 (Report schema v1)`. The version command prints its second word, and Fleet ignores the leading `v` when it compares that word with the tag.
+Fleet's Application declarations for both binaries, their config templates, and their native Services are in [How Fleet declares Heimdall](fleet.md).

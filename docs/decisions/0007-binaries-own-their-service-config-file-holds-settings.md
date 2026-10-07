@@ -46,3 +46,4 @@ If `install` rewrote a Fleet-rendered file, Heimdall's own Drift check would rep
 
 - 2026-10-06: Accepted. The Linux lifecycle landed in HMD-20; the launchd backend follows in HMD-21.
 - 2026-10-07: Addendum. The launchd backend landed in HMD-21.
+- 2026-10-07: Addendum. The consequence that Fleet restarts the Hub for a new token list no longer applies: Systems pair with the Hub and their tokens live in its database ([ADR-0009](0009-collectors-pair-with-the-hub.md)), so adding a System needs no restart.
