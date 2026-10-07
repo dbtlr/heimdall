@@ -173,7 +173,7 @@ test('install --port leaves a hub.toml that already holds the port untouched', a
   await using home = await tempHome();
   const file = join(home.path, '.config', 'heimdall', 'hub.toml');
   await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
-  const rendered = 'database = "postgres://db/heimdall"\nport=9090\ntokens = ["a=b"]\n';
+  const rendered = 'port=9090\n\n[database]\nurl = "postgres://db/heimdall"\n';
   await writeFile(file, rendered);
   const before = await stat(file);
 
@@ -306,7 +306,7 @@ test('status asks for health on the port the Hub reads from its config file', as
   await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
   await writeFile(
     join(home.path, '.config', 'heimdall', 'hub.toml'),
-    'database = "postgres://db/heimdall"\nport = 9191\n',
+    'port = 9191\n\n[database]\nurl = "postgres://db/heimdall"\n',
   );
   const seen: string[] = [];
 
@@ -504,7 +504,7 @@ test('install --port refuses to create hub.toml beside a hub.json, and writes no
   await using home = await tempHome();
   const dir = join(home.path, '.config', 'heimdall');
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'hub.json'), '{"database":"postgres://db/heimdall"}');
+  await writeFile(join(dir, 'hub.json'), '{"database":{"url":"postgres://db/heimdall"}}');
 
   const result = await invoke(HUB, ['service', 'install', '--port', '9090'], { home: home.path });
 

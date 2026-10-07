@@ -259,7 +259,12 @@ test('the rollup migration rolls up the samples stored before it', async () => {
   await stored(NOW + MINUTE, 30, 12 * GIB, [disk('/', 35 * GIB, 100 * GIB)]);
   await stored(NOW + 5 * MINUTE, 50, 4 * GIB, [disk('/', 36 * GIB, 100 * GIB)]);
 
-  expect(await migrate(db.sql)).toEqual([3]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 3),
+    ),
+  ).toEqual([3]);
 
   expect(await vitalsRollups(db.sql)).toEqual([
     {

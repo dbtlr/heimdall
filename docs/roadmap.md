@@ -45,7 +45,7 @@ Every System runs a Collector, and the Hub runs as a Fleet-managed Service.
 - The Hub ships as a Fleet Application with a native Service on its System (Fleet ADR-0021): its own systemd user unit, Tailscale ingress, and a health check against `/api/health`.
 - PostgreSQL database and login role `heimdall` declared in Fleet's registry, plus a Backup Job.
 - The Collector ships as a Fleet Application on all four Systems, running as a launchd user agent on macOS and a systemd service on Linux.
-- Per-System ingest tokens rendered from 1Password through the Application's config template.
+- Each System pairs with the Hub once: the Hub issues a short-lived Pairing code, the Collector redeems it for its System name and token, and the Hub keeps only token hashes in its database ([ADR-0009](decisions/0009-collectors-pair-with-the-hub.md)).
 - Retention: raw Vitals pruned after 14 days, 5-minute rollups kept for a year. Rollups update as samples arrive, and the Hub prunes on a timer ([ADR-0008](decisions/0008-vitals-roll-up-as-they-arrive-serve-prunes.md)).
 
 Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwin native supervisor and an unprivileged account on the System that lacks one.

@@ -6,26 +6,26 @@ import { sample } from '@heimdall/schema/testing';
 
 import { createHub } from '../hub.ts';
 import { migrate } from '../migrations.ts';
-import { tokenTable } from '../tokens.ts';
+import { storeToken } from '../tokens.ts';
 import { testDatabase } from './postgres.ts';
 
 export const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
 
-// A Hub on a fresh, migrated database that knows two Systems' tokens. The
-// clock reads `clock.now`, so a test can move it between Reports.
+// A Hub on a fresh, migrated database where two Systems are paired, with
+// tokens a test can name. The wall clock reads `clock.now` and the monotonic
+// clock `clock.elapsed`, so a test can move either between requests.
 export const startHub = async () => {
   const db = await testDatabase();
   await migrate(db.sql);
-  const clock = { now: NOW };
+  await storeToken(db.sql, { pairedAt: NOW, system: 'server-1', token: 'server-token' });
+  await storeToken(db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
+  const clock = { elapsed: 0, now: NOW };
   const errors: unknown[] = [];
   const hub = createHub({
+    elapsed: () => clock.elapsed,
     now: () => clock.now,
     onError: (error) => errors.push(error),
     sql: db.sql,
-    tokens: tokenTable([
-      { system: 'server-1', token: 'server-token' },
-      { system: 'laptop-1', token: 'laptop-token' },
-    ]),
   });
   return { clock, db, errors, hub, [Symbol.asyncDispose]: () => db[Symbol.asyncDispose]() };
 };
@@ -51,6 +51,16 @@ export const push = (
         'content-type': 'application/json',
         ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
       },
+      method: 'POST',
+    }),
+  );
+
+// Redeems a Pairing code the way the Collector does.
+export const redeem = (hub: ReturnType<typeof createHub>, body: unknown) =>
+  hub.fetch(
+    new Request('http://hub.test/api/v1/pair', {
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
       method: 'POST',
     }),
   );

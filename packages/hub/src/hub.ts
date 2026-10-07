@@ -2,20 +2,27 @@ import { ReportSchema } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { failureCap } from './failure-cap.ts';
+import type { CapSlot } from './failure-cap.ts';
 import { renderPage } from './page.ts';
+import { readCode, redeemCode } from './pairing.ts';
 import { listSystems, recordRejection, storeReport } from './store.ts';
-import type { TokenTable } from './tokens.ts';
+import { systemForToken } from './tokens.ts';
 import { HUB_VERSION } from './version.ts';
 
 export type HubDependencies = {
+  // A monotonic clock in milliseconds that times the Pairing failure cap's
+  // window, so a wall clock stepped back or forward cannot stretch or end a
+  // lockout; defaults to performance.now.
+  elapsed?: () => number;
   // How long the health check waits for the database; defaults to HEALTH_TIMEOUT_MS.
   healthTimeoutMs?: number;
-  // The Hub's clock in epoch milliseconds: the time it receives each Report.
+  // The Hub's clock in epoch milliseconds: the time it receives each Report or
+  // redeems a Pairing code.
   now: () => number;
   // Told of each request the Hub could not answer, such as one the database refused.
   onError: (error: unknown) => void;
   sql: SQL;
-  tokens: TokenTable;
 };
 
 // RFC 9110 reads the scheme name in any case.
@@ -24,6 +31,17 @@ const BEARER = /^Bearer +(?<token>\S+)$/iu;
 // The largest Report body the Hub reads. The schema's 1,000 samples, each with
 // several disks, come to about 1.5 MB; a larger body is a Collector bug.
 export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
+
+// The largest Pairing request body the Hub reads; `{"code":"XXXX-XXXX"}` is 20 bytes.
+const MAX_PAIR_BYTES = 1024;
+
+// Failed redemptions the Hub allows in any rolling minute, across every
+// client. With codes valid for 10 minutes, at most 100 guesses fit in a
+// code's life, against 2^40 codes (ADR-0009).
+const PAIR_FAILURES_PER_MINUTE = 10;
+
+// The one answer every failed redemption gets, whatever failed.
+const PAIR_FAILURE = { error: 'invalid or expired code' };
 
 // The reason a Report is rejected, short enough for the Collector to log.
 const MAX_REASON_LENGTH = 2000;
@@ -40,13 +58,13 @@ type Authentication =
   | { kind: 'unknown' }
   | { kind: 'system'; system: string };
 
-// Who a request's bearer token says sent it.
-const authenticate = (request: Request, tokens: TokenTable): Authentication => {
+// Who a request's bearer token says sent it, by the paired Systems' tokens.
+const authenticate = async (request: Request, sql: SQL): Promise<Authentication> => {
   const token = BEARER.exec(request.headers.get('authorization') ?? '')?.groups?.token;
   if (token === undefined) {
     return { kind: 'missing' };
   }
-  const system = tokens.systemFor(token);
+  const system = await systemForToken(sql, token);
   return system === undefined ? { kind: 'unknown' } : { kind: 'system', system };
 };
 
@@ -84,8 +102,8 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
 // Report (ADR-0004). A Report the token attributes to a System counts as seeing
 // that System even when rejected, and raises its Reports-rejected Condition
 // (ADR-0005).
-const ingest = async (request: Request, { now, onError, sql, tokens }: HubDependencies) => {
-  const auth = authenticate(request, tokens);
+const ingest = async (request: Request, { now, onError, sql }: HubDependencies) => {
+  const auth = await authenticate(request, sql);
   if (auth.kind === 'missing') {
     return answer(401, "Supply the System's ingest token as a bearer token.");
   }
@@ -119,6 +137,36 @@ const ingest = async (request: Request, { now, onError, sql, tokens }: HubDepend
   return Response.json(await storeReport(sql, { receivedAt: now(), report: parsed.data }));
 };
 
+// The code a Pairing request body holds, or undefined for any body that does
+// not hold one.
+const codeIn = (body: string | undefined) => {
+  const json = body === undefined ? undefined : parseJson(body);
+  if (json?.kind !== 'json' || typeof json.value !== 'object' || json.value === null) {
+    return undefined;
+  }
+  return readCode((json.value as { code?: unknown }).code);
+};
+
+// `POST /api/v1/pair`: redeems a Pairing code for its System's name and a new
+// token (ADR-0009). Every failure, from a malformed body to a spent code,
+// answers the same 400, and only a success stops counting against the
+// failure cap. A full cap answers 429 without reading the code.
+const pair = async (request: Request, { now, sql }: HubDependencies, slot: CapSlot) => {
+  if (slot.kind === 'refused') {
+    return Response.json(
+      { error: 'too many failed codes; try again later' },
+      { headers: { 'retry-after': String(Math.ceil(slot.retryAfterMs / 1000)) }, status: 429 },
+    );
+  }
+  const code = codeIn(await readCapped(request, MAX_PAIR_BYTES));
+  const pairing = code === undefined ? undefined : await redeemCode(sql, { code, now: now() });
+  if (pairing === undefined) {
+    return Response.json(PAIR_FAILURE, { status: 400 });
+  }
+  slot.succeeded();
+  return Response.json(pairing, { headers: { 'cache-control': 'no-store' } });
+};
+
 // `GET /api/health`: 200 when the database answers a trivial query within the
 // timeout, 503 when it does not. A failed check answers directly rather than
 // through `onError`, so an outage does not log on every poll.
@@ -136,10 +184,17 @@ const health = async ({ healthTimeoutMs = HEALTH_TIMEOUT_MS, sql }: HubDependenc
   );
 };
 
-const route = async (request: Request, deps: HubDependencies) => {
+const route = async (
+  request: Request,
+  deps: HubDependencies,
+  pairFailures: ReturnType<typeof failureCap>,
+) => {
   const { pathname } = new URL(request.url);
   if (pathname === '/api/v1/reports' && request.method === 'POST') {
     return ingest(request, deps);
+  }
+  if (pathname === '/api/v1/pair' && request.method === 'POST') {
+    return pair(request, deps, pairFailures.begin());
   }
   if (pathname === '/api/health' && request.method === 'GET') {
     return health(deps);
@@ -153,14 +208,22 @@ const route = async (request: Request, deps: HubDependencies) => {
 
 // The Hub's HTTP surface, independent of the server that runs it. A request it
 // cannot answer, such as one during a database outage, is a 503, which leaves
-// the Collector's Report queued for retry (ADR-0004).
-export const createHub = (deps: HubDependencies) => ({
-  fetch: async (request: Request): Promise<Response> => {
-    try {
-      return await route(request, deps);
-    } catch (error) {
-      deps.onError(error);
-      return answer(503, 'The Hub cannot answer right now; try again later.');
-    }
-  },
-});
+// the Collector's Report queued for retry (ADR-0004). One Hub holds one failure
+// cap for Pairing, so a process runs one Hub.
+export const createHub = (deps: HubDependencies) => {
+  const pairFailures = failureCap({
+    clock: deps.elapsed ?? (() => performance.now()),
+    limit: PAIR_FAILURES_PER_MINUTE,
+    windowMs: 60_000,
+  });
+  return {
+    fetch: async (request: Request): Promise<Response> => {
+      try {
+        return await route(request, deps, pairFailures);
+      } catch (error) {
+        deps.onError(error);
+        return answer(503, 'The Hub cannot answer right now; try again later.');
+      }
+    },
+  };
+};

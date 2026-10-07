@@ -61,8 +61,8 @@ export const withPort = (text: string, port: number): string | undefined => {
 // Sets `port` in the configuration file at `file` and reports whether it wrote.
 // A file that already holds the value is left exactly as it is, so a file Fleet
 // rendered stays as Fleet rendered it. A missing file is created, readable by
-// its owner alone because the Hub's file also holds its tokens, unless a JSON
-// file of the same name holds the settings instead.
+// its owner alone because the Hub's file also holds its database URL, which may
+// carry a password, unless a JSON file of the same name holds the settings instead.
 export const setPort = async (file: string, port: number): Promise<boolean> => {
   const existing = await readIfPresent(file);
   // Loom reads the first of hub.toml and hub.json it finds, so a new TOML file

@@ -136,6 +136,27 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 3,
   },
+  {
+    // Each paired System's token, and the Pairing codes issued and not yet
+    // redeemed, kept only as SHA-256 hashes (ADR-0009). A System may pair
+    // before the Hub hears from it, so neither table refers to `systems`, and
+    // unpairing leaves the System's history. A System has at most one token and
+    // at most one pending code: issuing deletes its earlier code.
+    sql: `
+      CREATE TABLE paired_systems (
+        system text PRIMARY KEY,
+        token_hash bytea NOT NULL UNIQUE,
+        paired_at timestamptz NOT NULL
+      );
+
+      CREATE TABLE pairing_codes (
+        code_hash bytea PRIMARY KEY,
+        system text NOT NULL UNIQUE,
+        expires_at timestamptz NOT NULL
+      );
+    `,
+    version: 4,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

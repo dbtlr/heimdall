@@ -8,7 +8,6 @@ import packageJson from '../package.json' with { type: 'json' };
 import { MAX_REPORT_BYTES, createHub } from './hub.ts';
 import { listSystems } from './store.ts';
 import { NOW, page, push, report, silentServer, startHub } from './testing/hub.ts';
-import { tokenTable } from './tokens.ts';
 
 test('a Report without a token is refused as unauthenticated', async () => {
   await using h = await startHub();
@@ -292,7 +291,6 @@ test('the health check gives up on a database that hangs', async () => {
     now: () => NOW,
     onError: (error) => h.errors.push(error),
     sql,
-    tokens: tokenTable([]),
   });
 
   // Closing a connection stuck in its handshake would hang too, so it is not awaited.
