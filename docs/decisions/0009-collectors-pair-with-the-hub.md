@@ -23,7 +23,7 @@ A Collector keeps durable state in its state directory, so an identity it receiv
 - **Redemption gives nothing away.** `POST /api/v1/pair` with a code answers the System's name and a new token. Every failure answers the same "invalid or expired code", and failed redemptions are capped at 10 a minute across the Hub. At most 100 guesses fit in a code's life, against 2^40 codes.
 - **The Hub keeps only hashes.** Tokens are 32 random bytes, and the Hub stores their SHA-256 hashes, and the hashes of unredeemed codes, in its database. Ingest authenticates a Report by its token's hash. Adding or revoking a System needs no restart.
 - **The Collector keeps its identity as state.** `identity.json` in the Collector's state directory, mode 0600, holds the System name and token, and is written only after a successful redemption. `run` refuses to start without it. Heimdall never writes the config files Fleet renders ([ADR-0007](0007-binaries-own-their-service-config-file-holds-settings.md)).
-- **One way to give a System its identity.** The Collector's `system` and `token` settings and the Hub's `token` setting are removed. `collector.toml` holds the Hub's URL, the same on every System. `hub.toml` holds the database URL under `[database] url`, where Fleet's dotted secret path can reach it, and the listener's host and port.
+- **One way to give a System its identity.** The Collector's `system` and `token` settings and the Hub's `tokens` setting and `--token` option are removed. `collector.toml` holds the Hub's URL, the same on every System. `hub.toml` holds the database URL under `[database] url`, where Fleet's dotted secret path can reach it, and the listener's host and port.
 
 ## Considered options
 
