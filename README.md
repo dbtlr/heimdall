@@ -117,6 +117,8 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 - `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
 
+[How Fleet declares Heimdall](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet uses to run both binaries.
+
 Only a compiled binary may `install` or `uninstall`, and there is no opt-in. A run from source, such as a test, refuses before it touches the user manager. To try the real supervisor during development, compile first with `bun run build:hub` or `bun run build:collector` and run the binary from `dist/`.
 
 `serve` and `run` write their runtime lines to stdout, each starting with an ISO 8601 UTC time, and the unit appends both output streams to the log. Fatal startup lines on stderr carry the time too. The binary rotates its own log before it writes its first line and about once a day after: when the first line is 90 days old or the log reaches 10 MB, it copies the log to `<log>.1`, replacing the previous copy, and empties the log in place.
