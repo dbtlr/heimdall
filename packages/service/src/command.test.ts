@@ -20,6 +20,13 @@ const waiting: string[] = [];
 const COLLECTOR: ServiceSpec = {
   binary: 'collector',
   defaultStateDir: ({ home }) => join(home, 'default-state'),
+  // A state directory named `empty` holds neither a queue nor an identity.
+  pairedSystem: (stateDir) =>
+    Promise.resolve(
+      stateDir.endsWith('empty')
+        ? undefined
+        : { hub: 'http://hub.example:8080', system: 'laptop-1' },
+    ),
   queueDepth: (stateDir) => {
     waiting.push(stateDir);
     return Promise.resolve(stateDir.endsWith('empty') ? undefined : 12);
@@ -463,6 +470,7 @@ test('Collector status counts the samples waiting in its default queue', async (
 
   expect(result.code).toBe(0);
   expect(result.stdout).toBe(`com.dbtlr.heimdall.collector: loaded, running (pid 4182)
+  system   laptop-1 (paired with http://hub.example:8080)
   queue    12 samples waiting
   unit     ~/unit.service
   log      ~/.local/state/heimdall/collector.log
@@ -483,8 +491,56 @@ test('Collector status reads the state directory the way run does', async () => 
   const result = await invoke(COLLECTOR, ['service', 'status'], { home: home.path });
 
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain('  queue    no queue yet; run has not started\n');
+  expect(result.stdout).toContain(
+    '  system   not paired; run heimdall-collector pair <code>\n  queue    no queue yet; run has not started\n',
+  );
   expect(waiting).toEqual([join(home.path, 'empty')]);
+});
+
+test.each([
+  [
+    'the same origin under another path',
+    'http://hub.example:8080/heimdall/',
+    'laptop-1 (paired with http://hub.example:8080)',
+  ],
+  [
+    'another origin',
+    'https://hub.example/',
+    'laptop-1, paired with http://hub.example:8080 but configured for https://hub.example; pair again',
+  ],
+])(
+  'Collector status compares the Hub it paired with to the configured one: %s',
+  async (_, configured, words) => {
+    await using home = await tempHome();
+    await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+    await writeFile(
+      join(home.path, '.config', 'heimdall', 'collector.toml'),
+      `hub = "${configured}"\n`,
+    );
+
+    const result = await invoke(COLLECTOR, ['service', 'status'], { home: home.path });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`  system   ${words}\n`);
+  },
+);
+
+test('Collector status reports an identity it cannot read as not paired, and exits 0', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(
+    {
+      ...COLLECTOR,
+      pairedSystem: () => Promise.reject(new Error('identity.json is not a valid identity')),
+    },
+    ['service', 'status'],
+    { home: home.path },
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    '  system   not paired (identity.json is not a valid identity); run heimdall-collector pair <code>\n',
+  );
 });
 
 test('Collector status reports a queue it cannot read, and exits 0', async () => {
@@ -602,6 +658,7 @@ test('Collector status on macOS names the agent state, plist, log, and queue, wi
 
   expect(result.code).toBe(0);
   expect(result.stdout).toBe(`${AGENT}: loaded, running (pid 4182)
+  system   laptop-1 (paired with http://hub.example:8080)
   queue    12 samples waiting
   unit     ${PLIST_SHOWN}
   log      ~/.local/state/heimdall/collector.log

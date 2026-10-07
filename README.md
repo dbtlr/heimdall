@@ -19,28 +19,38 @@ bun run build:hub        # compile dist/heimdall-hub for this platform
 
 A pull request that changes what ships adds a changelog fragment in [`.changes/`](.changes/README.md). [Releasing](docs/releasing.md) covers fragments, cutting a release, and installing the binaries.
 
-The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. Run `bun test` from the repository root or from `packages/hub`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`.
+The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. The Collector's end-to-end pairing tests run against the same test Hub. Run `bun test` from the repository root, `packages/hub`, or `packages/collector`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`.
 
 ## Running the Collector
 
-`heimdall-collector run` samples the System's Vitals every 15 seconds and Pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, with the System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
+`heimdall-collector run` samples the System's Vitals every 15 seconds and Pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, as the System it paired as, with that System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
 
 Each setting comes from its flag, then its environment variable, then the configuration file:
 
 | Flag          | Variable             | File key   | Default                                                                 |
 | ------------- | -------------------- | ---------- | ----------------------------------------------------------------------- |
 | `--hub`       | `HEIMDALL_HUB`       | `hub`      | none                                                                    |
-| `--system`    | `HEIMDALL_SYSTEM`    | `system`   | none                                                                    |
-| `--token`     | `HEIMDALL_TOKEN`     | `token`    | none                                                                    |
 | `--state-dir` | `HEIMDALL_STATE_DIR` | `stateDir` | `~/Library/Application Support/heimdall` on macOS, `$XDG_STATE_HOME/heimdall` on Linux |
 
-The configuration file is the one `--config` names, or else `.config/heimdall/collector.toml` or `.config/heimdall/collector.json` in the working directory and then the home directory, which is `~/.config/heimdall/collector.toml`. Supply the token through the file or the variable, because a flag is visible in the process table.
+The configuration file is the one `--config` names, or else `.config/heimdall/collector.toml` or `.config/heimdall/collector.json` in the working directory and then the home directory, which is `~/.config/heimdall/collector.toml`. It holds no secret and is the same on every System:
 
 ```toml
 hub = "https://heimdall.example.ts.net/"
-system = "laptop-1"
-token = "…"
 ```
+
+### Pairing a new System
+
+The Collector learns which System it is, and the token it authenticates with, by pairing with the Hub once ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)):
+
+1. On the System that hosts the Hub, run `heimdall-hub pair <system>` with the new System's Fleet name, such as `laptop-1`. It prints a Pairing code such as `7K3M-Q9XA`.
+2. On the new System, run `heimdall-collector pair <code>` within 10 minutes. It reads the Hub's URL and the state directory the way `run` does, redeems the code, and prints `Paired as laptop-1.`
+3. Run `heimdall-collector service install` to start the Collector as a Service.
+
+[Pairing a System](#pairing-a-system) describes the codes and the Hub's side.
+
+`pair` keeps the System name and token, with the origin (scheme, host, and port) of the Hub that issued them, in `identity.json` in the state directory, readable by its owner alone, creating the directory private to its owner when it is missing, and writes it only after the Hub accepts the code. A refused or expired code, a Hub that has paused pairing, or a Hub it cannot reach exits 1 and leaves any identity it held as it was. `pair` never prints the code or the token. Pairing a paired System again rotates its token; restart a running Collector afterwards with `heimdall-collector service restart`.
+
+`run` refuses to start without an identity and says to run `heimdall-collector pair <code>`. The identity is bound to its Hub: when the configured `hub` has another origin, `run` refuses before it sends anything, so the token never reaches another Hub, and the System pairs again with the new Hub. A `hub` that differs only in its path, such as a trailing slash or a path prefix, is the same Hub. It warns, and still runs, when `identity.json` is not private: when group or others have any access to it, can write to the state directory, or when another user owns it. Wiping the state directory loses the identity as well as the queue, and the System pairs again.
 
 SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 130; queued samples stay on disk for the next start.
 
@@ -96,7 +106,7 @@ Each binary installs and supervises itself as a systemd user unit on Linux and a
 - `heimdall-hub service install --port N` first stores `port = N` in `~/.config/heimdall/hub.toml`, creating the file if it is missing. A file that already holds that port is left exactly as it is, and `install` refuses to create `hub.toml` beside an existing `hub.json`, which the new file would hide, so a file Fleet rendered stays as Fleet rendered it. No other setting goes through `install`.
 - On Linux, `uninstall` stops and disables the unit, deletes its file, and reloads the user manager. The config file, the log, and the Collector's queue stay.
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
-- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's adds its health from `GET http://<host>:<port>/api/health`, with the host and port the Hub reads from its config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds how many samples wait in its queue. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
+- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's adds its health from `GET http://<host>:<port>/api/health`, with the host and port the Hub reads from its config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, and how many samples wait in its queue. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
 The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; exit status 143 or 130, after SIGTERM or SIGINT, counts as a clean stop.
 

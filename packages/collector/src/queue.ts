@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { VitalsSampleSchema } from '@heimdall/schema';
 import type { VitalsSample } from '@heimdall/schema';
 
+import { parseJson } from './json.ts';
+
 // About 24 hours of 15-second samples: what an awake but offline System keeps.
 export const QUEUE_CAPACITY = 5760;
 
@@ -20,14 +22,6 @@ export type SampleQueue = {
 };
 
 type Row = { sample: string; t: number };
-
-const parseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-};
 
 export const openQueue = async ({
   capacity,

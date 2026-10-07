@@ -12,7 +12,14 @@ import { displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
 import { setPort } from './settings.ts';
-import { healthUrl, healthWords, probeHealth, queueWords, renderStatus } from './status.ts';
+import {
+  healthUrl,
+  healthWords,
+  probeHealth,
+  queueWords,
+  renderStatus,
+  systemWords,
+} from './status.ts';
 import type { HealthFetch } from './status.ts';
 import { UnitNotInstalledError } from './supervisor.ts';
 import type { Supervisor, UnitStatus } from './supervisor.ts';
@@ -20,12 +27,17 @@ import type { Supervisor, UnitStatus } from './supervisor.ts';
 type Env = Readonly<Record<string, string | undefined>>;
 
 // What differs between the two binaries' `service` commands. The Collector's
-// status counts its queue, which only the Collector knows how to read.
+// status names its paired System and counts its queue, which only the
+// Collector knows how to read.
 export type ServiceSpec =
   | { binary: 'hub'; version: string }
   | {
       binary: 'collector';
       defaultStateDir: (place: { env: Env; home: string; platform: NodeJS.Platform }) => string;
+      // The System the identity under `stateDir` names and the origin of the Hub
+      // it paired with, or undefined when it has none. It rejects, with a
+      // message that holds no secret, for an identity it cannot read.
+      pairedSystem: (stateDir: string) => Promise<{ hub: string; system: string } | undefined>;
       // The samples waiting in the queue under `stateDir`, or undefined when there is no queue yet.
       queueDepth: (stateDir: string) => Promise<number | undefined>;
       version: string;
@@ -67,6 +79,15 @@ const asGiven: StandardSchemaV1<unknown, unknown> = {
 const portOf = (value: unknown) => {
   const port = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN;
   return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
+};
+
+// The origin of a configured Hub URL, or undefined when it is not one.
+const originOf = (value: unknown) => {
+  if (typeof value !== 'string' || !URL.canParse(value)) {
+    return undefined;
+  }
+  const { origin } = new URL(value);
+  return origin === 'null' ? undefined : origin;
 };
 
 // The parts of a Loom action context the commands use.
@@ -253,7 +274,11 @@ export const serviceCommand = (
     return [['health', healthWords(answer, spec.version, url)] as const];
   };
 
-  const collectorQueue = async (place: ReturnType<typeof io>, stateDirSetting: unknown) => {
+  // The Collector's `system` and `queue` lines, read from the state directory `run` uses.
+  const collectorDetails = async (
+    place: ReturnType<typeof io>,
+    { hub, stateDir: stateDirSetting }: { hub?: unknown; stateDir?: unknown },
+  ) => {
     if (spec.binary !== 'collector') {
       return [];
     }
@@ -261,27 +286,30 @@ export const serviceCommand = (
       typeof stateDirSetting === 'string' && stateDirSetting !== ''
         ? stateDirSetting
         : spec.defaultStateDir({ env: place.env, home: place.home, platform: settings().platform });
-    try {
-      return [['queue', queueWords({ samples: await spec.queueDepth(stateDir) })] as const];
-    } catch (error) {
-      return [['queue', queueWords({ problem: describeError(error) })] as const];
-    }
+    const configured = originOf(hub);
+    const system = await spec.pairedSystem(stateDir).then(
+      (paired) => systemWords({ configured, paired }, program),
+      (error: unknown) => systemWords({ problem: describeError(error) }, program),
+    );
+    const queue = await spec.queueDepth(stateDir).then(
+      (samples) => queueWords({ samples }),
+      (error: unknown) => queueWords({ problem: describeError(error) }),
+    );
+    return [['system', system] as const, ['queue', queue] as const];
   };
 
   // Status always exits 0, whatever it finds: Fleet prints the text verbatim and
   // aborts on any other code.
   const status = async (
     context: Context,
-    setting: { host?: unknown; port?: unknown; stateDir?: unknown },
+    setting: { host?: unknown; hub?: unknown; port?: unknown; stateDir?: unknown },
   ) => {
     const place = io(context);
     const paths = servicePaths(binary, place.home);
     try {
       const unit = await unitStatus(place, paths.label);
       const details =
-        binary === 'hub'
-          ? await hubHealth(unit, setting)
-          : await collectorQueue(place, setting.stateDir);
+        binary === 'hub' ? await hubHealth(unit, setting) : await collectorDetails(place, setting);
       await place.print(
         renderStatus({
           details,
@@ -326,6 +354,13 @@ export const serviceCommand = (
             status(context, { host: context.options.host, port: context.options.port }),
           )
       : new Command('status', { description: statusDescription })
+          .option('hub', {
+            env: 'HEIMDALL_HUB',
+            extensions: [configInput({ path: 'hub' })],
+            hidden: true,
+            type: 'string',
+            validate: asGiven,
+          })
           .option('state-dir', {
             env: 'HEIMDALL_STATE_DIR',
             extensions: [configInput({ path: 'stateDir' })],
@@ -333,7 +368,12 @@ export const serviceCommand = (
             type: 'string',
             validate: asGiven,
           })
-          .action((context) => status(context, { stateDir: context.options['state-dir'] }));
+          .action((context) =>
+            status(context, {
+              hub: context.options.hub,
+              stateDir: context.options['state-dir'],
+            }),
+          );
 
   return new Command('service', {
     description: `Install, run, and report ${program} as a user Service.`,
