@@ -12,6 +12,7 @@ import { app } from './application.ts';
 import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
 import { testDatabase } from './testing/postgres.ts';
+import { storeToken } from './tokens.ts';
 import { versionLine } from './version.ts';
 
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
@@ -115,19 +116,49 @@ test('a stray argument is a usage error', async () => {
   expect(code).toBe(2);
 });
 
-test('serve migrates the database, ingests Reports, and lists Systems', async () => {
+// The Hub's configuration file for the database `db`, listening on a free port.
+const hubConfig = (db: { url: URL }) =>
+  configFile(['host = "127.0.0.1"', 'port = 0', '[database]', `url = "${db.url.href}"`]);
+
+const configArgs = (config: { path: string }) => ['--config', config.path];
+
+const SHOWN_CODE =
+  /Pairing code for (?<system>\S+): (?<code>[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4})\n/u;
+
+test('pair, before serve has ever run, prints a code for the System and when it expires', async () => {
   await using db = await testDatabase();
-  await using config = await configFile([
-    `database = "${db.url.href}"`,
-    'host = "127.0.0.1"',
-    'port = 0',
-    'tokens = ["laptop-1=laptop-s3cret"]',
-  ]);
+  await using config = await hubConfig(db);
+  const before = Date.now();
+
+  const { code, stderr, stdout } = await invoke(['pair', 'laptop-1', ...configArgs(config)]);
+
+  expect(stderr).toBe('');
+  expect(code).toBe(0);
+  const shown = SHOWN_CODE.exec(stdout)?.groups;
+  expect(shown?.system).toBe('laptop-1');
+  const expiry = /expires at (?<at>\S+Z)\./u.exec(stdout)?.groups?.at ?? '';
+  expect(Date.parse(expiry) - before).toBeGreaterThanOrEqual(10 * 60_000);
+  expect(Date.parse(expiry) - Date.now()).toBeLessThanOrEqual(10 * 60_000);
+  expect(stdout).toContain(`On laptop-1, run: heimdall-collector pair ${shown?.code ?? ''}`);
+});
+
+test('a System paired with pair redeems its code from serve, and its token ingests Reports', async () => {
+  await using db = await testDatabase();
+  await using config = await hubConfig(db);
+  const issued = await invoke(['pair', 'laptop-1', ...configArgs(config)]);
+  const shown = SHOWN_CODE.exec(issued.stdout)?.groups?.code ?? '';
+  let paired: { system?: string; token?: string } = {};
   let ingested = 0;
   let html = '';
 
-  const { code, stderr, stdout } = await invoke(['serve', '--config', config.path], {
+  const { code, stderr, stdout } = await invoke(['serve', ...configArgs(config)], {
     whileServing: async (hub) => {
+      const redeemed = await fetch(new URL('api/v1/pair', hub), {
+        body: JSON.stringify({ code: shown.toLowerCase() }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      });
+      paired = (await redeemed.json()) as typeof paired;
       const response = await fetch(new URL('api/v1/reports', hub), {
         body: JSON.stringify({
           collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
@@ -136,7 +167,10 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
           sentAt: Date.now(),
           system: 'laptop-1',
         }),
-        headers: { authorization: 'Bearer laptop-s3cret', 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${paired.token ?? ''}`,
+          'content-type': 'application/json',
+        },
         method: 'POST',
       });
       ingested = response.status;
@@ -144,11 +178,118 @@ test('serve migrates the database, ingests Reports, and lists Systems', async ()
     },
   });
 
+  expect(paired.system).toBe('laptop-1');
   expect(ingested).toBe(200);
   expect(html).toContain('laptop-1');
-  expect(stdout).not.toContain('laptop-s3cret');
-  expect(stderr).not.toContain('laptop-s3cret');
+  expect(stdout).toContain('for 0 Systems.');
+  expect(stdout).not.toContain(paired.token ?? 'no token');
+  expect(stderr).toBe('');
   expect(code).toBe(130);
+});
+
+test('serve counts the paired Systems as it starts', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
+  await storeToken(db.sql, { pairedAt: Date.now(), system: 'server-1', token: 'server-token' });
+  await using config = await hubConfig(db);
+
+  const { stdout } = await invoke(['serve', ...configArgs(config)]);
+
+  expect(stdout).toMatch(/Listening on http:\/\/127\.0\.0\.1:\d+\/ for 2 Systems\.\n/u);
+});
+
+test('pair for a System that is paired says its token works until the new code is redeemed', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
+  await using config = await hubConfig(db);
+
+  const { code, stdout } = await invoke(['pair', 'laptop-1', ...configArgs(config)]);
+
+  expect(stdout).toContain(
+    'laptop-1 is paired already. Its token works until this code is redeemed.',
+  );
+  expect(code).toBe(0);
+});
+
+test.each([['LAPTOP_1'], ['laptop-'], ['laptop.example']])(
+  'pair %p, which is no System name, is a usage error',
+  async (system) => {
+    const { code, stderr } = await invoke(['pair', system, '--database', 'postgres://db/heimdall']);
+
+    expect(stderr).toContain('Fleet System name');
+    expect(code).toBe(2);
+  },
+);
+
+test('pair without a System is a usage error', async () => {
+  const { code } = await invoke(['pair', '--database', 'postgres://db/heimdall']);
+
+  expect(code).toBe(2);
+});
+
+test('unpair revokes a paired System and says its history stays', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
+  await using config = await hubConfig(db);
+
+  const { code, stdout } = await invoke(['unpair', 'laptop-1', ...configArgs(config)]);
+
+  expect(stdout).toBe(
+    'Unpaired laptop-1. Its token no longer authenticates Reports; its history stays.\n',
+  );
+  expect(code).toBe(0);
+  expect((await invoke(['serve', ...configArgs(config)])).stdout).toContain('for 0 Systems.');
+});
+
+test('unpair of a System with only a pending code withdraws the code', async () => {
+  await using db = await testDatabase();
+  await using config = await hubConfig(db);
+  await invoke(['pair', 'laptop-1', ...configArgs(config)]);
+
+  const { code, stdout } = await invoke(['unpair', 'laptop-1', ...configArgs(config)]);
+
+  expect(stdout).toBe('laptop-1 was not paired. Withdrew its pending Pairing code.\n');
+  expect(code).toBe(0);
+});
+
+test('unpair of a System that is not paired says so and exits 1', async () => {
+  await using db = await testDatabase();
+  await using config = await hubConfig(db);
+
+  const { code, stderr } = await invoke(['unpair', 'laptop-1', ...configArgs(config)]);
+
+  expect(stderr).toContain('laptop-1 is not paired.');
+  expect(code).toBe(1);
+});
+
+test('pair and unpair read the database from HEIMDALL_DATABASE_URL', async () => {
+  await using db = await testDatabase();
+
+  const paired = await invoke(['pair', 'laptop-1'], {
+    env: { HEIMDALL_DATABASE_URL: db.url.href },
+  });
+  const unpaired = await invoke(['unpair', 'laptop-1'], {
+    env: { HEIMDALL_DATABASE_URL: db.url.href },
+  });
+
+  expect(paired.code).toBe(0);
+  expect(unpaired.code).toBe(0);
+});
+
+test('pair names the database as the problem when it cannot reach it', async () => {
+  const { code, stderr } = await invoke([
+    'pair',
+    'laptop-1',
+    '--database',
+    'postgres://heimdall:db-s3cret@127.0.0.1:1/heimdall',
+  ]);
+
+  expect(stderr).toContain('Could not reach the database');
+  expect(stderr).not.toContain('db-s3cret');
+  expect(code).toBe(1);
 });
 
 // A database that already holds a 20-day-old sample for laptop-1, which a
@@ -175,10 +316,10 @@ const serveArgs = (config: { path: string }) => ['serve', '--config', config.pat
 test('serve prunes old Vitals as it starts, and says nothing about it', async () => {
   await using db = await databaseWithOldSample();
   await using config = await configFile([
-    `database = "${db.url.href}"`,
     'host = "127.0.0.1"',
     'port = 0',
-    'tokens = ["laptop-1=laptop-s3cret"]',
+    '[database]',
+    `url = "${db.url.href}"`,
   ]);
 
   const { code, stderr, stdout } = await invoke(serveArgs(config));
@@ -201,10 +342,10 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
     FOR EACH ROW EXECUTE FUNCTION refuse_delete()
   `;
   await using config = await configFile([
-    `database = "${db.url.href}"`,
     'host = "127.0.0.1"',
     'port = 0',
-    'tokens = ["laptop-1=laptop-s3cret"]',
+    '[database]',
+    `url = "${db.url.href}"`,
   ]);
   let html = '';
 
@@ -228,10 +369,10 @@ const timestampedFatal = (message: string) =>
 test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
   await using db = await databaseWithOldSample();
   await using config = await configFile([
-    `database = "${db.url.href}"`,
     'host = "127.0.0.1"',
     'port = 0',
-    'tokens = ["laptop-1=laptop-s3cret"]',
+    '[database]',
+    `url = "${db.url.href}"`,
   ]);
 
   const { stdout } = await invoke(serveArgs(config));
@@ -246,10 +387,10 @@ test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
 test('serve rotates a log from before timestamps as it starts', async () => {
   await using db = await testDatabase();
   await using config = await configFile([
-    `database = "${db.url.href}"`,
     'host = "127.0.0.1"',
     'port = 0',
-    'tokens = ["laptop-1=laptop-s3cret"]',
+    '[database]',
+    `url = "${db.url.href}"`,
   ]);
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const logDir = join(home, '.local', 'state', 'heimdall');
@@ -292,12 +433,7 @@ test('serve finds the configuration file under ~/.config/heimdall/ when --config
     await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
     await writeFile(
       join(home, '.config', 'heimdall', 'hub.toml'),
-      [
-        `database = "${db.url.href}"`,
-        'host = "127.0.0.1"',
-        'port = 0',
-        'tokens = ["laptop-1=laptop-s3cret"]',
-      ].join('\n'),
+      ['host = "127.0.0.1"', 'port = 0', '[database]', `url = "${db.url.href}"`].join('\n'),
     );
     let html = '';
 
@@ -318,38 +454,34 @@ test('serve finds the configuration file under ~/.config/heimdall/ when --config
 });
 
 test('serve without a database is a usage error that names the option', async () => {
-  const { code, stderr } = await invoke(['serve', '--token', 'laptop-1=t']);
+  const { code, stderr } = await invoke(['serve']);
 
   expect(stderr).toContain('--database');
   expect(code).toBe(2);
 });
 
-test('serve with a token entry that names no System is a usage error', async () => {
-  const { code, stderr } = await invoke([
-    'serve',
-    '--database',
-    'postgres://localhost/heimdall',
-    '--token',
-    'just-a-token',
-  ]);
+// Before pairing, the database URL was a top-level key (ADR-0009).
+test('serve reads the database only from [database] url, not a top-level database key', async () => {
+  await using db = await testDatabase();
+  await using config = await configFile([`database = "${db.url.href}"`, 'port = 0']);
 
-  expect(stderr).toContain('system=token');
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  expect(stderr).toContain('--database');
   expect(code).toBe(2);
 });
 
-test('serve refuses two Systems that share a token', async () => {
+test('serve takes no --token: Systems pair instead', async () => {
   const { code, stderr } = await invoke([
     'serve',
     '--database',
     'postgres://localhost/heimdall',
     '--token',
-    'server-1=same',
-    '--token',
-    'laptop-1=same',
+    'laptop-1=t',
   ]);
 
-  expect(stderr).toMatch(timestampedFatal('server-1 and laptop-1 share a token'));
-  expect(code).toBe(1);
+  expect(stderr).toContain('--token');
+  expect(code).toBe(2);
 });
 
 test('serve names the database as the problem when it cannot reach it', async () => {
@@ -357,8 +489,6 @@ test('serve names the database as the problem when it cannot reach it', async ()
     'serve',
     '--database',
     'postgres://heimdall:db-s3cret@127.0.0.1:1/heimdall',
-    '--token',
-    'laptop-1=t',
   ]);
 
   expect(stderr).toMatch(timestampedFatal('Could not prepare the database'));

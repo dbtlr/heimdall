@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Report, Vitals, Session, Condition, Last seen, and Timeline, plus the Fleet terms it borrows."
+description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Report, Vitals, Session, Condition, Last seen, Timeline, Pairing, and Pairing code, plus the Fleet terms it borrows."
 ---
 
 # Glossary
@@ -43,3 +43,11 @@ _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 **Timeline**:
 A System's history of Conditions being raised and cleared, newest Condition first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
 _Avoid_: event feed, event log (a Report is never an event)
+
+**Pairing**:
+How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it and keeps the System's history.
+_Avoid_: enrollment, registration, provisioning (Fleet's install, not Heimdall's identity)
+
+**Pairing code**:
+A short, single-use code the Hub issues for one System's Pairing, valid for minutes. It carries no identity until the Hub redeems it.
+_Avoid_: token (the lasting credential a Collector sends with each Report), key, password

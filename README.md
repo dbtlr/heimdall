@@ -46,27 +46,40 @@ SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 13
 
 ## Running the Hub
 
-`heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports` and serves a page at `/` that lists every System with its last-seen time, status, and newest Vitals, followed by each System's Timeline of its latest 10 Conditions raised and cleared.
+`heimdall-hub serve` applies any pending database migrations, then listens for Reports at `POST /api/v1/reports`, redeems Pairing codes at `POST /api/v1/pair`, and serves a page at `/` that lists every System with its last-seen time, status, and newest Vitals, followed by each System's Timeline of its latest 10 Conditions raised and cleared. Its first line names the address it listens on and how many Systems are paired.
 
 About once an hour, `serve` deletes raw Vitals samples older than 14 days and rollups older than a year, and logs only when that fails.
 
 `GET /api/health` needs no token. It answers `200` with `{"database":"ok","version":"<version>"}` when the database answers a trivial query, and `503` with `{"database":"not answering","version":"<version>"}` when it fails or takes more than 2 seconds. Fleet's health check polls it, and `version` is the release `--version` prints.
 
-| Flag         | Variable                | File key   | Default     |
-| ------------ | ----------------------- | ---------- | ----------- |
-| `--database` | `HEIMDALL_DATABASE_URL` | `database` | none        |
-| `--host`     | `HEIMDALL_HOST`         | `host`     | `127.0.0.1` |
-| `--port`     | `HEIMDALL_PORT`         | `port`     | `8080`      |
-| `--token`    | none                    | `tokens`   | none        |
+| Flag         | Variable                | File key         | Default     |
+| ------------ | ----------------------- | ---------------- | ----------- |
+| `--database` | `HEIMDALL_DATABASE_URL` | `[database] url` | none        |
+| `--host`     | `HEIMDALL_HOST`         | `host`           | `127.0.0.1` |
+| `--port`     | `HEIMDALL_PORT`         | `port`           | `8080`      |
 
-The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Each token entry is `system=token`, one per System. No two Systems may share a token, and a token holds no whitespace. Supply tokens through the file, because a flag is visible in the process table.
+`pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Top-level keys come before the `[database]` table:
 
 ```toml
-database = "postgres://heimdall@localhost/heimdall"
-tokens = ["laptop-1=…", "server-1=…"]
+host = "127.0.0.1"
+port = 8080
+
+[database]
+url = "postgres://heimdall@localhost/heimdall"
 ```
 
-The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing token, 403 for a token no System holds or a Report that names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)). A Report rejected with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports rejected Condition until a Report from it is stored ([ADR-0005](docs/decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
+### Pairing a System
+
+Each System pairs with the Hub once, and the Hub keeps only SHA-256 hashes of the tokens and codes it issues ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)). Pairing works whether `serve` runs or not, and needs no restart.
+
+1. On the System that hosts the Hub, run `heimdall-hub pair <system>` with the System's Fleet name, such as `laptop-1`. It prints a Pairing code such as `7K3M-Q9XA` and when the code expires.
+2. On that System, run `heimdall-collector pair <code>` within 10 minutes. The Collector redeems the code and keeps the System name and token it receives.
+
+A code redeems once, reads in any case with the dash optional, and expires 10 minutes after it is issued. A later `pair` for the same System replaces its unredeemed code. `pair` for a System that is paired already rotates its token: the old token works until the new code is redeemed. `heimdall-hub unpair <system>` revokes the System's token and withdraws its pending code, and keeps its history on the page. It exits 1 when the System holds neither. Like `serve`, `pair` and `unpair` first apply any pending database migrations.
+
+`POST /api/v1/pair` needs no token. It takes `{"code":"7K3M-Q9XA"}` and answers `200` with `{"system":"laptop-1","token":"…"}`, where the token is 32 random bytes in base64url. Every failure, whether the code is malformed, unknown, expired, or already used, answers `400` with `{"error":"invalid or expired code"}`. After 10 failed redemptions in a rolling minute across the Hub, it answers `429` with a `Retry-After` header and does not read the code until a failure ages out. Successful redemptions do not count.
+
+The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing token, 403 for a token no paired System holds or a Report that names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)). A Report rejected with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports rejected Condition until a Report from it is stored ([ADR-0005](docs/decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
 
 SIGTERM or SIGINT stops the Hub with exit status 143 or 130.
 

@@ -6,9 +6,7 @@ import { setPort, withPort } from './settings.ts';
 import { tempHome } from './testing.ts';
 
 test('a file with no port gains one', () => {
-  expect(withPort('database = "postgres://localhost/heimdall"\n', 9090)).toBe(
-    'database = "postgres://localhost/heimdall"\nport = 9090\n',
-  );
+  expect(withPort('host = "0.0.0.0"\n', 9090)).toBe('host = "0.0.0.0"\nport = 9090\n');
 });
 
 test('an empty file gains the port alone', () => {
@@ -23,12 +21,10 @@ test('a top-level port with another value is replaced in place', () => {
 
 test('the port goes in as a top-level key, before the first table', () => {
   const before = [
-    'database = "postgres://localhost/heimdall"',
-    'tokens = [',
-    '  "laptop-1=a",',
-    ']',
+    'host = "0.0.0.0"',
     '',
-    '[later]',
+    '[database]',
+    'url = "postgres://localhost/heimdall"',
     'port = 1',
     '',
   ].join('\n');
@@ -37,22 +33,19 @@ test('the port goes in as a top-level key, before the first table', () => {
 
   expect(after).toBe(
     [
-      'database = "postgres://localhost/heimdall"',
-      'tokens = [',
-      '  "laptop-1=a",',
-      ']',
+      'host = "0.0.0.0"',
       'port = 9090',
       '',
-      '[later]',
+      '[database]',
+      'url = "postgres://localhost/heimdall"',
       'port = 1',
       '',
     ].join('\n'),
   );
   expect(Bun.TOML.parse(after ?? '')).toEqual({
-    database: 'postgres://localhost/heimdall',
-    later: { port: 1 },
+    database: { port: 1, url: 'postgres://localhost/heimdall' },
+    host: '0.0.0.0',
     port: 9090,
-    tokens: ['laptop-1=a'],
   });
 });
 
@@ -83,7 +76,8 @@ test('setPort leaves a file that already holds the value untouched, byte for byt
   await using home = await tempHome();
   const file = join(home.path, 'hub.toml');
   // Odd spacing and a comment that a rewrite would not reproduce.
-  const rendered = 'database = "postgres://db/heimdall"\nport   =   9090   # rendered by Fleet\n';
+  const rendered =
+    'port   =   9090   # rendered by Fleet\n\n[database]\nurl = "postgres://db/heimdall"\n';
   await writeFile(file, rendered);
   const before = await stat(file);
 
@@ -107,7 +101,7 @@ test('setPort rewrites a file whose port differs', async () => {
 test('setPort refuses to create hub.toml beside a hub.json, which it would shadow', async () => {
   await using home = await tempHome();
   const json = join(home.path, 'hub.json');
-  await writeFile(json, '{"database":"postgres://db/heimdall"}');
+  await writeFile(json, '{"database":{"url":"postgres://db/heimdall"}}');
 
   const error = await setPort(join(home.path, 'hub.toml'), 9090).then(
     () => undefined,
@@ -116,5 +110,5 @@ test('setPort refuses to create hub.toml beside a hub.json, which it would shado
 
   expect(String(error)).toContain('hub.json holds the settings');
   expect(await Bun.file(join(home.path, 'hub.toml')).exists()).toBe(false);
-  expect(await readFile(json, 'utf8')).toBe('{"database":"postgres://db/heimdall"}');
+  expect(await readFile(json, 'utf8')).toBe('{"database":{"url":"postgres://db/heimdall"}}');
 });

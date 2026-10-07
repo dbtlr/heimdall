@@ -4,15 +4,14 @@ import { every, homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimda
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
-import { SQL } from 'bun';
 
 import type { serve } from './application.ts';
+import { openDatabase } from './database.ts';
 import { createHub } from './hub.ts';
 import { migrate } from './migrations.ts';
 import { pruneVitals } from './retention.ts';
-import { tokenTable } from './tokens.ts';
+import { pairedSystemCount } from './tokens.ts';
 
-const STATEMENT_TIMEOUT_MS = 30_000;
 const PRUNE_INTERVAL_MS = 3_600_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
@@ -57,22 +56,7 @@ const serveUntilStopped = async ({
   options: Parameters<ActionHandler<typeof serve>>[0]['options'];
   signal: AbortSignal;
 }) => {
-  // Refuse an ambiguous token list before touching the database.
-  const loadTokens = () => {
-    try {
-      return tokenTable(options.token);
-    } catch (error) {
-      return log.fatal(clean(describeError(error)));
-    }
-  };
-  const tokens = loadTokens();
-
-  // The Collector gives up on a Push after 30 seconds, so a statement still
-  // running past that, such as one waiting on a lock, only holds a connection.
-  const sql = new SQL({
-    connection: { statement_timeout: STATEMENT_TIMEOUT_MS },
-    url: options.database.href,
-  });
+  const sql = openDatabase(options.database);
   try {
     // PostgreSQL's messages name the host and role, never the password.
     const applied = await migrate(sql).catch((error: unknown) =>
@@ -87,15 +71,13 @@ const serveUntilStopped = async ({
         void log.warn(clean(`Could not answer a request: ${describeError(error)}`));
       },
       sql,
-      tokens,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
     // Pruning is routine, so only a failure is logged, and the next hour tries again.
     let stopPruning: (() => Promise<void>) | undefined;
     try {
-      await log.info(
-        clean(`Listening on ${server.url.href} for ${systemCount(options.token.length)}.`),
-      );
+      const paired = await pairedSystemCount(sql);
+      await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
       stopPruning = every({
         intervalMs: PRUNE_INTERVAL_MS,
         onError: (error) => {

@@ -206,7 +206,14 @@ test('reasons are escaped on the page and the Timeline', async () => {
 
 test('a rejection the database cannot record is still answered as rejected', async () => {
   await using h = await startHub();
-  await h.db.sql.close();
+  await h.db.sql`
+    CREATE FUNCTION refuse_condition() RETURNS trigger LANGUAGE plpgsql
+    AS $$ BEGIN RAISE EXCEPTION 'condition refused'; END $$
+  `;
+  await h.db.sql`
+    CREATE TRIGGER refuse BEFORE INSERT ON conditions
+    FOR EACH ROW EXECUTE FUNCTION refuse_condition()
+  `;
 
   const invalidReport = await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
   const otherSystem = await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });

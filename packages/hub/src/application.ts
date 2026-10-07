@@ -1,3 +1,4 @@
+import { SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
@@ -7,28 +8,31 @@ import { version } from '@loomcli/plugins/version';
 import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
 import { integer, text, url } from '@loomcli/validators';
 
+import { pairAction, unpairAction } from './pair-commands.ts';
 import { serveAction } from './serve.ts';
-import { TokenEntrySchema } from './tokens.ts';
 import { HUB_VERSION, versionLine } from './version.ts';
 
 // SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops
 // listening and closes its database connections.
 const signals = () => plugin('@heimdall/hub/signals', { signals: ['SIGINT', 'SIGTERM'] });
 
+// The database every command opens, from its flag, then its variable, then
+// `[database] url` in the configuration file, where Fleet's secret path reaches it.
+const database = {
+  description: 'PostgreSQL connection URL.',
+  env: 'HEIMDALL_DATABASE_URL',
+  extensions: [configInput({ path: 'database.url' })],
+  required: true,
+  type: 'string',
+  validate: url({ protocols: ['postgres', 'postgresql'] }),
+} as const;
+
 // Each `serve` setting comes from its flag, then its variable, then the
-// configuration file. The token list has no variable; Fleet renders it into the
-// file. The flag is for local runs and shows tokens in the process table.
+// configuration file.
 export const serve = new Command('serve', {
   description: 'Accept Reports from Collectors and serve the page of Systems.',
 })
-  .option('database', {
-    description: 'PostgreSQL connection URL.',
-    env: 'HEIMDALL_DATABASE_URL',
-    extensions: [configInput({ path: 'database' })],
-    required: true,
-    type: 'string',
-    validate: url({ protocols: ['postgres', 'postgresql'] }),
-  })
+  .option('database', database)
   .option('host', {
     default: '127.0.0.1',
     description: 'Address to listen on.',
@@ -45,15 +49,29 @@ export const serve = new Command('serve', {
     type: 'string',
     validate: integer({ max: 65_535, min: 0 }),
   })
-  .option('token', {
-    description: "A System's ingest token as system=token, once per System. Prefer the file.",
-    extensions: [configInput({ path: 'tokens' })],
-    multiple: true,
-    required: true,
-    type: 'string',
-    validate: TokenEntrySchema,
-  })
   .action(serveAction);
+
+// The System a `pair` or `unpair` names, by Fleet's System name rule.
+const system = {
+  description: 'The Fleet System name, such as laptop-1.',
+  required: true,
+  validate: text({ message: 'Use a Fleet System name, such as laptop-1.', pattern: SYSTEM_NAME }),
+} as const;
+
+export const pair = new Command('pair', {
+  description:
+    'Issue a Pairing code for a System. On that System, heimdall-collector pair <code> redeems it.',
+})
+  .argument('system', system)
+  .option('database', database)
+  .action(pairAction);
+
+export const unpair = new Command('unpair', {
+  description: "Revoke a System's token and any pending Pairing code. Its history stays.",
+})
+  .argument('system', system)
+  .option('database', database)
+  .action(unpairAction);
 
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
@@ -65,4 +83,6 @@ export const app = new Application('heimdall-hub', {
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],
 })
   .command(serve)
+  .command(pair)
+  .command(unpair)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

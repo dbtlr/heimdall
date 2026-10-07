@@ -21,3 +21,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0006 — Releases ship both binaries per platform, installed by one script each](0006-releases-ship-both-binaries-installed-by-script.md)
 - [ADR-0007 — Each binary installs and supervises its own Service, and its config file is the one home for its settings](0007-binaries-own-their-service-config-file-holds-settings.md)
 - [ADR-0008 — Vitals roll up into 5-minute buckets as they arrive, and serve prunes on a timer](0008-vitals-roll-up-as-they-arrive-serve-prunes.md)
+- [ADR-0009 — Collectors pair with the Hub, and tokens live in the Hub's database](0009-collectors-pair-with-the-hub.md)
