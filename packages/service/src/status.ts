@@ -81,6 +81,28 @@ export const queueWords = (
   return `${String(depth.samples)} ${depth.samples === 1 ? 'sample' : 'samples'} waiting`;
 };
 
+// The Collector's `system` line: the System it is paired as and the Hub it
+// paired with, a mismatch with the configured Hub's origin, or how to pair.
+// It never names the token.
+export const systemWords = (
+  identity:
+    | { configured: string | undefined; paired: { hub: string; system: string } | undefined }
+    | { problem: string },
+  program: string,
+): string => {
+  const pairing = `run ${program} pair <code>`;
+  if ('problem' in identity) {
+    return `not paired (${identity.problem}); ${pairing}`;
+  }
+  const { configured, paired } = identity;
+  if (paired === undefined) {
+    return `not paired; ${pairing}`;
+  }
+  return configured === undefined || configured === paired.hub
+    ? `${paired.system} (paired with ${paired.hub})`
+    : `${paired.system}, paired with ${paired.hub} but configured for ${configured}; pair again`;
+};
+
 export type StatusReport = {
   details: (readonly [string, string])[];
   home: string;

@@ -1,4 +1,3 @@
-import { SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
@@ -9,6 +8,8 @@ import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
 import { text, url } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { readIdentity } from './identity.ts';
+import { pairAction } from './pair.ts';
 import { countWaiting } from './queue.ts';
 import { runAction } from './run.ts';
 import { defaultStateDir } from './state-dir.ts';
@@ -18,43 +19,60 @@ import { versionLine } from './version.ts';
 // `run` stops between samples with its queue closed cleanly.
 const signals = () => plugin('@heimdall/collector/signals', { signals: ['SIGINT', 'SIGTERM'] });
 
-// Each `run` setting comes from its flag, then its variable, then the
-// configuration file, so Fleet can render one file and keep the token out of argv.
+// The Hub's base URL, from its flag, then its variable, then the top-level
+// `hub` key, which holds no secret and is the same on every System.
+const hub = {
+  description: 'Base URL of the Hub.',
+  env: 'HEIMDALL_HUB',
+  extensions: [configInput({ path: 'hub' })],
+  required: true,
+  type: 'string',
+  validate: url({ protocols: ['http', 'https'] }),
+} as const;
+
+// Where the queue and the identity live, read the same way.
+const stateDir = {
+  description:
+    'Directory for the sample queue and the identity. Defaults to the per-user state directory.',
+  env: 'HEIMDALL_STATE_DIR',
+  extensions: [configInput({ path: 'stateDir' })],
+  type: 'string',
+  validate: text(),
+} as const;
+
+// `run` reports as the System `pair` stored in the state directory.
 export const run = new Command('run', {
   description: 'Sample this System every 15 seconds and push queued Reports to the Hub.',
 })
-  .option('hub', {
-    description: 'Base URL of the Hub.',
-    env: 'HEIMDALL_HUB',
-    extensions: [configInput({ path: 'hub' })],
-    required: true,
-    type: 'string',
-    validate: url({ protocols: ['http', 'https'] }),
-  })
-  .option('system', {
-    description: 'The Fleet System this Collector reports for.',
-    env: 'HEIMDALL_SYSTEM',
-    extensions: [configInput({ path: 'system' })],
-    required: true,
-    type: 'string',
-    validate: text({ message: 'Use a Fleet System name, such as laptop-1.', pattern: SYSTEM_NAME }),
-  })
-  .option('token', {
-    description: "The System's ingest token. Prefer the file or the variable to this flag.",
-    env: 'HEIMDALL_TOKEN',
-    extensions: [configInput({ path: 'token' })],
-    required: true,
-    type: 'string',
-    validate: text(),
-  })
-  .option('state-dir', {
-    description: 'Directory for the sample queue. Defaults to the per-user state directory.',
-    env: 'HEIMDALL_STATE_DIR',
-    extensions: [configInput({ path: 'stateDir' })],
-    type: 'string',
-    validate: text(),
-  })
+  .option('hub', hub)
+  .option('state-dir', stateDir)
   .action(runAction);
+
+export const pair = new Command('pair', {
+  description:
+    "Redeem a Pairing code from heimdall-hub pair and keep this System's name and token.",
+})
+  .argument('code', {
+    description: 'The Pairing code heimdall-hub pair printed, such as 7K3M-Q9XA.',
+    required: true,
+    validate: text({ minLength: 1 }),
+  })
+  .option('hub', hub)
+  .option('state-dir', stateDir)
+  .action(pairAction);
+
+// The System `service status` names, with the Hub it paired with: undefined
+// when unpaired, and a rejection that names the file, never its content, when
+// the identity is not valid.
+const pairedSystem = async (dir: string) => {
+  const read = await readIdentity(dir);
+  if (read.kind === 'invalid') {
+    throw new Error(read.problem);
+  }
+  return read.kind === 'paired'
+    ? { hub: read.identity.hub, system: read.identity.system }
+    : undefined;
+};
 
 // The `heimdall-collector` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-collector', {
@@ -71,10 +89,12 @@ export const app = new Application('heimdall-collector', {
   views: [override(loomVersionLine, { render: () => `${versionLine()}\n` })],
 })
   .command(run)
+  .command(pair)
   .command(
     serviceCommand({
       binary: 'collector',
       defaultStateDir,
+      pairedSystem,
       queueDepth: countWaiting,
       version: packageJson.version,
     }),

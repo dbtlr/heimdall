@@ -19,6 +19,9 @@
         "@loomcli/plugins": "0.8.0",
         "@loomcli/validators": "0.8.0",
       },
+      "devDependencies": {
+        "@heimdall/hub": "workspace:*",
+      },
     },
     "packages/hub": {
       "name": "@heimdall/hub",

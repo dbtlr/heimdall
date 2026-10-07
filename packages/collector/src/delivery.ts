@@ -14,13 +14,13 @@ export type Delivery =
 const HTTP_UNPROCESSABLE = 422;
 const SEND_TIMEOUT_MS = 30_000;
 
-// The ingest endpoint under the Hub's base URL, which may carry a path prefix.
-const ingestUrl = (hub: URL) => {
+// The Hub endpoint at `path` under the Hub's base URL, which may carry a path prefix.
+export const hubEndpoint = (hub: URL, path: string) => {
   const base = new URL(hub);
   if (!base.pathname.endsWith('/')) {
     base.pathname += '/';
   }
-  return new URL('api/v1/reports', base);
+  return new URL(path, base);
 };
 
 // Pushes one Report to the Hub's ingest endpoint and reads the answer.
@@ -38,7 +38,7 @@ export const sendReport = async ({
   const timeout = AbortSignal.timeout(SEND_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(ingestUrl(hub), {
+    response = await fetch(hubEndpoint(hub, 'api/v1/reports'), {
       body: JSON.stringify(report),
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       method: 'POST',

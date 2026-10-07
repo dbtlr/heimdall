@@ -2,17 +2,12 @@ import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 
 import { issueCode, unpair } from './pairing.ts';
-import { NOW, page, push, redeem, report, startHub } from './testing/hub.ts';
-
-type Hub = Awaited<ReturnType<typeof startHub>>;
+import { issue, NOW, page, push, redeem, report, startHub } from './testing/hub.ts';
+import type { Hub } from './testing/hub.ts';
 
 const MINUTE = 60_000;
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest();
-
-// Issues a code for `system` at the Hub's current time.
-const issue = async (h: Hub, system: string) =>
-  (await issueCode(h.db.sql, { now: h.clock.now, system })).code;
 
 // Redeems `code` and answers the System and token, failing the test otherwise.
 const pairWith = async (h: Hub, code: string) => {

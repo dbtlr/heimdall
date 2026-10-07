@@ -6,6 +6,7 @@ import { sample } from '@heimdall/schema/testing';
 
 import { createHub } from '../hub.ts';
 import { migrate } from '../migrations.ts';
+import { issueCode } from '../pairing.ts';
 import { storeToken } from '../tokens.ts';
 import { testDatabase } from './postgres.ts';
 
@@ -29,6 +30,12 @@ export const startHub = async () => {
   });
   return { clock, db, errors, hub, [Symbol.asyncDispose]: () => db[Symbol.asyncDispose]() };
 };
+
+export type Hub = Awaited<ReturnType<typeof startHub>>;
+
+// Issues a Pairing code for `system` at the Hub's current time, as `heimdall-hub pair` does.
+export const issue = async (h: Hub, system: string) =>
+  (await issueCode(h.db.sql, { now: h.clock.now, system })).code;
 
 export const report = (system: string, times: number[]): Report => ({
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
