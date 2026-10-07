@@ -218,7 +218,7 @@ Fleet's Service Units require a Linux System, so Fleet cannot yet run the Collec
 Fleet renders no token. An operator pairs each System with the Hub once, and the Hub keeps only hashes of the tokens it issues ([ADR-0009](decisions/0009-collectors-pair-with-the-hub.md)):
 
 1. On the System that hosts the Hub, run `heimdall-hub pair laptop-1`, with the System's Fleet name. It prints a Pairing code such as `7K3M-Q9XA`, valid for 10 minutes.
-2. On `laptop-1`, run `heimdall-collector pair 7K3M-Q9XA`. The Collector redeems the code and keeps the System name and token in `identity.json` in its state directory, readable by its owner alone. It prints `Paired as laptop-1.`
+2. On `laptop-1`, run `heimdall-collector pair 7K3M-Q9XA`. The Collector redeems the code and keeps the System name and token in `identity.json` in its state directory, which `pair` writes readable by its owner alone. If the file or directory later becomes readable or writable by others, `run` warns and carries on. It prints `Paired as laptop-1.`
 3. On `laptop-1`, run `heimdall-collector service restart`, or `service install` when Fleet has not installed the Service yet.
 
 Until a System is paired, its Collector refuses to run and `service status` says `not paired`. The Hub's own System pairs the same way, with both commands run there. Pairing needs no Hub restart.
