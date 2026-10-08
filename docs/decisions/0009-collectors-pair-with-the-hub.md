@@ -48,3 +48,4 @@ Code hashes are unsalted SHA-256 over 40 bits, so anyone who can read the Hub's 
 
 - 2026-10-07: Accepted. The Hub side landed in HMD-27 and the Collector side in HMD-28.
 - 2026-10-08: Clarification. Read access to the Hub's database, which this decision treats as trusted, now also exposes Session transcripts ([ADR-0012](0012-hub-archives-agent-session-transcripts.md)). The decision is unchanged.
+- 2026-10-08: Clarification. `collector.toml` is the same on every System only until a System turns off Session transcript capture, a per-System setting in that file ([ADR-0012](0012-hub-archives-agent-session-transcripts.md)). The decision is unchanged.

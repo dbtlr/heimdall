@@ -1,7 +1,7 @@
 ---
 type: adr
 title: ADR-0011 - Collectors hold what provisioners record, and Heimdall stores no declarations
-description: "Any provisioner tells a System's Collector what it installed through the Collector's command line, and the Collector keeps those records in its own state, checks each against the System, and reports both to the Hub. Heimdall compares recorded state with observed state on one System; comparing declarations with records belongs to the provisioner, which can read the Hub's inventory. Supersedes ADR-0010."
+description: "Any provisioner tells a System's Collector what it installed through the Collector's command line, and the Collector keeps those records in its own state, checks each against the System, and reports both to the Hub. Heimdall compares recorded state with observed state on one System; comparing declarations with records belongs to the provisioner, which can read the records the Hub mirrors. Supersedes ADR-0010."
 status: accepted
 created: 2026-10-08
 modified: 2026-10-08
@@ -30,7 +30,7 @@ Heimdall's repository is public, and the problems it observes are not specific t
   - `files`: paths and their hashes, recorded after a provisioner writes them.
 
   A record may carry provenance, such as the provisioner's name and revision, which Heimdall shows and never compares.
-- **The Collector reads no provisioner's files.** Fleet's `manifest.json` included: a provisioner that wants Drift reported records the files it writes.
+- **The Collector reads no file a provisioner keeps as its own record,** Fleet's `manifest.json` included. A provisioner that wants Drift reported records the files it writes, and the Collector hashes those files.
 - **Every record is optional.** A System that no provisioner records anything on still reports Vitals and Sessions. Each kind adds its checks only when something of that kind is recorded.
 - **Heimdall compares recorded state with observed state on one System.** The Collector checks each record against the System and reports the records with the checks: a Service's supervisor state and health, whose URL it requests only on loopback; each job's runs; and each recorded file's hash. The Hub derives Conditions from those gaps, such as Service down, job failing, and Drift. A job is overdue when one of its scheduled times plus a grace period passed while its System was awake with no successful run since.
 - **Comparing declarations with records is the provisioner's job.** Heimdall stores no provisioner's declarations. The Hub mirrors every System's records and returns all of them on request, so a provisioner can check what it declares against what each System holds, as a `fleet doctor` would. Returning records is a read, with the same trust as the dashboard; whether it is served through the Hub's command line or a read-only endpoint is part of building it. Heimdall retires the term Inventory, which named Fleet's declared snapshot.

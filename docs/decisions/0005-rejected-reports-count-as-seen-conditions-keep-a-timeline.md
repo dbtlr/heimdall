@@ -4,7 +4,7 @@ title: ADR-0005 - A rejected Report still counts as seeing its System, and Condi
 description: "Last seen moves on every request whose token names a System, whether the Hub stores or rejects the Report. A rejection raises that System's Reports-rejected Condition; each Condition records when it was raised and cleared, and those records form the System's Timeline."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-06
+modified: 2026-10-08
 ---
 
 # A rejected Report still counts as seeing its System, and Conditions keep a Timeline
@@ -35,3 +35,7 @@ A dropped Report is lost for good, so a single bad batch between good ones must 
 
 A System can appear on the page before any of its Reports is stored, with a last-seen time and a status but no Vitals or Collector build.
 Going quiet, including sleep, adds nothing to the Timeline until M3's stale-System Condition, which the Hub must evaluate on a timer rather than on a request.
+
+## Changelog
+
+- 2026-10-08: Clarification. Under [ADR-0011](0011-collectors-hold-what-provisioners-record.md), Backup Job overdue becomes job overdue or failing, for any job a provisioner records. The decision is unchanged.
