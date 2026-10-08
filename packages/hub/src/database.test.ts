@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { openDatabase } from './database.ts';
 import { testDatabase } from './testing/postgres.ts';
 
-// The Collector gives up on a Push after 30 seconds, and `pair` and `unpair`
+// The Collector gives up on a Report after 30 seconds, and `pair` and `unpair`
 // should not wait on a lock forever either.
 test("statements on the Hub's connections give up after 30 seconds", async () => {
   await using db = await testDatabase();

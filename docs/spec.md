@@ -6,7 +6,7 @@ description: "The fleet observability spec: the roles in a Heimdall fleet, the p
 
 A fleet is a person's own set of Systems. Heimdall observes a fleet and the agent work done on it, whatever provisions its Systems. This spec states what each role does and what a provisioner follows to plug in. [ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md) and [ADR-0012](decisions/0012-hub-archives-agent-session-transcripts.md) record why. Terms are defined in the [glossary](glossary.md).
 
-Sections marked _planned_ describe contracts whose exact fields are fixed when the milestone that builds them lands ([roadmap](roadmap.md)).
+Roles and Principles describe Heimdall as designed. Sections marked _planned_ describe contracts not built yet, whose exact fields are fixed when the milestone that builds them lands ([roadmap](roadmap.md)).
 
 ## Roles
 
@@ -32,13 +32,13 @@ A System joins by pairing its Collector with the Hub once, as the [README](../RE
 
 A provisioner records something it installed by piping a JSON record to `heimdall-collector record <kind>`, and removes it with `heimdall-collector forget <kind> <name>`. It runs both as the account the Collector runs as, so the records land in that Collector's state, even when the install itself ran as another account such as root.
 
-The Collector validates a record when it is recorded and refuses one that is invalid or carries a field it does not know, so a mistake fails the provisioner's command at once. A record may carry provenance, such as the provisioner's name and revision, which Heimdall shows and never compares.
+The Collector validates a record when it is recorded and refuses one that is invalid or carries a field it does not know, so a mistake fails the provisioner's command at once. A record may carry provenance, such as the provisioner's name and revision, which Heimdall shows and never compares. Records are keyed by kind and name, and a job's runs by job and start time. They live in the Collector's state directory, so wiping it loses them, and the provisioner records them again. A new kind or supervisor is added only when a provisioner needs it.
 
 | Kind | A provisioner records | Heimdall checks and reports |
 | --- | --- | --- |
 | `application` | Name, installed version, optional source | Reported as recorded; the version is not observed. |
-| `service` | Name; supervisor (`systemd`, `systemd-user`, `launchd`, `docker`, or `none`); its unit, label, or container; optional health URL and port | Supervisor state, and health from the URL, which must be plain HTTP on loopback (`http://127.0.0.1:<port>`). A stopped or unhealthy Service raises Service down. |
-| `job` | Name; scheduler (`launchd` or `systemd-timer`); its label or unit; its schedule in the System's local time | Each run the job reports. A failed run raises job failing; a scheduled time plus a grace period that passed while the System was awake, with no successful run since, raises job overdue. |
+| `service` | Name; supervisor (`systemd`, `systemd-user`, `launchd`, `docker`, or `none`); its unit, label, or container; optional health URL and port | Supervisor state, and health from the URL, which must be on loopback; its exact form is fixed in M4. A stopped or unhealthy Service raises Service down. |
+| `job` | Name; scheduler (`launchd` or `systemd-timer`); its label or unit; its schedule | Each run the job reports. A failed run raises job failing; a scheduled time plus a grace period that passed while the System was awake, with no successful run since, raises job overdue. |
 | `files` | Paths and their hashes, after the provisioner writes them | Each file's current hash. A file that no longer matches raises Drift. |
 
 A job reports each run with `heimdall-collector record run <job>`: when it started and finished, its exit status, and optionally the output file it wrote and its size. A job's runner should ignore a failure to record, so a broken Collector never fails the job.

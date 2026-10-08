@@ -23,7 +23,7 @@ The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL
 
 ## Running the Collector
 
-`heimdall-collector run` samples the System's Vitals every 15 seconds and Pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, as the System it paired as, with that System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
+`heimdall-collector run` samples the System's Vitals every 15 seconds and pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, as the System it paired as, with that System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
 
 Each setting comes from its flag, then its environment variable, then the configuration file:
 

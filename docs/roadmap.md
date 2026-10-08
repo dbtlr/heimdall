@@ -67,7 +67,7 @@ Size: medium. It comes first because transcripts lost to pruning cannot be recov
 The dashboard answers "is everything each System's provisioner recorded still healthy?" ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
 
 - `heimdall-collector record` and `forget` hold a provisioner's Applications, Services, jobs, and files in the Collector's state; jobs report their runs with `record run`.
-- The Collector checks what it can observe: each Service's supervisor state and loopback health, each job's runs, and each recorded file's hash. It reports its whole record set in Reports whenever it changes, and each Harness's installed version.
+- The Collector checks what it can observe: each Service's supervisor state and loopback health, each job's runs, and each recorded file's hash. It reports its whole record set in Reports whenever it changes.
 - The Hub mirrors each System's records, returns them on request for a provisioner's own check, and derives Conditions: Service down, job failing or overdue, Drift, stale System, and low disk. Each joins the Timeline M1 started.
 - Fleet records what it installs and builds its own declared-against-recorded check (Fleet-side work in the Fleet repository).
 
@@ -79,6 +79,7 @@ Agent work becomes visible: what each Session did, used, and cost, and which Ses
 
 - The Hub derives each Session's model, tokens, tools, skills, context used, and approximate cost from its stored transcript, per Harness.
 - The Collector detects Harness processes and records Sessions with Harness, working directory, start and end, and aggregate CPU and memory across the process tree, on the same time axis as Vitals.
+- The Collector reports each Harness's installed version without running Harness binaries.
 - The archive can be queried across months, by a person or an agent.
 
 Size: large. Sharp edges: each Harness's transcript format, a price table for cost, and process-tree aggregation that differs between macOS and Linux.

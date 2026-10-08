@@ -49,7 +49,7 @@ Each Application also declares its `[[configs]]`, described next.
 
 ## Config templates
 
-Heimdall reads one file per binary, `~/.config/heimdall/hub.toml` and `~/.config/heimdall/collector.toml`. Fleet renders every setting into these files from a template, and it passes none to `service install`. Heimdall never modifies a rendered file: `service install` writes a setting only when its value changes, and Fleet gives it none, so Heimdall's own Drift check stays quiet.
+Heimdall reads one file per binary, `~/.config/heimdall/hub.toml` and `~/.config/heimdall/collector.toml`. Fleet renders every setting into these files from a template, and it passes none to `service install`. Heimdall never modifies a rendered file: `service install` writes a setting only when its value changes, and Fleet gives it none, so a `files` record Fleet makes for the file never drifts.
 
 The only secret in either file is the Hub's database URL. A System's name and token are not settings: each Collector receives them when the operator pairs the System, and keeps them in `identity.json` in its state directory ([Pairing a System](#pairing-a-system)).
 

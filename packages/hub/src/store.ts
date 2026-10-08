@@ -122,8 +122,8 @@ export const storeReport = (
     return { skipped: report.samples.length - stored.length, stored: stored.length };
   });
 
-// The kinds of Condition the Hub derives. M3 adds Service, Backup Job, Drift,
-// and stale-System Conditions to the same Timeline.
+// The kinds of Condition the Hub derives. M4 adds Service, job, Drift, and
+// stale-System Conditions to the same Timeline.
 export type ConditionKind = 'reports_rejected';
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';

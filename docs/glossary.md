@@ -8,7 +8,7 @@ Heimdall observes a fleet and the agent work done on it, whatever provisions its
 
 ## Language
 
-**Fleet**:
+**fleet**:
 A person's own set of Systems, which they provision and want to watch. Capitalized, Fleet names one provisioner, the one that installs and operates Heimdall today.
 _Avoid_: cluster, estate, inventory
 
@@ -16,11 +16,11 @@ _Avoid_: cluster, estate, inventory
 One machine in a fleet, named by a DNS label, that runs a Collector.
 _Avoid_: host, node, box
 
-**Provisioner**:
+**provisioner**:
 Any tool or person that installs things on a System and records them with that System's Collector. Heimdall stores no provisioner's declarations; comparing what a provisioner declares with what it recorded is the provisioner's own check.
 _Avoid_: installer, manager, Fleet (one provisioner, not the role)
 
-**Record**:
+**record**:
 What a provisioner tells a Collector it installed: an Application, a Service, a job, or a set of files. The Collector keeps its records in its own state, checks those it can observe, and reports them; the Hub mirrors each System's records. Every kind is optional.
 _Avoid_: Inventory (retired; it named Fleet's declared snapshot), install record, manifest, declaration
 
@@ -29,10 +29,10 @@ Software a provisioner installed on a System and recorded with its version. The 
 _Avoid_: package, app
 
 **Service**:
-A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, and optionally a loopback health URL. The Collector checks its supervisor state and health; a stopped Service is the Service down Condition.
+A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, and optionally a loopback health URL. The Collector checks its supervisor state and health; a stopped or unhealthy Service raises the Service down Condition.
 _Avoid_: daemon, process
 
-**Job**:
+**job**:
 A scheduled program a provisioner recorded, with its scheduler and schedule, such as a backup. It reports each run to the Collector, and the Hub judges whether it is failing or overdue.
 _Avoid_: cron, task, Backup Job (a backup is a job whose runs report an output file)
 
@@ -64,7 +64,7 @@ _Avoid_: client, IDE, model
 One run of a Harness. The Collector observes it from the process table, as the Harness process and its descendants with their working directory, start and end, and aggregate CPU and memory, and from its transcript.
 _Avoid_: conversation, run
 
-**Transcript**:
+**transcript**:
 The file a Harness writes for a Session, holding its prompts, responses, and tool calls. The Hub keeps it as the durable record of the Session after the Harness deletes its own copy.
 _Avoid_: log (a binary's runtime lines), history
 

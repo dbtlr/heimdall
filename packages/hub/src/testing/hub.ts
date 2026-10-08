@@ -45,7 +45,7 @@ export const report = (system: string, times: number[]): Report => ({
   system,
 });
 
-// Pushes a body to the ingest endpoint the way the Collector does.
+// Sends a body to the ingest endpoint the way the Collector does.
 export const push = (
   hub: ReturnType<typeof createHub>,
   body: unknown,
