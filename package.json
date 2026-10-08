@@ -12,7 +12,8 @@
     "verify": "bun run check && bun run test",
     "build:collector": "bun build packages/collector/src/main.ts --compile --outfile dist/heimdall-collector",
     "build:hub": "bun build packages/hub/src/main.ts --compile --outfile dist/heimdall-hub",
-    "release": "bun packages/release/src/main.ts"
+    "release": "bun packages/release/src/main.ts",
+    "schema:write": "bun packages/schema/scripts/write-inventory-schema.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

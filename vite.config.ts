@@ -9,6 +9,7 @@ const GENERATED_IGNORES = [
   'bun.lock',
   '**/*.gen.{js,ts}',
   '**/*.generated.{js,ts}',
+  '**/*.schema.json',
   '.claude/**',
   '.codex/**',
   '.superpowers/**',
