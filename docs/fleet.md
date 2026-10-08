@@ -1,10 +1,10 @@
 ---
-description: "How Fleet declares Heimdall: Application Units for both binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, the Inventory Fleet publishes, and the asks Fleet has not yet met."
+description: "Running Heimdall with Fleet, one provisioner: Application Units for both binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, and the asks Fleet has not yet met."
 ---
 
-# How Fleet declares Heimdall
+# Running Heimdall with Fleet
 
-Fleet installs and operates Heimdall, and it declares the Hub and the Collector the same way it declares Mimir. This document holds everything the Fleet repository needs: the Application Units, the config templates, the native Service Units, and the one step an operator takes to pair each System. Each section follows Fleet's `docs/specs/units.md`, and the declarations are modeled on Mimir's under `apps/mimir/` and `services/mimir/`.
+Fleet is one provisioner, and it installs and operates Heimdall. Heimdall depends on no provisioner: the [spec](spec.md) describes what any provisioner follows, and this document is how Fleet does it. Fleet declares the Hub and the Collector the same way it declares Mimir. This document holds everything the Fleet repository needs: the Application Units, the config templates, the native Service Units, and the one step an operator takes to pair each System. Each section follows Fleet's `docs/specs/units.md`, and the declarations are modeled on Mimir's under `apps/mimir/` and `services/mimir/`.
 
 The example System names are `laptop-1` and `server-1`. `server-1` is the System that hosts the Hub. Replace them with the names in Fleet's own repository.
 
@@ -268,13 +268,13 @@ A new optional field keeps `schemaVersion`; a rename, a removal, or a change of 
 
 ## Open Fleet-side asks
 
-These are the gaps between Heimdall's needs and what Fleet's documents and renderer show today. Each is an ask in Fleet's `docs/specs/heimdall-asks.md`; A5 to A7 follow ADR-0010.
+These are the gaps between Heimdall's needs and what Fleet's documents and renderer show today. Each is an ask in Fleet's `docs/specs/heimdall-asks.md`. The M4 asks follow [ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md), which replaced publishing an Inventory and leaving record files.
 
 - **Darwin user agents (A4).** Native Service Units must run on a macOS System, so that `fleet service heimdall-collector <system> install` runs the Collector's launchd install and reports its status. Until then an operator runs `service install` by hand.
 - **An account on a System without one (A4).** A System that declares no `package_user` has no unprivileged account to run the Collector as a systemd user service. It joins Heimdall when Fleet gives it one.
-- **Publish the Inventory (A5, M3).** Each Fleet command that changes a System reads the stored commit with `heimdall-hub inventory current` over SSH on the System that hosts the Hub, checks that its own commit descends from it (skipped when the Hub stores `none`), then runs `heimdall-hub inventory publish --expect-commit <stored commit or none>` with the whole-fleet Inventory on standard input ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
-- **Install records (A6, M3).** Each Fleet command that installs an Application, Service, or Backup Job leaves a data-only install record on the System, which the Collector checks.
-- **Run records (A7, M3).** Each Backup Job keeps a run record of its latest run and latest successful run: start, finish, exit status, and newest archive.
+- **Record what Fleet installs (M4).** After a command that installs or updates an Application, a Service, or a Backup Job succeeds, Fleet records it with `heimdall-collector record` as the Collector's account, and removing the installed thing runs `heimdall-collector forget`. After a Push or Apply, Fleet records the files it wrote, if it wants Drift reported.
+- **Report job runs (M4).** Each Backup Job's runner reports every run with `heimdall-collector record run <job>`, and ignores a failure to record so a broken Collector never fails a backup.
+- **Check declarations against records (M4).** Fleet compares what it declares with the records the Hub mirrors, in a command of its own such as `fleet doctor`. Heimdall stores none of Fleet's declarations.
 - **Automated pairing (optional, later).** Fleet could run `heimdall-hub pair <system>` and `heimdall-collector pair <code>` for a System that is not paired. Fleet has no cross-System imperative step today, and a System pairs only once, so the manual step stands until the effort pays.
 
 Ask A3, per-System secrets and plain values in one template, is no longer needed. Pairing replaced the per-System token and System name, and the Hub's `port` and `tailnet_port` stay literals on the one System that hosts the Hub.
