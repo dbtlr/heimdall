@@ -2,9 +2,10 @@
 type: adr
 title: ADR-0002 - The Collector observes processes, never content
 description: "Agent Sessions are observed from the process table. Heimdall stores program names and working directories, never transcripts or command-line arguments."
-status: accepted
+status: superseded
+superseded_by: ADR-0012
 created: 2026-10-05
-modified: 2026-10-05
+modified: 2026-10-08
 ---
 
 # The Collector observes processes, never content
@@ -32,3 +33,7 @@ Heimdall stores executable names and working directories only. It never stores c
 Session correlation works identically for every Harness with no integration.
 A Session has no stable link to its transcript until a hook-based enrichment exists.
 Any later feature that wants argument or content data needs a new decision that supersedes this one.
+
+## Changelog
+
+- 2026-10-08: Superseded by [ADR-0012](0012-hub-archives-agent-session-transcripts.md). The Hub archives Session transcripts, content included. Process observation still records no command-line arguments or environment variables.

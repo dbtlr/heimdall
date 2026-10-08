@@ -2,7 +2,8 @@
 type: adr
 title: ADR-0010 - Fleet publishes the Inventory to the Hub, and Collectors read Fleet's install records
 description: "Fleet's git stays the only place desired state is written. Fleet publishes a whole-fleet Inventory snapshot to the Hub by running heimdall-hub inventory over SSH, against a schema Heimdall owns. Each Fleet install leaves a data-only install record on its System, and each Backup Job run leaves a run record. The Collector reads only those records and never takes instructions from the Hub; the Hub alone compares declared, installed, and running state. Supersedes ADR-0001."
-status: accepted
+status: superseded
+superseded_by: ADR-0011
 created: 2026-10-08
 modified: 2026-10-08
 ---
@@ -52,3 +53,4 @@ Removing a declaration leaves its install record on the System until Fleet remov
 ## Changelog
 
 - 2026-10-08: Addendum. The Hub refuses an Inventory with a field its schema does not name, where ADR-0004 drops unknown Report fields. The Inventory has one writer, which an operator runs and which reports a refusal at once, and a misspelled optional field that the Hub dropped would read as nothing declared. A breaking change remains a rename, a removal, or a change of meaning, as in ADR-0004, so a new optional field keeps the schema version; the Hub is upgraded before Fleet publishes it, as for a new version. The Inventory carries no publish time; the Hub records when it stored the Inventory, which is the time `inventory current` reports as published.
+- 2026-10-08: Superseded by [ADR-0011](0011-collectors-hold-what-provisioners-record.md). Heimdall stores no provisioner's declarations, so Fleet no longer publishes an Inventory to the Hub, and provisioners record installs through the Collector's command line instead of leaving files for it to read.

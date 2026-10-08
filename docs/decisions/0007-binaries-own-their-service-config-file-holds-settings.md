@@ -4,7 +4,7 @@ title: ADR-0007 - Each binary installs and supervises its own Service, and its c
 description: "The Collector and the Hub each install, run, and report their own systemd user unit or launchd user agent through a shared service package. The unit carries no settings: both binaries read ~/.config/heimdall/, and service install writes a setting there only when its value changes."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-06
+modified: 2026-10-08
 ---
 
 # Each binary installs and supervises its own Service, and its config file is the one home for its settings
@@ -47,3 +47,4 @@ If `install` rewrote a Fleet-rendered file, Heimdall's own Drift check would rep
 - 2026-10-06: Accepted. The Linux lifecycle landed in HMD-20; the launchd backend follows in HMD-21.
 - 2026-10-07: Addendum. The launchd backend landed in HMD-21.
 - 2026-10-07: Addendum. The consequence that Fleet restarts the Hub for a new token list no longer applies: Systems pair with the Hub and their tokens live in its database ([ADR-0009](0009-collectors-pair-with-the-hub.md)), so adding a System needs no restart.
+- 2026-10-08: Clarification. Heimdall's Drift check reports a rewritten file only when the provisioner recorded it as a `files` record ([ADR-0011](0011-collectors-hold-what-provisioners-record.md)); the Collector no longer reads Fleet's `manifest.json`. The decision is unchanged.
