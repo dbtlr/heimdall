@@ -48,3 +48,7 @@ The Hub knows every declared System, including one whose Collector has never rep
 An Inventory error fails at the Fleet command that published it, not as a Condition seen later.
 A release published between Fleet commands shows as installed differently than declared only after the next publish.
 Removing a declaration leaves its install record on the System until Fleet removes the installed thing, and the Hub shows it as installed but not declared meanwhile.
+
+## Changelog
+
+- 2026-10-08: Addendum. The Hub refuses an Inventory with a field its schema does not name, where ADR-0004 drops unknown Report fields. The Inventory has one writer, which an operator runs and which reports a refusal at once, and a misspelled optional field that the Hub dropped would read as nothing declared. A breaking change remains a rename, a removal, or a change of meaning, as in ADR-0004, so a new optional field keeps the schema version; the Hub is upgraded before Fleet publishes it, as for a new version. The Inventory carries no publish time; the Hub records when it stored the Inventory, which is the time `inventory current` reports as published.
