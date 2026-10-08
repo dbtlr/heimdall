@@ -11,7 +11,7 @@
         "installedAt": {
           "type": "string",
           "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
         },
         "name": {
           "type": "string",
@@ -37,7 +37,14 @@
           ]
         }
       },
-      "required": ["commit", "installedAt", "name", "schemaVersion", "kind", "release"],
+      "required": [
+        "commit",
+        "installedAt",
+        "name",
+        "schemaVersion",
+        "kind",
+        "release"
+      ],
       "additionalProperties": false
     },
     {
@@ -52,7 +59,7 @@
             "installedAt": {
               "type": "string",
               "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
             },
             "name": {
               "type": "string",
@@ -64,7 +71,7 @@
             },
             "healthUrl": {
               "type": "string",
-              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/[!-~]*)?$"
             },
             "kind": {
               "type": "string",
@@ -105,7 +112,7 @@
             "installedAt": {
               "type": "string",
               "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
             },
             "name": {
               "type": "string",
@@ -117,7 +124,7 @@
             },
             "healthUrl": {
               "type": "string",
-              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/[!-~]*)?$"
             },
             "kind": {
               "type": "string",
@@ -158,7 +165,7 @@
             "installedAt": {
               "type": "string",
               "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
             },
             "name": {
               "type": "string",
@@ -170,7 +177,7 @@
             },
             "healthUrl": {
               "type": "string",
-              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/[!-~]*)?$"
             },
             "kind": {
               "type": "string",
@@ -186,7 +193,14 @@
               "const": "native"
             }
           },
-          "required": ["commit", "installedAt", "name", "schemaVersion", "kind", "supervisor"],
+          "required": [
+            "commit",
+            "installedAt",
+            "name",
+            "schemaVersion",
+            "kind",
+            "supervisor"
+          ],
           "additionalProperties": false
         }
       ]
@@ -201,7 +215,7 @@
         "installedAt": {
           "type": "string",
           "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
         },
         "name": {
           "type": "string",
@@ -245,7 +259,10 @@
                 "maximum": 59
               }
             },
-            "required": ["hour", "minute"],
+            "required": [
+              "hour",
+              "minute"
+            ],
             "additionalProperties": false
           },
           "uniqueItems": true
@@ -270,6 +287,6 @@
       "additionalProperties": false
     }
   ],
-  "description": "The record Fleet leaves on a System for each Application, Service, or Backup Job it installs there (ADR-0010). Beyond this schema, Heimdall refuses a health URL port above 65535 and a Backup Job scheduled twice at one time. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.",
+  "description": "The record Fleet leaves on a System for each Application, Service, or Backup Job it installs there (ADR-0010). Beyond this schema, Heimdall refuses a health URL port above 65535. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.",
   "title": "Heimdall install record v1"
 }

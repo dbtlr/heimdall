@@ -25,7 +25,7 @@ A data-only record Fleet leaves on a System for each Application, Service, or Ba
 _Avoid_: receipt, lockfile, Inventory
 
 **Run record**:
-The record a Backup Job keeps on its System of its latest run and its latest successful run: when each started and finished, its exit status, and its newest archive.
+The record a Backup Job keeps on its System of its latest run and its latest successful run: when each started and finished, its exit status, and the archive it wrote.
 _Avoid_: heartbeat, ping, log
 
 **Report**:

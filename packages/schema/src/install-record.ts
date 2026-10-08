@@ -12,7 +12,7 @@ export const INSTALL_RECORD_SCHEMA_VERSION = 1;
 // Fleet's `-dirty` suffix.
 const installed = {
   commit: z.string().regex(/^[0-9a-f]{40}(?:-dirty)?$/u),
-  installedAt: z.iso.datetime(),
+  installedAt: z.iso.datetime({ precision: 0 }),
   name: unitName,
   schemaVersion: z.literal(INSTALL_RECORD_SCHEMA_VERSION),
 };
@@ -25,12 +25,12 @@ const ApplicationInstallSchema = z.object({
 });
 
 // A health URL the Collector may request: plain HTTP to the IPv4 loopback
-// address with an explicit port, which Fleet already requires of every health
-// URL. Nothing may follow the port but a path, so no user part can hide
-// another host.
+// address with an explicit port. Fleet requires only the `http://127.0.0.1:`
+// prefix; nothing may follow the port here but a path of printable ASCII, so
+// no user part can hide another host.
 const loopbackUrl = z
   .string()
-  .regex(/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}(?:\/\S*)?$/u)
+  .regex(/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}(?:\/[!-~]*)?$/u)
   .refine((url) => Number(/^http:\/\/127\.0\.0\.1:([0-9]+)/u.exec(url)?.[1]) <= 65_535, {
     message: 'health URL port out of range',
   });
@@ -85,7 +85,7 @@ export const InstallRecordSchema = z
   ])
   .meta({
     description:
-      'The record Fleet leaves on a System for each Application, Service, or Backup Job it installs there (ADR-0010). Beyond this schema, Heimdall refuses a health URL port above 65535 and a Backup Job scheduled twice at one time. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.',
+      'The record Fleet leaves on a System for each Application, Service, or Backup Job it installs there (ADR-0010). Beyond this schema, Heimdall refuses a health URL port above 65535. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.',
     title: `Heimdall install record v${String(INSTALL_RECORD_SCHEMA_VERSION)}`,
   });
 

@@ -8,12 +8,12 @@
         "finishedAt": {
           "type": "string",
           "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
         },
         "startedAt": {
           "type": "string",
           "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
         },
         "archive": {
           "anyOf": [
@@ -22,7 +22,8 @@
               "properties": {
                 "name": {
                   "type": "string",
-                  "pattern": "^(?!\\.\\.?$)[^/]+$"
+                  "maxLength": 255,
+                  "pattern": "^(?!\\.\\.?$)[ -.0-~]+$"
                 },
                 "sizeBytes": {
                   "type": "integer",
@@ -30,7 +31,10 @@
                   "maximum": 9007199254740991
                 }
               },
-              "required": ["name", "sizeBytes"],
+              "required": [
+                "name",
+                "sizeBytes"
+              ],
               "additionalProperties": false
             },
             {
@@ -44,7 +48,12 @@
           "maximum": 255
         }
       },
-      "required": ["finishedAt", "startedAt", "archive", "exitStatus"],
+      "required": [
+        "finishedAt",
+        "startedAt",
+        "archive",
+        "exitStatus"
+      ],
       "additionalProperties": false
     },
     "latestSuccess": {
@@ -55,19 +64,20 @@
             "finishedAt": {
               "type": "string",
               "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
             },
             "startedAt": {
               "type": "string",
               "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
             },
             "archive": {
               "type": "object",
               "properties": {
                 "name": {
                   "type": "string",
-                  "pattern": "^(?!\\.\\.?$)[^/]+$"
+                  "maxLength": 255,
+                  "pattern": "^(?!\\.\\.?$)[ -.0-~]+$"
                 },
                 "sizeBytes": {
                   "type": "integer",
@@ -75,7 +85,10 @@
                   "maximum": 9007199254740991
                 }
               },
-              "required": ["name", "sizeBytes"],
+              "required": [
+                "name",
+                "sizeBytes"
+              ],
               "additionalProperties": false
             },
             "exitStatus": {
@@ -83,7 +96,12 @@
               "const": 0
             }
           },
-          "required": ["finishedAt", "startedAt", "archive", "exitStatus"],
+          "required": [
+            "finishedAt",
+            "startedAt",
+            "archive",
+            "exitStatus"
+          ],
           "additionalProperties": false
         },
         {
@@ -100,8 +118,13 @@
       "const": 1
     }
   },
-  "required": ["latestRun", "latestSuccess", "name", "schemaVersion"],
+  "required": [
+    "latestRun",
+    "latestSuccess",
+    "name",
+    "schemaVersion"
+  ],
   "additionalProperties": false,
-  "description": "The record a Backup Job keeps on its System of its latest run and its latest successful run (ADR-0010). Beyond this schema, Heimdall refuses a run that finished before it started. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.",
+  "description": "The record a Backup Job keeps on its System of its latest run and its latest successful run (ADR-0010). Beyond this schema, Heimdall refuses a run that finished before it started and a successful latest run that is not the latest success. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.",
   "title": "Heimdall run record v1"
 }

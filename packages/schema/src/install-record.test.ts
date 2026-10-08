@@ -42,10 +42,27 @@ describe('an install record', () => {
 // Fleet and each Collector upgrade on their own schedules, so a Collector
 // reading a newer Fleet's record keeps what it knows (ADR-0010).
 describe('an install record from a newer Fleet', () => {
-  test('parses without the fields this Collector does not know', () => {
-    expect(parsedRecord({ ...serviceInstall(), restartPolicy: 'always' })).toEqual(
-      serviceInstall(),
-    );
+  const { commit, installedAt, schemaVersion } = applicationInstall();
+  const installed = { commit, installedAt, kind: 'service', name: 'notes', schemaVersion };
+  const backupJob = backupJobInstall();
+
+  test.each([
+    ['an Application', applicationInstall()],
+    ['a systemd Service', serviceInstall()],
+    ['a docker Service', { ...installed, container: 'fleet-notes', supervisor: 'docker' }],
+    ['a native Service', { ...installed, supervisor: 'native' }],
+    ['a Backup Job', backupJob],
+  ])('of %s parses without the fields this Collector does not know', (_, record) => {
+    expect(parsedRecord({ ...record, restartPolicy: 'always' })).toEqual(record);
+  });
+
+  test('parses a Backup Job without scheduled time fields this Collector does not know', () => {
+    const schedule = [{ hour: 3, minute: 15, second: 0 }];
+
+    expect(parsedRecord({ ...backupJob, schedule })).toEqual({
+      ...backupJob,
+      schedule: [{ hour: 3, minute: 15 }],
+    });
   });
 
   test('of an unknown schema version is refused as unknown', () => {
@@ -77,12 +94,17 @@ describe('an install record is invalid', () => {
   test.each([
     ['of a kind Fleet does not install', { ...applicationInstall(), kind: 'harness' }],
     ['with an abbreviated commit', { ...applicationInstall(), commit: '3f1c2a9' }],
+    [
+      'with an install time finer than a second',
+      { ...service, installedAt: '2026-10-08T03:22:21.5Z' },
+    ],
     ['with an install time not in UTC', { ...service, installedAt: '2026-10-07T23:22:21-04:00' }],
     ['naming outside Fleet names', { ...service, name: 'Notes' }],
     ['without a schema version', { ...service, schemaVersion: undefined }],
     // The Collector requests health URLs, so a record must not aim it off the System.
     ['with a health URL off loopback', { ...service, healthUrl: 'http://192.0.2.7:8080/health' }],
     ['with a health URL on a loopback name', { ...service, healthUrl: 'http://localhost:8080/' }],
+    ['with a health URL outside ASCII', { ...service, healthUrl: 'http://127.0.0.1:8080/é' }],
     ['with an HTTPS health URL', { ...service, healthUrl: 'https://127.0.0.1:8080/' }],
     [
       'with a health URL that hides another host',

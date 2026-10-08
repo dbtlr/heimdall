@@ -268,11 +268,11 @@ A new optional field keeps `schemaVersion`; a rename, a removal, or a change of 
 
 ## Install records and run records
 
-Fleet leaves data-only records on each System, and the Collector reads them with `manifest.json` ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)). An install record says what Fleet installed. A run record says how a Backup Job's runs went. Their JSON Schemas are [`packages/schema/install-record.v1.schema.json`](../packages/schema/install-record.v1.schema.json) and [`packages/schema/run-record.v1.schema.json`](../packages/schema/run-record.v1.schema.json). As with the Inventory, their patterns are ECMA-262 regular expressions.
+Fleet leaves data-only records on each System, and the Collector reads them with `manifest.json` ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)). An install record says what Fleet installed. A run record says how a Backup Job's runs went. Their JSON Schemas are [`packages/schema/install-record.v1.schema.json`](../packages/schema/install-record.v1.schema.json) and [`packages/schema/run-record.v1.schema.json`](../packages/schema/run-record.v1.schema.json). As with the Inventory, their patterns are ECMA-262 regular expressions. Python's `re` differs: `$` matches before a final newline, and `\d` matches digits beyond ASCII, so a Python validator accepts some records Heimdall refuses.
 
 ### Where they live
 
-The records live in `~/.fleet/`, beside `manifest.json`, in the home of the account Fleet acts as on the System. That is the account the System's `ssh` alias logs into, which is the `package_user` when the System declares one.
+The records live in `~/.fleet/`, beside `manifest.json`, in the home of the account the System's `ssh` alias logs into, which is the `package_user` when the System declares one. Each record belongs to that account and is readable by it, even when Fleet installed the thing as root through `admin_ssh`, as it does for a `systemd` Service.
 
 | Path | Holds |
 | --- | --- |
@@ -285,7 +285,7 @@ Each kind has its own directory because an Application and a Service can share a
 
 Fleet writes each record as one JSON object, first to a temporary file in the same directory and then moved into place with `mv`, so the Collector never reads half a record. The files may be readable by their owner alone, because the Collector runs as the same account.
 
-- **Install records.** Fleet writes one after a command that installs or updates an Application, a Service, or a Backup Job succeeds. That includes `upgrade` and the commands that handle their own Services. A later install replaces the record. Removing the installed thing removes its record.
+- **Install records.** Fleet writes one after a command that installs or updates an Application, a Service Unit, or a Backup Job succeeds, including through `upgrade`. A later install replaces the record. The Services that Fleet's own commands handle, such as `t3code` and `proxy`, get no record, as they are not in the Inventory. Removing the installed thing removes its record.
 - **Run records.** The Backup Job's runner writes one after every run, including a run that refuses to start, such as when its volume is not mounted. It writes nothing when the run stops because another run holds the lock, so it cannot overwrite the record the running one will write. It carries `latestSuccess` forward from the record it replaces when the run fails.
 
 A System whose Collector runs as another account, such as a System without a `package_user`, has no records that Collector can read. It reports none, and the Hub judges no install gaps for it.
@@ -300,7 +300,7 @@ Every install record carries these fields:
 | `kind` | `application`, `service`, or `backup-job`. |
 | `name` | The Application, Service, or Backup Job name Fleet declares. |
 | `commit` | The full 40-character SHA of the Fleet commit the command ran from, with Fleet's `-dirty` suffix when the tree was dirty. |
-| `installedAt` | When the install finished, in UTC, such as `2026-10-08T03:22:21Z`, as `manifest.json` writes `installedAt`. |
+| `installedAt` | When the install finished, in UTC to the whole second, such as `2026-10-08T03:22:21Z`, as `manifest.json` writes `installedAt`. |
 
 Each kind adds its own:
 
@@ -309,7 +309,7 @@ Each kind adds its own:
 | `application` | `release` | The release tag Fleet installed, or `null` when Fleet did not resolve one, as for an update with `--raw`. |
 | `service` | `supervisor` | `systemd`, `docker`, or `native`. |
 | `service` | `unit` | For `systemd` only, the system unit Fleet renders, such as `notes.service`. |
-| `service` | `container` | For `docker` only, the container Fleet runs, such as `fleet-notes`. |
+| `service` | `container` | For `docker` only, the container Fleet runs under the account's rootless Docker, such as `fleet-notes`. |
 | `service` | `healthUrl` | Optional. The `[health] url` Fleet rendered and polls. It must be `http://127.0.0.1:<port>`, optionally followed by a path, because the Collector requests it. |
 | `service` | `port` | Optional. The `[ingress] port` the Service listens on. |
 | `backup-job` | `supervisor` | `launchd`, the only scheduler Fleet runs Backup Jobs under. |
@@ -345,7 +345,7 @@ The install record of a `systemd` Service, `~/.fleet/installed/services/notes.js
 | `latestRun` | The latest run, successful or not. |
 | `latestSuccess` | The latest run that exited 0, or `null` until the job first succeeds. |
 
-Each run holds `startedAt` and `finishedAt` in UTC, `exitStatus` from 0 to 255, and `archive`. `archive` is the `name` and `sizeBytes` of the archive the run wrote, where `name` is a file name in the job's destination, or `null` when the run wrote none. A successful run always has an archive.
+Each run holds `startedAt` and `finishedAt` in UTC to the whole second, `exitStatus` from 0 to 255, and `archive`. `archive` is the `name` and `sizeBytes` of the archive the run wrote, where `name` is a file name in the job's destination, in printable ASCII, or `null` when the run wrote none. A successful run always has an archive, and when `latestRun` succeeded it is the same run as `latestSuccess`.
 
 The run record after a failed run that followed a successful one, `~/.fleet/backup-runs/notes.json`:
 
@@ -373,10 +373,10 @@ The run record after a failed run that followed a successful one, `~/.fleet/back
 A record is unreadable when it fails its schema or claims a `schemaVersion` the Collector does not know, and the Collector reports it as unreadable. Heimdall also refuses these, which the JSON Schemas cannot express:
 
 - A health URL whose port is above 65535.
-- A Backup Job scheduled twice at one time.
 - A run that finished before it started.
+- A successful `latestRun` that is not the same run as `latestSuccess`.
 
-The Collector drops fields it does not know and reads the rest of the record. Each System's Collector upgrades on its own schedule, so a record from a newer Fleet stays readable. The JSON Schemas refuse unknown fields, so validating a record before writing it catches a misspelled field. Fleet may write a new optional field once a Heimdall release defines it, and validates against that release's schema. A rename, a removal, or a change of meaning bumps `schemaVersion`, so every Collector is upgraded before Fleet writes the new version.
+The Collector drops fields it does not know and reads the rest of the record. Each System's Collector upgrades on its own schedule, so a record from a newer Fleet stays readable. The JSON Schemas refuse unknown fields, so validating a record before writing it catches a misspelled field. Fleet may write a new optional field once a Heimdall release defines it, and validates against that release's schema. A rename, a removal, or a change of meaning bumps `schemaVersion`, so every Collector is upgraded before Fleet writes the new version. A new `kind` or `supervisor` value is a change of meaning, because a Collector cannot check what it does not know how to read.
 
 ## Open Fleet-side asks
 
