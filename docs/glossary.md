@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Report, Vitals, Session, Condition, Last seen, Timeline, Pairing, and Pairing code, plus the Fleet terms it borrows."
+description: "Heimdall's domain vocabulary: Collector, Hub, Inventory, Install record, Run record, Report, Vitals, Session, Condition, Last seen, Timeline, Pairing, and Pairing code, plus the Fleet terms it borrows."
 ---
 
 # Glossary
@@ -17,11 +17,19 @@ The service that receives Reports, stores them in PostgreSQL, derives Conditions
 _Avoid_: server, backend, center (a Center is a Fleet role)
 
 **Inventory**:
-The per-System Artifact that Fleet compiles and Pushes, listing what Fleet declares for that System: Services, Backup Jobs, Applications with their selected releases, and Harnesses. The Collector's only source of desired state.
-_Avoid_: manifest (Fleet's `manifest.json` lists Managed paths and is a separate file), config
+The whole-fleet snapshot of what Fleet declares, which Fleet publishes to the Hub from one commit: the Systems, each System's Applications with their releases, Services, Backup Jobs with their schedules, and Harnesses, and the databases Fleet manages. The Hub's source of desired state for everything but Managed paths.
+_Avoid_: Inventory Artifact (Fleet publishes the Inventory to the Hub and Pushes nothing for it), manifest (Fleet's `manifest.json` lists Managed paths and is a separate file), catalog, config
+
+**Install record**:
+A data-only record Fleet leaves on a System for each Application, Service, or Backup Job it installs, saying what it installed there. The Collector checks each one against the System; it is what Fleet did, not what Fleet declares.
+_Avoid_: receipt, lockfile, Inventory
+
+**Run record**:
+The record a Backup Job keeps on its System of its latest run and its latest successful run: when each started and finished, its exit status, and its newest archive.
+_Avoid_: heartbeat, ping, log
 
 **Report**:
-One payload from a Collector to the Hub: a batch of Vitals samples, Session observations, and the observed state of each Inventory entry. Its shape is the versioned wire schema.
+One payload from a Collector to the Hub: a batch of Vitals samples, Session observations, and the observed state of Managed paths, install records, and run records. Its shape is the versioned wire schema.
 _Avoid_: event, metric, ping
 
 **Vitals**:

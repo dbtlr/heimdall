@@ -4,7 +4,7 @@ title: ADR-0004 - The Report grows additively, and samples are keyed by System a
 description: "Report schema versions bump only on breaking changes; the Hub drops unknown fields. Samples are deduplicated by System and timestamp. An invalid Report is answered 422 and dropped; every other failed delivery is retried."
 status: accepted
 created: 2026-10-05
-modified: 2026-10-06
+modified: 2026-10-08
 ---
 
 # The Report grows additively, and samples are keyed by System and time
@@ -42,3 +42,4 @@ A Collector bug that produces an invalid sample loses that whole Report, at most
 ## Changelog
 
 - 2026-10-06: Addendum. A Report the Hub rejects with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports-rejected Condition; see [ADR-0005](0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md). The answers and the Collector's handling of them are unchanged.
+- 2026-10-08: Clarification. The M3 section carries the observed state of Managed paths and of Fleet's install and run records; the Inventory reaches the Hub from Fleet, not in Reports ([ADR-0010](0010-fleet-publishes-inventory-collectors-read-install-records.md)). The decision is unchanged.

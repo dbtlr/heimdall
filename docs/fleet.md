@@ -243,10 +243,13 @@ Fleet need not render or store a token, and no 1Password item exists per System.
 
 ## Open Fleet-side asks
 
-These are the gaps between Heimdall's needs and what Fleet's documents and renderer show today. Each is tracked as an ask in Fleet's `docs/specs/heimdall-asks.md`.
+These are the gaps between Heimdall's needs and what Fleet's documents and renderer show today. Each is an ask in Fleet's `docs/specs/heimdall-asks.md`; A5 to A7 follow ADR-0010.
 
 - **Darwin user agents (A4).** Native Service Units must run on a macOS System, so that `fleet service heimdall-collector <system> install` runs the Collector's launchd install and reports its status. Until then an operator runs `service install` by hand.
 - **An account on a System without one (A4).** A System that declares no `package_user` has no unprivileged account to run the Collector as a systemd user service. It joins Heimdall when Fleet gives it one.
+- **Publish the Inventory (A5, M3).** Each Fleet command that changes a System reads the stored commit with `heimdall-hub inventory current` over SSH on the System that hosts the Hub, checks that its own commit descends from it (skipped when the Hub stores `none`), then runs `heimdall-hub inventory publish --expect-commit <stored commit or none>` with the whole-fleet Inventory on standard input ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
+- **Install records (A6, M3).** Each Fleet command that installs an Application, Service, or Backup Job leaves a data-only install record on the System, which the Collector checks.
+- **Run records (A7, M3).** Each Backup Job keeps a run record of its latest run and latest successful run: start, finish, exit status, and newest archive.
 - **Automated pairing (optional, later).** Fleet could run `heimdall-hub pair <system>` and `heimdall-collector pair <code>` for a System that is not paired. Fleet has no cross-System imperative step today, and a System pairs only once, so the manual step stands until the effort pays.
 
 Ask A3, per-System secrets and plain values in one template, is no longer needed. Pairing replaced the per-System token and System name, and the Hub's `port` and `tailnet_port` stay literals on the one System that hosts the Hub.

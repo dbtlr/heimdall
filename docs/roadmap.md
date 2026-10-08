@@ -8,9 +8,9 @@ Heimdall gives one view of where every Fleet System stands: whether it is up, it
 
 ## Shape of v1
 
-- A Collector on every System Pushes Reports to the Hub ([ADR-0001](decisions/0001-fleet-declares-collector-observes-hub-remembers.md)).
+- A Collector on every System Pushes Reports to the Hub ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
 - The Hub stores Reports in its own PostgreSQL database on the System that hosts it and serves a web dashboard inside the tailnet that works on a phone.
-- Desired state comes only from Fleet's per-System Inventory Artifact and `manifest.json`.
+- Desired state comes only from the Inventory Fleet publishes to the Hub and each System's `manifest.json` ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
 - Vitals are CPU, memory, disk, load, and uptime, sampled every 15 seconds. Raw samples are kept for 14 days and 5-minute min/avg/max rollups for a year.
 - Sessions are observed from the process table, never from content ([ADR-0002](decisions/0002-collector-observes-processes-never-content.md)).
 - A System that sleeps contributes only while awake: the dashboard shows its last-seen time and a gap. While awake but offline, the Collector keeps a bounded queue (about 24 hours) and flushes it on reconnect.
@@ -53,13 +53,14 @@ Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwi
 
 ## M3: Fleet state
 
-The dashboard answers "does each System match what Fleet declared?"
+The dashboard answers "does each System match what Fleet declared?" ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
 
-- Fleet compiles and Pushes the Inventory Artifact (Fleet-side work; see the asks document in the Fleet repository).
-- The Collector reads the Inventory and `manifest.json` and reports: last Push or Apply and its commit, Drift per Managed path, each declared Service's supervisor state and health, each Backup Job's last run, exit status, and next due time, each Application's installed release against the selected release, and each Harness version.
-- The Hub derives Conditions: Service down, Backup Job overdue or failing, Drift, release mismatch, stale System, low disk, unknown Inventory version. Each joins the Timeline M1 started.
+- `packages/schema` publishes the Inventory schema, and `heimdall-hub inventory publish` and `inventory current` store and report the Inventory Fleet publishes.
+- Fleet publishes the Inventory on every command that changes a System, writes an install record for each thing it installs, and writes a run record for each Backup Job run (Fleet-side work; see the asks document in the Fleet repository).
+- The Collector reads `manifest.json`, the install records, and the run records, and reports: last Push or Apply and its commit, Drift per Managed path, each installed Service's supervisor state and health, each Backup Job's last run and exit status, each Application's installed release, and each Harness version.
+- The Hub compares the Inventory, the install records, and the Collector's checks, and derives Conditions: declared but not installed, installed differently than declared (including a release behind its channel), installed but not declared, Service down, Backup Job overdue or failing, Drift, stale System, and low disk. Each joins the Timeline M1 started.
 
-Size: large. The Inventory contract is the main risk; land and version it before building the Collector side.
+Size: large. The Inventory schema and the install record format are the contracts; land them before building the Collector side.
 
 ## M4: Session correlation
 
