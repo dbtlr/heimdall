@@ -9,6 +9,6 @@ Fleet observability: a Collector on each Fleet System Pushes Reports to a Hub, w
 
 ## Boundaries
 
-- Fleet's Inventory Artifact and `manifest.json` are the only sources of desired state. The Hub never reads the Fleet repository.
+- The Inventory Fleet publishes to the Hub and each System's `manifest.json` are the only sources of desired state. The Hub never reads the Fleet repository, and the Collector never takes instructions from the Hub: its desired-state inputs are `manifest.json` and Fleet's install and run records.
 - The Collector never stores command-line arguments, environment variables, or transcript content.
 - Fleet installs and operates Heimdall. Packaging, service, and database changes on the Fleet side land in the Fleet repository.

@@ -35,7 +35,7 @@ Each setting comes from its flag, then its environment variable, then the config
 The configuration file is the one `--config` names, or else `.config/heimdall/collector.toml` or `.config/heimdall/collector.json` in the working directory and then the home directory, which is `~/.config/heimdall/collector.toml`. It holds no secret and is the same on every System:
 
 ```toml
-hub = "https://heimdall.example.ts.net/"
+hub = "http://hub-host.example.ts.net:8080"
 ```
 
 ### Pairing a new System

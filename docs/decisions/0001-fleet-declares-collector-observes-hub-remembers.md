@@ -2,9 +2,10 @@
 type: adr
 title: ADR-0001 - Fleet declares, the Collector observes, the Hub remembers
 description: "Fleet's compiled per-System Inventory is the only contract between Fleet and Heimdall. Collectors push Reports to the Hub; the Hub never reads Fleet source."
-status: accepted
+status: superseded
+superseded_by: ADR-0010
 created: 2026-10-05
-modified: 2026-10-06
+modified: 2026-10-08
 ---
 
 # Fleet declares, the Collector observes, the Hub remembers
@@ -41,3 +42,4 @@ The Hub's database is one more tenant under Fleet's ADR-0014, and an outage of t
 ## Changelog
 
 - 2026-10-06: Machine names replaced with role phrases (HMD-15). The decision is unchanged.
+- 2026-10-08: Superseded by [ADR-0010](0010-fleet-publishes-inventory-collectors-read-install-records.md). Fleet publishes the Inventory to the Hub instead of Pushing it to each System, and the Collector reads Fleet's install records instead of the Inventory.
