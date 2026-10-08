@@ -1,8 +1,8 @@
 # Heimdall
 
-Observability for a small personal fleet. A Collector on each machine reports host vitals, agent sessions, and the state of everything Fleet manages to a Hub, which serves a dashboard inside the tailnet.
+Cheap observability for a personal fleet and the agent work done on it. A Collector on each machine reports host vitals, the Services and jobs its provisioner recorded, and agent sessions to a Hub, which archives session transcripts and serves a dashboard inside the tailnet. Heimdall works with any provisioner; the [spec](docs/spec.md) describes what one follows.
 
-Status: M1 (walking skeleton) and M2 (Fleet rollout) are complete; M3 (Fleet state) is next. See [docs/roadmap.md](docs/roadmap.md).
+Status: M1 (walking skeleton) and M2 (Fleet rollout) are complete; M3 (Session archive) is next. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Development
 
@@ -23,7 +23,7 @@ The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL
 
 ## Running the Collector
 
-`heimdall-collector run` samples the System's Vitals every 15 seconds and Pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, as the System it paired as, with that System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
+`heimdall-collector run` samples the System's Vitals every 15 seconds and pushes them to the Hub's ingest endpoint, `POST <hub>/api/v1/reports`, as the System it paired as, with that System's token as a bearer token. Samples wait in a SQLite queue in the state directory, which holds about 24 hours and keeps them across restarts, until the Hub accepts them.
 
 Each setting comes from its flag, then its environment variable, then the configuration file:
 
@@ -117,7 +117,7 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 - `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
 
-[How Fleet declares Heimdall](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet uses to run both binaries.
+[Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run both binaries.
 
 Only a compiled binary may `install` or `uninstall`, and there is no opt-in. A run from source, such as a test, refuses before it touches the user manager. To try the real supervisor during development, compile first with `bun run build:hub` or `bun run build:collector` and run the binary from `dist/`.
 

@@ -23,7 +23,7 @@ export const hubEndpoint = (hub: URL, path: string) => {
   return new URL(path, base);
 };
 
-// Pushes one Report to the Hub's ingest endpoint and reads the answer.
+// Sends one Report to the Hub's ingest endpoint and reads the answer.
 export const sendReport = async ({
   hub,
   report,

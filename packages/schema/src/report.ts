@@ -38,7 +38,7 @@ export const VitalsSampleSchema = z.object({
 const isStrictlyIncreasing = (samples: { t: number }[]) =>
   samples.every((sample, i) => i === 0 || sample.t > (samples[i - 1]?.t ?? -1));
 
-// One Report a Collector Pushes to the Hub's ingest endpoint. Samples are keyed
+// One Report a Collector pushes to the Hub's ingest endpoint. Samples are keyed
 // by System and `t`, so the Hub skips any it already holds. The Hub answers an
 // invalid Report with 422, the one answer on which the Collector drops it
 // (ADR-0004).

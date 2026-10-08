@@ -1,18 +1,17 @@
 ---
-description: "Heimdall milestones from walking skeleton to Fleet state, Session correlation, and the dashboard, with the settled scope of v1."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, and the dashboard, with the settled scope of v1."
 ---
 
 # Roadmap
 
-Heimdall gives one view of where every Fleet System stands: whether it is up, its Vitals, the Services and Backup Jobs Fleet manages on it, and whether it matches what Fleet declared. See the [glossary](glossary.md) for terms and [decisions](decisions/README.md) for the settled design.
+Heimdall gives one view of a personal fleet and the agent work done on it: whether each System is up, its Vitals, the Services and jobs its provisioner recorded and whether they are healthy, and what each agent Session did and cost. See the [glossary](glossary.md) for terms, [decisions](decisions/README.md) for the settled design, and the [spec](spec.md) for what a provisioner follows.
 
 ## Shape of v1
 
-- A Collector on every System Pushes Reports to the Hub ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
-- The Hub stores Reports in its own PostgreSQL database on the System that hosts it and serves a web dashboard inside the tailnet that works on a phone.
-- Desired state comes only from the Inventory Fleet publishes to the Hub and each System's `manifest.json` ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
+- A Collector on every System pushes Reports to the Hub, which stores them in its own PostgreSQL database and serves a web dashboard inside the tailnet that works on a phone.
+- Any provisioner records what it installed with `heimdall-collector record`. Heimdall compares those records with what the Collector observes and stores no provisioner's declarations ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
+- The Hub archives agent Session transcripts, content included, as the durable record of agent work ([ADR-0012](decisions/0012-hub-archives-agent-session-transcripts.md)).
 - Vitals are CPU, memory, disk, load, and uptime, sampled every 15 seconds. Raw samples are kept for 14 days and 5-minute min/avg/max rollups for a year.
-- Sessions are observed from the process table, never from content ([ADR-0002](decisions/0002-collector-observes-processes-never-content.md)).
 - A System that sleeps contributes only while awake: the dashboard shows its last-seen time and a gap. While awake but offline, the Collector keeps a bounded queue (about 24 hours) and flushes it on reconnect.
 - v1 is dashboard-only. Conditions are visible in the UI; nothing is delivered.
 
@@ -20,7 +19,9 @@ Heimdall gives one view of where every Fleet System stands: whether it is up, it
 
 - Alerting and its delivery channel. A later milestone delivers Conditions the Hub already derives.
 - A watcher outside the System that hosts the Hub. The Hub cannot report an outage of its own System.
-- Session IDs linked to transcripts through Harness hooks.
+- Comparing a provisioner's declarations with its records. That is the provisioner's own check, such as `fleet doctor`, reading the records the Hub mirrors.
+- A dashboard that adds or changes a System's records ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
+- Harness hooks; transcripts already hold what hooks would report.
 - General-purpose metrics, logs, or traces. Heimdall is not Prometheus.
 
 ## M1: Walking skeleton
@@ -51,39 +52,52 @@ Every System runs a Collector, and the Hub runs as a Fleet-managed Service.
 
 Size: medium. Depends on the Fleet asks for packaging, the database, and a Darwin native supervisor and an unprivileged account on the System that lacks one.
 
-## M3: Fleet state
+## M3: Session archive
 
-The dashboard answers "does each System match what Fleet declared?" ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
+Every agent Session's transcript reaches the Hub before its Harness deletes it ([ADR-0012](decisions/0012-hub-archives-agent-session-transcripts.md)).
 
-- `packages/schema` publishes the Inventory schema, and `heimdall-hub inventory publish` and `inventory current` store and report the Inventory Fleet publishes.
-- Fleet publishes the Inventory on every command that changes a System, writes an install record for each thing it installs, and writes a run record for each Backup Job run (Fleet-side work; see the asks document in the Fleet repository).
-- The Collector reads `manifest.json`, the install records, and the run records, and reports: last Push or Apply and its commit, Drift per Managed path, each installed Service's supervisor state and health, each Backup Job's last run and exit status, each Application's installed release, and each Harness version.
-- The Hub compares the Inventory, the install records, and the Collector's checks, and derives Conditions: declared but not installed, installed differently than declared (including a release behind its channel), installed but not declared, Service down, Backup Job overdue or failing, Drift, stale System, and low disk. Each joins the Timeline M1 started.
+- The Collector finds each supported Harness's transcript files and uploads them as they grow, separately from Reports, resending from what the Hub already holds and keeping content the Hub has not acknowledged.
+- The Hub stores transcripts as written, without parsing them, so later analysis can reprocess the archive.
+- Capture can be turned off per System in the Collector's configuration.
 
-Size: large. The Inventory schema and the install record format are the contracts; land them before building the Collector side.
+Size: medium. It comes first because transcripts lost to pruning cannot be recovered. Sharp edges: files that grow while being read, and the size of the Hub's database and backups.
 
-## M4: Session correlation
+## M4: Fleet state
 
-Spikes can be traced to the agent Session that caused them.
+The dashboard answers "is everything each System's provisioner recorded still healthy?" ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
 
-- The Collector detects Harness processes and records Sessions with Harness, working directory, start and end, and aggregate CPU and memory across the process tree.
-- The Hub stores Sessions and exposes them on the same time axis as Vitals.
+- `heimdall-collector record` and `forget` hold a provisioner's Applications, Services, jobs, and files in the Collector's state; jobs report their runs with `record run`.
+- The Collector checks what it can observe: each Service's supervisor state and loopback health, each job's runs, and each recorded file's hash. It reports its whole record set in Reports whenever it changes.
+- The Hub mirrors each System's records, returns them on request for a provisioner's own check, and derives Conditions: Service down, job failing or overdue, Drift, stale System, and low disk. Each joins the Timeline M1 started.
+- Fleet records what it installs and builds its own declared-against-recorded check (Fleet-side work in the Fleet repository).
 
-Size: medium. Sharp edge: process-tree aggregation differs between macOS and Linux, and short-lived children fall between 15-second samples.
+Size: medium to large. The record contract lands in the [spec](spec.md) before provisioners build against it.
 
-## M5: Dashboard
+## M5: Session insight
+
+Agent work becomes visible: what each Session did, used, and cost, and which Session caused a spike.
+
+- The Hub derives each Session's model, tokens, tools, skills, context used, and approximate cost from its stored transcript, per Harness.
+- The Collector detects Harness processes and records Sessions with Harness, working directory, start and end, and aggregate CPU and memory across the process tree, on the same time axis as Vitals.
+- The Collector reports each Harness's installed version without running Harness binaries.
+- The archive can be queried across months, by a person or an agent.
+
+Size: large. Sharp edges: each Harness's transcript format, a price table for cost, and process-tree aggregation that differs between macOS and Linux.
+
+## M6: Dashboard
 
 The full UI, designed before it is built.
 
 - Static mock variants first. One is chosen before any component is written.
 - Fleet overview: every System with last seen, headline Vitals, and open Conditions.
-- System detail: Vitals charts with min/max ranges and Session overlays, managed Services and Backup Jobs with their schedules, Applications and releases, Drift, and the Timeline.
+- System detail: Vitals charts with min/max ranges and Session overlays, recorded Services and jobs with their health and runs, Applications, Drift, and the Timeline.
+- Session views: what each Session did and cost.
 - Readable on a phone.
 
-Size: large. M1's plain page carries the project until here. Mocks can start any time after M3 fixes the data shape.
+Size: large. M1's plain page carries the project until here. Mocks can start once M4 and M5 fix the data shape.
 
 ## Later
 
+- Hardening before anyone else runs Heimdall: authentication for the dashboard and its reads, and handling of secrets that appear in transcripts.
 - Alerting: deliver Conditions through a chosen channel, with silencing.
 - An external watcher for the System that hosts the Hub.
-- Harness hook enrichment that links Sessions to transcripts.
