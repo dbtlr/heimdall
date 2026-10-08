@@ -112,7 +112,8 @@
                       "minute"
                     ],
                     "additionalProperties": false
-                  }
+                  },
+                  "uniqueItems": true
                 }
               },
               "required": [
@@ -128,7 +129,8 @@
             "items": {
               "type": "string",
               "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-            }
+            },
+            "uniqueItems": true
           },
           "name": {
             "type": "string",
@@ -194,6 +196,6 @@
     "systems"
   ],
   "additionalProperties": false,
-  "description": "The whole-fleet snapshot Fleet publishes to the Heimdall Hub (ADR-0010). Beyond this schema, the Hub refuses repeated names among Systems and among each System's Applications, Services, Backup Jobs, and Harnesses; repeated times in one schedule; a database name or role repeated on one System; and a database on a System the Inventory does not declare.",
+  "description": "The whole-fleet snapshot Fleet publishes to the Heimdall Hub (ADR-0010). Beyond this schema, the Hub refuses repeated names among Systems and among each System's Applications, Services, and Backup Jobs; a database name or role repeated on one System; and a database on a System the Inventory does not declare.",
   "title": "Heimdall Inventory v1"
 }

@@ -24,8 +24,14 @@ describe('an Inventory of an unknown schema version', () => {
     ['missing', undefined],
     ['fractional', 1.5],
     ['a string', '1'],
+    ['zero', 0],
+    ['negative', -3],
   ])('is invalid when its version is %s', (_, schemaVersion) => {
     expect(parseInventory({ ...inventory(), schemaVersion }).kind).toBe('invalid');
+  });
+
+  test('is not claimed by a known version with an unknown shape', () => {
+    expect(parseInventory({ schemaVersion: 1, systems: {} }).kind).toBe('invalid');
   });
 });
 
@@ -46,7 +52,26 @@ describe('an Inventory is invalid', () => {
       'with an Application field the Hub does not know',
       withLaptop({ applications: [{ ...collector, installScript: 'install.sh' }] }),
     ],
-    ['with no Systems', withSystems()],
+    [
+      'with a Service field the Hub does not know',
+      withLaptop({ services: [{ name: 'notes', port: 8080, supervisor: 'systemd' }] }),
+    ],
+    [
+      'with a Backup Job field the Hub does not know',
+      withLaptop({ backupJobs: [{ ...notes, volume: '/Volumes/Backups' }] }),
+    ],
+    [
+      'with a scheduled time field the Hub does not know',
+      withLaptop({ backupJobs: [{ ...notes, schedule: [{ hour: 3, minute: 15, second: 0 }] }] }),
+    ],
+    [
+      'with a database field the Hub does not know',
+      {
+        ...inventory(),
+        databases: [{ extensions: [], name: 'heimdall', role: 'heimdall', system: 'server-1' }],
+      },
+    ],
+    ['with no Systems', { ...inventory(), databases: [], systems: [] }],
     ['with an abbreviated commit', { ...inventory(), commit: '3f1c2a9' }],
     ['with a dirty commit', { ...inventory(), commit: `${inventory().commit}-dirty` }],
     ['naming a System outside Fleet names', withLaptop({ name: 'Laptop_1' })],
@@ -140,6 +165,15 @@ describe('an Inventory is invalid', () => {
   ])('%s', (_, input) => {
     expect(parseInventory(input).kind).toBe('invalid');
   });
+});
+
+// The cross-reference check would otherwise blame the database for a System
+// that failed on its own.
+test('an Inventory with a misnamed System is not also blamed for its databases', () => {
+  const [laptop, server] = inventory().systems as [System, System];
+  const parsed = parseInventory(withSystems(laptop, { ...server, name: 'Server_1' }));
+
+  expect(parsed.kind === 'invalid' && parsed.reason).not.toContain('does not declare');
 });
 
 describe('an Inventory may', () => {

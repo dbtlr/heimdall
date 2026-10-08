@@ -243,16 +243,16 @@ Fleet need not render or store a token, and no 1Password item exists per System.
 
 ## The Inventory
 
-Fleet publishes the whole-fleet Inventory to the Hub as one JSON document ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)). Its JSON Schema is [`packages/schema/inventory.v1.schema.json`](../packages/schema/inventory.v1.schema.json). Fleet fetches it at the release tag the Hub runs, such as `https://raw.githubusercontent.com/dbtlr/heimdall/<tag>/packages/schema/inventory.v1.schema.json`, and can validate an Inventory before it publishes.
+Fleet publishes the whole-fleet Inventory to the Hub as one JSON document ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)). Its JSON Schema is [`packages/schema/inventory.v1.schema.json`](../packages/schema/inventory.v1.schema.json). Fleet fetches it at the release tag the Hub runs, such as `https://raw.githubusercontent.com/dbtlr/heimdall/<tag>/packages/schema/inventory.v1.schema.json`, and can validate an Inventory before it publishes. Its patterns are ECMA-262 regular expressions, as JSON Schema specifies. A validator that runs them as Python regular expressions lets `$` match before a final newline, so it accepts a value such as `"laptop-1\n"` that the Hub refuses.
 
 | Field | Holds |
 | --- | --- |
 | `schemaVersion` | `1`. |
 | `commit` | The full 40-character SHA of the commit on Fleet's main branch that Fleet compiled the Inventory from. |
-| `systems` | Every declared System: `name`, `os` (`darwin` or `linux`), `tags`, and the Units that Fleet's targeting applies to it. |
+| `systems` | Every declared System: `name`, `os` (`darwin` or `linux`), `tags` (each non-empty), and the Applications, Services, Backup Jobs, and Harnesses that Fleet's targeting applies to it. |
 | `systems[].applications` | `name`, `repository` as `owner/name`, `channel` (`stable` or `next`), and `release`, the tag the channel resolved to when Fleet published. |
 | `systems[].services` | `name` and `supervisor` (`systemd`, `docker`, or `native`). |
-| `systems[].backupJobs` | `name`, `schedule` as a list of `{ "hour", "minute" }` times in the System's local time, and `retentionDays`. |
+| `systems[].backupJobs` | `name`, `schedule` as a list of `{ "hour", "minute" }` times in the System's local time, and `retentionDays`, from 1 to 3650. |
 | `systems[].harnesses` | The Harness names the System declares, such as `claude-code`. |
 | `databases` | Each database in Fleet's PostgreSQL registry: `name`, `role`, and `system`, the System that hosts it. |
 
@@ -260,8 +260,7 @@ Every field is required, and lists may be empty, except that the Inventory names
 
 The Hub refuses an Inventory that fails the schema, including one with a field the schema does not name. It also refuses these, which the JSON Schema cannot express:
 
-- A name that repeats among the Systems, or among one System's Applications, Services, Backup Jobs, or Harnesses.
-- A time that repeats in one Backup Job's schedule.
+- A name that repeats among the Systems, or among one System's Applications, Services, or Backup Jobs.
 - A database name or role that repeats on one System.
 - A database whose System the Inventory does not declare.
 

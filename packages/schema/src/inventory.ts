@@ -21,7 +21,8 @@ const COMMIT = /^[0-9a-f]{40}$/u;
 const unitName = z.string().regex(UNIT_NAME);
 
 // True when no two items share a key. Fleet enforces these rules on its own
-// declarations, and JSON Schema cannot state them, so only the Hub checks them.
+// declarations. JSON Schema states uniqueness only for whole items, so for
+// named items only the Hub checks it.
 const isUnique = <T>(items: T[], key: (item: T) => string) =>
   new Set(items.map(key)).size === items.length;
 const byName = (item: { name: string }) => item.name;
@@ -55,17 +56,19 @@ const BackupJobSchema = z.strictObject({
     .min(1)
     .refine((times) => isUnique(times, ({ hour, minute }) => `${hour}:${minute}`), {
       message: 'scheduled times repeat',
-    }),
+    })
+    .meta({ uniqueItems: true }),
 });
 
-// One System as Fleet declares it, with every Unit Fleet's targeting applies
-// to it already resolved.
+// One System as Fleet declares it, with the Applications, Services, Backup
+// Jobs, and Harnesses Fleet's targeting applies to it already resolved.
 const SystemSchema = z.strictObject({
   applications: uniqueNames(ApplicationSchema, 'Application'),
   backupJobs: uniqueNames(BackupJobSchema, 'Backup Job'),
   harnesses: z
     .array(unitName)
-    .refine((harnesses) => isUnique(harnesses, String), { message: 'Harnesses repeat' }),
+    .refine((harnesses) => isUnique(harnesses, String), { message: 'Harnesses repeat' })
+    .meta({ uniqueItems: true }),
   name: z.string().regex(SYSTEM_NAME),
   os: z.enum(['darwin', 'linux']),
   services: uniqueNames(ServiceSchema, 'Service'),
@@ -99,11 +102,16 @@ export const InventorySchema = z
   .refine(
     ({ databases, systems }) =>
       databases.every(({ system }) => systems.some(({ name }) => name === system)),
-    { message: 'a database names a System the Inventory does not declare', path: ['databases'] },
+    {
+      message: 'a database names a System the Inventory does not declare',
+      path: ['databases'],
+      // Only a valid list of Systems can show that a database's System is missing.
+      when: ({ issues }) => issues.length === 0,
+    },
   )
   .meta({
     description:
-      "The whole-fleet snapshot Fleet publishes to the Heimdall Hub (ADR-0010). Beyond this schema, the Hub refuses repeated names among Systems and among each System's Applications, Services, Backup Jobs, and Harnesses; repeated times in one schedule; a database name or role repeated on one System; and a database on a System the Inventory does not declare.",
+      "The whole-fleet snapshot Fleet publishes to the Heimdall Hub (ADR-0010). Beyond this schema, the Hub refuses repeated names among Systems and among each System's Applications, Services, and Backup Jobs; a database name or role repeated on one System; and a database on a System the Inventory does not declare.",
     title: `Heimdall Inventory v${String(INVENTORY_SCHEMA_VERSION)}`,
   });
 
@@ -119,9 +127,10 @@ export type InventoryParse =
   | { kind: 'invalid'; reason: string }
   | { kind: 'unknown-version'; schemaVersion: number };
 
-// The integer schema version an input claims, or undefined when it claims none.
+// The schema version an input claims, or undefined when it claims none a
+// release could carry.
 const claimedVersion = (input: unknown) => {
-  const version = z.object({ schemaVersion: z.int() }).safeParse(input);
+  const version = z.object({ schemaVersion: z.int().positive() }).safeParse(input);
   return version.success ? version.data.schemaVersion : undefined;
 };
 
