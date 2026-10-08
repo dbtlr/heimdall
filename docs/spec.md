@@ -57,4 +57,4 @@ The Collector observes each Session's processes from the process table, recordin
 
 ## Trust
 
-The Hub has no authentication; it relies on a tailnet only its operator can reach. Its database holds every transcript, including anything an agent read. Authentication, and handling of secrets in transcripts, come before Heimdall is used anywhere else.
+Collectors send Reports with their System's token, but the dashboard and reads of the records have no authentication; they rely on a tailnet only its operator can reach. Its database holds every transcript, including anything an agent read. Authentication, and handling of secrets in transcripts, come before Heimdall is used anywhere else.
