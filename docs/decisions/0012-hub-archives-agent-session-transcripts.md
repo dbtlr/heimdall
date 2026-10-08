@@ -21,9 +21,10 @@ Transcripts exist only on the System where the Session ran, and Harnesses delete
 
 ## Decision
 
-- **The Collector uploads each Harness's transcript files to the Hub as they grow.** The Hub stores them as written, without parsing on arrival, so later analysis can reprocess the whole archive when it improves. Uploads travel separately from the Reports that carry Vitals, and an upload the Hub refuses or does not receive is sent again from what the Hub already holds, never dropped. The Hub saying how much of a file it holds is an acknowledgment, not an instruction about what to observe.
+- **The Collector uploads each Harness's transcript files to the Hub as they grow.** The Hub stores them as written, without parsing on arrival, so later analysis can reprocess the whole archive when it improves. Uploads travel separately from the Reports that carry Vitals, and an upload the Hub refuses or does not receive is sent again from what the Hub already holds, never dropped. The Collector keeps a copy of transcript content the Hub has not yet acknowledged, so a Hub outage longer than a Harness's pruning loses nothing. The Hub saying how much of a file it holds is an acknowledgment, not an instruction about what to observe.
 - **The Hub is the durable record of agent Sessions, content included.** Derived facts such as tokens, model, tools, skills, context, and cost come from the stored transcripts.
-- **Capture can be turned off per System** in the Collector's configuration.
+- **Capture can be turned off per System** in the Collector's configuration. Turning it off stops new uploads and leaves what the Hub already holds.
+- **The Hub keeps transcripts until they are deleted on purpose.** Retention limits and a way to delete transcripts are part of the capture design.
 - **Process observation is unchanged.** The Collector still identifies Sessions from the process table and records only executable names and working directories there, never command-line arguments or environment variables.
 
 ## Considered options
