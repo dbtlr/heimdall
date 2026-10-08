@@ -58,7 +58,7 @@ Every agent Session's transcript reaches the Hub before its Harness deletes it (
 
 - The Collector finds each supported Harness's transcript files and uploads them as they grow, separately from Reports, resending from what the Hub already holds and keeping content the Hub has not acknowledged.
 - The Hub stores transcripts as written, without parsing them, so later analysis can reprocess the archive.
-- Capture can be turned off per System in the Collector's configuration.
+- A System captures only the transcript sources its Collector configuration lists; capture is off by default ([ADR-0013](decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)).
 
 Size: medium. It comes first because transcripts lost to pruning cannot be recovered. Sharp edges: files that grow while being read, and the size of the Hub's database and backups.
 

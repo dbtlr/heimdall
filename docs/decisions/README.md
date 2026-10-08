@@ -25,3 +25,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0010 — Fleet publishes the Inventory to the Hub, and Collectors read Fleet's install records](0010-fleet-publishes-inventory-collectors-read-install-records.md) (superseded by ADR-0011)
 - [ADR-0011 — Collectors hold what provisioners record, and Heimdall stores no declarations](0011-collectors-hold-what-provisioners-record.md)
 - [ADR-0012 — The Hub archives agent Session transcripts](0012-hub-archives-agent-session-transcripts.md)
+- [ADR-0013 — Transcripts upload as acknowledged chunks into PostgreSQL, from sources each System opts into](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)

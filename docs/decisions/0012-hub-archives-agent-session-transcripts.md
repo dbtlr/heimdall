@@ -4,7 +4,7 @@ title: ADR-0012 - The Hub archives agent Session transcripts
 description: "Collectors upload each Harness's Session transcripts to the Hub, which keeps them as the durable record of agent Sessions, content included, so it can derive token spend, tools, skills, context, and cost and support analysis across months. Process observation still records no command-line arguments or environment variables. Supersedes ADR-0002."
 status: accepted
 created: 2026-10-08
-modified: 2026-10-08
+modified: 2026-10-09
 ---
 
 # The Hub archives agent Session transcripts
@@ -40,3 +40,7 @@ Transcripts are the largest data Heimdall stores. The Vitals retention of [ADR-0
 The Hub's dashboard has no authentication and relies on access to a single-person tailnet, so authentication and the handling of secrets in transcripts come before Heimdall is offered for use anywhere else.
 Linking a transcript to its process-observed Session becomes possible, so a spike in Vitals could be traced to what the agent was doing; how is part of deriving Session insight.
 The repository's rule that the Collector never stores transcript content is replaced by this decision.
+
+## Changelog
+
+- 2026-10-09: Clarification. [ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) settles the capture design: a System captures only the sources its configuration lists, so capture is off until turned on, and it fixes the upload protocol, the spool, and storage in PostgreSQL. The decision is unchanged.
