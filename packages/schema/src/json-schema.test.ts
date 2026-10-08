@@ -1,9 +1,22 @@
 import { expect, test } from 'bun:test';
 
-import committed from '../inventory.v1.schema.json';
-import { inventoryJsonSchema } from './json-schema.ts';
+import installRecord from '../install-record.v1.schema.json';
+import inventory from '../inventory.v1.schema.json';
+import runRecord from '../run-record.v1.schema.json';
+import {
+  installRecordJsonSchema,
+  inventoryJsonSchema,
+  runRecordJsonSchema,
+} from './json-schema.ts';
 
-// Fleet validates against the committed file, so it must say what the Hub checks.
-test('the committed Inventory JSON Schema matches the schema the Hub parses with', () => {
-  expect(committed).toEqual(JSON.parse(inventoryJsonSchema()));
-});
+// Fleet validates against the committed files, so each must say what Heimdall checks.
+test.each([
+  ['Inventory', inventory, inventoryJsonSchema],
+  ['install record', installRecord, installRecordJsonSchema],
+  ['run record', runRecord, runRecordJsonSchema],
+])(
+  'the committed %s JSON Schema matches the schema Heimdall parses with',
+  (_, committed, generate) => {
+    expect(committed).toEqual(JSON.parse(generate()));
+  },
+);

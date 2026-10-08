@@ -1,5 +1,5 @@
 ---
-description: "How Fleet declares Heimdall: Application Units for both binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, the Inventory Fleet publishes, and the asks Fleet has not yet met."
+description: "How Fleet declares Heimdall: Application Units for both binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, the Inventory Fleet publishes, the install and run records Fleet leaves on each System, and the asks Fleet has not yet met."
 ---
 
 # How Fleet declares Heimdall
@@ -266,6 +266,118 @@ The Hub refuses an Inventory that fails the schema, including one with a field t
 
 A new optional field keeps `schemaVersion`; a rename, a removal, or a change of meaning bumps it. Either way, upgrade the Hub before Fleet publishes the new field or version. The Hub refuses a version it does not know and says so.
 
+## Install records and run records
+
+Fleet leaves data-only records on each System, and the Collector reads them with `manifest.json` ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)). An install record says what Fleet installed. A run record says how a Backup Job's runs went. Their JSON Schemas are [`packages/schema/install-record.v1.schema.json`](../packages/schema/install-record.v1.schema.json) and [`packages/schema/run-record.v1.schema.json`](../packages/schema/run-record.v1.schema.json). As with the Inventory, their patterns are ECMA-262 regular expressions.
+
+### Where they live
+
+The records live in `~/.fleet/`, beside `manifest.json`, in the home of the account Fleet acts as on the System. That is the account the System's `ssh` alias logs into, which is the `package_user` when the System declares one.
+
+| Path | Holds |
+| --- | --- |
+| `~/.fleet/installed/applications/<name>.json` | The install record of the Application `<name>`. |
+| `~/.fleet/installed/services/<name>.json` | The install record of the Service `<name>`. |
+| `~/.fleet/installed/backup-jobs/<name>.json` | The install record of the Backup Job `<name>`. |
+| `~/.fleet/backup-runs/<name>.json` | The run record of the Backup Job `<name>`. |
+
+Each kind has its own directory because an Application and a Service can share a name, as `heimdall` does. The file name is the record's `name` with `.json` appended.
+
+Fleet writes each record as one JSON object, first to a temporary file in the same directory and then moved into place with `mv`, so the Collector never reads half a record. The files may be readable by their owner alone, because the Collector runs as the same account.
+
+- **Install records.** Fleet writes one after a command that installs or updates an Application, a Service, or a Backup Job succeeds. That includes `upgrade` and the commands that handle their own Services. A later install replaces the record. Removing the installed thing removes its record.
+- **Run records.** The Backup Job's runner writes one after every run, including a run that refuses to start, such as when its volume is not mounted. It writes nothing when the run stops because another run holds the lock, so it cannot overwrite the record the running one will write. It carries `latestSuccess` forward from the record it replaces when the run fails.
+
+A System whose Collector runs as another account, such as a System without a `package_user`, has no records that Collector can read. It reports none, and the Hub judges no install gaps for it.
+
+### Install record fields
+
+Every install record carries these fields:
+
+| Field | Holds |
+| --- | --- |
+| `schemaVersion` | `1`. |
+| `kind` | `application`, `service`, or `backup-job`. |
+| `name` | The Application, Service, or Backup Job name Fleet declares. |
+| `commit` | The full 40-character SHA of the Fleet commit the command ran from, with Fleet's `-dirty` suffix when the tree was dirty. |
+| `installedAt` | When the install finished, in UTC, such as `2026-10-08T03:22:21Z`, as `manifest.json` writes `installedAt`. |
+
+Each kind adds its own:
+
+| Kind | Field | Holds |
+| --- | --- | --- |
+| `application` | `release` | The release tag Fleet installed, or `null` when Fleet did not resolve one, as for an update with `--raw`. |
+| `service` | `supervisor` | `systemd`, `docker`, or `native`. |
+| `service` | `unit` | For `systemd` only, the system unit Fleet renders, such as `notes.service`. |
+| `service` | `container` | For `docker` only, the container Fleet runs, such as `fleet-notes`. |
+| `service` | `healthUrl` | Optional. The `[health] url` Fleet rendered and polls. It must be `http://127.0.0.1:<port>`, optionally followed by a path, because the Collector requests it. |
+| `service` | `port` | Optional. The `[ingress] port` the Service listens on. |
+| `backup-job` | `supervisor` | `launchd`, the only scheduler Fleet runs Backup Jobs under. |
+| `backup-job` | `label` | The launchd label Fleet installed the job under. |
+| `backup-job` | `schedule` | The installed `{ "hour", "minute" }` times, in the System's local time, as in the Inventory. |
+| `backup-job` | `retentionDays` | The installed retention, from 1 to 3650. |
+| `backup-job` | `destination` | The absolute path of the directory the job writes its archives to. |
+
+A `native` Service records neither `unit` nor `container`, because its Application writes and names its own unit. A Service that declares neither `[health]` nor `[ingress]` leaves out `healthUrl` and `port`.
+
+The install record of a `systemd` Service, `~/.fleet/installed/services/notes.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "service",
+  "name": "notes",
+  "commit": "3f1c2a9d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+  "installedAt": "2026-10-08T03:22:21Z",
+  "supervisor": "systemd",
+  "unit": "notes.service",
+  "healthUrl": "http://127.0.0.1:8080/api/health",
+  "port": 8080
+}
+```
+
+### Run record fields
+
+| Field | Holds |
+| --- | --- |
+| `schemaVersion` | `1`. |
+| `name` | The Backup Job's name. |
+| `latestRun` | The latest run, successful or not. |
+| `latestSuccess` | The latest run that exited 0, or `null` until the job first succeeds. |
+
+Each run holds `startedAt` and `finishedAt` in UTC, `exitStatus` from 0 to 255, and `archive`. `archive` is the `name` and `sizeBytes` of the archive the run wrote, where `name` is a file name in the job's destination, or `null` when the run wrote none. A successful run always has an archive.
+
+The run record after a failed run that followed a successful one, `~/.fleet/backup-runs/notes.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "name": "notes",
+  "latestRun": {
+    "startedAt": "2026-10-08T19:15:00Z",
+    "finishedAt": "2026-10-08T19:15:01Z",
+    "exitStatus": 1,
+    "archive": null
+  },
+  "latestSuccess": {
+    "startedAt": "2026-10-08T07:15:00Z",
+    "finishedAt": "2026-10-08T07:15:04Z",
+    "exitStatus": 0,
+    "archive": { "name": "2026-10-08T071500Z.sqlite", "sizeBytes": 5242880 }
+  }
+}
+```
+
+### Unreadable records and unknown fields
+
+A record is unreadable when it fails its schema or claims a `schemaVersion` the Collector does not know, and the Collector reports it as unreadable. Heimdall also refuses these, which the JSON Schemas cannot express:
+
+- A health URL whose port is above 65535.
+- A Backup Job scheduled twice at one time.
+- A run that finished before it started.
+
+The Collector drops fields it does not know and reads the rest of the record. Each System's Collector upgrades on its own schedule, so a record from a newer Fleet stays readable. The JSON Schemas refuse unknown fields, so validating a record before writing it catches a misspelled field. Fleet may write a new optional field once a Heimdall release defines it, and validates against that release's schema. A rename, a removal, or a change of meaning bumps `schemaVersion`, so every Collector is upgraded before Fleet writes the new version.
+
 ## Open Fleet-side asks
 
 These are the gaps between Heimdall's needs and what Fleet's documents and renderer show today. Each is an ask in Fleet's `docs/specs/heimdall-asks.md`; A5 to A7 follow ADR-0010.
@@ -273,8 +385,8 @@ These are the gaps between Heimdall's needs and what Fleet's documents and rende
 - **Darwin user agents (A4).** Native Service Units must run on a macOS System, so that `fleet service heimdall-collector <system> install` runs the Collector's launchd install and reports its status. Until then an operator runs `service install` by hand.
 - **An account on a System without one (A4).** A System that declares no `package_user` has no unprivileged account to run the Collector as a systemd user service. It joins Heimdall when Fleet gives it one.
 - **Publish the Inventory (A5, M3).** Each Fleet command that changes a System reads the stored commit with `heimdall-hub inventory current` over SSH on the System that hosts the Hub, checks that its own commit descends from it (skipped when the Hub stores `none`), then runs `heimdall-hub inventory publish --expect-commit <stored commit or none>` with the whole-fleet Inventory on standard input ([ADR-0010](decisions/0010-fleet-publishes-inventory-collectors-read-install-records.md)).
-- **Install records (A6, M3).** Each Fleet command that installs an Application, Service, or Backup Job leaves a data-only install record on the System, which the Collector checks.
-- **Run records (A7, M3).** Each Backup Job keeps a run record of its latest run and latest successful run: start, finish, exit status, and newest archive.
+- **Install records (A6, M3).** Each Fleet command that installs or updates an Application, Service, or Backup Job writes its install record under `~/.fleet/installed/`, and removing the installed thing removes the record ([Install records and run records](#install-records-and-run-records)).
+- **Run records (A7, M3).** Each Backup Job's runner writes its run record to `~/.fleet/backup-runs/<name>.json` after every run, holding its latest run and its latest successful run.
 - **Automated pairing (optional, later).** Fleet could run `heimdall-hub pair <system>` and `heimdall-collector pair <code>` for a System that is not paired. Fleet has no cross-System imperative step today, and a System pairs only once, so the manual step stands until the effort pays.
 
 Ask A3, per-System secrets and plain values in one template, is no longer needed. Pairing replaced the per-System token and System name, and the Hub's `port` and `tailnet_port` stay literals on the one System that hosts the Hub.

@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?:-dirty)?$"
+        },
+        "installedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "kind": {
+          "type": "string",
+          "const": "application"
+        },
+        "release": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^v?[0-9A-Za-z][0-9A-Za-z._-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["commit", "installedAt", "name", "schemaVersion", "kind", "release"],
+      "additionalProperties": false
+    },
+    {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}(?:-dirty)?$"
+            },
+            "installedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            },
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "healthUrl": {
+              "type": "string",
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "supervisor": {
+              "type": "string",
+              "const": "systemd"
+            },
+            "unit": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.service$"
+            }
+          },
+          "required": [
+            "commit",
+            "installedAt",
+            "name",
+            "schemaVersion",
+            "kind",
+            "supervisor",
+            "unit"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}(?:-dirty)?$"
+            },
+            "installedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            },
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "healthUrl": {
+              "type": "string",
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "container": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            },
+            "supervisor": {
+              "type": "string",
+              "const": "docker"
+            }
+          },
+          "required": [
+            "commit",
+            "installedAt",
+            "name",
+            "schemaVersion",
+            "kind",
+            "container",
+            "supervisor"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}(?:-dirty)?$"
+            },
+            "installedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            },
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "healthUrl": {
+              "type": "string",
+              "pattern": "^http:\\/\\/127\\.0\\.0\\.1:[1-9][0-9]{0,4}(?:\\/\\S*)?$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "supervisor": {
+              "type": "string",
+              "const": "native"
+            }
+          },
+          "required": ["commit", "installedAt", "name", "schemaVersion", "kind", "supervisor"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?:-dirty)?$"
+        },
+        "installedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "destination": {
+          "type": "string",
+          "pattern": "^\\/."
+        },
+        "kind": {
+          "type": "string",
+          "const": "backup-job"
+        },
+        "label": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "schedule": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hour": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 23
+              },
+              "minute": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 59
+              }
+            },
+            "required": ["hour", "minute"],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "supervisor": {
+          "type": "string",
+          "const": "launchd"
+        }
+      },
+      "required": [
+        "commit",
+        "installedAt",
+        "name",
+        "schemaVersion",
+        "destination",
+        "kind",
+        "label",
+        "retentionDays",
+        "schedule",
+        "supervisor"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "description": "The record Fleet leaves on a System for each Application, Service, or Backup Job it installs there (ADR-0010). Beyond this schema, Heimdall refuses a health URL port above 65535 and a Backup Job scheduled twice at one time. Fleet writes no field this schema does not name; a Collector reading a newer version of it drops the fields it does not know.",
+  "title": "Heimdall install record v1"
+}

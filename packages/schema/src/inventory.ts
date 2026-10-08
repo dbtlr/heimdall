@@ -1,6 +1,16 @@
 import { z } from 'zod';
 
+import {
+  isUnique,
+  releaseTag,
+  repository,
+  retentionDays,
+  scheduledTime,
+  scheduleOf,
+  unitName,
+} from './fleet.ts';
 import { SYSTEM_NAME } from './report.ts';
+import { versionedParser } from './versioned.ts';
 
 // The Inventory schema version this build speaks. The Hub refuses versions it
 // does not know and fields it does not know, so it is upgraded before Fleet
@@ -8,23 +18,10 @@ import { SYSTEM_NAME } from './report.ts';
 // meaning; new optional fields keep the version (ADR-0010).
 export const INVENTORY_SCHEMA_VERSION = 1;
 
-// Names of Fleet's Applications, Services, Backup Jobs, and Harnesses: Fleet's
-// DNS-label pattern without the length cap System names carry.
-const UNIT_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
-// The patterns Fleet validates repositories, release tags, and PostgreSQL
-// identifiers with.
-const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const RELEASE_TAG = /^v?[0-9A-Za-z][0-9A-Za-z._-]*$/u;
+// The pattern Fleet validates PostgreSQL identifiers with.
 const POSTGRES_IDENTIFIER = /^[a-z][a-z0-9_]{0,62}$/u;
 const COMMIT = /^[0-9a-f]{40}$/u;
 
-const unitName = z.string().regex(UNIT_NAME);
-
-// True when no two items share a key. Fleet enforces these rules on its own
-// declarations. JSON Schema states uniqueness only for whole items, so for
-// named items only the Hub checks it.
-const isUnique = <T>(items: T[], key: (item: T) => string) =>
-  new Set(items.map(key)).size === items.length;
 const byName = (item: { name: string }) => item.name;
 const uniqueNames = <T extends { name: string }>(schema: z.ZodType<T>, noun: string) =>
   z.array(schema).refine((items) => isUnique(items, byName), { message: `${noun} names repeat` });
@@ -33,8 +30,8 @@ const ApplicationSchema = z.strictObject({
   channel: z.enum(['stable', 'next']),
   name: unitName,
   // The tag the channel resolved to when Fleet published the Inventory.
-  release: z.string().regex(RELEASE_TAG),
-  repository: z.string().regex(REPOSITORY),
+  release: releaseTag,
+  repository,
 });
 
 const ServiceSchema = z.strictObject({
@@ -42,22 +39,10 @@ const ServiceSchema = z.strictObject({
   supervisor: z.enum(['systemd', 'docker', 'native']),
 });
 
-// One time of day a Backup Job runs, in its System's local time.
-const ScheduledTimeSchema = z.strictObject({
-  hour: z.int().min(0).max(23),
-  minute: z.int().min(0).max(59),
-});
-
 const BackupJobSchema = z.strictObject({
   name: unitName,
-  retentionDays: z.int().min(1).max(3650),
-  schedule: z
-    .array(ScheduledTimeSchema)
-    .min(1)
-    .refine((times) => isUnique(times, ({ hour, minute }) => `${hour}:${minute}`), {
-      message: 'scheduled times repeat',
-    })
-    .meta({ uniqueItems: true }),
+  retentionDays,
+  schedule: scheduleOf(z.strictObject(scheduledTime)),
 });
 
 // One System as Fleet declares it, with the Applications, Services, Backup
@@ -120,28 +105,4 @@ export type System = Inventory['systems'][number];
 export type Application = System['applications'][number];
 export type BackupJob = System['backupJobs'][number];
 
-// What the Hub makes of a published Inventory. An unknown schema version is
-// its own outcome so the Hub can tell Fleet to upgrade the Hub first.
-export type InventoryParse =
-  | { inventory: Inventory; kind: 'inventory' }
-  | { kind: 'invalid'; reason: string }
-  | { kind: 'unknown-version'; schemaVersion: number };
-
-// The schema version an input claims, or undefined when it claims none a
-// release could carry.
-const claimedVersion = (input: unknown) => {
-  const version = z.object({ schemaVersion: z.int().positive() }).safeParse(input);
-  return version.success ? version.data.schemaVersion : undefined;
-};
-
-export const parseInventory = (input: unknown): InventoryParse => {
-  const schemaVersion = claimedVersion(input);
-  if (schemaVersion !== undefined && schemaVersion !== INVENTORY_SCHEMA_VERSION) {
-    return { kind: 'unknown-version', schemaVersion };
-  }
-  const parsed = InventorySchema.safeParse(input);
-  if (!parsed.success) {
-    return { kind: 'invalid', reason: z.prettifyError(parsed.error) };
-  }
-  return { inventory: parsed.data, kind: 'inventory' };
-};
+export const parseInventory = versionedParser(InventorySchema, INVENTORY_SCHEMA_VERSION);

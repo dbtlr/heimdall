@@ -13,7 +13,7 @@
     "build:collector": "bun build packages/collector/src/main.ts --compile --outfile dist/heimdall-collector",
     "build:hub": "bun build packages/hub/src/main.ts --compile --outfile dist/heimdall-hub",
     "release": "bun packages/release/src/main.ts",
-    "schema:write": "bun packages/schema/scripts/write-inventory-schema.ts"
+    "schema:write": "bun packages/schema/scripts/write-json-schemas.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

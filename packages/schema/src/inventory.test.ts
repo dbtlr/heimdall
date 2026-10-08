@@ -6,7 +6,7 @@ import { inventory } from './testing.ts';
 
 describe('an Inventory', () => {
   test('parses when complete', () => {
-    expect(parseInventory(inventory())).toEqual({ inventory: inventory(), kind: 'inventory' });
+    expect(parseInventory(inventory())).toEqual({ kind: 'parsed', value: inventory() });
   });
 });
 
@@ -183,6 +183,6 @@ describe('an Inventory may', () => {
       { name: 'heimdall', role: 'heimdall', system: 'laptop-1' },
     ];
 
-    expect(parseInventory({ ...inventory(), databases }).kind).toBe('inventory');
+    expect(parseInventory({ ...inventory(), databases }).kind).toBe('parsed');
   });
 });
