@@ -18,13 +18,15 @@ export const RECORD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const name = z.string().regex(RECORD_NAME);
 
 // Free text for a person to read: no control characters, so it cannot rewrite a
-// terminal or break a line.
+// terminal or break a line, and well-formed Unicode, so PostgreSQL can store it
+// in a Report.
 const text = (maxLength = 256) =>
   z
     .string()
     .min(1)
     .max(maxLength)
-    .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' });
+    .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' })
+    .refine((value) => value.isWellFormed(), { message: 'must be well-formed Unicode' });
 
 // Who recorded something, for Heimdall to show and never compare.
 const provenance = z.strictObject({ by: text(64), revision: text(128).optional() }).optional();
@@ -105,9 +107,21 @@ export const JobRecordSchema = z.discriminatedUnion('scheduler', [
 const MAX_PATH_BYTES = 4096;
 const MAX_FILES = 10_000;
 
+// Whether `path` names a file in one way: no empty, `.`, or `..` segment, which
+// also rules out a trailing slash and `/` alone.
+const isNormalized = (path: string) =>
+  path
+    .split('/')
+    .every(
+      (segment, index) => index === 0 || (segment !== '' && segment !== '.' && segment !== '..'),
+    );
+
 const absolutePath = z
   .string()
   .regex(/^\/\P{Cc}*$/u, { message: 'must be absolute and must not contain control characters' })
+  .refine(isNormalized, {
+    message: 'must be normalized: no empty, . or .. segment and no trailing slash',
+  })
   .refine(
     (path) => path.isWellFormed() && new TextEncoder().encode(path).byteLength <= MAX_PATH_BYTES,
     {
