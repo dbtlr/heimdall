@@ -1,16 +1,17 @@
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
-import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
-import { text, url } from '@loomcli/validators';
+import { text } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { readIdentity } from './identity.ts';
+import { hub, stateDir } from './options.ts';
 import { pairAction } from './pair.ts';
 import { countWaiting } from './queue.ts';
+import { forgetCommand, recordCommand } from './record.ts';
 import { runAction } from './run.ts';
 import { defaultStateDir } from './state-dir.ts';
 import { readSpoolSummary } from './transcripts/spool.ts';
@@ -19,27 +20,6 @@ import { versionLine } from './version.ts';
 // SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, so
 // `run` stops between samples with its queue closed cleanly.
 const signals = () => plugin('@heimdall/collector/signals', { signals: ['SIGINT', 'SIGTERM'] });
-
-// The Hub's base URL, from its flag, then its variable, then the top-level
-// `hub` key, which holds no secret and is the same on every System.
-const hub = {
-  description: 'Base URL of the Hub.',
-  env: 'HEIMDALL_HUB',
-  extensions: [configInput({ path: 'hub' })],
-  required: true,
-  type: 'string',
-  validate: url({ protocols: ['http', 'https'] }),
-} as const;
-
-// Where the queue and the identity live, read the same way.
-const stateDir = {
-  description:
-    'Directory for the sample queue, the transcript spool, and the identity. Defaults to the per-user state directory.',
-  env: 'HEIMDALL_STATE_DIR',
-  extensions: [configInput({ path: 'stateDir' })],
-  type: 'string',
-  validate: text(),
-} as const;
 
 // `run` reports as the System `pair` stored in the state directory.
 export const run = new Command('run', {
@@ -91,6 +71,8 @@ export const app = new Application('heimdall-collector', {
 })
   .command(run)
   .command(pair)
+  .command(recordCommand)
+  .command(forgetCommand)
   .command(
     serviceCommand({
       binary: 'collector',

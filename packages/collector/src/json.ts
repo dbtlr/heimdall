@@ -11,3 +11,13 @@ export const parseJson = (text: string): unknown => {
 // Whether `value` is a table: an object that is not a list.
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// What a Zod schema offers that parsing a value needs, so a caller names no Zod type.
+export type Checker<T> = {
+  safeParse: (value: unknown) =>
+    | { data: T; success: true }
+    | {
+        error: { issues: readonly { message: string; path: readonly PropertyKey[] }[] };
+        success: false;
+      };
+};
