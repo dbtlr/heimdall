@@ -44,3 +44,4 @@ The repository's rule that the Collector never stores transcript content is repl
 ## Changelog
 
 - 2026-10-09: Clarification. [ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) settles the capture design: a System captures only the sources its configuration lists, so capture is off until turned on, and it fixes the upload protocol, the spool, and storage in PostgreSQL. The decision is unchanged.
+- 2026-10-09: Clarification. One refusal is not resent: an upload for a path deleted on purpose is refused as deleted, and the Collector stops uploading that path ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). It acknowledges a deliberate delete and is not an instruction about what to observe. The decision is unchanged.
