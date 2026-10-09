@@ -59,6 +59,7 @@ Every agent Session's transcript reaches the Hub before its Harness deletes it (
 - The Collector finds each supported Harness's transcript files and uploads them as they grow, separately from Reports, resending from what the Hub already holds and keeping content the Hub has not acknowledged.
 - The Hub stores transcripts as written, without parsing them, so later analysis can reprocess the archive.
 - A System captures only the transcript sources its Collector configuration lists; capture is off by default ([ADR-0013](decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)).
+- Proven with v0.3.0: Collectors on one Linux System and two macOS Systems capture Claude Code and Codex transcripts, history included, and the Hub's copy of every file on the Linux System matches it byte for byte. Through a three-minute Hub outage, each Collector kept what it spooled and every Vitals sample, and all of it reached the Hub within minutes of the restart. A System that lists no sources uploads nothing. The first upload of the existing history stored about 5 GB of transcripts as 1.1 GB in the database.
 
 Size: medium. It comes first because transcripts lost to pruning cannot be recovered. Sharp edges: files that grow while being read, and the size of the Hub's database and backups.
 
