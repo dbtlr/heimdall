@@ -525,6 +525,28 @@ describe('deleting transcripts', () => {
     expect([...live]).toEqual([]);
   });
 
+  // An open that locked the path's generations first commits a new one the
+  // delete's first pass cannot see; a later pass deletes it.
+  test('deletes a generation opened at the path just before it', async () => {
+    await using h = await startHub();
+    const first = await upload(h, NOW);
+    let removed: Promise<unknown> | undefined;
+
+    await h.db.sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM transcript_generations WHERE id = ${first} FOR UPDATE`;
+      await tx`
+        INSERT INTO transcript_generations (system, source, path, opened_at, last_upload_at)
+        VALUES ('laptop-1', ${FILE.source}, ${FILE.path}, ${new Date(NOW)}, ${new Date(NOW)})
+      `;
+      removed = deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+      await waitersOnLocks(h.db.sql, 1);
+    });
+
+    expect(await removed).toEqual({ bytes: expect.any(Number), generations: 2 });
+    const live = await h.db.sql`SELECT id FROM transcript_generations WHERE deleted_at IS NULL`;
+    expect([...live]).toEqual([]);
+  });
+
   test('refuses to run without a filter', async () => {
     await using h = await startHub();
 

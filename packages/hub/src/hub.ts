@@ -166,7 +166,7 @@ const uploader = async (request: Request, sql: SQL) => {
 };
 
 // The largest request body that opens a generation: a path of up to 4096
-// characters, each up to four bytes of UTF-8 or a six-byte JSON escape.
+// bytes of UTF-8, which JSON escapes to at most six bytes each.
 const MAX_OPEN_BYTES = 32 * 1024;
 
 const DELETED = 'This transcript was deleted on purpose; do not upload it again.';
