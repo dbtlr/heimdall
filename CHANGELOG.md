@@ -8,6 +8,13 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.3.0 - 2026-10-09
+
+### Added
+
+- **The Hub stores agent Session transcripts as Collectors upload them** (HMD-50). The Hub accepts gzipped chunks of each transcript file at the offset it holds, stores them in PostgreSQL, and acknowledges them in the same transaction, as [ADR-0013](docs/decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) describes. It keeps each System's latest set of transcript sources from its Reports. `heimdall-hub transcripts delete` removes whole generations by System, source, or last upload before a date, and the Hub refuses a path once every generation there is deleted. Generation ids are random, so a Hub restored from a backup never reissues an id a Collector still holds (HMD-57). `docs/spec.md` describes the upload protocol.
+- **The Collector uploads agent Session transcripts to the Hub** (HMD-51). `heimdall-collector run` captures the sources its configuration lists in `[[sessions.sources]]`, Claude Code's `projects/` and Codex's `sessions/`, including the history already there, and captures nothing when none is listed. Every 60 seconds it spools what each file gained into `spool.sqlite` in its state directory and uploads the spool as gzipped chunks the Hub acknowledges, starting a new generation when a file shrinks, is replaced, or no longer matches what was uploaded, as [ADR-0013](docs/decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) describes. Every Report carries the sources and the spool's size and age; `service status` shows the spool, and `run` warns when it holds content from more than a day ago.
+
 ## v0.2.0 - 2026-10-07
 
 ### Added
