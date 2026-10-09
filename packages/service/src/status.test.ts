@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { once } from 'node:events';
 
-import { healthWords, probeHealth, queueWords, renderStatus } from './status.ts';
+import { healthWords, probeHealth, queueWords, renderStatus, spoolWords } from './status.ts';
 
 const URL_8080 = 'http://127.0.0.1:8080/api/health';
 
@@ -115,4 +115,34 @@ test('queue words count the samples waiting, or say there is no queue yet', () =
   expect(queueWords({ samples: 0 })).toBe('0 samples waiting');
   expect(queueWords({ samples: undefined })).toBe('no queue yet; run has not started');
   expect(queueWords({ problem: 'database is locked' })).toBe('unreadable (database is locked)');
+});
+
+const NOW = Date.UTC(2026, 9, 9, 12);
+const HOUR = 3_600_000;
+
+test('spool words say how much waits and how old it is, or why they cannot', () => {
+  const held = (bytes: number, oldestAt: number | null) =>
+    spoolWords({ now: NOW, summary: { bytes, oldestAt } });
+
+  expect(spoolWords({ problem: 'file is not a spool' })).toBe('unreadable (file is not a spool)');
+  expect(spoolWords({ now: NOW, summary: undefined })).toBe(
+    'no spool yet; capture has not started',
+  );
+  expect(held(0, null)).toBe('empty');
+  expect(held(512, NOW - 45_000)).toBe('512 B waiting, oldest spooled 45 s ago');
+  expect(held(1536, NOW - 12 * 60_000)).toBe('1.5 KiB waiting, oldest spooled 12 min ago');
+  expect(held(12.3 * 1024 ** 2, NOW - 3 * HOUR)).toBe('12.3 MiB waiting, oldest spooled 3 h ago');
+  expect(held(1.2 * 1024 ** 3, NOW - 23 * HOUR)).toBe('1.2 GiB waiting, oldest spooled 23 h ago');
+});
+
+test('spool words warn when content has waited more than a day for the Hub', () => {
+  expect(spoolWords({ now: NOW, summary: { bytes: 2048, oldestAt: NOW - 24 * HOUR } })).toBe(
+    '2.0 KiB waiting, oldest spooled 1 d ago',
+  );
+  expect(spoolWords({ now: NOW, summary: { bytes: 2048, oldestAt: NOW - 50 * HOUR } })).toBe(
+    '2.0 KiB waiting, oldest spooled 2 d ago; the Hub has not acknowledged it for over a day',
+  );
+  expect(spoolWords({ now: NOW, summary: { bytes: 2048, oldestAt: NOW - 25 * HOUR } })).toBe(
+    '2.0 KiB waiting, oldest spooled 1 d ago; the Hub has not acknowledged it for over a day',
+  );
 });

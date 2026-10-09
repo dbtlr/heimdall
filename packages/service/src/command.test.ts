@@ -16,6 +16,7 @@ const HUB: ServiceSpec = { binary: 'hub', version: '0.2.0' };
 const EXECUTABLE = '/opt/heimdall/bin/heimdall-hub';
 
 // The state directories the Collector's status asked to count, in order.
+const SPOOL_NOW = Date.UTC(2026, 9, 9, 12);
 const waiting: string[] = [];
 const COLLECTOR: ServiceSpec = {
   binary: 'collector',
@@ -31,6 +32,10 @@ const COLLECTOR: ServiceSpec = {
     waiting.push(stateDir);
     return Promise.resolve(stateDir.endsWith('empty') ? undefined : 12);
   },
+  spool: (stateDir) =>
+    Promise.resolve(
+      stateDir.endsWith('empty') ? undefined : { bytes: 2048, oldestAt: SPOOL_NOW - 3 * 3_600_000 },
+    ),
   version: '0.2.0',
 };
 
@@ -60,6 +65,7 @@ const invoke = async (
       compiled: () => true,
       executable: EXECUTABLE,
       fetch: () => Promise.reject(new Error('no Hub in this test')),
+      now: () => SPOOL_NOW,
       platform: 'linux',
       supervisor: () => fake.supervisor,
       ...environment,
@@ -472,6 +478,7 @@ test('Collector status counts the samples waiting in its default queue', async (
   expect(result.stdout).toBe(`com.dbtlr.heimdall.collector: loaded, running (pid 4182)
   system   laptop-1 (paired with http://hub.example:8080)
   queue    12 samples waiting
+  spool    2.0 KiB waiting, oldest spooled 3 h ago
   unit     ~/unit.service
   log      ~/.local/state/heimdall/collector.log
   config   ~/.config/heimdall/collector.toml
@@ -554,6 +561,30 @@ test('Collector status reports a queue it cannot read, and exits 0', async () =>
 
   expect(result.code).toBe(0);
   expect(result.stdout).toContain('  queue    unreadable (file is not a database)\n');
+});
+
+test('Collector status shows the transcript spool, sized and aged by the clock', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(COLLECTOR, ['service', 'status'], {
+    home: home.path,
+  });
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain('  spool    2.0 KiB waiting, oldest spooled 3 h ago\n');
+});
+
+test('Collector status reports a spool it cannot read, and exits 0', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(
+    { ...COLLECTOR, spool: () => Promise.reject(new Error('spool is locked')) },
+    ['service', 'status'],
+    { home: home.path },
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain('  spool    unreadable (spool is locked)\n');
 });
 
 test('install --port refuses to create hub.toml beside a hub.json, and writes nothing', async () => {
@@ -660,6 +691,7 @@ test('Collector status on macOS names the agent state, plist, log, and queue, wi
   expect(result.stdout).toBe(`${AGENT}: loaded, running (pid 4182)
   system   laptop-1 (paired with http://hub.example:8080)
   queue    12 samples waiting
+  spool    2.0 KiB waiting, oldest spooled 3 h ago
   unit     ${PLIST_SHOWN}
   log      ~/.local/state/heimdall/collector.log
   config   ~/.config/heimdall/collector.toml

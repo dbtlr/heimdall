@@ -1,5 +1,5 @@
 import { MAX_SAMPLES_PER_REPORT, REPORT_SCHEMA_VERSION } from '@heimdall/schema';
-import type { Report } from '@heimdall/schema';
+import type { Report, TranscriptsSection } from '@heimdall/schema';
 
 import { describeError } from './errors.ts';
 import type { SampleQueue } from './queue.ts';
@@ -70,19 +70,22 @@ export type FlushResult =
   | { delivered: number; kind: 'failed'; reason: string; rejected: Rejection[] };
 
 // Sends the queued backlog oldest first, in Reports of at most `batchSize`
-// samples, until the queue is empty or a delivery fails.
+// samples, until the queue is empty or a delivery fails. Every Report carries
+// the transcripts section as it stands when the Report is sent (ADR-0013).
 export const flushQueue = async ({
   batchSize = MAX_SAMPLES_PER_REPORT,
   identity,
   now,
   queue,
   send,
+  transcripts,
 }: {
   batchSize?: number;
   identity: ReportIdentity;
   now: () => number;
   queue: SampleQueue;
   send: (report: Report) => Promise<Delivery>;
+  transcripts: () => TranscriptsSection;
 }): Promise<FlushResult> => {
   let delivered = 0;
   const rejected: Rejection[] = [];
@@ -98,6 +101,7 @@ export const flushQueue = async ({
       samples,
       schemaVersion: REPORT_SCHEMA_VERSION,
       sentAt: Math.trunc(now()),
+      transcripts: transcripts(),
     });
     switch (outcome.kind) {
       case 'delivered': {

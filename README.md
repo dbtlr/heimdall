@@ -38,6 +38,25 @@ The configuration file is the one `--config` names, or else `.config/heimdall/co
 hub = "http://hub-host.example.ts.net:8080"
 ```
 
+### Capturing transcripts
+
+`run` also uploads agent Session transcripts from the sources the configuration file lists in `[[sessions.sources]]`, and captures none when it lists no source ([ADR-0013](docs/decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). Each source names a Harness, `claude-code` or `codex`, and optionally a directory and a name:
+
+```toml
+[[sessions.sources]]
+harness = "claude-code"            # ~/.claude, capturing projects/
+
+[[sessions.sources]]
+harness = "codex"                  # ~/.codex, capturing sessions/
+
+[[sessions.sources]]
+harness = "claude-code"
+dir = "~/.claude-work"             # absolute, or under ~
+name = "claude-work"
+```
+
+`run` refuses to start when two sources share a name or a directory, even through a symbolic link, or a source names a Harness it does not know. A source whose directory does not exist is reported as absent and skipped. Every 60 seconds `run` reads what each source's files gained, writes it to a spool in the state directory, `spool.sqlite`, and uploads the spool to the Hub. The spool keeps whatever the Hub has not acknowledged, without a size limit, and `run` warns when it holds content from more than a day ago. Every Report carries the sources and the spool's size and age. The [spec](docs/spec.md#agent-session-transcripts) describes what is uploaded and the protocol.
+
 ### Pairing a new System
 
 The Collector learns which System it is, and the token it authenticates with, by pairing with the Hub once ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)):
@@ -104,9 +123,9 @@ Each binary installs and supervises itself as a systemd user unit on Linux and a
 
 - `install` creates the log directory and, on Linux, writes `~/.config/systemd/user/<unit>.service`, but only when its content changed, and then reloads the user manager. It enables the unit and always restarts it, which is how a new binary or a changed config file takes effect. Running it again with nothing changed rewrites nothing and restarts.
 - `heimdall-hub service install --port N` first stores `port = N` in `~/.config/heimdall/hub.toml`, creating the file if it is missing. A file that already holds that port is left exactly as it is, and `install` refuses to create `hub.toml` beside an existing `hub.json`, which the new file would hide, so a file Fleet rendered stays as Fleet rendered it. No other setting goes through `install`.
-- On Linux, `uninstall` stops and disables the unit, deletes its file, and reloads the user manager. The config file, the log, and the Collector's queue stay.
+- On Linux, `uninstall` stops and disables the unit, deletes its file, and reloads the user manager. The config file, the log, and the Collector's queue and spool stay.
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
-- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's adds its health from `GET http://<host>:<port>/api/health`, with the host and port the Hub reads from its config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, and how many samples wait in its queue. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
+- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's adds its health from `GET http://<host>:<port>/api/health`, with the host and port the Hub reads from its config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
 The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; exit status 143 or 130, after SIGTERM or SIGINT, counts as a clean stop.
 
@@ -114,7 +133,7 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 
 - `install` enables the agent and always restarts the binary. When the plist changed and the agent is loaded, it first boots the agent out and waits up to 15 seconds for launchd to let it go. Only then does it write the new plist, so a failure leaves the old one and the next `install` tries again. A changed plist, or an agent that is not loaded, is bootstrapped, which starts the binary. An unchanged, loaded agent restarts with `launchctl kickstart -k`.
 - `stop` boots the agent out of the GUI domain, because launchd would relaunch a stopped process, and leaves the plist in place. `start` bootstraps it again. `restart` kills and relaunches a loaded agent and bootstraps one that is not loaded. A stopped agent loads again at the next login.
-- `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue stay.
+- `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue and spool stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
 
 [Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run both binaries.

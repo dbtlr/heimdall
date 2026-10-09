@@ -13,6 +13,7 @@ import { pairAction } from './pair.ts';
 import { countWaiting } from './queue.ts';
 import { runAction } from './run.ts';
 import { defaultStateDir } from './state-dir.ts';
+import { readSpoolSummary } from './transcripts/spool.ts';
 import { versionLine } from './version.ts';
 
 // SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, so
@@ -33,7 +34,7 @@ const hub = {
 // Where the queue and the identity live, read the same way.
 const stateDir = {
   description:
-    'Directory for the sample queue and the identity. Defaults to the per-user state directory.',
+    'Directory for the sample queue, the transcript spool, and the identity. Defaults to the per-user state directory.',
   env: 'HEIMDALL_STATE_DIR',
   extensions: [configInput({ path: 'stateDir' })],
   type: 'string',
@@ -96,6 +97,7 @@ export const app = new Application('heimdall-collector', {
       defaultStateDir,
       pairedSystem,
       queueDepth: countWaiting,
+      spool: readSpoolSummary,
       version: packageJson.version,
     }),
   );

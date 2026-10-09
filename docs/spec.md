@@ -49,7 +49,7 @@ A new field reaches the dashboard only when every layer knows it, so the Hub is 
 
 Whenever a Collector's records change, it sends the whole set in a Report, and the Hub replaces that System's mirror with it. The Hub returns every System's records on request, with the same trust as the dashboard, so a provisioner can compare them with what it declares. Whether the read is a Hub command or a read-only endpoint is decided when it is built.
 
-## Agent Session transcripts _(planned, M3)_
+## Agent Session transcripts
 
 A System captures transcripts only from the sources its Collector configuration lists ([ADR-0013](decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). Capture is off until a source is listed:
 
@@ -63,28 +63,33 @@ dir = "~/.claude-work"             # a second profile
 name = "claude-work"
 ```
 
-Each source names a Harness, and optionally a directory and a name, which default to the Harness's standard location and its name. Two sources may not share a name or a directory. A source whose directory does not exist is skipped, so one configuration can list every source a fleet uses. The Collector reads each directory as its own account and reports each source as capturing, absent, or unreadable. Adding a source uploads the history already in it.
+Each source names a Harness, and optionally a directory and a name, which default to the Harness's standard location and its name. A directory is absolute or starts with `~/`. Two sources may not share a name or a directory, even through a symbolic link, and the Collector refuses to start with such a configuration or with a Harness it does not know. A source whose directory does not exist is skipped, so one configuration can list every source a fleet uses. The Collector reads each directory as its own account and reports each source as capturing, absent, or unreadable. Adding a source uploads the history already in it.
 
-The Collector uploads every file of a source's session tree to the Hub as it grows, separately from Reports, as gzipped chunks the Hub acknowledges by offset. It keeps content the Hub has not acknowledged in a spool, so a Harness pruning its files loses nothing. The Hub stores transcripts as written and keeps them until they are deleted on purpose.
+| Harness | Standard directory | Session tree |
+| --- | --- | --- |
+| `claude-code` | `~/.claude` | `projects/` |
+| `codex` | `~/.codex` | `sessions/` |
+
+The Collector uploads every file of a source's session tree to the Hub as it grows, separately from Reports, as gzipped chunks the Hub acknowledges by offset. It keeps content the Hub has not acknowledged in a spool, so a Harness pruning its files loses nothing. It reads the trees every 60 seconds, reads only regular files, follows no symbolic link inside a tree, and skips a file whose name is not UTF-8, which has no path the Hub accepts. A JSONL file's chunks end on line boundaries; a last line without a newline, and a whole file that is not JSONL, upload once the file is unchanged across two scans. The Hub stores transcripts as written and keeps them until they are deleted on purpose.
 
 ### Upload protocol
 
 A Collector uploads with its System's token as a bearer token, like a Report. The limits and request shapes are in `packages/schema/src/transcripts.ts`.
 
-1. **Open a generation** for each file the Collector has not uploaded before, and whenever a file it has uploaded shrinks, is replaced, or stops matching what it uploaded: `POST /api/v1/transcripts/generations` with `{"source": "claude-code", "path": "my-project/0b1c.jsonl"}`. The path is relative to the source's directory, with `/` between segments, and is valid UTF-8 of at most 4096 bytes; a file whose name cannot be written so has no path the Hub accepts. The Hub answers `201` with `{"generation": 42, "held": 0}`.
-2. **Send each chunk** of the file in order: `POST /api/v1/transcripts/generations/42/chunks` with the gzipped chunk as the body and its offset, counted in bytes of the file before compression, in the `Heimdall-Offset` header. A chunk carries at most 1 MiB of the file and its body at most 2 MiB. The Hub stores the chunk as uploaded and answers `{"held": <bytes of the file it holds>}` in the same transaction.
+1. **Open a generation** for each file the Collector has not uploaded before, and whenever a file it has uploaded shrinks, is replaced, or stops matching what it uploaded: `POST /api/v1/transcripts/generations` with `{"source": "claude-code", "path": "projects/my-project/0b1c.jsonl"}`. The path is relative to the source's directory, as the directory lists it, with `/` between segments, and is valid UTF-8 of at most 4096 bytes; a file whose name cannot be written so has no path the Hub accepts. The Hub answers `201` with `{"generation": 42, "held": 0}`.
+2. **Send each chunk** of the file in order: `POST /api/v1/transcripts/generations/42/chunks` with the gzipped chunk as the body, as one gzip member or several concatenated, and its offset, counted in bytes of the file before compression, in the `Heimdall-Offset` header. A chunk carries at most 1 MiB of the file and its body at most 2 MiB. The Hub stores the chunk as uploaded and answers `{"held": <bytes of the file it holds>}` in the same transaction.
 
 | Answer | Meaning | The Collector |
 | --- | --- | --- |
 | `200 {"held": n}` | The chunk is stored, or the Hub held it already. | Removes what the Hub holds from its spool. |
-| `409 {"held": n}` | The offset is not where the Hub's content ends. | Resumes from `n`, or opens a new generation when its file is shorter than `n`. |
+| `409 {"held": n}` | The offset is not where the Hub's content ends. | Resumes from `n` when its spool continues there. Otherwise, as when the Hub holds more than the file has, the file starts over in a new generation. |
 | `410` to an open | Every generation at the path was deleted on purpose. | Stops uploading the path and drops its spooled content. |
-| `410` to a chunk | The generation was deleted on purpose. A newer generation at the same path may survive. | Drops the generation's spooled content. |
-| `404` | The System opened no such generation. | Opens a new generation. |
+| `410` to a chunk | The generation was deleted on purpose. A newer generation at the same path may survive. | Drops the generation's spooled content. If the file still grows into it, opens a new generation at the path, and stops the path when that open is refused. |
+| `404` | The System opened no such generation. | Opens a new generation when the spool still holds the file from its first byte; otherwise drops the spooled content, and the file starts over in a new generation at the next scan. |
 | `401`, `403` | No token, or a token no System holds. | Keeps its spool and retries. |
-| `413`, `422` | The chunk body is over the cap, is not gzip, or unpacks past the chunk limit, or the request is malformed, such as an open with an invalid path or a body over 32 KiB. | Keeps its spool and retries; it is a Collector bug. |
+| `413`, `422` | The chunk body is over the cap, is not gzip, or unpacks past the chunk limit, or the request is malformed, such as an open with an invalid path or a body over 32 KiB. | Keeps that file's spool and retries after backing off, while other files still upload; it is a Collector bug. |
 
-Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector that captures nothing sends no sources and an empty spool. The Hub keeps each System's section from the latest Report it was sent in; a Report from a Collector older than this section leaves it unchanged.
+Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector that captures nothing sends no sources and, once what a removed source left is uploaded, an empty spool. The Hub keeps each System's section from the latest Report it was sent in; a Report from a Collector older than this section leaves it unchanged.
 
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 

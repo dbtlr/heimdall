@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 
 import { ReportSchema } from '@heimdall/schema';
-import type { Report } from '@heimdall/schema';
+import type { Report, TranscriptsSection } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { flushQueue, sendReport } from './delivery.ts';
@@ -104,8 +104,13 @@ const scriptedHub = (outcomes: Delivery[]) => {
   return { reports, send };
 };
 
-const flush = (queue: SampleQueue, send: (sent: Report) => Promise<Delivery>) =>
-  flushQueue({ batchSize: 2, identity, now: () => 9000, queue, send });
+const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
+
+const flush = (
+  queue: SampleQueue,
+  send: (sent: Report) => Promise<Delivery>,
+  transcripts: () => TranscriptsSection = () => NO_TRANSCRIPTS,
+) => flushQueue({ batchSize: 2, identity, now: () => 9000, queue, send, transcripts });
 
 describe('flushing the queue', () => {
   test('sends the backlog oldest first in Reports of at most the batch size', async () => {
@@ -127,6 +132,31 @@ describe('flushing the queue', () => {
     expect(hub.reports[0]).toMatchObject({ ...identity, schemaVersion: 1, sentAt: 9000 });
     expect(result).toEqual({ delivered: 5, kind: 'drained', rejected: [] });
     expect(queue.oldest(10)).toEqual([]);
+    queue.close();
+  });
+
+  test('every Report carries the transcripts section as it stands when sent', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    for (const t of [1000, 2000, 3000]) {
+      queue.append(sample(t));
+    }
+    const hub = scriptedHub([]);
+    let bytes = 300;
+    const transcripts = (): TranscriptsSection => {
+      bytes -= 100;
+      return {
+        sources: [{ harness: 'codex', name: 'codex', status: 'capturing' }],
+        spool: { bytes, oldestAt: 500 },
+      };
+    };
+
+    await flush(queue, hub.send, transcripts);
+
+    expect(hub.reports.map((r) => r.transcripts?.spool.bytes)).toEqual([200, 100]);
+    expect(hub.reports[0]?.transcripts?.sources).toEqual([
+      { harness: 'codex', name: 'codex', status: 'capturing' },
+    ]);
     queue.close();
   });
 

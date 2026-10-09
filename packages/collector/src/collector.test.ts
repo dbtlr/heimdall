@@ -8,6 +8,8 @@ import { sendReport } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
+const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
+
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },
   system: 'server-1',
@@ -71,6 +73,7 @@ test('samples taken while the Hub is down arrive once it is back, each once', as
     },
     send: (report) => sendReport({ hub: hub.url, report, token: 't' }),
     signal: controller.signal,
+    transcripts: () => NO_TRANSCRIPTS,
   });
 
   await until(() => hub.received.length >= 3);
@@ -111,6 +114,7 @@ test('stops between samples when its signal aborts', async () => {
     },
     send: () => Promise.resolve({ kind: 'delivered' }),
     signal: controller.signal,
+    transcripts: () => NO_TRANSCRIPTS,
   });
   controller.abort();
   await running;
@@ -146,6 +150,7 @@ test('a sample that fails is skipped with a warning and collection carries on', 
       return Promise.resolve({ kind: 'delivered' });
     },
     signal: controller.signal,
+    transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => delivered.length >= 2);
   controller.abort();
@@ -181,6 +186,7 @@ test('a slow push does not crowd the next sample', async () => {
       return { kind: 'delivered' };
     },
     signal: controller.signal,
+    transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => sampledAt.length >= 4);
   controller.abort();
@@ -226,6 +232,7 @@ test('a queue error warns and backs off instead of stopping the Collector', asyn
       return Promise.resolve({ kind: 'delivered' });
     },
     signal: controller.signal,
+    transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => delivered.includes(1));
   controller.abort();

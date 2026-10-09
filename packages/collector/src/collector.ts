@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 
-import type { Report } from '@heimdall/schema';
+import type { Report, TranscriptsSection } from '@heimdall/schema';
 
 import { flushQueue } from './delivery.ts';
 import type { Delivery, FlushResult, ReportIdentity } from './delivery.ts';
@@ -38,6 +38,7 @@ export const runCollector = async ({
   sampler,
   send,
   signal,
+  transcripts,
 }: {
   identity: ReportIdentity;
   intervalMs?: number;
@@ -47,6 +48,7 @@ export const runCollector = async ({
   sampler: Sampler;
   send: (report: Report) => Promise<Delivery>;
   signal: AbortSignal;
+  transcripts: () => TranscriptsSection;
 }): Promise<void> => {
   let nextSampleAt = performance.now() + intervalMs;
   let retryAt = 0;
@@ -74,7 +76,7 @@ export const runCollector = async ({
     }
 
     // oxlint-disable-next-line no-await-in-loop -- one push at a time.
-    const result = await flushQueue({ identity, now: Date.now, queue, send }).catch(
+    const result = await flushQueue({ identity, now: Date.now, queue, send, transcripts }).catch(
       (error: unknown): FlushResult => ({
         delivered: 0,
         kind: 'failed',
