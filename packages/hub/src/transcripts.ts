@@ -5,12 +5,29 @@ import { seeSystem } from './store.ts';
 
 export type Opened = { generation: number; kind: 'opened' } | { kind: 'deleted' };
 
+// A random generation id from 1 to 2^53 - 1, the safe integers a Collector
+// reads. Ids are random rather than sequential so a database restored from a
+// backup never reissues an id it issued since: a Collector still holding one
+// is told the generation is unknown and opens another, where a reissued id
+// would splice two files (ADR-0013).
+export const randomGenerationId = (): number => {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
+  return (((high >>> 11) * 2 ** 32 + low) % (2 ** 53 - 1)) + 1;
+};
+
 // Opens a new generation of a file for `system`, which is seen at `now`,
 // unless every generation already at its path was deleted on purpose
 // (ADR-0013). A path with no generation, or with one surviving, opens.
+// `newId` draws the generation's id, again while the one drawn is taken.
 export const openGeneration = (
   sql: SQL,
-  { now, path, source, system }: OpenGeneration & { now: number; system: string },
+  {
+    newId = randomGenerationId,
+    now,
+    path,
+    source,
+    system,
+  }: OpenGeneration & { newId?: () => number; now: number; system: string },
 ): Promise<Opened> =>
   sql.begin(async (tx) => {
     // Locking the path's generations waits out a delete that is marking them,
@@ -28,12 +45,19 @@ export const openGeneration = (
       return { kind: 'deleted' };
     }
     const at = new Date(now);
-    const [opened]: { id: string }[] = await tx`
-      INSERT INTO transcript_generations (system, source, path, opened_at, last_upload_at)
-      VALUES (${system}, ${source}, ${path}, ${at}, ${at})
-      RETURNING id
-    `;
-    return { generation: Number(opened?.id), kind: 'opened' };
+    for (;;) {
+      const id = newId();
+      // oxlint-disable-next-line no-await-in-loop -- draws again only while the id is taken.
+      const opened: unknown[] = await tx`
+        INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at)
+        VALUES (${id}, ${system}, ${source}, ${path}, ${at}, ${at})
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+      `;
+      if (opened.length > 0) {
+        return { generation: id, kind: 'opened' };
+      }
+    }
   });
 
 // One chunk of a generation's content: `content` is gzipped, as uploaded, and
@@ -67,9 +91,11 @@ export const appendChunk = (
     // The generation's row lock orders its chunks, so two deliveries of a
     // chunk cannot both append it. It is taken before the System's row, so a
     // delete holding the generation does not hold up the System's Reports.
+    // Bun binds a number of 2^51 or more as a double, which the primary key's
+    // index cannot match, so each id is cast back to bigint.
     const [row]: { deleted_at: Date | null; held: string; system: string }[] = await tx`
       SELECT system, held, deleted_at FROM transcript_generations
-      WHERE id = ${generation}
+      WHERE id = ${generation}::bigint
       FOR UPDATE
     `;
     await seeSystem(tx, { at: now, system });
@@ -98,7 +124,7 @@ export const appendChunk = (
         held = held + ${length},
         stored_bytes = stored_bytes + ${content.byteLength},
         last_upload_at = GREATEST(last_upload_at, ${new Date(now)})
-      WHERE id = ${generation}
+      WHERE id = ${generation}::bigint
     `;
     return { held: held + length, kind: 'held' };
   });

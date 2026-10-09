@@ -194,7 +194,11 @@ const open = async (request: Request, { now, sql }: HubDependencies) => {
   return Response.json(answered, { status: 201 });
 };
 
-// A generation's chunk endpoint; the identifier is a positive integer.
+// The answer for a chunk of a generation its System did not open.
+const NO_SUCH_GENERATION = 'This System opened no such generation.';
+
+// A generation's chunk endpoint; the identifier is a positive integer, and
+// one past the safe integers names no generation (ADR-0013).
 const CHUNK_PATH = /^\/api\/v1\/transcripts\/generations\/(?<generation>[1-9]\d{0,15})\/chunks$/u;
 
 // A chunk's offset as its header carries it: a safe, non-negative integer.
@@ -227,10 +231,13 @@ const append = async (request: Request, { now, sql }: HubDependencies, generatio
   if (typeof system !== 'string') {
     return system;
   }
-  const refuse = async (status: 413 | 422, reason: string) => {
+  const refuse = async (status: 404 | 413 | 422, reason: string) => {
     await seeSystem(sql, { at: now(), system });
     return answer(status, reason);
   };
+  if (!Number.isSafeInteger(generation)) {
+    return refuse(404, NO_SUCH_GENERATION);
+  }
   const offset = offsetOf(request);
   if (offset === undefined) {
     return refuse(422, `Give the chunk's offset in the file as ${TRANSCRIPT_OFFSET_HEADER}.`);
@@ -255,7 +262,7 @@ const append = async (request: Request, { now, sql }: HubDependencies, generatio
     system,
   });
   if (appended.kind === 'unknown') {
-    return answer(404, 'This System opened no such generation.');
+    return answer(404, NO_SUCH_GENERATION);
   }
   if (appended.kind === 'deleted') {
     return answer(410, DELETED);
