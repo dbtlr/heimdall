@@ -274,7 +274,7 @@ describe('record refuses', () => {
     // 0xC3 0x28 is no character; a lenient decoder turns the 0xC3 into U+FFFD and the JSON still parses.
     const bytes = Buffer.concat([
       Buffer.from('{"name": "webapp", "version": "1'),
-      Buffer.from([0xc3, 0x28]),
+      Buffer.from([0xC3, 0x28]),
       Buffer.from('"}'),
     ]);
 
