@@ -8,7 +8,11 @@ import type { SQL } from 'bun';
 import { listSystems, storeReport } from './store.ts';
 import { NOW, gzip, openGeneration, push, report, sendChunk, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
-import { deleteTranscripts } from './transcripts.ts';
+import {
+  deleteTranscripts,
+  openGeneration as openStored,
+  randomGenerationId,
+} from './transcripts.ts';
 
 const FILE = { path: 'my-project/0b1c.jsonl', source: 'claude-code' };
 
@@ -92,6 +96,35 @@ describe('opening a generation', () => {
     await using h = await startHub();
 
     expect(await open(h)).not.toBe(await open(h));
+  });
+
+  // A restore puts the database, sequences included, back as the backup had
+  // it, while Collectors still hold the ids the Hub answered since. A
+  // reissued generation id would splice two files (ADR-0013).
+  test('after a restore from an earlier backup never reissues an id it issued since', async () => {
+    await using h = await startHub();
+    const before = await open(h);
+    const since = await Promise.all(Array.from({ length: 20 }, async () => open(h)));
+    await h.db.sql`DELETE FROM transcript_generations WHERE id <> ${before}`;
+    await h.db.sql`SELECT setval(pg_get_serial_sequence('transcript_generations', 'id'), 1)`;
+
+    const after = await Promise.all(Array.from({ length: 20 }, async () => open(h)));
+
+    expect(after.filter((generation) => since.includes(generation))).toEqual([]);
+    expect(after.every((generation) => Number.isSafeInteger(generation) && generation > 0)).toBe(
+      true,
+    );
+  });
+
+  test('draws another id when the one it drew is taken', async () => {
+    await using h = await startHub();
+    const taken = await open(h);
+    const drawn = [taken, 42];
+    const file = { ...FILE, now: NOW, system: 'laptop-1' };
+
+    const opened = await openStored(h.db.sql, { ...file, newId: () => drawn.shift() ?? 0 });
+
+    expect(opened).toEqual({ generation: 42, kind: 'opened' });
   });
 
   test.each([
@@ -251,6 +284,21 @@ describe('a chunk', () => {
     await using h = await startHub();
 
     const response = await sendChunk(h.hub, generation, {
+      content: LINE_1,
+      offset: 0,
+      token: 'laptop-token',
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  // 2^53 + 1 reads as the Number 2^53, so it must not reach that generation.
+  test('for an id past the largest safe integer is not found', async () => {
+    await using h = await startHub();
+    const file = { ...FILE, now: NOW, system: 'laptop-1' };
+    await openStored(h.db.sql, { ...file, newId: () => 2 ** 53 });
+
+    const response = await sendChunk(h.hub, '9007199254740993', {
       content: LINE_1,
       offset: 0,
       token: 'laptop-token',
@@ -419,7 +467,7 @@ describe('deleting transcripts', () => {
 
     await deleteTranscripts(h.db.sql, { now: NOW, source: 'claude-code', system: 'laptop-1' });
 
-    expect(await generations(h.db.sql)).toEqual([codex, server]);
+    expect(await generations(h.db.sql)).toEqual([codex, server].toSorted((x, y) => x - y));
   });
 
   test('as a dry run removes nothing and reports what it would remove', async () => {
@@ -506,18 +554,19 @@ describe('deleting transcripts', () => {
   // keep the path open for good.
   test('refuses a generation opened at the path while it runs', async () => {
     await using h = await startHub();
-    await upload(h, NOW);
-    const later = await upload(h, NOW, { ...FILE, path: 'b.jsonl' });
+    const files = [FILE, { ...FILE, path: 'b.jsonl' }];
+    const ids = [await upload(h, NOW, files[0]), await upload(h, NOW, files[1])];
+    const first = (ids[0] ?? 0) < (ids[1] ?? 0) ? 0 : 1;
     let removed: Promise<unknown> | undefined;
     let opened: Promise<Response> | undefined;
 
-    // Holding the later generation keeps the delete waiting on it, holding the
-    // earlier one, which it locks first.
+    // The delete locks generations in id order, so holding the higher id
+    // keeps it waiting there, holding the lower one.
     await h.db.sql.begin(async (tx) => {
-      await tx`SELECT 1 FROM transcript_generations WHERE id = ${later} FOR UPDATE`;
+      await tx`SELECT 1 FROM transcript_generations WHERE id = ${ids[1 - first]} FOR UPDATE`;
       removed = deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
       await waitersOnLocks(h.db.sql, 1);
-      opened = openGeneration(h.hub, FILE, { token: 'laptop-token' });
+      opened = openGeneration(h.hub, files[first], { token: 'laptop-token' });
       await waitersOnLocks(h.db.sql, 2);
     });
 
@@ -537,8 +586,8 @@ describe('deleting transcripts', () => {
     await h.db.sql.begin(async (tx) => {
       await tx`SELECT 1 FROM transcript_generations WHERE id = ${first} FOR UPDATE`;
       await tx`
-        INSERT INTO transcript_generations (system, source, path, opened_at, last_upload_at)
-        VALUES ('laptop-1', ${FILE.source}, ${FILE.path}, ${new Date(NOW)}, ${new Date(NOW)})
+        INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at)
+        VALUES (${randomGenerationId()}, 'laptop-1', ${FILE.source}, ${FILE.path}, ${new Date(NOW)}, ${new Date(NOW)})
       `;
       removed = deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
       await waitersOnLocks(h.db.sql, 1);
@@ -555,8 +604,8 @@ describe('deleting transcripts', () => {
     await upload(h, NOW);
     await h.db.sql`
       WITH opened AS (
-        INSERT INTO transcript_generations (system, source, path, opened_at, last_upload_at, held)
-        SELECT 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
+        INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
+        SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
         FROM generate_series(1, 70000) AS n
         RETURNING id
       )

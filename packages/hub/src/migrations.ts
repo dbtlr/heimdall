@@ -204,6 +204,12 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 5,
   },
+  {
+    // Generation ids are random from here on (ADR-0013): a sequence goes
+    // back with a restored backup and would reissue ids Collectors still hold.
+    sql: 'ALTER TABLE transcript_generations ALTER COLUMN id DROP IDENTITY',
+    version: 6,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
