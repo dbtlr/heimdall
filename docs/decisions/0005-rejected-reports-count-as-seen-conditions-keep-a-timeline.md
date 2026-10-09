@@ -4,7 +4,7 @@ title: ADR-0005 - A rejected Report still counts as seeing its System, and Condi
 description: "Last seen moves on every request whose token names a System, whether the Hub stores or rejects the Report. A rejection raises that System's Reports-rejected Condition; each Condition records when it was raised and cleared, and those records form the System's Timeline."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-08
+modified: 2026-10-09
 ---
 
 # A rejected Report still counts as seeing its System, and Conditions keep a Timeline
@@ -39,3 +39,4 @@ Going quiet, including sleep, adds nothing to the Timeline until M3's stale-Syst
 ## Changelog
 
 - 2026-10-08: Clarification. Under [ADR-0011](0011-collectors-hold-what-provisioners-record.md), Backup Job overdue becomes job overdue or failing, for any job a provisioner records. The decision is unchanged.
+- 2026-10-09: Clarification. A transcript upload under a System's token also counts toward its Last seen, and a refused upload does not raise Reports rejected ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). The decision is unchanged.
