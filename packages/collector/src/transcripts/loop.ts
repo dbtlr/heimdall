@@ -45,7 +45,13 @@ export const startCapture = ({
   let stale = false;
 
   const drain = async () => {
-    const result = await capture.drain();
+    // A drain that throws, as on a spool error, backs off like a failed one.
+    let result: DrainResult;
+    try {
+      result = await capture.drain();
+    } catch (error) {
+      result = { kind: 'failed', reason: describeError(error) };
+    }
     // A drain cut short by the Collector stopping says nothing about the Hub.
     if (signal?.aborted === true) {
       return;

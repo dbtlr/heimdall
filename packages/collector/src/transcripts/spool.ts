@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 const SPOOL_FILE = 'spool.sqlite';
 
-// What the Collector last saw of a file on disk: its identity, size, and
-// modification time.
-export type Fingerprint = { dev: number; ino: number; mtimeMs: number; size: number };
+// What the Collector last saw of a file on disk: its identity, its device and
+// inode exactly as `dev:ino`, its size, and its modification time.
+export type Fingerprint = { identity: string; mtimeMs: number; size: number };
 
 // What the Collector knows of one file of a source: its fingerprint at the
 // last scan and how many scans in a row it was unchanged, the generation its
@@ -42,11 +42,10 @@ export type ChunkHead = { bytes: number; id: number; length: number; offset: num
 export type SpoolSummary = { bytes: number; oldestAt: number | null };
 
 type FileRow = {
-  dev: number;
   generation: number | null;
   head_hash: string | null;
   id: number;
-  ino: number;
+  identity: string;
   mtime_ms: number;
   path: string;
   read_offset: number;
@@ -62,8 +61,7 @@ const SCHEMA = [
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,
     path TEXT NOT NULL,
-    dev INTEGER NOT NULL,
-    ino INTEGER NOT NULL,
+    identity TEXT NOT NULL,
     size INTEGER NOT NULL,
     mtime_ms REAL NOT NULL,
     stable_scans INTEGER NOT NULL DEFAULT 0,
@@ -91,11 +89,10 @@ const SCHEMA = [
 ];
 
 const toRecord = (row: FileRow): FileRecord => ({
-  dev: row.dev,
   generation: row.generation,
   headHash: row.head_hash,
   id: row.id,
-  ino: row.ino,
+  identity: row.identity,
   mtimeMs: row.mtime_ms,
   path: row.path,
   readOffset: row.read_offset,
@@ -132,11 +129,11 @@ const createSpool = (db: Database) => {
     { id: number },
     Fingerprint & { path: string; source: string; mtimeMs: number }
   >(
-    `INSERT INTO files (source, path, dev, ino, size, mtime_ms)
-     VALUES ($source, $path, $dev, $ino, $size, $mtimeMs) RETURNING id`,
+    `INSERT INTO files (source, path, identity, size, mtime_ms)
+     VALUES ($source, $path, $identity, $size, $mtimeMs) RETURNING id`,
   );
   const observeFile = db.query(
-    `UPDATE files SET dev = $dev, ino = $ino, size = $size, mtime_ms = $mtimeMs,
+    `UPDATE files SET identity = $identity, size = $size, mtime_ms = $mtimeMs,
      stable_scans = $stableScans WHERE id = $id`,
   );
   const restartFile = db.query(

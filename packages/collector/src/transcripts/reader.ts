@@ -1,4 +1,5 @@
 import { constants } from 'node:fs';
+import type { BigIntStats } from 'node:fs';
 import { lstat, open, readdir } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -39,15 +40,16 @@ const nameOf = (raw: Buffer) => {
   }
 };
 
-const fingerprintOf = (stats: Fingerprint): Fingerprint => ({
-  dev: stats.dev,
-  ino: stats.ino,
-  mtimeMs: stats.mtimeMs,
-  size: stats.size,
+// A file's fingerprint from its stats, read as BigInts so a device or inode
+// past 2^53 keeps every digit.
+const fingerprintOf = (stats: BigIntStats): Fingerprint => ({
+  identity: `${String(stats.dev)}:${String(stats.ino)}`,
+  mtimeMs: Number(stats.mtimeNs) / 1e6,
+  size: Number(stats.size),
 });
 
 const sameFingerprint = (a: Fingerprint, b: Fingerprint) =>
-  a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+  a.identity === b.identity && a.size === b.size && a.mtimeMs === b.mtimeMs;
 
 const readAt = async (handle: FileHandle, position: number, length: number) => {
   const buffer = Buffer.alloc(length);
@@ -68,7 +70,7 @@ export const openRegular = async (path: string) => {
     }
     throw error;
   }
-  const stats = await handle.stat().catch(async (error: unknown) => {
+  const stats = await handle.stat({ bigint: true }).catch(async (error: unknown) => {
     await handle.close();
     throw error;
   });
@@ -192,8 +194,7 @@ export const createReader = ({
       let record = spool.observe(source.name, path, seen, unchanged ? 1 : 0);
       const jsonl = path.endsWith('.jsonl');
       if (record.generation !== null) {
-        const replaced =
-          before !== undefined && (before.dev !== seen.dev || before.ino !== seen.ino);
+        const replaced = before !== undefined && before.identity !== seen.identity;
         const shrank = seen.size < record.readOffset;
         if (replaced || shrank || (!jsonl && !unchanged)) {
           spool.restart(record.id);
@@ -251,7 +252,7 @@ export const createReader = ({
         }
         const path = `${relative}/${name}`;
         // oxlint-disable-next-line no-await-in-loop -- one entry at a time.
-        const stats = await lstat(join(source.dir, path)).catch(() => undefined);
+        const stats = await lstat(join(source.dir, path), { bigint: true }).catch(() => undefined);
         if (stats?.isDirectory() === true) {
           pending.push(path);
         } else if (stats?.isFile() === true) {

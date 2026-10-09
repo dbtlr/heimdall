@@ -165,7 +165,8 @@ export const findSharedDirectory = async (
 ): Promise<string | undefined> => {
   const found = await Promise.all(
     sources.map(async (source) => {
-      const stats = await stat(source.dir).catch(() => undefined);
+      // As BigInts, so a device or inode past 2^53 keeps every digit.
+      const stats = await stat(source.dir, { bigint: true }).catch(() => undefined);
       return stats === undefined ? undefined : `${String(stats.dev)}:${String(stats.ino)}`;
     }),
   );

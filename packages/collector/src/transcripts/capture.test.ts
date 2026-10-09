@@ -631,23 +631,27 @@ describe('walking a source', () => {
     expect(t.remote.opens).toEqual([]);
   });
 
-  test('skips a file whose name is not UTF-8, warning once', async () => {
-    await using t = await setUp();
-    const c = t.capture();
-    const bad = Buffer.concat([
-      Buffer.from(join(t.source.dir, 'projects/bad')),
-      Buffer.from([255]),
-      Buffer.from('.jsonl'),
-    ]);
-    await writeFile(bad, '{"a":1}\n');
-    await t.write(SESSION, '{"a":1}\n');
-    await t.tick(c);
-    await t.tick(c);
+  // APFS refuses a name that is not UTF-8 (EILSEQ), so on macOS no such file can exist.
+  test.skipIf(process.platform === 'darwin')(
+    'skips a file whose name is not UTF-8, warning once',
+    async () => {
+      await using t = await setUp();
+      const c = t.capture();
+      const bad = Buffer.concat([
+        Buffer.from(join(t.source.dir, 'projects/bad')),
+        Buffer.from([255]),
+        Buffer.from('.jsonl'),
+      ]);
+      await writeFile(bad, '{"a":1}\n');
+      await t.write(SESSION, '{"a":1}\n');
+      await t.tick(c);
+      await t.tick(c);
 
-    expect(t.remote.opens).toEqual([`claude-code/${SESSION}`]);
-    expect(t.warnings).toHaveLength(1);
-    expect(t.warnings[0]).toContain('not UTF-8');
-  });
+      expect(t.remote.opens).toEqual([`claude-code/${SESSION}`]);
+      expect(t.warnings).toHaveLength(1);
+      expect(t.warnings[0]).toContain('not UTF-8');
+    },
+  );
 
   test('reports each source as capturing, absent, or unreadable', async () => {
     await using t = await setUp();

@@ -115,3 +115,22 @@ test('a scan that throws is logged and the loop carries on', async () => {
 
   expect(warnings[0]).toContain('disk on fire');
 });
+
+test('a drain that throws backs off like a failed one, and is reported once', async () => {
+  const { capture, counts } = fakeCapture(() => {
+    throw new Error('spool is locked');
+  });
+  const warnings: string[] = [];
+  const stop = startCapture({
+    capture,
+    intervalMs: 5,
+    log: { info: () => {}, warn: (m) => warnings.push(m) },
+    maxBackoffMs: 1000,
+    now: Date.now,
+  });
+  await until(() => counts.scans >= 40);
+  await stop();
+
+  expect(counts.drains).toBeLessThan(10);
+  expect(warnings.filter((w) => w.includes('spool is locked'))).toHaveLength(1);
+});
