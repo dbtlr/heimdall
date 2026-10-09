@@ -77,10 +77,10 @@ describe('opening a generation', () => {
   // A file that shrank or was replaced starts a new generation, never
   // appending to the old one (ADR-0013).
   // A path of the longest the schema allows, in characters that do not
-  // compress, outgrows a plain index entry.
+  // compress, outgrows a plain index entry. 19,968 is U+4E00, the first CJK ideograph.
   test('at the longest path the schema allows opens', async () => {
     await using h = await startHub();
-    const path = Array.from({ length: 1365 }, (_, i) => String.fromCodePoint(0x4e_00 + i)).join('');
+    const path = Array.from({ length: 1365 }, (_, i) => String.fromCodePoint(19_968 + i)).join('');
 
     const response = await openGeneration(h.hub, { ...FILE, path }, { token: 'laptop-token' });
 
