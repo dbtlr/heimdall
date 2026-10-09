@@ -1,4 +1,14 @@
-import { ReportSchema } from '@heimdall/schema';
+import { promisify } from 'node:util';
+import { gunzip as gunzipCallback } from 'node:zlib';
+
+import {
+  MAX_TRANSCRIPT_CHUNK_BYTES,
+  MAX_TRANSCRIPT_REQUEST_BYTES,
+  OpenGenerationSchema,
+  ReportSchema,
+  TRANSCRIPT_OFFSET_HEADER,
+} from '@heimdall/schema';
+import type { ChunkAccepted, GenerationOpened } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
@@ -6,8 +16,9 @@ import { failureCap } from './failure-cap.ts';
 import type { CapSlot } from './failure-cap.ts';
 import { renderPage } from './page.ts';
 import { readCode, redeemCode } from './pairing.ts';
-import { listSystems, recordRejection, storeReport } from './store.ts';
+import { listSystems, recordRejection, seeSystem, storeReport } from './store.ts';
 import { systemForToken } from './tokens.ts';
+import { appendChunk, openGeneration } from './transcripts.ts';
 import { HUB_VERSION } from './version.ts';
 
 export type HubDependencies = {
@@ -68,11 +79,11 @@ const authenticate = async (request: Request, sql: SQL): Promise<Authentication>
   return system === undefined ? { kind: 'unknown' } : { kind: 'system', system };
 };
 
-// The request body as text, or undefined when it exceeds `limit` bytes. A body
-// is read only as far as the limit, whatever its Content-Length claims.
-const readCapped = async (request: Request, limit: number) => {
+// The request body, or undefined when it exceeds `limit` bytes. A body is read
+// only as far as the limit, whatever its Content-Length claims.
+const readBytes = async (request: Request, limit: number) => {
   if (request.body === null) {
-    return '';
+    return Buffer.alloc(0);
   }
   if (Number(request.headers.get('content-length') ?? 0) > limit) {
     return undefined;
@@ -86,8 +97,12 @@ const readCapped = async (request: Request, limit: number) => {
     }
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
 };
+
+// The request body as text, or undefined when it exceeds `limit` bytes.
+const readCapped = async (request: Request, limit: number) =>
+  (await readBytes(request, limit))?.toString('utf8');
 
 const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'invalid' } => {
   try {
@@ -135,6 +150,118 @@ const ingest = async (request: Request, { now, onError, sql }: HubDependencies) 
     return reject(403, `This token belongs to ${system}, not ${parsed.data.system}.`);
   }
   return Response.json(await storeReport(sql, { receivedAt: now(), report: parsed.data }));
+};
+
+// The System a transcript upload's token names, or the answer to a request
+// whose token names none. An upload never raises a Condition (ADR-0013).
+const uploader = async (request: Request, sql: SQL) => {
+  const auth = await authenticate(request, sql);
+  if (auth.kind === 'missing') {
+    return answer(401, "Supply the System's ingest token as a bearer token.");
+  }
+  if (auth.kind === 'unknown') {
+    return answer(403, 'No System holds this token.');
+  }
+  return auth.system;
+};
+
+// The largest request body that opens a generation: a path of up to 4096
+// bytes of UTF-8, which JSON escapes to at most six bytes each.
+const MAX_OPEN_BYTES = 32 * 1024;
+
+const DELETED = 'This transcript was deleted on purpose; do not upload it again.';
+
+// `POST /api/v1/transcripts/generations`: opens a generation of a file for
+// the token's System and answers its identifier, or 410 when the file's path
+// was deleted on purpose (ADR-0013).
+const open = async (request: Request, { now, sql }: HubDependencies) => {
+  const system = await uploader(request, sql);
+  if (typeof system !== 'string') {
+    return system;
+  }
+  const body = await readCapped(request, MAX_OPEN_BYTES);
+  const json = body === undefined ? undefined : parseJson(body);
+  const parsed = OpenGenerationSchema.safeParse(json?.kind === 'json' ? json.value : undefined);
+  if (!parsed.success) {
+    await seeSystem(sql, { at: now(), system });
+    return answer(422, z.prettifyError(parsed.error));
+  }
+  const opened = await openGeneration(sql, { ...parsed.data, now: now(), system });
+  if (opened.kind === 'deleted') {
+    return answer(410, DELETED);
+  }
+  const answered: GenerationOpened = { generation: opened.generation, held: 0 };
+  return Response.json(answered, { status: 201 });
+};
+
+// A generation's chunk endpoint; the identifier is a positive integer.
+const CHUNK_PATH = /^\/api\/v1\/transcripts\/generations\/(?<generation>[1-9]\d{0,15})\/chunks$/u;
+
+// A chunk's offset as its header carries it: a safe, non-negative integer.
+const OFFSET = /^(?:0|[1-9]\d{0,15})$/u;
+
+const offsetOf = (request: Request) => {
+  const header = request.headers.get(TRANSCRIPT_OFFSET_HEADER) ?? '';
+  const offset = OFFSET.test(header) ? Number(header) : Number.NaN;
+  return Number.isSafeInteger(offset) ? offset : undefined;
+};
+
+// How many bytes of the file a gzipped chunk holds, or undefined when it is
+// not gzip or unpacks past the chunk limit. Unpacking stops at the limit, so
+// a small body cannot expand without bound.
+const gunzip = promisify(gunzipCallback);
+
+const unpackedLength = async (content: Buffer) => {
+  try {
+    return (await gunzip(content, { maxOutputLength: MAX_TRANSCRIPT_CHUNK_BYTES })).byteLength;
+  } catch {
+    return undefined;
+  }
+};
+
+// `POST /api/v1/transcripts/generations/<id>/chunks`: stores a gzipped chunk at
+// the offset the Hub holds for the generation and answers the new total, or,
+// at any other offset, 409 with what it holds (ADR-0013).
+const append = async (request: Request, { now, sql }: HubDependencies, generation: number) => {
+  const system = await uploader(request, sql);
+  if (typeof system !== 'string') {
+    return system;
+  }
+  const refuse = async (status: 413 | 422, reason: string) => {
+    await seeSystem(sql, { at: now(), system });
+    return answer(status, reason);
+  };
+  const offset = offsetOf(request);
+  if (offset === undefined) {
+    return refuse(422, `Give the chunk's offset in the file as ${TRANSCRIPT_OFFSET_HEADER}.`);
+  }
+  const content = await readBytes(request, MAX_TRANSCRIPT_REQUEST_BYTES);
+  if (content === undefined) {
+    return refuse(413, `A chunk exceeds ${String(MAX_TRANSCRIPT_REQUEST_BYTES)} bytes.`);
+  }
+  const length = await unpackedLength(content);
+  if (length === undefined) {
+    return refuse(
+      422,
+      `A chunk must be gzip of at most ${String(MAX_TRANSCRIPT_CHUNK_BYTES)} bytes of the file.`,
+    );
+  }
+  const appended = await appendChunk(sql, {
+    content,
+    generation,
+    length,
+    now: now(),
+    offset,
+    system,
+  });
+  if (appended.kind === 'unknown') {
+    return answer(404, 'This System opened no such generation.');
+  }
+  if (appended.kind === 'deleted') {
+    return answer(410, DELETED);
+  }
+  const answered: ChunkAccepted = { held: appended.held };
+  return Response.json(answered, { status: appended.kind === 'held' ? 200 : 409 });
 };
 
 // The code a Pairing request body holds, or undefined for any body that does
@@ -192,6 +319,13 @@ const route = async (
   const { pathname } = new URL(request.url);
   if (pathname === '/api/v1/reports' && request.method === 'POST') {
     return ingest(request, deps);
+  }
+  if (pathname === '/api/v1/transcripts/generations' && request.method === 'POST') {
+    return open(request, deps);
+  }
+  const chunkOf = CHUNK_PATH.exec(pathname)?.groups?.generation;
+  if (chunkOf !== undefined && request.method === 'POST') {
+    return append(request, deps, Number(chunkOf));
   }
   if (pathname === '/api/v1/pair' && request.method === 'POST') {
     return pair(request, deps, pairFailures.begin());

@@ -1,6 +1,8 @@
 import { expect } from 'bun:test';
+import { promisify } from 'node:util';
+import { gzip as gzipCallback } from 'node:zlib';
 
-import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
+import { REPORT_SCHEMA_VERSION, TRANSCRIPT_OFFSET_HEADER } from '@heimdall/schema';
 import type { Report } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
@@ -9,6 +11,9 @@ import { migrate } from '../migrations.ts';
 import { issueCode } from '../pairing.ts';
 import { storeToken } from '../tokens.ts';
 import { testDatabase } from './postgres.ts';
+
+// gzip, as the Collector packs a chunk.
+export const gzip = promisify(gzipCallback);
 
 export const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
 
@@ -57,6 +62,46 @@ export const push = (
       headers: {
         'content-type': 'application/json',
         ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+      },
+      method: 'POST',
+    }),
+  );
+
+const bearer = (token: string | undefined): Record<string, string> =>
+  token === undefined ? {} : { authorization: `Bearer ${token}` };
+
+// Opens a transcript generation the way the Collector does (ADR-0013).
+export const openGeneration = (
+  hub: ReturnType<typeof createHub>,
+  body: unknown,
+  { token }: { token?: string } = {},
+) =>
+  hub.fetch(
+    new Request('http://hub.test/api/v1/transcripts/generations', {
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      headers: { 'content-type': 'application/json', ...bearer(token) },
+      method: 'POST',
+    }),
+  );
+
+// Sends one transcript chunk the way the Collector does: `content` is gzipped
+// unless it is bytes already, and `offset` is omitted when undefined.
+export const sendChunk = async (
+  hub: ReturnType<typeof createHub>,
+  generation: number | string,
+  {
+    content,
+    offset,
+    token,
+  }: { content: string | Uint8Array; offset?: number | string; token?: string },
+) =>
+  hub.fetch(
+    new Request(`http://hub.test/api/v1/transcripts/generations/${String(generation)}/chunks`, {
+      body: typeof content === 'string' ? await gzip(content) : content,
+      headers: {
+        'content-type': 'application/gzip',
+        ...bearer(token),
+        ...(offset === undefined ? {} : { [TRANSCRIPT_OFFSET_HEADER]: String(offset) }),
       },
       method: 'POST',
     }),

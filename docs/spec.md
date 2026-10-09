@@ -67,6 +67,27 @@ Each source names a Harness, and optionally a directory and a name, which defaul
 
 The Collector uploads every file of a source's session tree to the Hub as it grows, separately from Reports, as gzipped chunks the Hub acknowledges by offset. It keeps content the Hub has not acknowledged in a spool, so a Harness pruning its files loses nothing. The Hub stores transcripts as written and keeps them until they are deleted on purpose.
 
+### Upload protocol
+
+A Collector uploads with its System's token as a bearer token, like a Report. The limits and request shapes are in `packages/schema/src/transcripts.ts`.
+
+1. **Open a generation** for each file the Collector has not uploaded before, and whenever a file it has uploaded shrinks, is replaced, or stops matching what it uploaded: `POST /api/v1/transcripts/generations` with `{"source": "claude-code", "path": "my-project/0b1c.jsonl"}`. The path is relative to the source's directory, with `/` between segments, and is valid UTF-8 of at most 4096 bytes; a file whose name cannot be written so has no path the Hub accepts. The Hub answers `201` with `{"generation": 42, "held": 0}`.
+2. **Send each chunk** of the file in order: `POST /api/v1/transcripts/generations/42/chunks` with the gzipped chunk as the body and its offset, counted in bytes of the file before compression, in the `Heimdall-Offset` header. A chunk carries at most 1 MiB of the file and its body at most 2 MiB. The Hub stores the chunk as uploaded and answers `{"held": <bytes of the file it holds>}` in the same transaction.
+
+| Answer | Meaning | The Collector |
+| --- | --- | --- |
+| `200 {"held": n}` | The chunk is stored, or the Hub held it already. | Removes what the Hub holds from its spool. |
+| `409 {"held": n}` | The offset is not where the Hub's content ends. | Resumes from `n`, or opens a new generation when its file is shorter than `n`. |
+| `410` to an open | Every generation at the path was deleted on purpose. | Stops uploading the path and drops its spooled content. |
+| `410` to a chunk | The generation was deleted on purpose. A newer generation at the same path may survive. | Drops the generation's spooled content. |
+| `404` | The System opened no such generation. | Opens a new generation. |
+| `401`, `403` | No token, or a token no System holds. | Keeps its spool and retries. |
+| `413`, `422` | The chunk body is over the cap, is not gzip, or unpacks past the chunk limit, or the request is malformed, such as an open with an invalid path or a body over 32 KiB. | Keeps its spool and retries; it is a Collector bug. |
+
+Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector that captures nothing sends no sources and an empty spool. The Hub keeps each System's section from the latest Report it was sent in; a Report from a Collector older than this section leaves it unchanged.
+
+`heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
+
 The Collector observes each Session's processes from the process table, recording only executable names and working directories, never command-line arguments or environment variables.
 
 ## Trust

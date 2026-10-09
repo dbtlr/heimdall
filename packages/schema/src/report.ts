@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+import { TranscriptsSectionSchema } from './transcripts.ts';
+import { bytes, epochMs } from './values.ts';
+
 // The Report wire schema version this build speaks. The Hub rejects versions it
 // does not know. Bump it only for a rename, a removal, or a change of meaning;
 // new optional fields keep the version (ADR-0004).
@@ -14,10 +17,6 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 
 // Checks catch Collector bugs, not operating-system quirks: used may exceed
 // total and percentages may exceed 100, so neither is bounded (ADR-0004).
-const bytes = z.int().nonnegative();
-// The last moment a JavaScript Date can hold; a later time is a Collector bug.
-const LAST_DATE_MS = 8_640_000_000_000_000;
-const epochMs = z.int().nonnegative().max(LAST_DATE_MS);
 const amount = z.number().nonnegative();
 
 const DiskSchema = z.object({ mount: z.string().min(1), totalBytes: bytes, usedBytes: bytes });
@@ -57,6 +56,8 @@ export const ReportSchema = z.object({
   sentAt: epochMs,
   // The Hub rejects a Report whose System differs from its ingest token's.
   system: z.string().regex(SYSTEM_NAME),
+  // In every Report; optional for Collectors that predate it (ADR-0013).
+  transcripts: TranscriptsSectionSchema.optional(),
 });
 
 export type VitalsSample = z.infer<typeof VitalsSampleSchema>;

@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, transcript, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, transcript, source, generation, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -67,6 +67,14 @@ _Avoid_: conversation, run
 **transcript**:
 The file a Harness writes for a Session, holding its prompts, responses, and tool calls. The Hub keeps it as the durable record of the Session after the Harness deletes its own copy.
 _Avoid_: log (a binary's runtime lines), history
+
+**source**:
+A Harness directory that a System's Collector configuration lists for transcript capture, under a name unique on that System. A System captures transcripts only from its sources.
+_Avoid_: profile, capture target
+
+**generation**:
+One continuous run of a transcript file's content, as the Hub holds it. When a file shrinks, is replaced, or no longer matches what was uploaded, its content continues in a new generation, so content from two different files is never joined.
+_Avoid_: version, revision, upload
 
 **Condition**:
 A problem state the Hub derives for a System from what it receives, such as Reports rejected, a Service down, a job failing or overdue, Drift, a stale System, or low disk. The dashboard shows open Conditions and the Timeline records each one raised and cleared; a later alerting phase delivers them.

@@ -11,8 +11,10 @@ import { sample } from '@heimdall/schema/testing';
 import { app } from './application.ts';
 import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
+import { gzip } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
+import { appendChunk, openGeneration } from './transcripts.ts';
 import { versionLine } from './version.ts';
 
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
@@ -263,6 +265,131 @@ test('unpair of a System that is not paired says so and exits 1', async () => {
 
   expect(stderr).toContain('laptop-1 is not paired.');
   expect(code).toBe(1);
+});
+
+// A database holding one generation of laptop-1's transcripts, last uploaded
+// at `now`, by default the start of 2026-10-01 in UTC.
+const withTranscript = async (now = Date.UTC(2026, 9, 1)) => {
+  const db = await testDatabase();
+  await migrate(db.sql);
+  const opened = await openGeneration(db.sql, {
+    now,
+    path: 'project/a.jsonl',
+    source: 'claude-code',
+    system: 'laptop-1',
+  });
+  const generation = opened.kind === 'opened' ? opened.generation : 0;
+  const content = await gzip('{"type":"user"}\n');
+  await appendChunk(db.sql, {
+    content,
+    generation,
+    length: 16,
+    now,
+    offset: 0,
+    system: 'laptop-1',
+  });
+  const live = async () =>
+    (await db.sql`SELECT count(*)::int AS n FROM transcript_chunks`)[0] as { n: number };
+  return { db, gzipped: content.byteLength, live };
+};
+
+test('transcripts delete removes the matching generations and says how much it removed', async () => {
+  const { db, gzipped, live } = await withTranscript();
+  await using _db = db;
+  await using config = await hubConfig(db);
+
+  const { code, stdout } = await invoke([
+    'transcripts',
+    'delete',
+    '--system',
+    'laptop-1',
+    '--before',
+    '2026-10-02',
+    ...configArgs(config),
+  ]);
+
+  expect(stdout).toBe(`Deleted 1 generation of transcripts, ${String(gzipped)} gzipped bytes.\n`);
+  expect(code).toBe(0);
+  expect(await live()).toEqual({ n: 0 });
+});
+
+test('transcripts delete --dry-run says what it would remove and removes nothing', async () => {
+  const { db, gzipped, live } = await withTranscript();
+  await using _db = db;
+  await using config = await hubConfig(db);
+
+  const { code, stdout } = await invoke([
+    'transcripts',
+    'delete',
+    '--source',
+    'claude-code',
+    '--dry-run',
+    ...configArgs(config),
+  ]);
+
+  expect(stdout).toBe(
+    `Would delete 1 generation of transcripts, ${String(gzipped)} gzipped bytes.\n`,
+  );
+  expect(code).toBe(0);
+  expect(await live()).toEqual({ n: 1 });
+});
+
+// Every upload of laptop-1's transcript happened on 2026-10-01, so a date of
+// that day keeps it: a generation is removed only when its last upload is
+// before the start of the day, in UTC.
+test('transcripts delete --before keeps a generation last uploaded on that day', async () => {
+  const { db, live } = await withTranscript();
+  await using _db = db;
+  await using config = await hubConfig(db);
+
+  const { stdout } = await invoke([
+    'transcripts',
+    'delete',
+    '--before',
+    '2026-10-01',
+    ...configArgs(config),
+  ]);
+
+  expect(stdout).toBe('Deleted 0 generations of transcripts, 0 gzipped bytes.\n');
+  expect(await live()).toEqual({ n: 1 });
+});
+
+// Tokyo's midnight on 2026-10-02 is 15:00 UTC on 2026-10-01, before the upload.
+test('transcripts delete --before reads the date in UTC, whatever the local time zone', async () => {
+  const { db, live } = await withTranscript(Date.UTC(2026, 9, 1, 20));
+  await using _db = db;
+  await using config = await hubConfig(db);
+  const zone = process.env.TZ;
+  process.env.TZ = 'Asia/Tokyo';
+  try {
+    await invoke(['transcripts', 'delete', '--before', '2026-10-02', ...configArgs(config)]);
+  } finally {
+    if (zone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = zone;
+    }
+  }
+
+  expect(await live()).toEqual({ n: 0 });
+});
+
+test('transcripts delete without a filter refuses and deletes nothing', async () => {
+  const { db, live } = await withTranscript();
+  await using _db = db;
+  await using config = await hubConfig(db);
+
+  const { code, stderr } = await invoke(['transcripts', 'delete', ...configArgs(config)]);
+
+  expect(stderr).toContain('--system, --source, or --before');
+  expect(code).not.toBe(0);
+  expect(await live()).toEqual({ n: 1 });
+});
+
+test('transcripts delete --before takes a calendar date', async () => {
+  const { code } = await invoke(['transcripts', 'delete', '--before', 'last week']);
+
+  expect(code).toBe(2);
 });
 
 test('pair and unpair read the database from HEIMDALL_DATABASE_URL', async () => {
