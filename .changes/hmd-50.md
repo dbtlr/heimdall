@@ -1,3 +1,0 @@
-### Added
-
-- **The Hub stores agent Session transcripts as Collectors upload them** (HMD-50). The Hub accepts gzipped chunks of each transcript file at the offset it holds, stores them in PostgreSQL, and acknowledges them in the same transaction, as [ADR-0013](docs/decisions/0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) describes. It keeps each System's latest set of transcript sources from its Reports. `heimdall-hub transcripts delete` removes whole generations by System, source, or last upload before a date, and the Hub refuses a path once every generation there is deleted. Generation ids are random, so a Hub restored from a backup never reissues an id a Collector still holds (HMD-57). `docs/spec.md` describes the upload protocol.
