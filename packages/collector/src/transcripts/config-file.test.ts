@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
-import { readSessionsSection } from './config-file.ts';
+import { configHome, readSessionsSection } from './config-file.ts';
 
 const TOML_PATH = '.config/heimdall/collector.toml';
 const JSON_PATH = '.config/heimdall/collector.json';
@@ -99,6 +99,29 @@ test('an unparseable discovered file counts as absent and the home directory ans
   );
 });
 
+test('an unparseable collector.toml shadows a collector.json beside it, and the home directory answers', async () => {
+  await using cwd = await tempStateDir();
+  await using home = await tempStateDir();
+  await put(cwd.path, TOML_PATH, 'not = = toml');
+  await put(cwd.path, JSON_PATH, JSON.stringify({ sessions: sourcesOf('claude-code') }));
+  await put(home.path, TOML_PATH, tomlWith('codex'));
+  expect(await readSessionsSection({ cwd: cwd.path, home: home.path, named: undefined })).toEqual(
+    sourcesOf('codex'),
+  );
+});
+
+test('a collector.toml that cannot be inspected shadows a collector.json beside it, and the home directory answers', async () => {
+  await using cwd = await tempStateDir();
+  await using home = await tempStateDir();
+  await put(cwd.path, JSON_PATH, JSON.stringify({ sessions: sourcesOf('claude-code') }));
+  // A link to itself: stat fails with ELOOP, not with a missing file.
+  await symlink('collector.toml', join(cwd.path, TOML_PATH));
+  await put(home.path, TOML_PATH, tomlWith('codex'));
+  expect(await readSessionsSection({ cwd: cwd.path, home: home.path, named: undefined })).toEqual(
+    sourcesOf('codex'),
+  );
+});
+
 test('an unparseable file yields no section', async () => {
   await using cwd = await tempStateDir();
   await put(cwd.path, JSON_PATH, '{ nope');
@@ -129,4 +152,18 @@ test('a JSON file that holds an array rather than an object yields no section', 
   expect(
     await readSessionsSection({ cwd: cwd.path, home: cwd.path, named: undefined }),
   ).toBeUndefined();
+});
+
+test('the home directory is HOME only when HOME is an absolute path, as Loom takes it', () => {
+  expect(configHome({ HOME: '/home/operator' })).toBe('/home/operator');
+  expect(configHome({ HOME: 'relative/home' })).toBeUndefined();
+  expect(configHome({})).toBeUndefined();
+});
+
+test('without a home directory, only the working directory is searched', async () => {
+  await using cwd = await tempStateDir();
+  await put(cwd.path, TOML_PATH, tomlWith('codex'));
+  expect(await readSessionsSection({ cwd: cwd.path, home: undefined, named: undefined })).toEqual(
+    sourcesOf('codex'),
+  );
 });

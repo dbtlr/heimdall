@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { givenIdentity, invoke, TOKEN } from './testing/cli.ts';
@@ -153,6 +153,28 @@ test('run refuses sources that share a name, before it starts', async () => {
   expect(stderr.trim()).toMatch(ISO_TIME);
   expect(stderr).toContain('collector.toml is not valid: ');
   expect(stderr).toContain('"claude-code"');
+  expect(code).toBe(1);
+});
+
+test('run refuses two sources that read one directory through a symbolic link, before it starts', async () => {
+  await using dir = await tempStateDir();
+  const claude = join(dir.path, 'claude');
+  const link = join(dir.path, 'link');
+  await mkdir(claude);
+  await symlink(claude, link);
+  const { configFile } = await configWith(dir.path, [
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    `dir = "${claude}"`,
+    '[[sessions.sources]]',
+    'harness = "codex"',
+    `dir = "${link}"`,
+  ]);
+
+  const { code, stderr, stdout } = await startAndStop(['run', '--config', configFile]);
+
+  expect(stdout).not.toContain('Sampling');
+  expect(stderr).toContain('read one directory');
   expect(code).toBe(1);
 });
 

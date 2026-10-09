@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 
@@ -59,24 +59,32 @@ const readDirectory = async (directory: string) => {
   return path === undefined ? undefined : readTable(path);
 };
 
+// The home directory Loom's config plugin looks in: HOME, when it is an
+// absolute path, and none otherwise.
+export const configHome = (env: Readonly<Record<string, string | undefined>>) => {
+  const home = env.HOME;
+  return home !== undefined && isAbsolute(home) ? home : undefined;
+};
+
 // The `sessions` value of the file Loom's config plugin reads for this run:
 // the file `--config` names (the only file when given), otherwise the first
-// candidate found in the working directory and then in the home directory.
-// Loom has already warned about or failed on a file it cannot use, so a missing
-// or unparseable file, or one without the key, yields undefined and never throws.
+// candidate found in the working directory and then in the home directory,
+// when there is one. Loom has already warned about or failed on a file it
+// cannot use, so a missing or unparseable file, or one without the key,
+// yields undefined and never throws.
 export const readSessionsSection = async ({
   cwd,
   home,
   named,
 }: {
   cwd: string;
-  home: string;
+  home: string | undefined;
   named: string | undefined;
 }): Promise<unknown> => {
   if (named !== undefined) {
     return (await readTable(resolve(cwd, named)))?.sessions;
   }
-  const directories = resolve(home) === resolve(cwd) ? [cwd] : [cwd, home];
+  const directories = home === undefined || resolve(home) === resolve(cwd) ? [cwd] : [cwd, home];
   const tables = await Promise.all(directories.map((directory) => readDirectory(directory)));
   return tables.find((table) => table !== undefined)?.sessions;
 };

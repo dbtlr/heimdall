@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { writeFileSync } from 'node:fs';
+import { closeSync, openSync, writeFileSync, writeSync } from 'node:fs';
 import {
   appendFile,
   chmod,
@@ -17,6 +17,7 @@ import { tempStateDir } from '../testing/fixtures.ts';
 import { memoryHub } from '../testing/memory-hub.ts';
 import { createCapture } from './capture.ts';
 import type { TranscriptHub } from './hub-client.ts';
+import { startCapture } from './loop.ts';
 import type { Source } from './sources.ts';
 import { openSpool } from './spool.ts';
 import type { Spool } from './spool.ts';
@@ -29,10 +30,12 @@ const SESSION = 'projects/my-project/0b1c.jsonl';
 const setUp = async ({
   chunkLimit,
   readBytes,
+  signal,
   wrapSpool = (spool) => spool,
 }: {
   chunkLimit?: number;
   readBytes?: number;
+  signal?: AbortSignal;
   wrapSpool?: (spool: Spool) => Spool;
 } = {}) => {
   const root = await tempStateDir();
@@ -55,6 +58,7 @@ const setUp = async ({
       log: { warn: (message) => warnings.push(message) },
       now: () => clock.now,
       readBytes,
+      signal,
       sources,
       spool: wrapSpool(spool),
     });
@@ -315,6 +319,48 @@ describe('the bytes already read', () => {
     expect(held.every((content) => v1.startsWith(content) || v2.startsWith(content))).toBe(true);
     expect(held.at(-1)).toBe(v2);
   });
+
+  test('rewritten in its first byte between blocks of one read is never spliced', async () => {
+    // Past the hashed windows, so the head window is not the tail window.
+    const v1 = `${'a'.repeat(5000)}\n${'c\n'.repeat(3000)}`;
+    const v2 = `Z${v1.slice(1)}`;
+    // The block that starts past the head window, where only the head hash can notice.
+    const rewriteAfter = 7;
+    let appended = 0;
+    const file = { path: '' };
+    await using t = await setUp({
+      chunkLimit: 1024,
+      readBytes: 1024,
+      wrapSpool: (spool) => ({
+        ...spool,
+        append: (...args) => {
+          spool.append(...args);
+          appended += 1;
+          if (appended === rewriteAfter) {
+            // Between two blocks of one read, so it must be synchronous.
+            // oxlint-disable-next-line node/no-sync -- see above.
+            const handle = openSync(file.path, 'r+');
+            // oxlint-disable-next-line node/no-sync -- see above.
+            writeSync(handle, 'Z', 0);
+            // oxlint-disable-next-line node/no-sync -- see above.
+            closeSync(handle);
+          }
+        },
+      }),
+    });
+    file.path = join(t.source.dir, SESSION);
+    await t.write(SESSION, v1);
+    const c = t.capture();
+    for (let tick = 0; tick < 3; tick += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- scans are sequential.
+      await t.tick(c);
+    }
+
+    const held = t.remote.contents('claude-code', SESSION);
+    expect(appended).toBeGreaterThan(rewriteAfter);
+    expect(held.every((content) => v1.startsWith(content) || v2.startsWith(content))).toBe(true);
+    expect(held.at(-1)).toBe(v2);
+  });
 });
 
 describe('a file that is not JSONL', () => {
@@ -449,6 +495,23 @@ describe('content deleted on purpose on the Hub', () => {
     expect(t.spool.summary().bytes).toBe(0);
   });
 
+  test('a path found deleted right after its generation was deleted is not read again', async () => {
+    await using t = await setUp();
+    const c = t.capture();
+    await t.write(SESSION, '{"a":1}\n');
+    await t.tick(c);
+    t.remote.deletePath('claude-code', SESSION);
+    await t.append(SESSION, '{"b":2}\n');
+    await t.tick(c);
+
+    expect(t.remote.opens).toEqual([`claude-code/${SESSION}`, `claude-code/${SESSION}`]);
+
+    await t.append(SESSION, '{"c":3}\n');
+    await c.scan();
+
+    expect(t.spool.summary().bytes).toBe(0);
+  });
+
   test('a deleted generation is dropped, and the file uploads again in a new one', async () => {
     await using t = await setUp();
     const c = t.capture();
@@ -459,6 +522,25 @@ describe('content deleted on purpose on the Hub', () => {
     await t.tick(c);
     await t.tick(c);
 
+    expect(t.remote.contents('claude-code', SESSION)).toEqual(['{"a":1}\n{"b":2}\n']);
+  });
+});
+
+describe('a generation the Hub deleted', () => {
+  test('is replaced in the same drain, and the file then uploads there from its first byte', async () => {
+    await using t = await setUp();
+    const c = t.capture();
+    await t.write(SESSION, '{"a":1}\n');
+    await t.tick(c);
+    t.remote.deleteGeneration(1);
+    await t.append(SESSION, '{"b":2}\n');
+    await t.tick(c);
+
+    expect(t.remote.opens).toEqual([`claude-code/${SESSION}`, `claude-code/${SESSION}`]);
+
+    await t.tick(c);
+
+    expect(t.remote.opens).toHaveLength(2);
     expect(t.remote.contents('claude-code', SESSION)).toEqual(['{"a":1}\n{"b":2}\n']);
   });
 });
@@ -587,6 +669,29 @@ describe('walking a source', () => {
     }
   });
 
+  test('reports a later source that is absent while an earlier one is still being read', async () => {
+    const reported: string[] = [];
+    const holder: { capture?: ReturnType<typeof createCapture> } = {};
+    await using t = await setUp({
+      wrapSpool: (spool) => ({
+        ...spool,
+        append: (...args) => {
+          spool.append(...args);
+          const gone = holder.capture?.section().sources.find((s) => s.name === 'gone');
+          if (gone !== undefined) {
+            reported.push(gone.status);
+          }
+        },
+      }),
+    });
+    const absent: Source = { ...t.source, dir: join(t.root.path, 'nowhere'), name: 'gone' };
+    await t.write(SESSION, '{"a":1}\n');
+    holder.capture = t.capture([t.source, absent]);
+    await holder.capture.scan();
+
+    expect(reported).toEqual(['absent']);
+  });
+
   test('reports no sources and an empty spool when capture is off', async () => {
     await using t = await setUp();
     const c = t.capture([]);
@@ -651,5 +756,148 @@ describe('walking a source', () => {
 
     expect(await t.tick(c)).toEqual({ kind: 'drained' });
     expect(t.warnings).toEqual([]);
+  });
+});
+
+describe('a file already read', () => {
+  test('is not opened again by later scans while it stays unchanged', async () => {
+    const observed: string[] = [];
+    await using t = await setUp({
+      wrapSpool: (spool) => ({
+        ...spool,
+        observe: (...args) => {
+          observed.push(args[1]);
+          return spool.observe(...args);
+        },
+      }),
+    });
+    const c = t.capture();
+    await t.write(SESSION, '{"a":1}\n');
+    // The first scan reads it; the second sees it unchanged and reads to its end.
+    await t.tick(c);
+    await t.tick(c);
+    const settled = observed.length;
+    for (let scan = 0; scan < 4; scan += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- scans are sequential.
+      await t.tick(c);
+    }
+
+    expect(settled).toBeGreaterThan(0);
+    expect(observed).toHaveLength(settled);
+    expect(t.remote.contents('claude-code', SESSION)).toEqual(['{"a":1}\n']);
+  });
+
+  test('cut short by the Collector stopping, is read to its end by a later run', async () => {
+    const lines = '{"a":12345678}\n'.repeat(8);
+    await using t = await setUp({ chunkLimit: 16, readBytes: 16 });
+    await t.write(SESSION, lines);
+    // A run that stops after the first chunk it spools.
+    const stopAfterOneChunk = async () => {
+      const stopping = new AbortController();
+      const c = createCapture({
+        chunkLimit: 16,
+        hub: t.remote.hub,
+        log: { warn: () => {} },
+        now: () => NOW,
+        readBytes: 16,
+        signal: stopping.signal,
+        sources: [t.source],
+        spool: {
+          ...t.spool,
+          append: (...args) => {
+            t.spool.append(...args);
+            stopping.abort();
+          },
+        },
+      });
+      await c.scan();
+    };
+    // The second run finds the file unchanged, so it is no longer waiting to settle.
+    await stopAfterOneChunk();
+    await stopAfterOneChunk();
+    await t.tick();
+
+    expect(t.remote.contents('claude-code', SESSION)).toEqual([lines]);
+  });
+});
+
+describe('a Collector that is stopping', () => {
+  const FOUR_BLOCKS = '{"a":12345678}\n'.repeat(4);
+  const WRITTEN = ['a', 'b', 'c'];
+
+  test('stops a scan after the block it is reading, and opens no further file', async () => {
+    const stopping = new AbortController();
+    const observed: string[] = [];
+    let appended = 0;
+    await using t = await setUp({
+      chunkLimit: 16,
+      readBytes: 16,
+      signal: stopping.signal,
+      wrapSpool: (spool) => ({
+        ...spool,
+        append: (...args) => {
+          spool.append(...args);
+          appended += 1;
+          if (appended === 2) {
+            stopping.abort();
+          }
+        },
+        observe: (...args) => {
+          observed.push(args[1]);
+          return spool.observe(...args);
+        },
+      }),
+    });
+    await Promise.all(WRITTEN.map((name) => t.write(`projects/${name}.jsonl`, FOUR_BLOCKS)));
+    await t.capture().scan();
+
+    expect(appended).toBe(2);
+    expect(observed).toEqual(['projects/a.jsonl']);
+  });
+
+  test('stops a drain after the request in flight', async () => {
+    const stopping = new AbortController();
+    await using t = await setUp({ chunkLimit: 16, readBytes: 16, signal: stopping.signal });
+    await Promise.all(WRITTEN.map((name) => t.write(`projects/${name}.jsonl`, FOUR_BLOCKS)));
+    const c = t.capture([t.source], {
+      open: t.remote.hub.open,
+      send: async (chunk) => {
+        const answer = await t.remote.hub.send(chunk);
+        stopping.abort();
+        return answer;
+      },
+    });
+    await c.scan();
+    await c.drain();
+
+    expect(t.remote.sends).toHaveLength(1);
+    expect(t.spool.summary().bytes).toBeGreaterThan(0);
+  });
+
+  test('is not told by the loop that uploading failed when the stop cut a request short', async () => {
+    const stopping = new AbortController();
+    const sent = Promise.withResolvers<undefined>();
+    const logged: string[] = [];
+    await using t = await setUp({ chunkLimit: 16, signal: stopping.signal });
+    await t.write(SESSION, FOUR_BLOCKS);
+    const c = t.capture([t.source], {
+      open: t.remote.hub.open,
+      send: () => {
+        stopping.abort();
+        sent.resolve(undefined);
+        return Promise.resolve({ kind: 'failed', reason: 'The request was aborted' });
+      },
+    });
+    const stop = startCapture({
+      capture: c,
+      intervalMs: 5,
+      log: { info: (m) => logged.push(m), warn: (m) => logged.push(m) },
+      now: () => NOW,
+      signal: stopping.signal,
+    });
+    await sent.promise;
+    await stop();
+
+    expect(logged).toEqual([]);
   });
 });

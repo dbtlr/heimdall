@@ -15,7 +15,7 @@ import type { SystemIdentity } from './identity.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
 import { defaultStateDir } from './state-dir.ts';
 import { createCapture } from './transcripts/capture.ts';
-import { readSessionsSection } from './transcripts/config-file.ts';
+import { configHome, readSessionsSection } from './transcripts/config-file.ts';
 import { transcriptHub } from './transcripts/hub-client.ts';
 import { startCapture } from './transcripts/loop.ts';
 import { findSharedDirectory, parseSources } from './transcripts/sources.ts';
@@ -115,7 +115,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     const named =
       'config' in options && typeof options.config === 'string' ? options.config : undefined;
     const configured = parseSources(
-      await readSessionsSection({ cwd: host.cwd, home, named }),
+      await readSessionsSection({ cwd: host.cwd, home: configHome(host.env), named }),
       home,
     );
     const sources =

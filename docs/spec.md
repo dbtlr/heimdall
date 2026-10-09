@@ -85,7 +85,7 @@ A Collector uploads with its System's token as a bearer token, like a Report. Th
 | `409 {"held": n}` | The offset is not where the Hub's content ends. | Resumes from `n` when its spool continues there. Otherwise, as when the Hub holds more than the file has, the file starts over in a new generation. |
 | `410` to an open | Every generation at the path was deleted on purpose. | Stops uploading the path and drops its spooled content. |
 | `410` to a chunk | The generation was deleted on purpose. A newer generation at the same path may survive. | Drops the generation's spooled content. If the file still grows into it, opens a new generation at the path, and stops the path when that open is refused. |
-| `404` | The System opened no such generation. | Opens a new generation; a file whose earlier content is no longer spooled starts over in it. |
+| `404` | The System opened no such generation. | Opens a new generation when the spool still holds the file from its first byte; otherwise drops the spooled content, and the file starts over in a new generation at the next scan. |
 | `401`, `403` | No token, or a token no System holds. | Keeps its spool and retries. |
 | `413`, `422` | The chunk body is over the cap, is not gzip, or unpacks past the chunk limit, or the request is malformed, such as an open with an invalid path or a body over 32 KiB. | Keeps that file's spool and retries after backing off, while other files still upload; it is a Collector bug. |
 

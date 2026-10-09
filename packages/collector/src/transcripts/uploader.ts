@@ -187,9 +187,6 @@ export const createUploader = ({
     drain: async (): Promise<DrainResult> => {
       let refusal: string | undefined;
       for (const generation of spool.pending()) {
-        if (signal?.aborted === true) {
-          break;
-        }
         // oxlint-disable-next-line no-await-in-loop -- one generation at a time, oldest first.
         const outcome = await drainGeneration(generation);
         if (outcome.kind === 'failed') {
