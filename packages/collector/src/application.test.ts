@@ -98,6 +98,64 @@ test('run settings from the environment override the configuration file', async 
   expect(stdout).toContain(`for http://b.example/; queue in ${join(dir.path, 'b')}.`);
 });
 
+// A paired state directory and a collector.toml naming it and the Hub, with `extra` lines.
+const configWith = async (dir: string, extra: string[]) => {
+  const stateDir = join(dir, 'state');
+  await givenIdentity(stateDir, { hub: 'http://heimdall.example:8080', system: 'server-1' });
+  const configFile = join(dir, 'collector.toml');
+  await writeFile(
+    configFile,
+    ['hub = "http://heimdall.example:8080/"', `stateDir = "${stateDir}"`, ...extra].join('\n'),
+  );
+  return { configFile, stateDir };
+};
+
+test('run captures transcripts from the sources collector.toml lists', async () => {
+  await using dir = await tempStateDir();
+  const claude = join(dir.path, 'claude');
+  const { configFile, stateDir } = await configWith(dir.path, [
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    `dir = "${claude}"`,
+    '[[sessions.sources]]',
+    'harness = "codex"',
+  ]);
+
+  const { code, stdout } = await startAndStop(['run', '--config', configFile]);
+
+  expect(stdout).toContain(`Capturing transcripts from claude-code (${claude}), codex (`);
+  expect(await Bun.file(join(stateDir, 'spool.sqlite')).exists()).toBe(true);
+  expect(code).toBe(130);
+});
+
+test('run says transcript capture is off when collector.toml lists no sources', async () => {
+  await using dir = await tempStateDir();
+  const { configFile } = await configWith(dir.path, []);
+
+  const { stdout } = await startAndStop(['run', '--config', configFile]);
+
+  expect(stdout).toContain('Transcript capture is off; collector.toml lists no sessions.sources.');
+});
+
+test('run refuses sources that share a name, before it starts', async () => {
+  await using dir = await tempStateDir();
+  const { configFile } = await configWith(dir.path, [
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    `dir = "${join(dir.path, 'work')}"`,
+  ]);
+
+  const { code, stderr, stdout } = await startAndStop(['run', '--config', configFile]);
+
+  expect(stdout).not.toContain('Sampling');
+  expect(stderr.trim()).toMatch(ISO_TIME);
+  expect(stderr).toContain('collector.toml is not valid: ');
+  expect(stderr).toContain('"claude-code"');
+  expect(code).toBe(1);
+});
+
 test('run without a Hub is a usage error that names the option', async () => {
   await using dir = await tempStateDir();
   await givenIdentity(dir.path);

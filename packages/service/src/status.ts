@@ -81,6 +81,59 @@ export const queueWords = (
   return `${String(depth.samples)} ${depth.samples === 1 ? 'sample' : 'samples'} waiting`;
 };
 
+const UNITS = ['B', 'KiB', 'MiB', 'GiB'];
+
+// A byte count in binary units: whole bytes, then one decimal from KiB up.
+const sizeWords = (bytes: number): string => {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${String(bytes)} B` : `${value.toFixed(1)} ${UNITS[unit] ?? ''}`;
+};
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+// A span as its largest whole unit: seconds, minutes, hours, or days.
+const spanWords = (ms: number): string => {
+  if (ms < MINUTE_MS) {
+    return `${String(Math.max(0, Math.floor(ms / 1000)))} s`;
+  }
+  if (ms < HOUR_MS) {
+    return `${String(Math.floor(ms / MINUTE_MS))} min`;
+  }
+  return ms < DAY_MS
+    ? `${String(Math.floor(ms / HOUR_MS))} h`
+    : `${String(Math.floor(ms / DAY_MS))} d`;
+};
+
+// The Collector's `spool` line: the transcript content the Hub has not
+// acknowledged, its size and its oldest content's age, with a warning once
+// that content is more than a day old (ADR-0013). `now` is epoch milliseconds.
+export const spoolWords = (
+  spool:
+    | { problem: string }
+    | { now: number; summary: { bytes: number; oldestAt: number | null } | undefined },
+): string => {
+  if ('problem' in spool) {
+    return `unreadable (${spool.problem})`;
+  }
+  const { now, summary } = spool;
+  if (summary === undefined) {
+    return 'no spool yet; capture has not started';
+  }
+  if (summary.bytes === 0 || summary.oldestAt === null) {
+    return 'empty';
+  }
+  const age = now - summary.oldestAt;
+  const words = `${sizeWords(summary.bytes)} waiting, oldest spooled ${spanWords(age)} ago`;
+  return age > DAY_MS ? `${words}; the Hub has not acknowledged it for over a day` : words;
+};
+
 // The Collector's `system` line: the System it is paired as and the Hub it
 // paired with, a mismatch with the configured Hub's origin, or how to pair.
 // It never names the token.

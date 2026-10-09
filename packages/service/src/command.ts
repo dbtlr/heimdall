@@ -17,6 +17,7 @@ import {
   healthWords,
   probeHealth,
   queueWords,
+  spoolWords,
   renderStatus,
   systemWords,
 } from './status.ts';
@@ -27,7 +28,7 @@ import type { Supervisor, UnitStatus } from './supervisor.ts';
 type Env = Readonly<Record<string, string | undefined>>;
 
 // What differs between the two binaries' `service` commands. The Collector's
-// status names its paired System and counts its queue, which only the
+// status names its paired System and counts its queue and spool, which only the
 // Collector knows how to read.
 export type ServiceSpec =
   | { binary: 'hub'; version: string }
@@ -40,6 +41,9 @@ export type ServiceSpec =
       pairedSystem: (stateDir: string) => Promise<{ hub: string; system: string } | undefined>;
       // The samples waiting in the queue under `stateDir`, or undefined when there is no queue yet.
       queueDepth: (stateDir: string) => Promise<number | undefined>;
+      // The transcript spool under `stateDir`: its stored bytes and when its oldest
+      // content was spooled (epoch ms, null when empty), or undefined when there is no spool yet.
+      spool: (stateDir: string) => Promise<{ bytes: number; oldestAt: number | null } | undefined>;
       version: string;
     };
 
@@ -48,6 +52,8 @@ export type ServiceEnvironment = {
   compiled: () => boolean;
   executable: string;
   fetch: HealthFetch;
+  // The clock, in epoch milliseconds.
+  now: () => number;
   platform: NodeJS.Platform;
   // The backend for `platform`, which is a supported one.
   supervisor: (place: { home: string; label: string; platform: NodeJS.Platform }) => Supervisor;
@@ -57,6 +63,7 @@ const defaultEnvironment = (): ServiceEnvironment => ({
   compiled: runsCompiled,
   executable: process.execPath,
   fetch: (url, init) => fetch(url, init),
+  now: () => Date.now(),
   platform: process.platform,
   supervisor: (place) => {
     const uid = process.getuid?.() ?? userInfo().uid;
@@ -274,7 +281,7 @@ export const serviceCommand = (
     return [['health', healthWords(answer, spec.version, url)] as const];
   };
 
-  // The Collector's `system` and `queue` lines, read from the state directory `run` uses.
+  // The Collector's `system`, `queue`, and `spool` lines, read from the state directory `run` uses.
   const collectorDetails = async (
     place: ReturnType<typeof io>,
     { hub, stateDir: stateDirSetting }: { hub?: unknown; stateDir?: unknown },
@@ -295,7 +302,11 @@ export const serviceCommand = (
       (samples) => queueWords({ samples }),
       (error: unknown) => queueWords({ problem: describeError(error) }),
     );
-    return [['system', system] as const, ['queue', queue] as const];
+    const spool = await spec.spool(stateDir).then(
+      (summary) => spoolWords({ now: settings().now(), summary }),
+      (error: unknown) => spoolWords({ problem: describeError(error) }),
+    );
+    return [['system', system] as const, ['queue', queue] as const, ['spool', spool] as const];
   };
 
   // Status always exits 0, whatever it finds: Fleet prints the text verbatim and
