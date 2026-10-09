@@ -47,13 +47,21 @@ describe('opening a generation', () => {
     expect(await h.client.open(FILE)).toEqual({ kind: 'deleted' });
   });
 
-  test.each([401, 403, 422, 500])('fails on %d', async (status) => {
-    await using h = hubAnswering(() => new Response('nope', { status }));
+  test.each([401, 403, 500, 302])('fails on %d', async (status) => {
+    await using h = hubAnswering(
+      () => new Response('nope', { headers: { location: '/' }, status }),
+    );
 
     expect(await h.client.open(FILE)).toEqual({
       kind: 'failed',
       reason: `Hub answered ${String(status)}`,
     });
+  });
+
+  test('answers refused when the Hub will never take the request', async () => {
+    await using h = hubAnswering(() => new Response('bad path', { status: 422 }));
+
+    expect(await h.client.open(FILE)).toEqual({ kind: 'refused', reason: 'Hub answered 422' });
   });
 
   test('fails on an answer that is not a generation', async () => {
@@ -106,9 +114,15 @@ describe('sending a chunk', () => {
     expect(await h.client.send({ body, generation: 42, offset: 0 })).toEqual({ kind: 'unknown' });
   });
 
-  test.each([401, 403, 413, 422, 503])('fails on %d', async (status) => {
+  test.each([401, 403, 503])('fails on %d', async (status) => {
     await using h = hubAnswering(() => new Response(null, { status }));
 
     expect((await h.client.send({ body, generation: 42, offset: 0 })).kind).toBe('failed');
+  });
+
+  test.each([413, 422])('answers refused on %d', async (status) => {
+    await using h = hubAnswering(() => new Response(null, { status }));
+
+    expect((await h.client.send({ body, generation: 42, offset: 0 })).kind).toBe('refused');
   });
 });

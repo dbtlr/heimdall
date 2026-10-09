@@ -21,19 +21,22 @@ type Capture = {
 // spool. After a failed drain, drains back off exponentially up to
 // `maxBackoffMs`, as Report pushes do, while scans carry on. It warns once
 // when the spool holds content spooled more than a day ago. The returned
-// function stops the loop and waits for a tick in flight.
+// function stops the loop and waits for a tick in flight, which `signal`
+// cuts short.
 export const startCapture = ({
   capture,
   intervalMs = SCAN_INTERVAL_MS,
   log,
   maxBackoffMs = MAX_BACKOFF_MS,
   now,
+  signal,
 }: {
   capture: Capture;
   intervalMs?: number;
   log: Log;
   maxBackoffMs?: number;
   now: () => number;
+  signal?: AbortSignal;
 }): (() => Promise<void>) => {
   let retryAt = 0;
   let backoffMs = intervalMs;
@@ -43,6 +46,10 @@ export const startCapture = ({
 
   const drain = async () => {
     const result = await capture.drain();
+    // A drain cut short by the Collector stopping says nothing about the Hub.
+    if (signal?.aborted === true) {
+      return;
+    }
     if (result.kind === 'failed') {
       if (outage === undefined) {
         log.warn(`Uploading transcripts failed (${result.reason}); they stay spooled.`);

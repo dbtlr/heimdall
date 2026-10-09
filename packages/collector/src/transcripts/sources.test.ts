@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
+import { mkdir, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { HARNESSES, parseSources } from './sources.ts';
+import { tempStateDir } from '../testing/fixtures.ts';
+import { findSharedDirectory, HARNESSES, parseSources } from './sources.ts';
+import type { Source } from './sources.ts';
 
 const HOME = '/home/operator';
 
@@ -136,4 +140,39 @@ const many = (count: number) => ({
 test('at most 64 sources are accepted', () => {
   expect(sourcesOf(many(64))).toHaveLength(64);
   expect(problemOf(many(65))).toContain('64');
+});
+
+const at = (dir: string, name: string): Source => ({
+  dir,
+  harness: 'claude-code',
+  name,
+  trees: ['projects'],
+});
+
+test('two sources whose directories are one through a symbolic link share it', async () => {
+  await using root = await tempStateDir();
+  await mkdir(join(root.path, 'claude'));
+  await symlink(join(root.path, 'claude'), join(root.path, 'alias'));
+
+  expect(
+    await findSharedDirectory([
+      at(join(root.path, 'claude'), 'claude-code'),
+      at(join(root.path, 'alias'), 'work'),
+    ]),
+  ).toContain('"claude-code" and "work" read one directory');
+});
+
+test('distinct and absent directories share nothing', async () => {
+  await using root = await tempStateDir();
+  await mkdir(join(root.path, 'a'));
+  await mkdir(join(root.path, 'b'));
+
+  expect(
+    await findSharedDirectory([
+      at(join(root.path, 'a'), 'a'),
+      at(join(root.path, 'b'), 'b'),
+      at(join(root.path, 'gone-1'), 'c'),
+      at(join(root.path, 'gone-2'), 'd'),
+    ]),
+  ).toBeUndefined();
 });

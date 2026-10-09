@@ -11,19 +11,22 @@ import { parseJson } from '../json.ts';
 
 const SEND_TIMEOUT_MS = 30_000;
 
-// How the Hub answered an open (docs/spec.md, "Upload protocol").
+// How the Hub answered an open (docs/spec.md, "Upload protocol"). `failed`
+// says nothing about the request, as when the Hub is unreachable or refuses
+// the token; `refused` is a request the Hub will never take as sent.
 export type OpenAnswer =
   | { generation: number; held: number; kind: 'opened' }
   | { kind: 'deleted' }
-  | { kind: 'failed'; reason: string };
+  | { kind: 'failed' | 'refused'; reason: string };
 
 // How the Hub answered a chunk: `held` when it holds the chunk, `elsewhere`
 // when its content ends at another offset, `deleted` for a generation deleted
-// on purpose, and `unknown` for one it has no record of.
+// on purpose, `unknown` for one it has no record of, and `failed` or
+// `refused` as for an open.
 export type ChunkAnswer =
   | { held: number; kind: 'elsewhere' | 'held' }
   | { kind: 'deleted' | 'unknown' }
-  | { kind: 'failed'; reason: string };
+  | { kind: 'failed' | 'refused'; reason: string };
 
 // The Hub's transcript endpoints, as the Collector uses them. Tests replace it.
 export type TranscriptHub = {
@@ -37,10 +40,17 @@ type Answer = { response: Response } | { reason: string };
 const heldIn = async (response: Response) =>
   ChunkAcceptedSchema.safeParse(parseJson(await response.text().catch(() => ''))).data?.held;
 
-// A failure for an answer the protocol does not name.
+const HTTP_TOO_LARGE = 413;
+const HTTP_UNPROCESSABLE = 422;
+
+// A refusal for a request the Hub will never take as sent, or a failure for
+// any other answer the protocol does not name.
 const failed = async (response: Response) => {
   await response.body?.cancel();
-  return { kind: 'failed', reason: `Hub answered ${String(response.status)}` } as const;
+  const reason = `Hub answered ${String(response.status)}`;
+  return response.status === HTTP_TOO_LARGE || response.status === HTTP_UNPROCESSABLE
+    ? ({ kind: 'refused', reason } as const)
+    : ({ kind: 'failed', reason } as const);
 };
 
 // The Hub's transcript endpoints at `hub`, authenticated as the System whose

@@ -18,7 +18,7 @@ import { createCapture } from './transcripts/capture.ts';
 import { readSessionsSection } from './transcripts/config-file.ts';
 import { transcriptHub } from './transcripts/hub-client.ts';
 import { startCapture } from './transcripts/loop.ts';
-import { parseSources } from './transcripts/sources.ts';
+import { findSharedDirectory, parseSources } from './transcripts/sources.ts';
 import type { Source } from './transcripts/sources.ts';
 import { openSpool } from './transcripts/spool.ts';
 import { hostProbe } from './vitals/host.ts';
@@ -122,6 +122,10 @@ export const runAction: ActionHandler<typeof run> = async ({
       configured.kind === 'refused'
         ? log.fatal(clean(`collector.toml is not valid: ${configured.problem}`))
         : configured.sources;
+    const shared = await findSharedDirectory(sources);
+    if (shared !== undefined) {
+      log.fatal(clean(`collector.toml is not valid: ${shared}`));
+    }
     const { system, token } = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
     const queue = await openQueue({ capacity: QUEUE_CAPACITY, stateDir });
     const spool = await openSpool({ stateDir });
@@ -133,10 +137,11 @@ export const runAction: ActionHandler<typeof run> = async ({
       hub: transcriptHub({ hub: options.hub, signal, token }),
       log: runtime,
       now: Date.now,
+      signal,
       sources,
       spool,
     });
-    const stopCapture = startCapture({ capture, log: runtime, now: Date.now });
+    const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
     try {
       await log.info(
         clean(

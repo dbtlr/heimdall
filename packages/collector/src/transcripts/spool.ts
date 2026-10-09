@@ -35,8 +35,9 @@ export type PendingGeneration = {
   source: string;
 };
 
-// One spooled chunk: `length` bytes of the file at `offset`, gzipped in `body`.
-export type SpooledChunk = { body: Uint8Array; id: number; length: number; offset: number };
+// One spooled chunk: `length` bytes of the file at `offset`, gzipped into
+// `bytes` bytes of body.
+export type ChunkHead = { bytes: number; id: number; length: number; offset: number };
 
 export type SpoolSummary = { bytes: number; oldestAt: number | null };
 
@@ -115,6 +116,13 @@ const SUMMARY_SQL =
 // it is on disk, and a chunk is removed only once the Hub holds it.
 export type Spool = ReturnType<typeof createSpool>;
 
+// A transaction as a plain function, so the spool's type holds no SQLite detail.
+const plain =
+  <A extends unknown[]>(run: (...args: A) => void) =>
+  (...args: A): void => {
+    run(...args);
+  };
+
 const createSpool = (db: Database) => {
   const fileQuery = db.query<FileRow, { path: string; source: string }>(
     'SELECT * FROM files WHERE source = $source AND path = $path',
@@ -163,18 +171,23 @@ const createSpool = (db: Database) => {
      WHERE EXISTS (SELECT 1 FROM chunks c WHERE c.generation = g.id)
      ORDER BY g.id`,
   );
-  const chunksQuery = db.query<SpooledChunk, { generation: number; limit: number }>(
-    'SELECT id, offset, length, body FROM chunks WHERE generation = $generation ORDER BY offset LIMIT $limit',
+  const headsQuery = db.query<ChunkHead, { generation: number; limit: number }>(
+    `SELECT id, offset, length, length(body) AS bytes FROM chunks
+     WHERE generation = $generation ORDER BY offset LIMIT $limit`,
   );
+  const bodyQuery = db.query<{ body: Uint8Array }, { id: number }>(
+    'SELECT body FROM chunks WHERE id = $id',
+  );
+  const adoptGeneration = db.query<{ id: number }, { file: number; hubId: number }>(
+    'INSERT INTO generations (file, hub_id) VALUES ($file, $hubId) RETURNING id',
+  );
+  const pointFile = db.query('UPDATE files SET generation = $generation WHERE id = $id');
   const lastChunkEnd = db.query<{ end: number | null }, { generation: number }>(
     'SELECT max(offset + length) AS end FROM chunks WHERE generation = $generation',
   );
   const setHubId = db.query('UPDATE generations SET hub_id = $hubId WHERE id = $id');
   const removeHeld = db.query(
     'DELETE FROM chunks WHERE generation = $generation AND offset + length <= $held',
-  );
-  const replaceChunk = db.query(
-    'UPDATE chunks SET offset = $offset, length = $length, body = $body WHERE id = $id',
   );
   const removeChunks = db.query('DELETE FROM chunks WHERE generation = $generation');
   const removeGeneration = db.query('DELETE FROM generations WHERE id = $id');
@@ -201,43 +214,55 @@ const createSpool = (db: Database) => {
   };
 
   return {
+    // Gives a file whose generation the Hub deleted the new generation the Hub
+    // just opened at its path, so its content uploads there from the first byte.
+    adopt: plain(
+      db.transaction((file: number, hubId: number) => {
+        const generation = adoptGeneration.get({ file, hubId })?.id ?? null;
+        pointFile.run({ generation, id: file });
+      }),
+    ),
     // Spools `chunks` read from the file, then moves its read offset and
     // hashes past them, in one transaction. The file's first content opens a
     // generation for it.
-    append: db.transaction(
-      (
-        id: number,
-        {
-          chunks,
-          headHash,
-          readOffset,
-          spooledAt,
-          tailHash,
-        }: {
-          chunks: { body: Uint8Array; length: number; offset: number }[];
-          headHash: string;
-          readOffset: number;
-          spooledAt: number;
-          tailHash: string;
+    append: plain(
+      db.transaction(
+        (
+          id: number,
+          {
+            chunks,
+            headHash,
+            readOffset,
+            spooledAt,
+            tailHash,
+          }: {
+            chunks: { body: Uint8Array; length: number; offset: number }[];
+            headHash: string;
+            readOffset: number;
+            spooledAt: number;
+            tailHash: string;
+          },
+        ) => {
+          const row = fileById.get({ id });
+          if (row === null) {
+            throw new Error(`no spooled file ${String(id)}`);
+          }
+          const generation = row.generation ?? insertGeneration.get({ file: id })?.id ?? null;
+          for (const chunk of chunks) {
+            insertChunk.run({ ...chunk, generation, spooledAt });
+          }
+          advanceFile.run({ generation, headHash, id, readOffset, tailHash });
         },
-      ) => {
-        const row = fileById.get({ id });
-        if (row === null) {
-          throw new Error(`no spooled file ${String(id)}`);
-        }
-        const generation = row.generation ?? insertGeneration.get({ file: id })?.id ?? null;
-        for (const chunk of chunks) {
-          insertChunk.run({ ...chunk, generation, spooledAt });
-        }
-        advanceFile.run({ generation, headHash, id, readOffset, tailHash });
-      },
+      ),
     ),
-    // The oldest spooled chunks of `generation`, at most `limit` of them.
-    chunks: (generation: number, limit: number) => chunksQuery.all({ generation, limit }),
+    // A spooled chunk's gzipped body.
+    body: (id: number) => bodyQuery.get({ id })?.body ?? new Uint8Array(),
+    // The oldest spooled chunks of `generation`, at most `limit` of them, without their bodies.
+    chunks: (generation: number, limit: number) => headsQuery.all({ generation, limit }),
     close: () => db.close(),
     // Drops a generation's spooled content. Its file, if still reading into
     // it, starts over in a new generation at its next scan.
-    dropGeneration: db.transaction(dropGeneration),
+    dropGeneration: plain(db.transaction(dropGeneration)),
     // The end of the content spooled for `generation`, or undefined when none is.
     end: (generation: number) => lastChunkEnd.get({ generation })?.end ?? undefined,
     // What the Collector knows of a file, or undefined for one it has never seen.
@@ -276,25 +301,25 @@ const createSpool = (db: Database) => {
       })),
     // Stops a path the Hub refused as deleted on purpose, dropping everything
     // spooled for it.
-    refuse: db.transaction((file: number) => {
-      for (const { id } of generationsOf.all({ file })) {
-        dropGeneration(id);
-      }
-      refuseFile.run({ id: file });
-    }),
-    // Replaces a chunk with the part of it from `offset`, which the Hub does not hold yet.
-    replace: (chunk: SpooledChunk) => {
-      replaceChunk.run(chunk);
-    },
+    refuse: plain(
+      db.transaction((file: number) => {
+        for (const { id } of generationsOf.all({ file })) {
+          dropGeneration(id);
+        }
+        refuseFile.run({ id: file });
+      }),
+    ),
     // Starts the file over: its next content opens a new generation from its
     // first byte. Its old generation's spooled content still goes to the Hub.
-    restart: db.transaction((file: number) => {
-      const generation = fileById.get({ id: file })?.generation ?? null;
-      restartFile.run({ id: file });
-      if (generation !== null) {
-        settled.run({ id: generation });
-      }
-    }),
+    restart: plain(
+      db.transaction((file: number) => {
+        const generation = fileById.get({ id: file })?.generation ?? null;
+        restartFile.run({ id: file });
+        if (generation !== null) {
+          settled.run({ id: generation });
+        }
+      }),
+    ),
     // Records the Hub's identifier for a generation, or forgets it.
     setHubId: (generation: number, hubId: number | null) => {
       setHubId.run({ hubId, id: generation });

@@ -55,7 +55,7 @@ dir = "~/.claude-work"             # absolute, or under ~
 name = "claude-work"
 ```
 
-`run` refuses to start when two sources share a name or a directory, or a source names a Harness it does not know. A source whose directory does not exist is reported as absent and skipped. Every 60 seconds `run` reads what each source's files gained, writes it to a spool in the state directory, `spool.sqlite`, and uploads the spool to the Hub. The spool keeps whatever the Hub has not acknowledged, without a size limit, and `run` warns when it holds content from more than a day ago. Every Report carries the sources and the spool's size and age. The [spec](docs/spec.md#agent-session-transcripts) describes what is uploaded and the protocol.
+`run` refuses to start when two sources share a name or a directory, even through a symbolic link, or a source names a Harness it does not know. A source whose directory does not exist is reported as absent and skipped. Every 60 seconds `run` reads what each source's files gained, writes it to a spool in the state directory, `spool.sqlite`, and uploads the spool to the Hub. The spool keeps whatever the Hub has not acknowledged, without a size limit, and `run` warns when it holds content from more than a day ago. Every Report carries the sources and the spool's size and age. The [spec](docs/spec.md#agent-session-transcripts) describes what is uploaded and the protocol.
 
 ### Pairing a new System
 

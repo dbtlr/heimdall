@@ -63,6 +63,14 @@ test('a json file is read as JSON', async () => {
   );
 });
 
+test('a TOML file with an integer past 2^53 elsewhere still yields its sources, as Loom reads it', async () => {
+  await using cwd = await tempStateDir();
+  await put(cwd.path, TOML_PATH, `stamp = 9007199254740993\n${tomlWith('codex')}`);
+  expect(await readSessionsSection({ cwd: cwd.path, home: cwd.path, named: undefined })).toEqual(
+    sourcesOf('codex'),
+  );
+});
+
 test('the named file is the only file, resolved against the working directory', async () => {
   await using cwd = await tempStateDir();
   await using home = await tempStateDir();

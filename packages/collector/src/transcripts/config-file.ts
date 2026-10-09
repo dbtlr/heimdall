@@ -1,7 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { isRecord } from './sources.ts';
+import { parse as parseToml } from 'smol-toml';
+
+import { isRecord } from '../json.ts';
 
 // The files Loom's config plugin tries in a directory, in its order
 // (`.config/heimdall/collector.{toml,json}`).
@@ -10,7 +12,8 @@ const CANDIDATES = ['.config/heimdall/collector.toml', '.config/heimdall/collect
 const parseByExtension = (path: string, text: string): unknown => {
   const body = text.startsWith('﻿') ? text.slice(1) : text;
   if (path.endsWith('.toml')) {
-    return Bun.TOML.parse(body);
+    // As Loom reads it, so an integer past 2^53 elsewhere in the file still parses.
+    return parseToml(body, { integersAsBigInt: 'asNeeded' });
   }
   if (path.endsWith('.yaml') || path.endsWith('.yml')) {
     return Bun.YAML.parse(body);
@@ -29,12 +32,16 @@ const readTable = async (path: string): Promise<Record<string, unknown> | undefi
   }
 };
 
+// Whether a candidate counts as present, as Loom counts it: anything but a
+// missing file or directory, so a file that cannot be read still shadows the
+// candidates after it.
 const exists = async (path: string) => {
   try {
     await stat(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : '';
+    return code !== 'ENOENT' && code !== 'ENOTDIR';
   }
 };
 

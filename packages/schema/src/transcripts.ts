@@ -11,7 +11,7 @@ import { bytes, epochMs } from './values.ts';
 //     201 GenerationOpened · 410 the path was deleted on purpose
 //   POST /api/v1/transcripts/generations/<id>/chunks
 //     Heimdall-Offset: <uncompressed bytes of the file before this chunk>
-//     body: the chunk, gzipped
+//     body: the chunk, gzipped, as one gzip member or several concatenated
 //     200 ChunkAccepted, stored or already held · 409 ChunkAccepted, the offset
 //     is not the one the Hub holds · 410 the generation was deleted on purpose
 //
@@ -32,6 +32,9 @@ export const TRANSCRIPT_OFFSET_HEADER = 'heimdall-offset';
 
 // A source's name: a DNS label, like a System's name.
 export const SOURCE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+
+// The most sources one Collector captures from.
+export const MAX_TRANSCRIPT_SOURCES = 64;
 
 // PATH_MAX on Linux, in bytes of UTF-8.
 const MAX_PATH_BYTES = 4096;
@@ -74,7 +77,7 @@ const TranscriptSourceSchema = z.object({
 export const TranscriptsSectionSchema = z.object({
   sources: z
     .array(TranscriptSourceSchema)
-    .max(64)
+    .max(MAX_TRANSCRIPT_SOURCES)
     .refine((sources) => new Set(sources.map((s) => s.name)).size === sources.length, {
       message: 'source names must be unique',
     }),

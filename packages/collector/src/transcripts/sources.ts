@@ -1,6 +1,9 @@
+import { stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { SOURCE_NAME } from '@heimdall/schema';
+import { MAX_TRANSCRIPT_SOURCES, SOURCE_NAME } from '@heimdall/schema';
+
+import { isRecord } from '../json.ts';
 
 export type Harness = 'claude-code' | 'codex';
 
@@ -15,18 +18,11 @@ export const HARNESSES: Record<Harness, { defaultDir: string; trees: readonly st
   codex: { defaultDir: '.codex', trees: ['sessions'] },
 };
 
-// The Report schema's cap on a Report's sources.
-const MAX_SOURCES = 64;
-
 type Refused = { kind: 'refused'; problem: string };
 
 const refused = (problem: string): Refused => ({ kind: 'refused', problem });
 
 const isHarness = (value: string): value is Harness => Object.hasOwn(HARNESSES, value);
-
-// Whether `value` is a table: an object that is not a list.
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // The first key of `value` outside `allowed`, if any.
 const strayKey = (value: Record<string, unknown>, allowed: readonly string[]) =>
@@ -139,9 +135,9 @@ export const parseSources = (
   if ('kind' in entries) {
     return entries;
   }
-  if (entries.length > MAX_SOURCES) {
+  if (entries.length > MAX_TRANSCRIPT_SOURCES) {
     return refused(
-      `sessions.sources lists ${String(entries.length)} sources; keep at most ${String(MAX_SOURCES)}.`,
+      `sessions.sources lists ${String(entries.length)} sources; keep at most ${String(MAX_TRANSCRIPT_SOURCES)}.`,
     );
   }
   const sources: Source[] = [];
@@ -158,4 +154,32 @@ export const parseSources = (
   }
   const clash = findClash(sources);
   return clash === undefined ? { kind: 'sources', sources } : refused(clash);
+};
+
+// The sentence naming two sources whose directories are one on disk, through
+// a symbolic link or a case-insensitive file system, which `parseSources`
+// cannot see; undefined when each is distinct. A directory that is not there
+// shares nothing.
+export const findSharedDirectory = async (
+  sources: readonly Source[],
+): Promise<string | undefined> => {
+  const found = await Promise.all(
+    sources.map(async (source) => {
+      const stats = await stat(source.dir).catch(() => undefined);
+      return stats === undefined ? undefined : `${String(stats.dev)}:${String(stats.ino)}`;
+    }),
+  );
+  const seen = new Map<string, Source>();
+  for (const [index, source] of sources.entries()) {
+    const identity = found[index];
+    if (identity === undefined) {
+      continue;
+    }
+    const other = seen.get(identity);
+    if (other !== undefined) {
+      return `the sessions.sources "${other.name}" and "${source.name}" read one directory, ${source.dir}; list it once.`;
+    }
+    seen.set(identity, source);
+  }
+  return undefined;
 };
