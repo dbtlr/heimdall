@@ -162,7 +162,9 @@ export const MIGRATIONS: readonly Migration[] = [
     // is one continuous run of a file's content; `held` counts the bytes of
     // the file it holds and `stored_bytes` the gzipped bytes of its chunks.
     // Each chunk is stored gzipped, as uploaded, at the file offset it starts
-    // from. A deleted generation keeps its row without its chunks, so the Hub
+    // from; its content is a gzip stream, which may hold several members. A
+    // path is indexed by its hash, since a long path outgrows an index entry.
+    // A deleted generation keeps its row without its chunks, so the Hub
     // refuses its later chunks, and a path whose every generation is deleted
     // refuses new ones. Each System's latest set of sources and its spool
     // replace the earlier set; `sent_at` keeps an older Report from replacing
@@ -180,7 +182,8 @@ export const MIGRATIONS: readonly Migration[] = [
         deleted_at timestamptz
       );
 
-      CREATE INDEX transcript_generations_by_path ON transcript_generations (system, source, path);
+      CREATE INDEX transcript_generations_by_path
+        ON transcript_generations (system, source, md5(path));
       CREATE INDEX transcript_generations_by_last_upload ON transcript_generations (last_upload_at);
 
       CREATE TABLE transcript_chunks (

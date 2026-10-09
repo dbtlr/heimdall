@@ -33,6 +33,22 @@ const held = async (sql: SQL, generation: number) => {
   return Buffer.concat(unpacked).toString('utf8');
 };
 
+// Waits until `count` backends of this database wait on a lock.
+const waitersOnLocks = async (sql: SQL, count: number) => {
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- polls until the waiters queue.
+    const [row]: { n: number }[] = await sql`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'
+    `;
+    if ((row?.n ?? 0) >= count) {
+      return;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- polls until the waiters queue.
+    await Bun.sleep(10);
+  }
+};
+
 const openConditions = async (sql: SQL) =>
   sql`SELECT kind FROM conditions WHERE cleared_at IS NULL` as Promise<unknown[]>;
 
@@ -60,6 +76,18 @@ describe('opening a generation', () => {
 
   // A file that shrank or was replaced starts a new generation, never
   // appending to the old one (ADR-0013).
+  // A path of the longest the schema allows, in characters that do not
+  // compress, outgrows a plain index entry.
+  test('at the longest path the schema allows opens', async () => {
+    await using h = await startHub();
+    const path = Array.from({ length: 1365 }, (_, i) => String.fromCodePoint(0x4e_00 + i)).join('');
+
+    const response = await openGeneration(h.hub, { ...FILE, path }, { token: 'laptop-token' });
+
+    expect(response.status).toBe(201);
+    expect(h.errors).toEqual([]);
+  });
+
   test('again at the same path opens another generation', async () => {
     await using h = await startHub();
 
@@ -169,6 +197,25 @@ describe('a chunk', () => {
     expect(await held(h.db.sql, generation)).toBe(LINE_1);
   });
 
+  test('that is empty holds nothing more, and the next chunk follows it', async () => {
+    await using h = await startHub();
+    const generation = await open(h);
+
+    const empty = await sendChunk(h.hub, generation, {
+      content: '',
+      offset: 0,
+      token: 'laptop-token',
+    });
+    const next = await sendChunk(h.hub, generation, {
+      content: LINE_1,
+      offset: 0,
+      token: 'laptop-token',
+    });
+
+    expect(await empty.json()).toEqual({ held: 0 });
+    expect(await next.json()).toEqual({ held: LINE_1.length });
+  });
+
   test('counts bytes of the file, not of the gzipped body', async () => {
     await using h = await startHub();
     const generation = await open(h);
@@ -262,6 +309,33 @@ describe('an upload', () => {
     expect(await listSystems(h.db.sql)).toMatchObject([
       { lastSeenAt: NOW + 60_000, name: 'laptop-1' },
     ]);
+  });
+
+  test('that is refused counts toward Last seen', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 60_000;
+
+    await openGeneration(h.hub, '{', { token: 'laptop-token' });
+
+    expect(await listSystems(h.db.sql)).toMatchObject([{ lastSeenAt: NOW + 60_000 }]);
+  });
+
+  // A delete holding a generation must not hold up the System's Reports.
+  test("waiting on its generation does not hold up its System's Reports", async () => {
+    await using h = await startHub();
+    const generation = await open(h);
+    let chunk: Promise<Response> | undefined;
+
+    await h.db.sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM transcript_generations WHERE id = ${generation} FOR UPDATE`;
+      chunk = sendChunk(h.hub, generation, { content: LINE_1, offset: 0, token: 'laptop-token' });
+      await waitersOnLocks(h.db.sql, 1);
+
+      const stored = await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
+
+      expect(stored.status).toBe(200);
+    });
+    expect((await chunk)?.status).toBe(200);
   });
 
   test('that is refused raises no Condition', async () => {
@@ -404,6 +478,53 @@ describe('deleting transcripts', () => {
     expect(response.status).toBe(200);
   });
 
+  test('does not tell another System that a generation was deleted', async () => {
+    await using h = await startHub();
+    const generation = await upload(h, NOW);
+    await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+
+    const response = await sendChunk(h.hub, generation, {
+      content: LINE_2,
+      offset: LINE_1.length,
+      token: 'server-token',
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  test('again counts nothing it deleted before', async () => {
+    await using h = await startHub();
+    await upload(h, NOW);
+    await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+
+    const again = await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+
+    expect(again).toEqual({ bytes: 0, generations: 0 });
+  });
+
+  // A generation opened while the delete runs would otherwise survive it and
+  // keep the path open for good.
+  test('refuses a generation opened at the path while it runs', async () => {
+    await using h = await startHub();
+    await upload(h, NOW);
+    let removed: Promise<unknown> | undefined;
+    let opened: Promise<Response> | undefined;
+
+    // Holding the chunks keeps the delete running after it marks the generations.
+    await h.db.sql.begin(async (tx) => {
+      await tx`LOCK TABLE transcript_chunks IN SHARE MODE`;
+      removed = deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+      await waitersOnLocks(h.db.sql, 1);
+      opened = openGeneration(h.hub, FILE, { token: 'laptop-token' });
+      await waitersOnLocks(h.db.sql, 2);
+    });
+
+    expect(await removed).toEqual({ bytes: expect.any(Number), generations: 1 });
+    expect((await opened)?.status).toBe(410);
+    const live = await h.db.sql`SELECT id FROM transcript_generations WHERE deleted_at IS NULL`;
+    expect([...live]).toEqual([]);
+  });
+
   test('refuses to run without a filter', async () => {
     await using h = await startHub();
 
@@ -481,6 +602,23 @@ describe("a Report's transcripts section", () => {
     await storeReport(h.db.sql, {
       receivedAt: NOW + 15_000,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
+    });
+
+    expect(await stored(h.db.sql)).toEqual([
+      expect.objectContaining({ sources: section('absent', 0).sources }),
+    ]);
+  });
+
+  test('from a Report sent at the same moment replaces it', async () => {
+    await using h = await startHub();
+    await storeReport(h.db.sql, {
+      receivedAt: NOW,
+      report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
+    });
+
+    await storeReport(h.db.sql, {
+      receivedAt: NOW + 15_000,
+      report: { ...report('laptop-1', [NOW + 1]), transcripts: section('absent', 0) },
     });
 
     expect(await stored(h.db.sql)).toEqual([

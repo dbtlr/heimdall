@@ -13,13 +13,18 @@ export const openGeneration = (
   { now, path, source, system }: OpenGeneration & { now: number; system: string },
 ): Promise<Opened> =>
   sql.begin(async (tx) => {
-    await seeSystem(tx, { at: now, system });
-    const [existing]: { live: string; total: string }[] = await tx`
-      SELECT count(*) AS total, count(*) FILTER (WHERE deleted_at IS NULL) AS live
-      FROM transcript_generations
-      WHERE system = ${system} AND source = ${source} AND path = ${path}
+    // Locking the path's generations waits out a delete that is marking them,
+    // then reads them as it left them, so a path it refused stays refused.
+    // Generation rows lock before the System's row everywhere, so uploads
+    // cannot deadlock.
+    const existing: { deleted_at: Date | null }[] = await tx`
+      SELECT deleted_at FROM transcript_generations
+      WHERE system = ${system} AND source = ${source} AND md5(path) = md5(${path}) AND path = ${path}
+      ORDER BY id
+      FOR UPDATE
     `;
-    if (existing !== undefined && Number(existing.total) > 0 && Number(existing.live) === 0) {
+    await seeSystem(tx, { at: now, system });
+    if (existing.length > 0 && existing.every((row) => row.deleted_at !== null)) {
       return { kind: 'deleted' };
     }
     const at = new Date(now);
@@ -59,14 +64,15 @@ export const appendChunk = (
   { content, generation, length, now, offset, system }: Chunk,
 ): Promise<Appended> =>
   sql.begin(async (tx) => {
-    await seeSystem(tx, { at: now, system });
-    // The row lock orders chunks of one generation, so two deliveries of a
-    // chunk cannot both append it.
+    // The generation's row lock orders its chunks, so two deliveries of a
+    // chunk cannot both append it. It is taken before the System's row, so a
+    // delete holding the generation does not hold up the System's Reports.
     const [row]: { deleted_at: Date | null; held: string; system: string }[] = await tx`
       SELECT system, held, deleted_at FROM transcript_generations
       WHERE id = ${generation}
       FOR UPDATE
     `;
+    await seeSystem(tx, { at: now, system });
     if (row === undefined || row.system !== system) {
       return { kind: 'unknown' };
     }
@@ -106,6 +112,8 @@ export type Removed = { bytes: number; generations: number };
 // A delete of years of transcripts can outlast the usual statement timeout.
 const DELETE_TIMEOUT = '10min';
 
+type Matched = { id: string; stored_bytes: string };
+
 // Deletes whole generations on purpose, as of `now`, and answers how many it
 // removed and their gzipped size; a dry run only answers. A deleted
 // generation keeps its row, without its content, so its path stays refused
@@ -115,32 +123,48 @@ export const deleteTranscripts = (
   sql: SQL,
   { dryRun = false, now, ...filter }: TranscriptFilter & { dryRun?: boolean; now: number },
 ): Promise<Removed> => {
-  const { before, source, system } = filter;
-  if (before === undefined && source === undefined && system === undefined) {
+  const { source, system } = filter;
+  const before = filter.before === undefined ? null : new Date(filter.before);
+  if (before === null && source === undefined && system === undefined) {
     return Promise.reject(new Error('Name a System, a source, or a date to delete before.'));
   }
   return sql.begin(async (tx) => {
     await tx.unsafe(`SET LOCAL statement_timeout = '${DELETE_TIMEOUT}'`);
-    const matched: { id: string; stored_bytes: string }[] = await tx`
-      SELECT id, stored_bytes FROM transcript_generations
-      WHERE deleted_at IS NULL
-        AND (${system ?? null}::text IS NULL OR system = ${system ?? null})
-        AND (${source ?? null}::text IS NULL OR source = ${source ?? null})
-        AND (${before === undefined ? null : new Date(before)}::timestamptz IS NULL
-             OR last_upload_at < ${before === undefined ? null : new Date(before)})
-      FOR UPDATE
+    const matching = tx`
+      deleted_at IS NULL
+      AND (${system ?? null}::text IS NULL OR system = ${system ?? null})
+      AND (${source ?? null}::text IS NULL OR source = ${source ?? null})
+      AND (${before}::timestamptz IS NULL OR last_upload_at < ${before})
     `;
-    const ids = matched.map((row) => row.id);
-    if (!dryRun && ids.length > 0) {
-      await tx`DELETE FROM transcript_chunks WHERE generation IN ${tx(ids)}`;
-      await tx`
-        UPDATE transcript_generations SET deleted_at = ${new Date(now)}
-        WHERE id IN ${tx(ids)}
-      `;
+    if (dryRun) {
+      return removedOf(
+        await tx`SELECT id, stored_bytes FROM transcript_generations WHERE ${matching}`,
+      );
     }
-    return {
-      bytes: matched.reduce((sum, row) => sum + Number(row.stored_bytes), 0),
-      generations: matched.length,
-    };
+    // Marking takes each generation's row lock, which an open at its path
+    // waits for. A generation opened while a pass ran is not in that pass's
+    // snapshot, so passes repeat until one finds nothing.
+    const marked: Matched[] = [];
+    for (;;) {
+      // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.
+      const pass: Matched[] = await tx`
+        UPDATE transcript_generations SET deleted_at = ${new Date(now)}
+        WHERE ${matching}
+        RETURNING id, stored_bytes
+      `;
+      if (pass.length === 0) {
+        break;
+      }
+      marked.push(...pass);
+    }
+    if (marked.length > 0) {
+      await tx`DELETE FROM transcript_chunks WHERE generation IN ${tx(marked.map((row) => row.id))}`;
+    }
+    return removedOf(marked);
   });
 };
+
+const removedOf = (rows: Matched[]): Removed => ({
+  bytes: rows.reduce((sum, row) => sum + Number(row.stored_bytes), 0),
+  generations: rows.length,
+});

@@ -268,11 +268,10 @@ test('unpair of a System that is not paired says so and exits 1', async () => {
 });
 
 // A database holding one generation of laptop-1's transcripts, last uploaded
-// on 2026-10-01.
-const withTranscript = async () => {
+// at `now`, by default the start of 2026-10-01 in UTC.
+const withTranscript = async (now = Date.UTC(2026, 9, 1)) => {
   const db = await testDatabase();
   await migrate(db.sql);
-  const now = Date.UTC(2026, 9, 1);
   const opened = await openGeneration(db.sql, {
     now,
     path: 'project/a.jsonl',
@@ -353,6 +352,26 @@ test('transcripts delete --before keeps a generation last uploaded on that day',
 
   expect(stdout).toBe('Deleted 0 generations of transcripts, 0 gzipped bytes.\n');
   expect(await live()).toEqual({ n: 1 });
+});
+
+// Tokyo's midnight on 2026-10-02 is 15:00 UTC on 2026-10-01, before the upload.
+test('transcripts delete --before reads the date in UTC, whatever the local time zone', async () => {
+  const { db, live } = await withTranscript(Date.UTC(2026, 9, 1, 20));
+  await using _db = db;
+  await using config = await hubConfig(db);
+  const zone = process.env.TZ;
+  process.env.TZ = 'Asia/Tokyo';
+  try {
+    await invoke(['transcripts', 'delete', '--before', '2026-10-02', ...configArgs(config)]);
+  } finally {
+    if (zone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = zone;
+    }
+  }
+
+  expect(await live()).toEqual({ n: 0 });
 });
 
 test('transcripts delete without a filter refuses and deletes nothing', async () => {

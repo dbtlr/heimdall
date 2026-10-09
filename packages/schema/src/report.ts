@@ -56,7 +56,7 @@ export const ReportSchema = z.object({
   sentAt: epochMs,
   // The Hub rejects a Report whose System differs from its ingest token's.
   system: z.string().regex(SYSTEM_NAME),
-  // Sent whenever the Collector's set of sources changes, and with its spool.
+  // In every Report from a Collector that captures transcripts.
   transcripts: TranscriptsSectionSchema.optional(),
 });
 

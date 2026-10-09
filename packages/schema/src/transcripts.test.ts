@@ -39,6 +39,7 @@ describe('opening a generation', () => {
     ['a Claude Code transcript', 'my-project/0b1c.jsonl'],
     ['a Codex rollout', '2026/10/09/rollout-2026-10-09T10-00-00-0b1c.jsonl'],
     ['a file with spaces and Unicode', 'café project/tool results/out 1.txt'],
+    ['a path of 4096 bytes', 'a'.repeat(4096)],
   ])('accepts %s', (_, path) => {
     expect(OpenGenerationSchema.safeParse({ path, source: 'claude-code' }).success).toBe(true);
   });
@@ -52,7 +53,8 @@ describe('opening a generation', () => {
     ['an empty path', ''],
     ['a NUL', 'a\0.jsonl'],
     ['a lone surrogate', 'a\uD800.jsonl'],
-    ['a path longer than 4096 characters', 'a'.repeat(4097)],
+    ['a path longer than 4096 bytes', 'a'.repeat(4097)],
+    ['a path of 4096 bytes in fewer characters', '漢'.repeat(1366)],
   ])('refuses %s', (_, path) => {
     expect(OpenGenerationSchema.safeParse({ path, source: 'claude-code' }).success).toBe(false);
   });
@@ -82,10 +84,10 @@ describe("a Report's transcripts section", () => {
   });
 
   // A newer Collector may support a Harness this Hub predates (ADR-0004).
-  test('accepts a Harness the Hub does not know', () => {
+  test('accepts a Harness and a status the Hub does not know', () => {
     const newer = {
       ...transcripts,
-      sources: [{ harness: 'gemini', name: 'gemini', status: 'capturing' }],
+      sources: [{ harness: 'gemini', name: 'gemini', status: 'paused' }],
     };
 
     expect(ReportSchema.safeParse({ ...report(), transcripts: newer }).success).toBe(true);
@@ -103,8 +105,8 @@ describe("a Report's transcripts section", () => {
       },
     ],
     [
-      'an unknown status',
-      { ...transcripts, sources: [{ harness: 'codex', name: 'codex', status: 'paused' }] },
+      'an empty status',
+      { ...transcripts, sources: [{ harness: 'codex', name: 'codex', status: '' }] },
     ],
     ['a negative spool size', { ...transcripts, spool: { bytes: -1, oldestAt: null } }],
   ])('rejects %s', (_, section) => {
