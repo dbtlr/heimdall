@@ -23,3 +23,22 @@ export type {
   OpenGeneration,
   TranscriptsSection,
 } from './transcripts.ts';
+export {
+  ApplicationRecordSchema,
+  FilesRecordSchema,
+  JobRecordSchema,
+  RECORD_KINDS,
+  RECORD_NAME,
+  RECORD_SCHEMAS,
+  RunRecordSchema,
+  ServiceRecordSchema,
+} from './records.ts';
+export type {
+  ApplicationRecord,
+  FilesRecord,
+  JobRecord,
+  RecordKind,
+  RecordOf,
+  RunRecord,
+  ServiceRecord,
+} from './records.ts';

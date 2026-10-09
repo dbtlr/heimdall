@@ -28,20 +28,61 @@ A System joins by pairing its Collector with the Hub once, as the [README](../RE
 5. **Every record is optional.** A System nobody records anything on still shows its Vitals and its agent Sessions.
 6. **The Hub keeps agent Session transcripts** as the durable record of agent work, after each Harness deletes its own copy.
 
-## Recording what a provisioner installed _(planned, M4)_
+## Recording what a provisioner installed
 
-A provisioner records something it installed by piping a JSON record to `heimdall-collector record <kind>`, and removes it with `heimdall-collector forget <kind> <name>`. It runs both as the account the Collector runs as, so the records land in that Collector's state, even when the install itself ran as another account such as root.
+A provisioner records something it installed by piping one JSON object to `heimdall-collector record <kind>`, and removes it with `heimdall-collector forget <kind> <name>`. It runs both as the account the Collector runs as, so the records land in that Collector's state, even when the install itself ran as another account such as root. The kinds are `application`, `service`, `job`, and `files`.
 
-The Collector validates a record when it is recorded and refuses one that is invalid or carries a field it does not know, so a mistake fails the provisioner's command at once. A record may carry provenance, such as the provisioner's name and revision, which Heimdall shows and never compares. Records are keyed by kind and name, and a job's runs by job and start time. They live in the Collector's state directory, so wiping it loses them, and the provisioner records them again. A new kind or supervisor is added only when a provisioner needs it.
+`record` reads at most 1 MiB from standard input and refuses a terminal. It exits 1, stores nothing, and names the field and the problem when the input is empty, is not JSON, fails the rules below, or carries a field the kind does not list; it never repeats the input. A mistake therefore fails the provisioner's command at once, and a field is never dropped without notice. On success it prints `Recorded <kind> <name>.` and exits 0. Recording a kind and name again replaces the record. `forget` removes the record and exits 0 with `No <kind> <name> is recorded.` when there is none, so an uninstall script can run it whether or not the install was recorded. Forgetting a job also removes its runs.
 
-| Kind | A provisioner records | Heimdall checks and reports |
-| --- | --- | --- |
-| `application` | Name, installed version, optional source | Reported as recorded; the version is not observed. |
-| `service` | Name; supervisor (`systemd`, `systemd-user`, `launchd`, `docker`, or `none`); its unit, label, or container; optional health URL and port | Supervisor state, and health from the URL, which must be on loopback; its exact form is fixed in M4. A stopped or unhealthy Service raises Service down. |
-| `job` | Name; scheduler (`launchd` or `systemd-timer`); its label or unit; its schedule | Each run the job reports. A failed run raises job failing; a scheduled time plus a grace period that passed while the System was awake, with no successful run since, raises job overdue. |
-| `files` | Paths and their hashes, after the provisioner writes them | Each file's current hash. A file that no longer matches raises Drift. |
+Records live in `records.sqlite` in the Collector's state directory, which `record` creates, readable by its owner alone, if it is missing. Pairing is not required. Wiping the directory loses the records, and the provisioner records them again. A new kind or supervisor is added only when a provisioner needs it.
 
-A job reports each run with `heimdall-collector record run <job>`: when it started and finished, its exit status, and optionally the output file it wrote and its size. A job's runner should ignore a failure to record, so a broken Collector never fails the job.
+### Fields
+
+A name is 1 to 128 characters: letters, digits, `.`, `_`, and `-`, starting with a letter or digit. A text field is 1 to 256 characters of well-formed Unicode with no control characters. Every kind may carry `provenance`, which is optional: `by`, text of at most 64 characters, and optionally `revision`, text of at most 128. Heimdall shows it and never compares it.
+
+| Kind | Fields |
+| --- | --- |
+| `application` | `name`, `version` (text of at most 128 characters), optional `source` (text), optional `provenance`. |
+| `service` | `name`, `supervisor`, optional `health`, optional `port`, optional `provenance`. The supervisor decides what names the Service to it: `unit` for `systemd` and `systemd-user`, `label` for `launchd`, `container` for `docker`, and no target for `none`. `health` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`, optionally followed by a path of printable ASCII other than space, with a port from 1 to 65535; `localhost` and every other host are refused. `port` is an integer from 1 to 65535. |
+| `job` | `name`, `scheduler`, `schedule`, optional `provenance`. The scheduler decides what names the job to it: `label` for `launchd`, `unit` for `systemd-timer`. `schedule` lists 1 to 100 calendar entries in the System's local time, with the meaning of launchd's `StartCalendarInterval`: each entry has at least one of `minute` (0 to 59), `hour` (0 to 23), `day` (1 to 31), `weekday` (0 to 7, where 0 and 7 are both Sunday), and `month` (1 to 12), all integers, and a field left out matches every value. Two identical entries, with weekday 0 and 7 counted as equal, are refused. Recording a job again keeps its runs. |
+| `files` | `name`, `files` (1 to 10,000 entries of `path` and `sha256`), optional `provenance`. A `path` is absolute and normalized, at most 4096 bytes, and has no control characters: it has no empty, `.`, or `..` segment and no trailing slash, and `/` alone is not a file. Paths within a record are unique. A `sha256` is 64 lowercase hexadecimal characters. |
+
+A job reports each run with `heimdall-collector record run <job>`, which reads one JSON object from standard input like the other kinds. The job must have a `job` record, and the command exits 1 for a run of one that has none. A run has `started` and `finished`, UTC times in ISO 8601 with whole seconds such as `2026-10-01T03:00:05Z`, where `finished` is not earlier than `started`; `exitStatus`, an integer from 0 to 255, where 0 is success; and optionally `output`, with `file`, the output file's name without any directory, and `sizeBytes`, a non-negative integer. Runs are keyed by job and `started`, so recording the same start again replaces the run. Recording a run prunes that job's runs that started more than 90 days earlier, except the job's latest successful run. A run that is itself that old, and not the latest success, is not kept: the command exits 0 and prints `Run of <job> started <started> is older than 90 days and was not kept.` instead of `Recorded run of <job> started <started>.` A job's runner should ignore a failure to record, so a broken Collector never fails the job.
+
+### Examples
+
+```json
+{"name": "webapp", "version": "1.4.2", "source": "https://example.com/webapp-1.4.2.tar.gz", "provenance": {"by": "my-provisioner", "revision": "3f9c2ab"}}
+```
+
+```json
+{"name": "webapp", "supervisor": "systemd", "unit": "webapp.service", "health": "http://127.0.0.1:8080/healthz", "port": 8080}
+```
+
+```json
+{"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}
+```
+
+```json
+{"name": "webapp-config", "files": [{"path": "/etc/webapp/webapp.conf", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}]}
+```
+
+```json
+{"started": "2026-10-01T03:30:00Z", "finished": "2026-10-01T03:42:17Z", "exitStatus": 0, "output": {"file": "backup-2026-10-01.tar.gz", "sizeBytes": 73400320}}
+```
+
+The last example is the input to `heimdall-collector record run nightly-backup`.
+
+### What Heimdall checks and reports _(planned, M4)_
+
+The Collector reports its records to the Hub and checks those it can observe. Both arrive in later M4 work; until then the Collector only keeps the records.
+
+| Kind | Heimdall checks and reports |
+| --- | --- |
+| `application` | Reported as recorded; the version is not observed. |
+| `service` | Supervisor state, and health from the URL, which the Collector requests only on loopback. A stopped or unhealthy Service raises Service down. |
+| `job` | Each run the job reports. A failed run raises job failing; a scheduled time plus a grace period that passed while the System was awake, with no successful run since, raises job overdue. |
+| `files` | Each file's current hash. A file that no longer matches raises Drift. |
 
 A new field reaches the dashboard only when every layer knows it, so the Hub is upgraded first, then the Collectors, and only then does a provisioner send the field.
 

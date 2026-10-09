@@ -1,18 +1,40 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { text } from 'node:stream/consumers';
 
 import { app } from '../application.ts';
 import { tempStateDir } from './fixtures.ts';
 
+// The host fields that stand in for standard input: `input` as a pipe or terminal delivers it.
+const piped = (input: string | Uint8Array, isTTY: boolean) => ({
+  stdin: Readable.from(input.length === 0 ? [] : [input]),
+  terminal: {
+    stderr: { columns: undefined, isTTY: false, rows: undefined },
+    stdin: { isTTY },
+    stdout: { columns: undefined, isTTY: false, rows: undefined },
+  },
+});
+
 // Runs the Collector command line in-process and captures what it prints. A run
 // that starts collecting is cancelled once its log shows it started, or after a
 // few seconds, so a `run` test ends either way. HOME is a fresh directory unless
-// `env` names one, so `run` never rotates a real log.
+// `env` names one, so `run` never rotates a real log. `stdin` is what a pipe
+// delivers, and `stdinIsTerminal` makes standard input a terminal; without
+// either, the command reads the process's own standard input.
 export const invoke = async (
   argv: string[],
-  { cwd, env = {} }: { cwd?: string; env?: Record<string, string> } = {},
+  {
+    cwd,
+    env = {},
+    stdin,
+    stdinIsTerminal = false,
+  }: {
+    cwd?: string;
+    env?: Record<string, string>;
+    stdin?: string | Uint8Array;
+    stdinIsTerminal?: boolean;
+  } = {},
 ) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -38,6 +60,7 @@ export const invoke = async (
         stderr,
         stdout,
         ...(cwd === undefined ? {} : { cwd }),
+        ...(stdin === undefined && !stdinIsTerminal ? {} : piped(stdin ?? '', stdinIsTerminal)),
       },
       signal: controller.signal,
     });

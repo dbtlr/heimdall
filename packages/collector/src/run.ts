@@ -13,7 +13,7 @@ import { describeError } from './errors.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
-import { defaultStateDir } from './state-dir.ts';
+import { resolveStateDir } from './state-dir.ts';
 import { createCapture } from './transcripts/capture.ts';
 import { configHome, readSessionsSection } from './transcripts/config-file.ts';
 import { transcriptHub } from './transcripts/hub-client.ts';
@@ -109,7 +109,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     const platform =
       reportPlatform(process.platform) ??
       log.fatal(`The Collector runs on macOS and Linux, not ${process.platform}.`);
-    const stateDir = options['state-dir'] ?? defaultStateDir({ env: host.env, home, platform });
+    const stateDir = resolveStateDir({ env: host.env, option: options['state-dir'], platform });
     // The config plugin's `--config` reaches every action, though `run`'s
     // declared options do not name it.
     const named =

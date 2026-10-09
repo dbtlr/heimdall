@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises';
 
-import { homeOf } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
@@ -10,7 +9,7 @@ import { identityPath, readIdentity, writeIdentity } from './identity.ts';
 import type { IdentityRead } from './identity.ts';
 import { MAX_ANSWER_BYTES, redeemCode } from './redeem.ts';
 import type { Redemption } from './redeem.ts';
-import { defaultStateDir } from './state-dir.ts';
+import { resolveStateDir } from './state-dir.ts';
 
 // Why a redemption that gave no identity failed, in words for the operator.
 const failure = (outcome: Exclude<Redemption, { kind: 'paired' }>, hub: URL): string => {
@@ -104,9 +103,7 @@ export const pairAction: ActionHandler<typeof pair> = async ({
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
   const fail: (message: string) => never = (message) => out.fatal(clean(message));
   const { hub } = options;
-  const stateDir =
-    options['state-dir'] ??
-    defaultStateDir({ env: host.env, home: homeOf(host.env), platform: process.platform });
+  const stateDir = resolveStateDir({ env: host.env, option: options['state-dir'] });
   // The directory comes first, so a state directory that cannot exist does not
   // spend the code. One `pair` creates is its owner's alone; an existing one keeps its mode.
   await mkdir(stateDir, { mode: 0o700, recursive: true }).catch((error: unknown) =>

@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 
+import { homeOf } from '@heimdall/service';
+
 // Where the Collector keeps its queue when no state directory is configured:
 // the per-user state location each platform's conventions name.
 export const defaultStateDir = ({
@@ -22,3 +24,15 @@ export const defaultStateDir = ({
     'heimdall',
   );
 };
+
+// The state directory a command uses: the one its option, variable, or
+// configuration names, else the default under the account's home.
+export const resolveStateDir = ({
+  env,
+  option,
+  platform = process.platform,
+}: {
+  env: Readonly<Record<string, string | undefined>>;
+  option: string | undefined;
+  platform?: NodeJS.Platform;
+}): string => option ?? defaultStateDir({ env, home: homeOf(env), platform });
