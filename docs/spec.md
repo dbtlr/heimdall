@@ -63,7 +63,7 @@ dir = "~/.claude-work"             # a second profile
 name = "claude-work"
 ```
 
-Each source names a Harness, and optionally a directory and a name, which default to the Harness's standard location and its name. Names are unique on a System. The Collector reads each directory as its own account and reports each source, and whether it is readable.
+Each source names a Harness, and optionally a directory and a name, which default to the Harness's standard location and its name. Two sources may not share a name or a directory. A source whose directory does not exist is skipped, so one configuration can list every source a fleet uses. The Collector reads each directory as its own account and reports each source as capturing, absent, or unreadable. Adding a source uploads the history already in it.
 
 The Collector uploads every file of a source's session tree to the Hub as it grows, separately from Reports, as gzipped chunks the Hub acknowledges by offset. It keeps content the Hub has not acknowledged in a spool, so a Harness pruning its files loses nothing. The Hub stores transcripts as written and keeps them until they are deleted on purpose.
 
