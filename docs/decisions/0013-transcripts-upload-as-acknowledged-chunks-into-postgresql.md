@@ -47,3 +47,7 @@ A provisioner that renders one configuration for every System can list every sou
 Enabling a source uploads the history already on disk, so the first upload after enabling it is large.
 A Session resumed after its whole transcript was deleted is not captured again, because its path stays refused.
 A Harness that changes where or how it writes transcripts needs a Collector release before its new files are captured.
+
+## Changelog
+
+- 2026-10-09: Clarification. Every Report carries the Collector's whole set of sources and its spool's size and age, not only Reports sent when the set changes, because the spool changes with every acknowledged chunk. A Collector that captures nothing reports no sources and an empty spool. The decision is unchanged.

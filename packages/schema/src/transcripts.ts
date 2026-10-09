@@ -68,10 +68,9 @@ const TranscriptSourceSchema = z.object({
   status: z.string().min(1).max(64),
 });
 
-// A Report's transcripts section, in every Report from a Collector that
-// captures: its whole set of sources and its spool, the content the Hub has
-// not yet acknowledged, with when the oldest of it was spooled. No sources
-// means capture is off.
+// A Report's transcripts section, in every Report: the Collector's whole set
+// of sources and its spool, the content the Hub has not yet acknowledged,
+// with when the oldest of it was spooled. No sources means capture is off.
 export const TranscriptsSectionSchema = z.object({
   sources: z
     .array(TranscriptSourceSchema)

@@ -84,7 +84,7 @@ A Collector uploads with its System's token as a bearer token, like a Report. Th
 | `401`, `403` | No token, or a token no System holds. | Keeps its spool and retries. |
 | `413`, `422` | The chunk body is over the cap, is not gzip, or unpacks past the chunk limit, or the request is malformed, such as an open with an invalid path or a body over 32 KiB. | Keeps its spool and retries; it is a Collector bug. |
 
-Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report from a Collector that captures carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector whose sources were all removed sends an empty set. The Hub keeps the set from the latest Report it was sent in for each System.
+Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector that captures nothing sends no sources and an empty spool. The Hub keeps each System's section from the latest Report it was sent in; a Report from a Collector older than this section leaves it unchanged.
 
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 
