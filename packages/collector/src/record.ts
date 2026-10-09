@@ -1,24 +1,16 @@
-import {
-  ApplicationRecordSchema,
-  FilesRecordSchema,
-  JobRecordSchema,
-  RECORD_NAME,
-  RunRecordSchema,
-  ServiceRecordSchema,
-} from '@heimdall/schema';
+import { RECORD_KINDS, RECORD_NAME, RECORD_SCHEMAS, RunRecordSchema } from '@heimdall/schema';
 import type { RecordKind, RecordOf } from '@heimdall/schema';
-import { homeOf } from '@heimdall/service';
 import { Command, escapeControlCharacters } from '@loomcli/core';
-import type { Host } from '@loomcli/core';
+import type { ActionHandler } from '@loomcli/core';
 import { text } from '@loomcli/validators';
 
 import { describeError } from './errors.ts';
 import { parseJson } from './json.ts';
 import type { Checker } from './json.ts';
 import { stateDir } from './options.ts';
-import { openRecords } from './records.ts';
+import { openRecords, RUN_RETENTION_DAYS } from './records.ts';
 import type { RecordStore } from './records.ts';
-import { defaultStateDir } from './state-dir.ts';
+import { resolveStateDir } from './state-dir.ts';
 
 // The most a record command reads from standard input. A record of 10,000 files
 // is well under it.
@@ -28,13 +20,22 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_ISSUES_LISTED = 10;
 const MAX_ISSUE_CHARACTERS = 200;
 
-// The parts of a Loom action context these commands use.
-type Context = {
-  host: Pick<Host, 'env' | 'stdin' | 'terminal'>;
-  options: { 'state-dir'?: string | undefined };
-  out: { fatal: (message: string) => never; print: (message: string) => Promise<void> };
-  style: { escape: (text: string) => string };
-};
+const KIND_DESCRIPTIONS = {
+  application:
+    'Record an Application from one JSON object on standard input: name, version, and optionally source and provenance.',
+  files:
+    'Record files from one JSON object on standard input: name and a list of absolute paths with their SHA-256 hashes, and optionally provenance.',
+  job: 'Record a scheduled job from one JSON object on standard input: name, scheduler (launchd or systemd-timer), its label or unit, and its calendar schedule.',
+  service:
+    'Record a Service from one JSON object on standard input: name, supervisor (systemd, systemd-user, launchd, docker, or none), its unit, label, or container, and optionally a loopback health URL and port.',
+} as const satisfies Record<RecordKind, string>;
+
+// The command every `record <kind>` is. The other record commands add an
+// argument, and their contexts fit this one's.
+const kindCommand = (kind: RecordKind) =>
+  new Command(kind, { description: KIND_DESCRIPTIONS[kind] }).option('state-dir', stateDir);
+
+type Context = Parameters<ActionHandler<ReturnType<typeof kindCommand>>>[0];
 
 // Plain text out, with control characters and markup shown literally. Each line
 // is escaped alone, so the line breaks between them stay.
@@ -48,9 +49,7 @@ const io = ({ host, options, out, style }: Context) => {
   return {
     fail,
     print: (message: string) => out.print(clean(message)),
-    stateDir:
-      options['state-dir'] ??
-      defaultStateDir({ env: host.env, home: homeOf(host.env), platform: process.platform }),
+    stateDir: resolveStateDir({ env: host.env, option: options['state-dir'] }),
   };
 };
 
@@ -152,30 +151,19 @@ const withStore = async <T>(place: Io, use: (store: RecordStore) => T): Promise<
   }
 };
 
-const KIND_DESCRIPTIONS = {
-  application:
-    'Record an Application from one JSON object on standard input: name, version, and optionally source and provenance.',
-  files:
-    'Record files from one JSON object on standard input: name and a list of absolute paths with their SHA-256 hashes, and optionally provenance.',
-  job: 'Record a scheduled job from one JSON object on standard input: name, scheduler (launchd or systemd-timer), its label or unit, and its calendar schedule.',
-  service:
-    'Record a Service from one JSON object on standard input: name, supervisor (systemd, systemd-user, launchd, docker, or none), its unit, label, or container, and optionally a loopback health URL and port.',
-} as const satisfies Record<RecordKind, string>;
-
-const recordKind = <K extends RecordKind>(kind: K, schema: Checker<RecordOf<K>>) =>
-  new Command(kind, { description: KIND_DESCRIPTIONS[kind] })
-    .option('state-dir', stateDir)
-    .action(async (context) => {
-      const place = io(context);
-      const record = await readRecord(context, place, {
-        description: `${kind} record`,
-        schema,
-      });
-      await withStore(place, (store) => {
-        store.put(kind, record);
-      });
-      await place.print(`Recorded ${kind} ${record.name}.`);
+const recordAction =
+  (kind: RecordKind): ActionHandler<ReturnType<typeof kindCommand>> =>
+  async (context) => {
+    const place = io(context);
+    const record = await readRecord<RecordOf<RecordKind>>(context, place, {
+      description: `${kind} record`,
+      schema: RECORD_SCHEMAS[kind],
     });
+    await withStore(place, (store) => {
+      store.put(kind, record);
+    });
+    await place.print(`Recorded ${kind} ${record.name}.`);
+  };
 
 const recordRun = new Command('run', {
   description:
@@ -191,22 +179,41 @@ const recordRun = new Command('run', {
     const place = io(context);
     const job = checkedName(place, context.args.job);
     const run = await readRecord(context, place, { description: 'run', schema: RunRecordSchema });
-    const kept = await withStore(place, (store) => store.putRun(job, run));
-    if (!kept) {
-      place.fail(`No job ${job} is recorded. Record it with record job before its runs.`);
+    const outcome = await withStore(place, (store) => store.putRun(job, run));
+    switch (outcome) {
+      case 'no job': {
+        return place.fail(`No job ${job} is recorded. Record it with record job before its runs.`);
+      }
+      case 'expired': {
+        // Not an error: a runner that ignores failures to record gets the same exit either way.
+        return place.print(
+          `Run of ${job} started ${run.started} is older than ${String(RUN_RETENTION_DAYS)} days and was not kept.`,
+        );
+      }
+      case 'kept': {
+        return place.print(`Recorded run of ${job} started ${run.started}.`);
+      }
+      default: {
+        const _exhaustive: never = outcome;
+        return _exhaustive;
+      }
     }
-    await place.print(`Recorded run of ${job} started ${run.started}.`);
   });
 
 // `heimdall-collector record <kind>`: keeps what a provisioner installed in the
 // Collector's own state (ADR-0011).
-export const recordCommand = new Command('record', {
-  description: 'Record what a provisioner installed on this System, from JSON on standard input.',
-})
-  .command(recordKind('application', ApplicationRecordSchema))
-  .command(recordKind('service', ServiceRecordSchema))
-  .command(recordKind('job', JobRecordSchema))
-  .command(recordKind('files', FilesRecordSchema))
+const [firstKind, ...otherKinds] = RECORD_KINDS;
+
+const recordKind = (kind: RecordKind) => kindCommand(kind).action(recordAction(kind));
+
+export const recordCommand = otherKinds
+  .reduce(
+    (group, kind) => group.command(recordKind(kind)),
+    new Command('record', {
+      description:
+        'Record what a provisioner installed on this System, from JSON on standard input.',
+    }).command(recordKind(firstKind)),
+  )
   .command(recordRun);
 
 const forgetKind = (kind: RecordKind) =>
@@ -228,10 +235,9 @@ const forgetKind = (kind: RecordKind) =>
 
 // `heimdall-collector forget <kind> <name>`: removes a record, so an uninstall
 // script can run it whether or not the thing was ever recorded.
-export const forgetCommand = new Command('forget', {
-  description: 'Remove a record of something a provisioner installed on this System.',
-})
-  .command(forgetKind('application'))
-  .command(forgetKind('service'))
-  .command(forgetKind('job'))
-  .command(forgetKind('files'));
+export const forgetCommand = otherKinds.reduce(
+  (group, kind) => group.command(forgetKind(kind)),
+  new Command('forget', {
+    description: 'Remove a record of something a provisioner installed on this System.',
+  }).command(forgetKind(firstKind)),
+);

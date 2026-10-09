@@ -7,8 +7,8 @@ import { app } from '../application.ts';
 import { tempStateDir } from './fixtures.ts';
 
 // The host fields that stand in for standard input: `input` as a pipe or terminal delivers it.
-const piped = (input: string, isTTY: boolean) => ({
-  stdin: Readable.from(input === '' ? [] : [input]),
+const piped = (input: string | Uint8Array, isTTY: boolean) => ({
+  stdin: Readable.from(input.length === 0 ? [] : [input]),
   terminal: {
     stderr: { columns: undefined, isTTY: false, rows: undefined },
     stdin: { isTTY },
@@ -29,7 +29,12 @@ export const invoke = async (
     env = {},
     stdin,
     stdinIsTerminal = false,
-  }: { cwd?: string; env?: Record<string, string>; stdin?: string; stdinIsTerminal?: boolean } = {},
+  }: {
+    cwd?: string;
+    env?: Record<string, string>;
+    stdin?: string | Uint8Array;
+    stdinIsTerminal?: boolean;
+  } = {},
 ) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();

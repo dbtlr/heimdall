@@ -1,4 +1,6 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { join } from 'node:path';
 
 import type { JobRecord } from '@heimdall/schema';
 
@@ -20,6 +22,15 @@ const run = (day: number, exitStatus = 0) => ({
   finished: new Date(START + day * DAY_MS + 5000).toISOString().replace('.000Z', 'Z'),
   started: new Date(START + day * DAY_MS).toISOString().replace('.000Z', 'Z'),
 });
+
+const stored = async (stateDir: string) => {
+  const store = await openRecords({ stateDir });
+  try {
+    return store.read();
+  } finally {
+    store.close();
+  }
+};
 
 test('a run is pruned once it is more than 90 days old, by the clock the store was given', async () => {
   await using dir = await tempStateDir();
@@ -91,4 +102,128 @@ test('records persist across opens and a job that is re-recorded keeps its runs'
     { kind: 'job', name: 'backup', record: { ...job, schedule: [{ hour: 4 }] } },
   ]);
   expect(read.runs).toHaveLength(1);
+});
+
+test('rows this build cannot read come back as unreadable, not as records, so none vanishes unseen', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('application', { name: 'fine', version: '1' });
+  store.put('job', job);
+  store.putRun('backup', run(0));
+  store.close();
+  // What a newer Collector, or a rollback after one, leaves behind.
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const insert = db.query('INSERT INTO records (kind, name, body) VALUES (?, ?, ?)');
+  insert.run('application', 'newer', JSON.stringify({ channel: 'x', name: 'newer', version: '2' }));
+  insert.run('widget', 'future', JSON.stringify({ name: 'future' }));
+  insert.run('files', 'broken', '{not json');
+  db.query(
+    'INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES (?, ?, ?, ?, ?)',
+  ).run(
+    'backup',
+    '2026-01-02T00:00:00Z',
+    Date.parse('2026-01-02T00:00:00Z'),
+    0,
+    '{"surprise":true}',
+  );
+  db.close();
+
+  const read = await stored(dir.path);
+
+  expect(read.records.map(({ kind, name }) => `${kind}:${name}`)).toEqual([
+    'application:fine',
+    'job:backup',
+  ]);
+  expect(read.runs).toHaveLength(1);
+  expect(read.unreadable).toEqual({
+    records: [
+      { kind: 'application', name: 'newer' },
+      { kind: 'files', name: 'broken' },
+      { kind: 'widget', name: 'future' },
+    ],
+    runs: [{ job: 'backup', started: '2026-01-02T00:00:00Z' }],
+  });
+});
+
+test('nothing is unreadable when every row reads', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', job);
+
+  expect(store.read().unreadable).toEqual({ records: [], runs: [] });
+  store.close();
+});
+
+test('putRun says whether it kept the run: kept, expired, or for a job nobody recorded', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 200 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+
+  const outcomes = [
+    store.putRun('ghost', run(199)),
+    store.putRun('backup', run(199, 1)),
+    // Older than 90 days and not the latest success: pruned in the same transaction.
+    store.putRun('backup', run(10, 1)),
+    // The latest success is kept however old.
+    store.putRun('backup', run(5)),
+  ];
+  const kept = store.read().runs.map((entry) => entry.run.started);
+  store.close();
+
+  expect(outcomes).toEqual(['no job', 'kept', 'expired', 'kept']);
+  expect(kept).toEqual([run(5).started, run(199).started]);
+});
+
+test('the database is in WAL mode, which lets a reader proceed while another process writes', async () => {
+  await using dir = await tempStateDir();
+  (await openRecords({ stateDir: dir.path })).close();
+
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const mode = db.query<{ journal_mode: string }, []>('PRAGMA journal_mode').get();
+  db.close();
+
+  expect(mode?.journal_mode).toBe('wal');
+});
+
+// A process that takes the write lock on the records database, inserts a record,
+// and commits `holdMs` later, as `heimdall-collector record` in another process would.
+const HOLDER = `
+import { Database } from 'bun:sqlite';
+const [path, holdMs] = process.argv.slice(1);
+const db = new Database(path);
+db.run('BEGIN IMMEDIATE');
+db.query("INSERT INTO records (kind, name, body) VALUES ('application', 'held', ?)").run(JSON.stringify({ name: 'held', version: '1' }));
+console.log('locked');
+await new Promise((resolve) => setTimeout(resolve, Number(holdMs)));
+db.run('COMMIT');
+`;
+
+const holdWriteLock = async (stateDir: string, holdMs: number) => {
+  const child = Bun.spawn(
+    [process.execPath, '-e', HOLDER, join(stateDir, 'records.sqlite'), String(holdMs)],
+    { stdout: 'pipe' },
+  );
+  await child.stdout.getReader().read();
+  return child;
+};
+
+test('a write waits for another process holding the write lock instead of failing', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', job);
+  const holder = await holdWriteLock(dir.path, 300);
+
+  // The holder commits a change during the wait, so a transaction that began
+  // reading before it would lose its snapshot; a write transaction begun with
+  // BEGIN IMMEDIATE waits for the lock first and sees the change.
+  const outcome = store.putRun('backup', run(0));
+  const forgotten = store.forget('application', 'held');
+  await holder.exited;
+  const read = store.read();
+  store.close();
+
+  expect(outcome).toBe('kept');
+  expect(forgotten).toBe(true);
+  expect(read.runs).toHaveLength(1);
+  expect(read.records.map(({ name }) => name)).toEqual(['backup']);
 });

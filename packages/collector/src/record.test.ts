@@ -59,7 +59,7 @@ const refuses = async (kind: string, body: unknown, message: string) => {
   expect(result.stderr).toContain(message);
   expect(result.stdout).toBe('');
   expect(result.code).toBe(1);
-  expect(await stored(dir.path)).toEqual({ records: [], runs: [] });
+  expect(await stored(dir.path)).toMatchObject({ records: [], runs: [] });
 };
 
 describe('record', () => {
@@ -266,7 +266,86 @@ describe('record refuses', () => {
 
     expect(result.stderr).toContain('1 MiB');
     expect(result.code).toBe(1);
-    expect(await stored(dir.path)).toEqual({ records: [], runs: [] });
+    expect(await stored(dir.path)).toMatchObject({ records: [], runs: [] });
+  });
+
+  test('input that is not UTF-8, which would otherwise be read as other text', async () => {
+    await using dir = await tempStateDir();
+    // 0xC3 0x28 is no character; a lenient decoder turns the 0xC3 into U+FFFD and the JSON still parses.
+    const bytes = Buffer.concat([
+      Buffer.from('{"name": "webapp", "version": "1'),
+      Buffer.from([0xc3, 0x28]),
+      Buffer.from('"}'),
+    ]);
+
+    const result = await invoke(['record', 'application', '--state-dir', dir.path], {
+      stdin: bytes,
+    });
+
+    expect(result.stderr).toContain('not valid UTF-8');
+    expect(result.code).toBe(1);
+    expect((await stored(dir.path)).records).toEqual([]);
+  });
+
+  test('exactly 1 MiB is read and one byte more is not', async () => {
+    await using dir = await tempStateDir();
+    const json = JSON.stringify(application);
+    const padded = (extra: number) => json + ' '.repeat(1024 * 1024 - json.length + extra);
+
+    const exact = await pipe(['record', 'application'], padded(0), dir.path);
+    const tooMuch = await pipe(['record', 'application'], padded(1), dir.path);
+
+    expect(exact.code).toBe(0);
+    expect(tooMuch.stderr).toContain('1 MiB');
+    expect(tooMuch.code).toBe(1);
+  });
+
+  test('a control character in an unknown field name is shown escaped, never raw', async () => {
+    await using dir = await tempStateDir();
+    // U+009B is a one-character terminal escape that JSON.stringify leaves alone.
+    const body = `{"name": "webapp", "version": "1", "a\u009b[31mb": 1}`;
+
+    const result = await pipe(['record', 'application'], body, dir.path);
+
+    expect(result.stderr).toContain('Unrecognized key');
+    // Shown as the six characters \u009b, so the operator sees what was sent.
+    expect(result.stderr).toContain(String.raw`"a\u009b[31mb"`);
+    expect(result.code).toBe(1);
+  });
+
+  test('lists at most 10 problems and says how many it left out', async () => {
+    await using dir = await tempStateDir();
+    const bad = {
+      ...files,
+      files: Array.from({ length: 13 }, (_, index) => ({
+        path: `/f${String(index)}`,
+        sha256: 'x',
+      })),
+    };
+
+    const result = await pipe(['record', 'files'], bad, dir.path);
+
+    expect(result.stderr.match(/files\[\d+\]\.sha256/gu)).toHaveLength(10);
+    expect(result.stderr).toContain('and 3 more');
+    expect(result.code).toBe(1);
+  });
+
+  test('cuts a problem longer than 200 characters', async () => {
+    await using dir = await tempStateDir();
+    const longKey = 'k'.repeat(300);
+
+    const result = await pipe(
+      ['record', 'application'],
+      { ...application, [longKey]: 1 },
+      dir.path,
+    );
+
+    expect(result.stderr).not.toContain(longKey);
+    const line = result.stderr.split('\n').find((candidate) => candidate.includes('Unrecognized'));
+    expect(line?.trim()).toMatch(/^the record: Unrecognized key: "k+\.\.\.$/u);
+    // "the record: " and the cut text are 200 characters, then the ellipsis.
+    expect(line?.trim()).toHaveLength(203);
+    expect(result.code).toBe(1);
   });
 
   test('a state directory that cannot be created', async () => {
@@ -341,6 +420,21 @@ describe('record run', () => {
     expect(result.stderr).toContain(message);
     expect(result.code).toBe(1);
     expect((await stored(dir.path)).runs).toEqual([]);
+  });
+
+  test('says so, and exits 0, for a run too old to keep', async () => {
+    await using dir = await tempStateDir();
+    await recordJob(dir.path);
+    await recordRun(dir.path, run(1));
+    const old = run(120, 1);
+
+    const result = await recordRun(dir.path, old);
+
+    expect(result.stdout).toBe(
+      `Run of backup started ${old.started} is older than 90 days and was not kept.\n`,
+    );
+    expect(result.code).toBe(0);
+    expect((await stored(dir.path)).runs).toHaveLength(1);
   });
 
   test('refuses a job name that is not one', async () => {
