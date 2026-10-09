@@ -144,24 +144,29 @@ export const deleteTranscripts = (
     // Marking takes each generation's row lock, which an open at its path
     // waits for. Locks are taken in id order, as an open takes them, so the
     // two cannot deadlock. A generation opened while a pass ran is not in that
-    // pass's snapshot, so passes repeat until one finds nothing.
+    // pass's snapshot, so passes repeat until one finds nothing. Each pass
+    // removes its generations' chunks in the same statement, so no list of
+    // generations, however long, is sent back as parameters.
     const marked: Matched[] = [];
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.
       const pass: Matched[] = await tx`
-        UPDATE transcript_generations SET deleted_at = ${new Date(now)}
-        WHERE id IN (
-          SELECT id FROM transcript_generations WHERE ${matching} ORDER BY id FOR UPDATE
+        WITH marked AS (
+          UPDATE transcript_generations SET deleted_at = ${new Date(now)}
+          WHERE id IN (
+            SELECT id FROM transcript_generations WHERE ${matching} ORDER BY id FOR UPDATE
+          )
+          RETURNING id, stored_bytes
+        ),
+        removed AS (
+          DELETE FROM transcript_chunks WHERE generation IN (SELECT id FROM marked)
         )
-        RETURNING id, stored_bytes
+        SELECT id, stored_bytes FROM marked
       `;
       if (pass.length === 0) {
         break;
       }
       marked.push(...pass);
-    }
-    if (marked.length > 0) {
-      await tx`DELETE FROM transcript_chunks WHERE generation IN ${tx(marked.map((row) => row.id))}`;
     }
     return removedOf(marked);
   });

@@ -507,19 +507,21 @@ describe('deleting transcripts', () => {
   test('refuses a generation opened at the path while it runs', async () => {
     await using h = await startHub();
     await upload(h, NOW);
+    const later = await upload(h, NOW, { ...FILE, path: 'b.jsonl' });
     let removed: Promise<unknown> | undefined;
     let opened: Promise<Response> | undefined;
 
-    // Holding the chunks keeps the delete running after it marks the generations.
+    // Holding the later generation keeps the delete waiting on it, holding the
+    // earlier one, which it locks first.
     await h.db.sql.begin(async (tx) => {
-      await tx`LOCK TABLE transcript_chunks IN SHARE MODE`;
+      await tx`SELECT 1 FROM transcript_generations WHERE id = ${later} FOR UPDATE`;
       removed = deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
       await waitersOnLocks(h.db.sql, 1);
       opened = openGeneration(h.hub, FILE, { token: 'laptop-token' });
       await waitersOnLocks(h.db.sql, 2);
     });
 
-    expect(await removed).toEqual({ bytes: expect.any(Number), generations: 1 });
+    expect(await removed).toEqual({ bytes: expect.any(Number), generations: 2 });
     expect((await opened)?.status).toBe(410);
     const live = await h.db.sql`SELECT id FROM transcript_generations WHERE deleted_at IS NULL`;
     expect([...live]).toEqual([]);
@@ -545,6 +547,28 @@ describe('deleting transcripts', () => {
     expect(await removed).toEqual({ bytes: expect.any(Number), generations: 2 });
     const live = await h.db.sql`SELECT id FROM transcript_generations WHERE deleted_at IS NULL`;
     expect([...live]).toEqual([]);
+  });
+
+  // PostgreSQL binds at most 65,535 parameters in one statement.
+  test('removes more generations than a statement can take as parameters', async () => {
+    await using h = await startHub();
+    await upload(h, NOW);
+    await h.db.sql`
+      WITH opened AS (
+        INSERT INTO transcript_generations (system, source, path, opened_at, last_upload_at, held)
+        SELECT 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
+        FROM generate_series(1, 70000) AS n
+        RETURNING id
+      )
+      INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
+      SELECT id, 0, 1, '\\x00'::bytea FROM opened
+    `;
+
+    const removed = await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+
+    expect(removed.generations).toBe(70_001);
+    const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
+    expect(left).toEqual({ n: 0 });
   });
 
   test('refuses to run without a filter', async () => {
