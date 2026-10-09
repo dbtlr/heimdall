@@ -1,0 +1,181 @@
+import { z } from 'zod';
+
+import { bytes } from './values.ts';
+
+// What a provisioner tells a Collector it installed (ADR-0011). A provisioner
+// pipes one record to `heimdall-collector record <kind>`; the Collector checks
+// it against these schemas and refuses a field they do not name, so the
+// provisioner sees the refusal. Every object is strict for that reason.
+
+// The kinds of record a provisioner makes by name. A job's runs are recorded
+// separately, keyed by job and start time.
+export const RECORD_KINDS = ['application', 'service', 'job', 'files'] as const;
+export type RecordKind = (typeof RECORD_KINDS)[number];
+
+// The name of a record, of a job a run belongs to, and the name `forget` takes.
+export const RECORD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
+const name = z.string().regex(RECORD_NAME);
+
+// Free text for a person to read: no control characters, so it cannot rewrite a
+// terminal or break a line.
+const text = (maxLength = 256) =>
+  z
+    .string()
+    .min(1)
+    .max(maxLength)
+    .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' });
+
+// Who recorded something, for Heimdall to show and never compare.
+const provenance = z.strictObject({ by: text(64), revision: text(128).optional() }).optional();
+
+export const ApplicationRecordSchema = z.strictObject({
+  name,
+  provenance,
+  source: text().optional(),
+  version: text(128),
+});
+
+const MAX_PORT = 65_535;
+
+const port = z.int().min(1).max(MAX_PORT);
+
+// A health URL the Collector may request: plain HTTP to a loopback address
+// with an explicit port. Nothing may follow the port but a path of printable
+// ASCII, so no user part can hide another host, and `localhost` is refused
+// because a resolver may send it elsewhere.
+const loopbackUrl = z
+  .string()
+  .max(512)
+  .regex(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}(?:\/[!-~]*)?$/u)
+  .refine((url) => Number(/^http:\/\/[^/]+:([0-9]+)/u.exec(url)?.[1]) <= MAX_PORT, {
+    message: 'health URL port out of range',
+  });
+
+const service = { health: loopbackUrl.optional(), name, port: port.optional(), provenance };
+
+// The shape depends on the supervisor, which decides what names the Service to it.
+export const ServiceRecordSchema = z.discriminatedUnion('supervisor', [
+  z.strictObject({ ...service, supervisor: z.literal('systemd'), unit: text() }),
+  z.strictObject({ ...service, supervisor: z.literal('systemd-user'), unit: text() }),
+  z.strictObject({ ...service, label: text(), supervisor: z.literal('launchd') }),
+  z.strictObject({ ...service, container: text(), supervisor: z.literal('docker') }),
+  z.strictObject({ ...service, supervisor: z.literal('none') }),
+]);
+
+// One calendar entry in the System's local time, with launchd StartCalendarInterval
+// meaning: a field left out matches every value.
+const CalendarEntrySchema = z
+  .strictObject({
+    day: z.int().min(1).max(31).optional(),
+    hour: z.int().min(0).max(23).optional(),
+    minute: z.int().min(0).max(59).optional(),
+    month: z.int().min(1).max(12).optional(),
+    // 0 and 7 are both Sunday.
+    weekday: z.int().min(0).max(7).optional(),
+  })
+  .refine((entry) => Object.keys(entry).length > 0, {
+    message: 'an entry needs at least one field',
+  });
+
+// The entry as a string that is equal for entries that match the same times.
+const entryKey = ({ day, hour, minute, month, weekday }: z.infer<typeof CalendarEntrySchema>) =>
+  JSON.stringify([minute, hour, day, weekday === 7 ? 0 : weekday, month]);
+
+const MAX_SCHEDULE_ENTRIES = 100;
+
+const schedule = z
+  .array(CalendarEntrySchema)
+  .min(1)
+  .max(MAX_SCHEDULE_ENTRIES)
+  .refine((entries) => new Set(entries.map(entryKey)).size === entries.length, {
+    message: 'duplicate schedule entry',
+    // Only valid entries can be compared.
+    when: ({ issues }) => issues.length === 0,
+  });
+
+const job = { name, provenance, schedule };
+
+// The shape depends on the scheduler, which decides what names the job to it.
+export const JobRecordSchema = z.discriminatedUnion('scheduler', [
+  z.strictObject({ ...job, label: text(), scheduler: z.literal('launchd') }),
+  z.strictObject({ ...job, scheduler: z.literal('systemd-timer'), unit: text() }),
+]);
+
+const MAX_PATH_BYTES = 4096;
+const MAX_FILES = 10_000;
+
+const absolutePath = z
+  .string()
+  .regex(/^\/\P{Cc}*$/u, { message: 'must be absolute and must not contain control characters' })
+  .refine(
+    (path) => path.isWellFormed() && new TextEncoder().encode(path).byteLength <= MAX_PATH_BYTES,
+    {
+      message: 'must be well-formed UTF-8 of at most 4096 bytes',
+    },
+  );
+
+const FileSchema = z.strictObject({
+  path: absolutePath,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+});
+
+export const FilesRecordSchema = z.strictObject({
+  files: z
+    .array(FileSchema)
+    .min(1)
+    .max(MAX_FILES)
+    .refine((files) => new Set(files.map(({ path }) => path)).size === files.length, {
+      message: 'duplicate path',
+      // Only valid files can be compared.
+      when: ({ issues }) => issues.length === 0,
+    }),
+  name,
+  provenance,
+});
+
+// The schema that checks a record of each kind.
+export const RECORD_SCHEMAS = {
+  application: ApplicationRecordSchema,
+  files: FilesRecordSchema,
+  job: JobRecordSchema,
+  service: ServiceRecordSchema,
+} as const;
+
+export type ApplicationRecord = z.infer<typeof ApplicationRecordSchema>;
+export type ServiceRecord = z.infer<typeof ServiceRecordSchema>;
+export type JobRecord = z.infer<typeof JobRecordSchema>;
+export type FilesRecord = z.infer<typeof FilesRecordSchema>;
+// The record of kind `K`.
+export type RecordOf<K extends RecordKind> = z.infer<(typeof RECORD_SCHEMAS)[K]>;
+
+// A run's output file, by its name in the job's own output directory:
+// printable ASCII without a slash, and neither `.` nor `..`, so it cannot name
+// a path outside that directory.
+const OutputSchema = z.strictObject({
+  file: z
+    .string()
+    .max(255)
+    .regex(/^(?!\.\.?$)[ -.0-~]+$/u),
+  sizeBytes: bytes,
+});
+
+// Whole seconds in UTC, so the times compare exactly.
+const second = z.iso.datetime({ precision: 0 });
+
+// One run of a job, successful or not; exit status 0 is success.
+export const RunRecordSchema = z
+  .strictObject({
+    exitStatus: z.int().min(0).max(255),
+    finished: second,
+    output: OutputSchema.optional(),
+    started: second,
+  })
+  .refine(({ finished, started }) => Date.parse(finished) >= Date.parse(started), {
+    message: 'a run finished before it started',
+    path: ['finished'],
+    // Only valid times can be compared.
+    when: ({ issues }) => issues.length === 0,
+  });
+
+export type RunRecord = z.infer<typeof RunRecordSchema>;
