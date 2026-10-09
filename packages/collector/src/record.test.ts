@@ -271,10 +271,10 @@ describe('record refuses', () => {
 
   test('input that is not UTF-8, which would otherwise be read as other text', async () => {
     await using dir = await tempStateDir();
-    // 0xC3 0x28 is no character; a lenient decoder turns the 0xC3 into U+FFFD and the JSON still parses.
+    // bytes 195 and 40 are no character; a lenient decoder turns the 0xC3 into U+FFFD and the JSON still parses.
     const bytes = Buffer.concat([
       Buffer.from('{"name": "webapp", "version": "1'),
-      Buffer.from([0xC3, 0x28]),
+      Buffer.from([195, 40]),
       Buffer.from('"}'),
     ]);
 
