@@ -157,6 +157,50 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 4,
   },
+  {
+    // Transcripts as their Collectors uploaded them (ADR-0013). A generation
+    // is one continuous run of a file's content; `held` counts the bytes of
+    // the file it holds and `stored_bytes` the gzipped bytes of its chunks.
+    // Each chunk is stored gzipped, as uploaded, at the file offset it starts
+    // from. A deleted generation keeps its row without its chunks, so the Hub
+    // refuses its later chunks, and a path whose every generation is deleted
+    // refuses new ones. Each System's latest set of sources and its spool
+    // replace the earlier set; `sent_at` keeps an older Report from replacing
+    // a newer one.
+    sql: `
+      CREATE TABLE transcript_generations (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text NOT NULL REFERENCES systems (name),
+        source text NOT NULL,
+        path text NOT NULL,
+        held bigint NOT NULL DEFAULT 0,
+        stored_bytes bigint NOT NULL DEFAULT 0,
+        opened_at timestamptz NOT NULL,
+        last_upload_at timestamptz NOT NULL,
+        deleted_at timestamptz
+      );
+
+      CREATE INDEX transcript_generations_by_path ON transcript_generations (system, source, path);
+      CREATE INDEX transcript_generations_by_last_upload ON transcript_generations (last_upload_at);
+
+      CREATE TABLE transcript_chunks (
+        generation bigint NOT NULL REFERENCES transcript_generations (id),
+        offset_bytes bigint NOT NULL,
+        length bigint NOT NULL,
+        content bytea NOT NULL,
+        PRIMARY KEY (generation, offset_bytes)
+      );
+
+      CREATE TABLE transcript_sources (
+        system text PRIMARY KEY REFERENCES systems (name),
+        sources jsonb NOT NULL,
+        spool_bytes bigint NOT NULL,
+        spool_oldest_at timestamptz,
+        sent_at timestamptz NOT NULL
+      );
+    `,
+    version: 5,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

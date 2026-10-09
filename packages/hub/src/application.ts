@@ -1,4 +1,4 @@
-import { SYSTEM_NAME } from '@heimdall/schema';
+import { SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command, override, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
@@ -6,10 +6,11 @@ import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { versionLine as loomVersionLine } from '@loomcli/plugins/version/views';
-import { integer, text, url } from '@loomcli/validators';
+import { date, integer, text, url } from '@loomcli/validators';
 
 import { pairAction, unpairAction } from './pair-commands.ts';
 import { serveAction } from './serve.ts';
+import { deleteTranscriptsAction } from './transcript-commands.ts';
 import { HUB_VERSION, versionLine } from './version.ts';
 
 // SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops
@@ -73,6 +74,37 @@ export const unpair = new Command('unpair', {
   .option('database', database)
   .action(unpairAction);
 
+export const deleteTranscripts = new Command('delete', {
+  description:
+    'Delete whole generations of transcripts that match every filter given. A path whose every generation is deleted is refused from then on.',
+})
+  .option('system', {
+    description: 'Only the transcripts of this System.',
+    type: 'string',
+    validate: text({ message: 'Use a Fleet System name, such as laptop-1.', pattern: SYSTEM_NAME }),
+  })
+  .option('source', {
+    description: 'Only the transcripts of this source, such as claude-code, on any System.',
+    type: 'string',
+    validate: text({ message: 'Use a source name, such as claude-code.', pattern: SOURCE_NAME }),
+  })
+  .option('before', {
+    description:
+      'Only generations last uploaded before the start of this day in UTC, such as 2026-01-01.',
+    type: 'string',
+    validate: date(),
+  })
+  .option('dry-run', {
+    description: 'Say what would be deleted, and delete nothing.',
+    type: 'boolean',
+  })
+  .option('database', database)
+  .action(deleteTranscriptsAction);
+
+const transcripts = new Command('transcripts', {
+  description: 'Manage the archive of agent Session transcripts.',
+}).command(deleteTranscripts);
+
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
@@ -85,4 +117,5 @@ export const app = new Application('heimdall-hub', {
   .command(serve)
   .command(pair)
   .command(unpair)
+  .command(transcripts)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

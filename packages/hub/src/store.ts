@@ -1,4 +1,4 @@
-import type { Report, VitalsSample } from '@heimdall/schema';
+import type { Report, TranscriptsSection, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 export type StoreResult = { skipped: number; stored: number };
@@ -9,6 +9,16 @@ const storable = (text: string) => text.toWellFormed().replaceAll('\0', '\uFFFD'
 
 const storableJson = (value: unknown) =>
   JSON.stringify(value, (_, v: unknown) => (typeof v === 'string' ? storable(v) : v));
+
+// Records that the Hub heard from `system` at `at` (epoch milliseconds), on
+// its own row lock (glossary: Last seen).
+export const seeSystem = async (sql: SQL, { at, system }: { at: number; system: string }) => {
+  await sql`
+    INSERT INTO systems (name, last_seen_at) VALUES (${system}, ${new Date(at)})
+    ON CONFLICT (name) DO UPDATE SET
+      last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at)
+  `;
+};
 
 // Records a Report received at `receivedAt` (epoch milliseconds): the System is
 // seen at that time, and each sample is stored unless the Hub already holds one
@@ -114,6 +124,9 @@ export const storeReport = (
       )
       SELECT t FROM stored
     `;
+    if (report.transcripts !== undefined) {
+      await storeTranscriptSources(tx, { ...report, transcripts: report.transcripts });
+    }
     // A stored Report ends a run of rejections (ADR-0005).
     await tx`
       UPDATE conditions SET cleared_at = GREATEST(raised_at, ${seenAt})
@@ -121,6 +134,26 @@ export const storeReport = (
     `;
     return { skipped: report.samples.length - stored.length, stored: stored.length };
   });
+
+// Replaces the System's set of transcript sources and its spool with a
+// Report's, unless the Hub holds a set from a Report sent later (ADR-0013).
+const storeTranscriptSources = async (
+  sql: SQL,
+  { sentAt, system, transcripts }: Report & { transcripts: TranscriptsSection },
+) => {
+  const { sources, spool } = transcripts;
+  await sql`
+    INSERT INTO transcript_sources (system, sources, spool_bytes, spool_oldest_at, sent_at)
+    VALUES (${system}, ${storableJson(sources)}::text::jsonb, ${spool.bytes},
+            ${spool.oldestAt === null ? null : new Date(spool.oldestAt)}, ${new Date(sentAt)})
+    ON CONFLICT (system) DO UPDATE SET
+      sources = excluded.sources,
+      spool_bytes = excluded.spool_bytes,
+      spool_oldest_at = excluded.spool_oldest_at,
+      sent_at = excluded.sent_at
+    WHERE transcript_sources.sent_at <= excluded.sent_at
+  `;
+};
 
 // The kinds of Condition the Hub derives. M4 adds Service, job, Drift, and
 // stale-System Conditions to the same Timeline.
@@ -139,11 +172,7 @@ export const recordRejection = (
   sql.begin(async (tx) => {
     const at = new Date(receivedAt);
     const why = storable(reason);
-    await tx`
-      INSERT INTO systems (name, last_seen_at) VALUES (${system}, ${at})
-      ON CONFLICT (name) DO UPDATE SET
-        last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at)
-    `;
+    await seeSystem(tx, { at: receivedAt, system });
     await tx`
       INSERT INTO conditions (system, kind, raised_at, raised_reason, latest_at, latest_reason)
       VALUES (${system}, ${REPORTS_REJECTED}, ${at}, ${why}, ${at}, ${why})
