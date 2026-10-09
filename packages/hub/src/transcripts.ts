@@ -91,9 +91,11 @@ export const appendChunk = (
     // The generation's row lock orders its chunks, so two deliveries of a
     // chunk cannot both append it. It is taken before the System's row, so a
     // delete holding the generation does not hold up the System's Reports.
+    // Bun binds a number of 2^51 or more as a double, which the primary key's
+    // index cannot match, so each id is cast back to bigint.
     const [row]: { deleted_at: Date | null; held: string; system: string }[] = await tx`
       SELECT system, held, deleted_at FROM transcript_generations
-      WHERE id = ${generation}
+      WHERE id = ${generation}::bigint
       FOR UPDATE
     `;
     await seeSystem(tx, { at: now, system });
@@ -122,7 +124,7 @@ export const appendChunk = (
         held = held + ${length},
         stored_bytes = stored_bytes + ${content.byteLength},
         last_upload_at = GREATEST(last_upload_at, ${new Date(now)})
-      WHERE id = ${generation}
+      WHERE id = ${generation}::bigint
     `;
     return { held: held + length, kind: 'held' };
   });

@@ -231,13 +231,13 @@ const append = async (request: Request, { now, sql }: HubDependencies, generatio
   if (typeof system !== 'string') {
     return system;
   }
-  if (!Number.isSafeInteger(generation)) {
-    return answer(404, NO_SUCH_GENERATION);
-  }
-  const refuse = async (status: 413 | 422, reason: string) => {
+  const refuse = async (status: 404 | 413 | 422, reason: string) => {
     await seeSystem(sql, { at: now(), system });
     return answer(status, reason);
   };
+  if (!Number.isSafeInteger(generation)) {
+    return refuse(404, NO_SUCH_GENERATION);
+  }
   const offset = offsetOf(request);
   if (offset === undefined) {
     return refuse(422, `Give the chunk's offset in the file as ${TRANSCRIPT_OFFSET_HEADER}.`);
