@@ -196,6 +196,15 @@ describe('a job record', () => {
     expect(accepts(JobRecordSchema, { ...JOB, cron: '0 3 * * *' })).toBe(false);
     expect(accepts(JobRecordSchema, { ...JOB, unit: 'j.timer' })).toBe(false);
   });
+
+  test.each([
+    { label: 'l', scheduler: 'launchd' },
+    { scheduler: 'systemd-timer', unit: 'j.timer' },
+  ])('refuses an unknown field beside %j', (target) => {
+    const valid = { name: 'j', schedule: [{ hour: 1 }], ...target };
+    expect(accepts(JobRecordSchema, valid)).toBe(true);
+    expect(accepts(JobRecordSchema, { ...valid, cron: '0 3 * * *' })).toBe(false);
+  });
 });
 
 describe('a Service record', () => {
@@ -205,6 +214,18 @@ describe('a Service record', () => {
     expect(accepts(ServiceRecordSchema, { name: 's', restart: true, supervisor: 'none' })).toBe(
       false,
     );
+  });
+
+  test.each([
+    { supervisor: 'systemd', unit: 'api.service' },
+    { supervisor: 'systemd-user', unit: 'api.service' },
+    { label: 'com.example.api', supervisor: 'launchd' },
+    { container: 'api', supervisor: 'docker' },
+    { supervisor: 'none' },
+  ])('refuses an unknown field beside %j', (target) => {
+    const valid = { name: 's', ...target };
+    expect(accepts(ServiceRecordSchema, valid)).toBe(true);
+    expect(accepts(ServiceRecordSchema, { ...valid, restart: true })).toBe(false);
   });
 
   test.each([

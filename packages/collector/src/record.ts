@@ -92,7 +92,8 @@ const pathWords = (path: readonly PropertyKey[]): string =>
       );
 
 // The problems a schema found, each with its field path and what is wrong. The
-// messages Zod and the schemas write name rules and field names, never the input.
+// messages Zod and the schemas write name rules and field names, an unknown
+// field's included, never a value from the input.
 const problems = (error: {
   issues: readonly { message: string; path: readonly PropertyKey[] }[];
 }): string => {
@@ -105,7 +106,7 @@ const problems = (error: {
 };
 
 // The JSON value on standard input, checked against `schema`. A failure exits 1
-// and never quotes the input, which may hold a secret.
+// and never quotes a value from the input, which may hold a secret.
 const readRecord = async <T>(
   context: Context,
   place: Io,

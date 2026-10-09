@@ -41,7 +41,7 @@ export type RecordStore = {
   forget: (kind: RecordKind, name: string) => boolean;
   // Keeps a record the caller checked against the schema of its kind, replacing
   // the one of the same kind and name.
-  put: (kind: RecordKind, record: RecordOf<RecordKind>) => void;
+  put: <K extends RecordKind>(kind: K, record: RecordOf<K>) => void;
   // Keeps a run of a recorded job, replacing the one with the same start, then
   // prunes the job's runs.
   putRun: (job: string, run: RunRecord) => RunOutcome;
