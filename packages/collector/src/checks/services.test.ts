@@ -187,6 +187,12 @@ describe('a systemd Service', () => {
     expect(outcomes[0]?.detail.startsWith('ActiveState=xxx')).toBe(true);
   });
 
+  test('keeps control characters out of its detail', async () => {
+    const { outcomes } = await check(WEB, shown({ active: 'fa\u0000il\u001b' }));
+
+    expect(outcomes[0]?.detail).toBe('ActiveState=fail');
+  });
+
   test('is unknown when systemctl cannot be started', async () => {
     const { outcomes } = await check(WEB, new Error('ENOENT'));
 

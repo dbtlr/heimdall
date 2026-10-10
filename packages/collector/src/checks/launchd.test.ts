@@ -8,8 +8,12 @@ import { checkService } from './services.ts';
 const WEB: ServiceRecord = { label: 'com.example.web', name: 'web', supervisor: 'launchd' };
 const UID = 501;
 
-// `launchctl print` for a launchd agent that is running, as macOS prints it:
-// the fields of the service one tab in, nested blocks two tabs in.
+// The fixtures below are hand-written from the documented shape of `launchctl
+// print`: the fields of the service one tab in, nested blocks two tabs in. They
+// are to be replaced with output captured on a Mac during the milestone's live
+// proof.
+//
+// `launchctl print` for a launchd agent that is running.
 const RUNNING = `gui/501/com.example.web = {
 \tactive count = 1
 \tpath = /Users/example/Library/LaunchAgents/com.example.web.plist
@@ -46,6 +50,22 @@ const RUNNING = `gui/501/com.example.web = {
 \tproxy started suspended = 0
 \tlast exit code = (never exited)
 
+\tresource coalition = {
+\t\tID = 2048
+\t\ttype = resource
+\t\tstate = active
+\t\tactive count = 1
+\t\tname = com.example.web
+\t}
+
+\tjetsam coalition = {
+\t\tID = 2049
+\t\ttype = jetsam
+\t\tstate = active
+\t\tactive count = 1
+\t\tname = com.example.web
+\t}
+
 \tevent triggers = {
 \t}
 
@@ -72,18 +92,22 @@ const LOADED_NOT_RUNNING = `gui/501/com.example.web = {
 }
 `;
 
-// An agent that holds a process in a nested block's `state` but not in its own.
-const NESTED_STATE_ONLY = `gui/501/com.example.web = {
+// An agent that is not running whose coalition blocks, nested inside it, have a
+// state and a last exit code of their own that are not the agent's.
+const NESTED_FIELDS_ONLY = `gui/501/com.example.web = {
 \ttype = LaunchAgent
 \tstate = not running
 
-\tendpoints = {
-\t\t"com.example.web.sock" = {
-\t\t\tport = 0x1f03
-\t\t\tactive = 1
-\t\t\tstate = running
-\t\t\tpid = 999
-\t\t}
+\tresource coalition = {
+\t\tID = 2048
+\t\tstate = active
+\t\tlast exit code = 99
+\t}
+
+\tjetsam coalition = {
+\t\tID = 2049
+\t\tstate = running
+\t\tpid = 999
 \t}
 
 \tlast exit code = 1
@@ -147,7 +171,7 @@ describe('a launchd Service', () => {
       [GUI]: printed(RUNNING.replace('state = running', 'state = xpc proxy')),
     });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'pid = 12345', state: 'up' }]);
+    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = xpc proxy', state: 'up' }]);
   });
 
   test('is stopped when its agent is loaded with no running process, with the last exit code', async () => {
@@ -172,8 +196,8 @@ describe('a launchd Service', () => {
     ]);
   });
 
-  test('reads only the service own fields, not those of a block inside it', async () => {
-    const { outcomes } = await check({ [GUI]: printed(NESTED_STATE_ONLY) });
+  test("reads only the service's own fields, not those of a block inside it", async () => {
+    const { outcomes } = await check({ [GUI]: printed(NESTED_FIELDS_ONLY) });
 
     expect(outcomes).toEqual([
       {
@@ -270,6 +294,69 @@ describe('a launchd Service', () => {
 
     expect(outcomes).toMatchObject([{ state: 'unknown' }]);
     expect(ran).toHaveLength(1);
+  });
+
+  test('names the signal that ended the process in the detail', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(
+        LOADED_NOT_RUNNING.replace(
+          '\tlast exit code = 78\n',
+          '\tlast exit code = (never exited)\n\tlast terminating signal = Killed: 9\n',
+        ),
+      ),
+    });
+
+    expect(outcomes).toEqual([
+      {
+        check: 'supervisor',
+        detail:
+          'state = not running, last exit code = (never exited), last terminating signal = Killed: 9',
+        state: 'stopped',
+      },
+    ]);
+  });
+
+  test('does not count a pid that is not made of digits', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 3', '\truns = 3\n\tpid = (none)')),
+    });
+
+    expect(outcomes).toMatchObject([{ state: 'stopped' }]);
+  });
+
+  test('takes root as an account like any other, asking gui/0', async () => {
+    const { ran } = await check({}, { uid: 0 });
+
+    expect(ran[0]).toEqual(['/bin/launchctl', 'print', 'gui/0/com.example.web']);
+  });
+
+  test.each([
+    ['on stdout alone', { ...failed(113, ''), stdout: NOT_FOUND_GUI }],
+    ['in capitals', failed(113, NOT_FOUND_GUI.toUpperCase())],
+  ])(
+    'is not loaded when launchctl says it could not find the service %s',
+    async (_name, answer) => {
+      const { outcomes } = await check({ [GUI]: answer, [SYSTEM]: answer });
+
+      expect(outcomes).toEqual([{ check: 'supervisor', detail: 'not loaded', state: 'stopped' }]);
+    },
+  );
+
+  test.each([
+    ['exits 1 with the not found message', failed(1, NOT_FOUND_GUI)],
+    ['exits 113 about a domain', failed(113, 'Could not find domain for user gui: 501\n')],
+    [
+      'exits non-zero with output that looks like a service',
+      { ...failed(1, 'oops'), stdout: LOADED_NOT_RUNNING },
+    ],
+    [
+      'prints a state of only whitespace',
+      printed(RUNNING.replace('state = running', 'state =    ')),
+    ],
+  ])('is unknown when launchctl %s', async (_name, answer) => {
+    const { outcomes } = await check({ [GUI]: answer });
+
+    expect(outcomes).toMatchObject([{ state: 'unknown' }]);
   });
 
   test('cuts a long detail to what the Hub takes', async () => {

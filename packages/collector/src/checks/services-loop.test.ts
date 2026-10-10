@@ -28,7 +28,13 @@ const shown = (active: string): CommandResult => ({
 // own, as `record` and `forget` do.
 const setup = async (
   dir: { path: string },
-  { open }: { open?: () => Promise<RecordStore> } = {},
+  {
+    open,
+    run,
+  }: {
+    open?: () => Promise<RecordStore>;
+    run?: (cmd: readonly string[]) => Promise<CommandResult>;
+  } = {},
 ) => {
   const warnings: string[] = [];
   const states = new Map<string, string>();
@@ -38,10 +44,12 @@ const setup = async (
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     now: () => now,
     open: open ?? (() => openRecords({ stateDir: join(dir.path, 'state') })),
-    run: (cmd) => {
-      const active = states.get(cmd.at(-1) ?? '');
-      return Promise.resolve(active === undefined ? shown('inactive') : shown(active));
-    },
+    run:
+      run ??
+      ((cmd) => {
+        const active = states.get(cmd.at(-1) ?? '');
+        return Promise.resolve(active === undefined ? shown('inactive') : shown(active));
+      }),
   });
   const elsewhere = async (change: (store: RecordStore) => void) => {
     const other = await openRecords({ stateDir: join(dir.path, 'state') });
@@ -100,6 +108,37 @@ test('checks the supervisor of every service record, and nothing else', async ()
     ],
   });
 });
+
+// Needs an account id to name the gui domain with, which Windows has not.
+test.skipIf(process.getuid === undefined)(
+  'asks launchd about a launchd service in the gui domain of the account the Collector runs as',
+  async () => {
+    await using dir = await tempStateDir();
+    const asked: string[][] = [];
+    const c = await setup(dir, {
+      run: (cmd) => {
+        asked.push([...cmd]);
+        return Promise.resolve<CommandResult>({
+          exitCode: 113,
+          kind: 'exited',
+          stderr: 'Could not find service "com.example.web" in domain for user gui',
+          stdout: '',
+        });
+      },
+    });
+    await c.elsewhere((store) =>
+      store.put('service', { label: 'com.example.web', name: 'web', supervisor: 'launchd' }),
+    );
+
+    await c.checks.tick();
+    c.checks.close();
+
+    expect(asked).toEqual([
+      ['/bin/launchctl', 'print', `gui/${String(process.getuid?.())}/com.example.web`],
+      ['/bin/launchctl', 'print', 'system/com.example.web'],
+    ]);
+  },
+);
 
 test('a check keeps its since time while its state holds, and takes a new one when the state changes', async () => {
   await using dir = await tempStateDir();
