@@ -73,7 +73,9 @@ const latestOnDay = (
 // skips from 23:00 to midnight. No clock skips more than a day, so every time
 // of a day falls before every time two days later. The search therefore goes
 // back to the first day with a time, or the first that starts at or before
-// `notBefore`, and then one day more.
+// `notBefore`, and then one day more. It starts a day after the date the
+// clock reads at `atOrBefore`, since a clock falling back across midnight
+// reads the earlier date after the later date's first minutes have passed.
 export const latestScheduledTime = ({
   atOrBefore,
   notBefore,
@@ -87,7 +89,8 @@ export const latestScheduledTime = ({
 }): number | undefined => {
   let date = Temporal.Instant.fromEpochMilliseconds(atOrBefore)
     .toZonedDateTimeISO(timeZone)
-    .toPlainDate();
+    .toPlainDate()
+    .add({ days: 1 });
   let latest: number | undefined;
   let lastDay: number | undefined;
   for (

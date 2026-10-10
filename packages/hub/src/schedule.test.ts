@@ -163,6 +163,20 @@ describe('latestScheduledTime', () => {
     ).toBe(at('2026-03-29T01:30:00Z'));
   });
 
+  test("a repeated hour that crosses midnight can put today's first pass before the clock's date", () => {
+    // Goose Bay fell back from 00:00 on 30 October 1988 to 23:00 the day
+    // before. At 03:30 UTC its clock read 29 October, but 30 October's 00:00
+    // had already passed, at 02:00 UTC.
+    const latest = latestIn(
+      'America/Goose_Bay',
+      [{ hour: 0, minute: 0 }],
+      '1988-10-30T03:30:00Z',
+      at('1988-01-01T00:00:00Z'),
+    );
+
+    expect(latest).toBe(at('1988-10-30T02:00:00Z'));
+  });
+
   test("during a repeated hour, the first pass of a later time is today's", () => {
     // At 01:10 EST, the second pass, 01:45 EDT has already passed.
     expect(latestIn('America/New_York', [{ hour: 1, minute: 45 }], '2026-11-01T06:10:00Z')).toBe(
