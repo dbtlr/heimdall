@@ -42,6 +42,11 @@ export type Hub = Awaited<ReturnType<typeof startHub>>;
 export const issue = async (h: Hub, system: string) =>
   (await issueCode(h.db.sql, { now: h.clock.now, system })).code;
 
+// The times of a sample every 15 seconds from `from` until before `to` (epoch
+// milliseconds): the span a System was awake for.
+export const sampleTimes = (from: number, to: number) =>
+  Array.from({ length: Math.floor((to - from) / 15_000) }, (_, i) => from + i * 15_000);
+
 export const report = (system: string, times: number[]): Report => ({
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
   samples: times.map(sample),

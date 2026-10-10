@@ -6,7 +6,7 @@ import { evaluateConditions, runInTurn } from './evaluate-conditions.ts';
 import { listSystems } from './store.ts';
 import type { ConditionKind } from './store.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
-import { NOW, push, report, startHub } from './testing/hub.ts';
+import { NOW, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 const MINUTE = 60_000;
@@ -14,13 +14,14 @@ const MINUTE = 60_000;
 const CONFIG = { files: [{ path: '/etc/app.conf', sha256: 'a'.repeat(64) }], name: 'app-config' };
 
 // laptop-1 reported a failed job run, a changed file, and a Service that had
-// been stopped for 3 minutes at NOW and then went quiet, so by NOW + 11 minutes
-// it is failing a job, drifting, has a Service down, and is stale.
+// been stopped through 5 awake minutes up to NOW and then went quiet, so by
+// NOW + 11 minutes it is failing a job, drifting, has a Service down, and is
+// stale.
 const failingAndQuiet = async (h: Hub) => {
   const response = await push(
     h.hub,
     {
-      ...report('laptop-1', [NOW]),
+      ...report('laptop-1', sampleTimes(NOW - 5 * MINUTE, NOW + 15_000)),
       checks: {
         fileRecords: [{ digest: await filesRecordDigest(CONFIG), record: 'app-config' }],
         files: [{ path: '/etc/app.conf', record: 'app-config', since: NOW, state: 'drifted' }],
@@ -29,7 +30,7 @@ const failingAndQuiet = async (h: Hub) => {
             check: 'supervisor',
             detail: 'ActiveState=failed',
             service: 'webapp',
-            since: NOW - 3 * MINUTE,
+            since: NOW - 5 * MINUTE,
             state: 'stopped',
           },
         ],

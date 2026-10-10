@@ -4,14 +4,14 @@ import type { ServiceRecord } from '@heimdall/schema';
 
 import { evaluateServiceConditions } from './service-conditions.ts';
 import { listSystems } from './store.ts';
-import { openGeneration, page, push, report, startHub } from './testing/hub.ts';
+import { page, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 // Times are on 10 October 2026.
 const at = (time: string) => Date.parse(`2026-10-10T${time}Z`);
 
-const SECOND = 1000;
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
 const WEB: ServiceRecord = { name: 'web', supervisor: 'systemd', unit: 'web.service' };
 const DB: ServiceRecord = { name: 'db', supervisor: 'systemd-user', unit: 'db.service' };
@@ -31,20 +31,24 @@ const check = (
   detail = state === 'up' ? 'ActiveState=active' : 'ActiveState=failed',
 ) => ({ check: 'supervisor', detail, service, since, state });
 
-// Sends laptop-1's Report at `time` on the Hub's clock with the given sections.
-// `sentAt` is the Collector's clock when it sent, which a test can set apart
-// from the Hub's.
+// A sample every 15 seconds from `from` until before `to` on the System's
+// clock, which `skew` sets apart from the Hub's: the span the System was awake.
+const awake = (from: string, to: string, skew = 0) => sampleTimes(at(from) + skew, at(to) + skew);
+
+// Sends laptop-1's Report at `time` on the Hub's clock (a time on 10 October,
+// or epoch milliseconds) with the given sections and the System's awake
+// `samples`, a sample at `time` unless it says otherwise.
 const send = async (
   h: Hub,
-  time: string,
-  sections: { checks?: unknown; records?: unknown; sentAt?: number },
+  time: string | number,
+  sections: { checks?: unknown; records?: unknown; samples?: number[] },
 ) => {
-  h.clock.now = at(time);
+  h.clock.now = typeof time === 'number' ? time : at(time);
   const response = await push(
     h.hub,
     {
-      ...report('laptop-1', [at(time)]),
-      sentAt: sections.sentAt ?? h.clock.now,
+      ...report('laptop-1', sections.samples ?? [h.clock.now]),
+      sentAt: h.clock.now,
       ...(sections.records === undefined ? {} : { records: sections.records }),
       ...(sections.checks === undefined ? {} : { checks: sections.checks }),
     },
@@ -66,6 +70,7 @@ const downAndEvaluated = async (h: Hub) => {
   await send(h, '08:00:00', {
     checks: { services: [check('web', 'stopped', at('07:55:00'))] },
     records: set(WEB),
+    samples: awake('07:55:00', '08:00:00'),
   });
   await evaluate(h, '08:03:00');
 };
@@ -73,36 +78,36 @@ const downAndEvaluated = async (h: Hub) => {
 const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 
 describe('Service down', () => {
-  test('is raised for a Service whose check has failed for 2 minutes, with the Service as its subject', async () => {
+  test('is raised for a Service whose check has failed for 2 minutes of awake time, with the Service as its subject', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('07:58:00'))] },
+    await send(h, '08:02:00', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
+      samples: awake('08:00:00', '08:02:00'),
     });
 
-    const { open } = await evaluate(h, '08:00:00');
+    const { open } = await evaluate(h, '08:02:00');
 
     expect(open).toEqual([
       {
         kind: 'service_down',
-        raisedAt: at('08:00:00'),
+        raisedAt: at('08:02:00'),
         reason: 'Stopped: ActiveState=failed.',
         subject: 'web',
       },
     ]);
   });
 
-  test('is not raised until the check has failed for 2 minutes', async () => {
+  test('is not raised until the check has failed for 2 minutes of awake time', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('07:59:00'))] },
+    await send(h, '08:01:45', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
+      samples: awake('08:00:00', '08:01:45'),
     });
-
-    await send(h, '08:00:59', {});
-    const justBefore = await evaluate(h, '08:00:59');
-    await send(h, '08:01:00', {});
-    const atTwoMinutes = await evaluate(h, '08:01:00');
+    const justBefore = await evaluate(h, '08:01:45');
+    await send(h, '08:02:00', { samples: awake('08:01:45', '08:02:00') });
+    const atTwoMinutes = await evaluate(h, '08:02:00');
 
     expect(justBefore.open).toEqual([]);
     expect(subjects(atTwoMinutes.open)).toEqual(['web']);
@@ -111,40 +116,19 @@ describe('Service down', () => {
   test.each([
     ['ahead of the Hub', 3 * HOUR],
     ['behind the Hub', -3 * HOUR],
-  ])(
-    'counts how long the check has failed without trusting a System clock that is %s',
-    async (_, skew) => {
-      await using h = await startHub();
-      // The check had failed for 90 seconds when the Collector sent it, by its own clock.
-      await send(h, '08:00:00', {
-        checks: { services: [check('web', 'stopped', at('08:00:00') + skew - 90 * SECOND)] },
-        records: set(WEB),
-        sentAt: at('08:00:00') + skew,
-      });
-
-      await send(h, '08:00:29', {});
-      const early = await evaluate(h, '08:00:29');
-      await send(h, '08:00:30', {});
-      const due = await evaluate(h, '08:00:30');
-
-      expect(early.open).toEqual([]);
-      expect(subjects(due.open)).toEqual(['web']);
-    },
-  );
-
-  test('counts the time since the Hub received the checks, though the Collector sends them only when they change', async () => {
+  ])('counts awake time on the System clock alone, which is %s', async (_, skew) => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+    await send(h, '08:01:45', {
+      checks: { services: [check('web', 'stopped', at('08:00:00') + skew)] },
       records: set(WEB),
+      samples: awake('08:00:00', '08:01:45', skew),
     });
-    await send(h, '08:01:00', {});
-    const first = await evaluate(h, '08:01:00');
-    await send(h, '08:02:00', {});
-    const later = await evaluate(h, '08:02:00');
+    const early = await evaluate(h, '08:01:45');
+    await send(h, '08:02:00', { samples: awake('08:01:45', '08:02:00', skew) });
+    const due = await evaluate(h, '08:02:00');
 
-    expect(first.open).toEqual([]);
-    expect(subjects(later.open)).toEqual(['web']);
+    expect(early.open).toEqual([]);
+    expect(subjects(due.open)).toEqual(['web']);
   });
 
   test('is not raised by silence after a Report that said stopped, even days later', async () => {
@@ -153,66 +137,56 @@ describe('Service down', () => {
     await send(h, '08:00:00', {
       checks: { services: [check('web', 'stopped', at('07:59:30'))] },
       records: set(WEB),
+      samples: awake('07:59:30', '08:00:00'),
     });
 
     const minutes = await evaluate(h, '08:03:00');
-    const days = await evaluate(h, at('08:00:00') + 3 * 24 * HOUR);
+    const days = await evaluate(h, at('08:00:00') + 3 * DAY);
 
     expect(minutes.open).toEqual([]);
     expect(days.open).toEqual([]);
   });
 
-  test('counts the time up to Last seen only, however much later it is judged', async () => {
+  test('counts no time a System slept: after 60 s of failing and 2 days asleep it is not raised in its first minute awake', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
+    await send(h, '08:01:00', {
       checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
+      samples: awake('08:00:00', '08:01:00'),
     });
-    await send(h, '08:01:30', {});
+    const wake = at('08:00:00') + 2 * DAY;
+    // The first Report after waking moves Last seen by two days, which counts nothing.
+    await send(h, wake + 45_000, { samples: sampleTimes(wake, wake + 45_000) });
+    const early = await evaluate(h, wake + 45_000);
+    await send(h, wake + 60_000, { samples: sampleTimes(wake + 45_000, wake + 60_000) });
+    const due = await evaluate(h, wake + 60_000);
 
-    const { open } = await evaluate(h, '08:30:00');
+    expect(early.open).toEqual([]);
+    expect(subjects(due.open)).toEqual(['web']);
+  });
+
+  test('does not count awake time from before the check began failing', async () => {
+    await using h = await startHub();
+    await send(h, '08:31:00', {
+      checks: { services: [check('web', 'stopped', at('08:30:00'))] },
+      records: set(WEB),
+      samples: awake('07:00:00', '08:31:00'),
+    });
+
+    const { open } = await evaluate(h, '08:31:00');
 
     expect(open).toEqual([]);
   });
 
-  test('is raised once Reports go on arriving for 2 minutes, which move Last seen', async () => {
+  test('counts a Hub that judges long after the Reports as it did when they arrived, since only awake time counts', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
+    await send(h, '08:01:00', {
       checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
+      samples: awake('08:00:00', '08:01:00'),
     });
-    await send(h, '08:01:59', {});
-    const before = await evaluate(h, '08:01:59');
-    await send(h, '08:02:00', {});
-    const after = await evaluate(h, '08:02:00');
 
-    expect(before.open).toEqual([]);
-    expect(subjects(after.open)).toEqual(['web']);
-  });
-
-  test('is raised once uploads that are not Reports move Last seen for 2 minutes', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
-      records: set(WEB),
-    });
-    h.clock.now = at('08:02:00');
-    await openGeneration(h.hub, '{', { token: 'laptop-token' });
-
-    const { open } = await evaluate(h, '08:02:00');
-
-    expect(subjects(open)).toEqual(['web']);
-  });
-
-  test('does not count time after the moment it is judged, though the System was seen later', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
-      records: set(WEB),
-    });
-    await send(h, '08:05:00', {});
-
-    const { open } = await evaluate(h, '08:01:00');
+    const { open } = await evaluate(h, '09:30:00');
 
     expect(open).toEqual([]);
   });
@@ -221,9 +195,10 @@ describe('Service down', () => {
     await using h = await startHub();
     await send(h, '08:00:00', {
       checks: {
-        services: [check('web', 'stopped', at('07:00:00'), 'LoadState=not-found')],
+        services: [check('web', 'stopped', at('07:55:00'), 'LoadState=not-found')],
       },
       records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');
@@ -251,12 +226,13 @@ describe('Service down', () => {
     await send(h, '08:00:00', {
       checks: {
         services: [
-          check('web', 'stopped', at('07:00:00')),
-          check('db', 'stopped', at('07:00:00')),
-          check('cache', 'up', at('07:00:00')),
+          check('web', 'stopped', at('07:55:00')),
+          check('db', 'stopped', at('07:55:00')),
+          check('cache', 'up', at('07:55:00')),
         ],
       },
       records: set(WEB, DB, { name: 'cache', supervisor: 'systemd', unit: 'cache.service' }),
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');
@@ -296,11 +272,12 @@ describe('Service down', () => {
     await send(h, '08:00:00', {
       checks: {
         services: [
-          check('web', 'unknown', at('07:00:00'), 'bus unavailable'),
-          check('db', 'unchecked', at('07:00:00'), 'launchd is not checked'),
+          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
+          check('db', 'unchecked', at('07:55:00'), 'launchd is not checked'),
         ],
       },
       records: set(WEB, DB),
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '09:00:00');
@@ -321,8 +298,9 @@ describe('Service down', () => {
   test('is not raised for a check of a Service the Hub mirrors no record for', async () => {
     await using h = await startHub();
     await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('07:00:00'))] },
+      checks: { services: [check('web', 'stopped', at('07:55:00'))] },
       records: set(),
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');
@@ -335,9 +313,10 @@ describe('Service down', () => {
     await send(h, '08:00:00', {
       checks: {
         overBudget: { files: { bytes: 2_000_000 } },
-        services: [check('web', 'stopped', at('07:00:00'))],
+        services: [check('web', 'stopped', at('07:55:00'))],
       },
       records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');
@@ -395,7 +374,7 @@ describe('Service down', () => {
 
   test('judges nothing, and does not fail, for a System that sent checks but never records', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', { checks: { services: [check('web', 'stopped', at('07:00:00'))] } });
+    await send(h, '08:00:00', { checks: { services: [check('web', 'stopped', at('07:55:00'))] } });
 
     const { open } = await evaluate(h, '08:05:00');
 
@@ -408,6 +387,7 @@ describe('Service down', () => {
     await send(h, '08:04:00', {
       checks: { services: [check('web', 'up', at('08:03:30'))] },
       records: { overBudget: { bytes: 9e6 } },
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');
@@ -487,8 +467,9 @@ describe('Service down', () => {
   test('is raised for a Service even while another service record is unreadable', async () => {
     await using h = await startHub();
     await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('07:00:00'))] },
+      checks: { services: [check('web', 'stopped', at('07:55:00'))] },
       records: { ...set(WEB), unreadable: [{ kind: 'service', name: 'other' }] },
+      samples: awake('07:55:00', '08:00:00'),
     });
 
     const { open } = await evaluate(h, '08:05:00');

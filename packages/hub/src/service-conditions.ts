@@ -3,6 +3,7 @@ import type { ServiceCheck } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { awakeCutoffOf, latestBucketOf } from './awake-time.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
 
@@ -29,47 +30,26 @@ const StoredServicesSchema = z.array(
 
 const UnreadableRecordsSchema = z.array(z.object({ kind: z.string(), name: z.string() }));
 
-type HeldRow = { last_seen_at: Date | null; name: string };
-type CheckSetRow = {
-  received_at: Date;
-  sent_at: Date;
-  services: unknown;
-};
+type CheckSetRow = { services: unknown };
 type RecordSetRow = { over_budget_bytes: string | null; unreadable: unknown };
 
 // How the reason names a failing state. A health check will join as unhealthy.
 const FAILING_STATES: Partial<Record<ServiceCheck['state'], string>> = { stopped: 'Stopped' };
 
-// How long the check has been failing, as the Hub knows it: how long it had
-// failed when the Collector sent the checks, by the Collector's clock alone,
-// plus how long the System went on being seen after the Hub received them, by
-// the Hub's clock alone. The Hub counts no time after the System was last seen,
-// since it does not know the Service was still stopped then. The two clocks
-// are never compared, so a System whose clock is off by a steady amount is
-// judged right.
-const failingForMs = (
-  check: ServiceCheck,
-  {
-    lastSeenAt,
-    now,
-    receivedAt,
-    sentAt,
-  }: { lastSeenAt: number; now: number; receivedAt: number; sentAt: number },
-) => Math.max(0, sentAt - check.since) + Math.max(0, Math.min(now, lastSeenAt) - receivedAt);
-
 // What one Service's checks say. It is down once any check has been failing for
-// long enough; the reason names the first such check, supervisor before the
-// rest. It is up, and its Condition clears, when every check that was made
-// passes. Anything else, including a check that is unknown or failed only
-// recently, or a Service with no check made, leaves the Condition as it is.
+// long enough, in the System's awake time; the reason names the first such
+// check, supervisor before the rest. It is up, and its Condition clears, when
+// every check that was made passes. Anything else, including a check that is
+// unknown or failed only recently, or a Service with no check made, leaves the
+// Condition as it is.
 const verdictOf = (
   checks: readonly ServiceCheck[],
-  failingFor: (check: ServiceCheck) => number,
+  failedLongEnough: (check: ServiceCheck) => boolean,
 ) => {
   const ordered = SERVICE_CHECK_KINDS.flatMap((kind) => checks.filter((c) => c.check === kind));
   for (const check of ordered) {
     const label = FAILING_STATES[check.state];
-    if (label !== undefined && failingFor(check) >= SERVICE_DOWN_AFTER_MS) {
+    if (label !== undefined && failedLongEnough(check)) {
       return { raise: `${label}: ${check.detail}.` } satisfies Verdict;
     }
   }
@@ -89,12 +69,12 @@ const verdictOf = (
 // unreadable, since that record may be the Service.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
-    const [held]: HeldRow[] = await tx`
-      SELECT name, last_seen_at FROM systems WHERE name = ${system} FOR UPDATE
+    const [held]: { name: string }[] = await tx`
+      SELECT name FROM systems WHERE name = ${system} FOR UPDATE
     `;
     const now = clock();
     const [checkSet]: CheckSetRow[] = await tx`
-      SELECT sent_at, received_at, services FROM check_sets WHERE system = ${system}
+      SELECT services FROM check_sets WHERE system = ${system}
     `;
     const [recordSet]: RecordSetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
@@ -119,14 +99,21 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     );
     // No services part, or one the Hub cannot read, judges no Service.
     const checks = StoredServicesSchema.safeParse(checkSet.services).data ?? [];
-    const receivedAt = checkSet.received_at.getTime();
-    const failingFor = (check: ServiceCheck) =>
-      failingForMs(check, {
-        lastSeenAt: held.last_seen_at?.getTime() ?? receivedAt,
-        now,
-        receivedAt,
-        sentAt: checkSet.sent_at.getTime(),
-      });
+    // A check has failed for long enough once the System was awake for that
+    // long since its `since`, counted in whole rollup buckets from the System's
+    // Vitals through its latest sample. Both are on the System's clock, so
+    // neither the Hub's clock nor the time the System spent silent or asleep
+    // counts. The Hub's clock bounds nothing, since a System whose clock runs
+    // ahead would then never be judged.
+    const latest = await latestBucketOf(tx, system);
+    const awakeCutoff =
+      latest === undefined
+        ? undefined
+        : (await awakeCutoffOf(tx, { maxGraceMs: SERVICE_DOWN_AFTER_MS, system, through: latest }))(
+            SERVICE_DOWN_AFTER_MS,
+          );
+    const failedLongEnough = (check: ServiceCheck) =>
+      awakeCutoff !== undefined && check.since <= awakeCutoff;
 
     const verdicts = new Map<string, Verdict>();
     for (const { name } of mirrored) {
@@ -134,7 +121,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
         name,
         verdictOf(
           checks.filter((c) => c.service === name),
-          failingFor,
+          failedLongEnough,
         ),
       );
     }
