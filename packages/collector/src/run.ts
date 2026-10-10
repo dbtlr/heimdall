@@ -9,6 +9,8 @@ import type { ActionHandler } from '@loomcli/core';
 import packageJson from '../package.json' with { type: 'json' };
 import type { run } from './application.ts';
 import { startChecks } from './checks/loop.ts';
+import { combineParts } from './checks/parts.ts';
+import { startServiceChecks } from './checks/services-loop.ts';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import type { ReportIdentity } from './delivery.ts';
@@ -174,15 +176,22 @@ export const runAction: ActionHandler<typeof run> = async ({
     // The daemon only reads the store; `record` and `forget` write it. The
     // checks and the reporter each open it on first use, through a connection
     // of their own, so a store that will not open costs only the checks, the
-    // records, and the runs.
-    const checks = startChecks({
+    // records, and the runs. The file checks hash on their own schedule and the
+    // Service checks run every minute, each in a loop of its own, and the
+    // reporter sends the parts of both as one section.
+    const fileChecks = startChecks({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
       signal,
     });
+    const serviceChecks = startServiceChecks({
+      log: runtime,
+      now: Date.now,
+      open: () => openRecords({ stateDir }),
+    });
     const sections = createSectionsReporter({
-      checks,
+      checks: combineParts([fileChecks, serviceChecks]),
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
@@ -208,7 +217,8 @@ export const runAction: ActionHandler<typeof run> = async ({
       });
     } finally {
       await stopCapture();
-      await checks.stop();
+      await serviceChecks.stop();
+      await fileChecks.stop();
       spool.close();
       sections.close();
       queue.close();

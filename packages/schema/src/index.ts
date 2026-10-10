@@ -68,8 +68,11 @@ export {
   ChecksSectionSchema,
   FILE_CHECK_STATES,
   filesRecordDigest,
-  MAX_CHECKS_SECTION_BYTES,
+  MAX_CHECK_DETAIL_LENGTH,
+  MAX_CHECKS_PART_BYTES,
   mirrorChecks,
+  SERVICE_CHECK_KINDS,
+  SERVICE_CHECK_STATES,
 } from './checks-section.ts';
 export type {
   ChecksSection,
@@ -79,4 +82,8 @@ export type {
   MirroredChecks,
   SentFileCheck,
   SentFileRecord,
+  SentServiceCheck,
+  ServiceCheck,
+  ServiceCheckKind,
+  ServiceCheckState,
 } from './checks-section.ts';

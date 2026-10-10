@@ -3,24 +3,11 @@ import { cpus, loadavg, totalmem, uptime } from 'node:os';
 
 import type { VitalsSample } from '@heimdall/schema';
 
+import { readCommand } from '../subprocess.ts';
 import { darwinMounts, diskUsage, linuxMounts } from './disks.ts';
 import type { Disk } from './disks.ts';
 import { darwinMemory, linuxMemory } from './memory.ts';
 import type { HostProbe } from './sampler.ts';
-
-// Runs a system tool by absolute path, since a launchd agent's PATH is minimal.
-const runTool = async (cmd: string[]): Promise<string> => {
-  const child = Bun.spawn({ cmd, stderr: 'pipe', stdout: 'pipe' });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  if (exitCode !== 0) {
-    throw new Error(`${cmd.join(' ')} exited ${String(exitCode)}: ${stderr}`);
-  }
-  return stdout;
-};
 
 // Usage for each mount point. A mount that vanished since it was listed is skipped.
 const usage = async (mountPoints: string[]): Promise<Disk[]> => {
@@ -40,8 +27,8 @@ const platformReadings = (platform: NodeJS.Platform): Pick<HostProbe, 'disks' | 
   switch (platform) {
     case 'darwin': {
       return {
-        disks: async () => usage(darwinMounts(await runTool(['/sbin/mount']))),
-        memory: async () => darwinMemory(await runTool(['/usr/bin/vm_stat']), totalmem()),
+        disks: async () => usage(darwinMounts(await readCommand(['/sbin/mount']))),
+        memory: async () => darwinMemory(await readCommand(['/usr/bin/vm_stat']), totalmem()),
       };
     }
     case 'linux': {

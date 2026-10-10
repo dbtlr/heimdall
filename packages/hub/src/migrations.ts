@@ -323,6 +323,31 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 11,
   },
+  {
+    // Checks arrive in parts, and a part over budget no longer hides the
+    // others, so `check_sets` keeps the size of each part that was too large to
+    // send: the files part's in `files_over_budget_bytes`, which was
+    // `over_budget_bytes` when it covered the whole section, and the services
+    // part's in `services_over_budget_bytes`. `services` lists each check of
+    // each recorded Service: its service, check, state, detail, and the epoch
+    // milliseconds the Collector first saw that state. It is null when the
+    // section carried no services part, which is not the same as an empty list:
+    // a Collector without Service checks says nothing about any Service.
+    // `files` and `file_records` are null when the section carried no files
+    // part, which says the Collector has not finished a file pass yet and is
+    // not the same as a files part that lists nothing, or when the files part
+    // was too large to send. Checks stored before keep their lists.
+    sql: `
+      ALTER TABLE check_sets RENAME COLUMN over_budget_bytes TO files_over_budget_bytes;
+      ALTER TABLE check_sets ADD COLUMN services jsonb;
+      ALTER TABLE check_sets ADD COLUMN services_over_budget_bytes bigint;
+      ALTER TABLE check_sets ALTER COLUMN files DROP NOT NULL;
+      ALTER TABLE check_sets ALTER COLUMN files DROP DEFAULT;
+      ALTER TABLE check_sets ALTER COLUMN file_records DROP NOT NULL;
+      ALTER TABLE check_sets ALTER COLUMN file_records DROP DEFAULT;
+    `,
+    version: 12,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

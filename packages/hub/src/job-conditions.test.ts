@@ -6,7 +6,7 @@ import type { JobRecord, RunRecord } from '@heimdall/schema';
 import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { listSystems } from './store.ts';
-import { page, push, report, startHub } from './testing/hub.ts';
+import { page, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 
@@ -41,8 +41,7 @@ const runsOf = (job: string, latestRun: RunRecord, latestSuccess: RunRecord | nu
 
 // A sample every 15 seconds from `from` until before `to`: the System was
 // awake for that span.
-const awake = (from: string, to: string) =>
-  Array.from({ length: (at(to) - at(from)) / 15_000 }, (_, i) => at(from) + i * 15_000);
+const awake = (from: string, to: string) => sampleTimes(at(from), at(to));
 
 // Sends a System's Reports, laptop-1's unless `system` says otherwise, at
 // `time` on the Hub's clock, carrying `samples` and, in the first, the given
