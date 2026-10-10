@@ -4,6 +4,7 @@ import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceCheckKind, ServiceCheckState, ServiceRecord } from '@heimdall/schema';
 
 import type { CommandResult } from '../subprocess.ts';
+import { launchdOutcome } from './launchd.ts';
 
 // What one check of a Service found.
 export type ServiceOutcome = {
@@ -13,10 +14,12 @@ export type ServiceOutcome = {
 };
 
 // What a check needs from the System: a way to run a command and the absolute
-// path of systemctl, or undefined when this System has none.
+// path of systemctl, or undefined when this System has none, and the id of the
+// account the Collector runs as, which names its launchd gui domain.
 export type ServiceTools = {
   run: (cmd: readonly string[]) => Promise<CommandResult>;
   systemctl: string | undefined;
+  uid?: number | undefined;
 };
 
 // Where systemctl lives on the Linux distributions the Collector runs on. A
@@ -145,7 +148,7 @@ const systemdOutcome = async (
 };
 
 // The supervisor check of a Service, by the supervisor that runs it. Checks for
-// launchd and docker join here as they are built.
+// docker join here as they are built.
 const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<ServiceOutcome> => {
   switch (record.supervisor) {
     case 'systemd': {
@@ -154,7 +157,11 @@ const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<Se
     case 'systemd-user': {
       return systemdOutcome(tools, { scope: 'user', unit: record.unit });
     }
-    case 'launchd':
+    case 'launchd': {
+      return launchdOutcome(tools, record.label).then(({ detail, state }) =>
+        supervisorOutcome(state, detail),
+      );
+    }
     case 'docker':
     case 'none': {
       return Promise.resolve(supervisorOutcome('unchecked', `${record.supervisor} is not checked`));

@@ -245,7 +245,6 @@ describe('a systemd-user Service', () => {
 
 describe('a Service whose supervisor this Collector does not check yet', () => {
   test.each([
-    ['launchd', { label: 'com.example.web', name: 'web', supervisor: 'launchd' }],
     ['docker', { container: 'web', name: 'web', supervisor: 'docker' }],
     ['none', { name: 'web', supervisor: 'none' }],
   ] as const)('is unchecked under %s, not down, and nothing is run', async (supervisor, record) => {
