@@ -1,8 +1,10 @@
-import { REPORTED_RECORD_SCHEMAS, REPORTED_RUN_SCHEMA, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
+import { REPORTED_RECORD_SCHEMAS, REPORTED_RUN_SCHEMA } from '@heimdall/schema';
 import type { JobRecord, RunRecord } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { awakeCutoffOf } from './awake-time.ts';
+import type { AwakeCutoff } from './awake-time.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import { latestScheduledTime } from './schedule.ts';
 import type { ConditionKind } from './store.ts';
@@ -11,15 +13,6 @@ import type { ConditionKind } from './store.ts';
 // for a successful run before it raises job overdue, unless the job's record
 // sets its own grace period.
 export const DEFAULT_GRACE_MINUTES = 60;
-
-// How far back the Hub looks for a System's awake time. A grace period the
-// System was not awake for within it has not run out, so job overdue is
-// neither raised nor cleared.
-const AWAKE_HORIZON_MS = 90 * 24 * 60 * 60_000;
-
-// The most samples a Vitals rollup bucket (ADR-0008) counts as awake time:
-// its 5 minutes.
-const SAMPLES_PER_BUCKET = (5 * 60_000) / SAMPLE_INTERVAL_MS;
 
 const JOB_KINDS = ['job_failing', 'job_overdue'] as const satisfies readonly ConditionKind[];
 
@@ -31,10 +24,6 @@ type Verdict = { raise: string } | 'clear' | 'unknown';
 // A job's latest run and latest success, null when it has not reported a run,
 // or 'unknown' when the Hub cannot tell.
 type LatestRuns = { latestRun: RunRecord; latestSuccess: RunRecord | null } | null | 'unknown';
-
-// The start of the earliest rollup bucket from which the System was awake for
-// at least `graceMs` up to now, or undefined when it has not been.
-type AwakeCutoff = (graceMs: number) => number | undefined;
 
 // How long, in awake time, the Hub waits for a successful run of `record`.
 const graceMsOf = (record: JobRecord) => (record.graceMinutes ?? DEFAULT_GRACE_MINUTES) * 60_000;
@@ -109,7 +98,6 @@ const overdueVerdict = ({
 type JobRow = { first_mirrored_at: Date | null; name: string; record: unknown };
 type RunRow = { job: string; latest_run: unknown; latest_success: unknown };
 type SetRow = { over_budget_bytes: string | null; unreadable: unknown };
-type BucketRow = { awake_samples: string; bucket: Date };
 
 // The unreadable rows a record set or a runs section lists, as the Hub stored
 // them: record references, and job names.
@@ -152,30 +140,6 @@ const latestRunsOf = async (tx: SQL, system: string): Promise<(job: string) => L
   return (job) => (unreadable.has(job) ? 'unknown' : (runs.get(job) ?? null));
 };
 
-// The System's awake time, from the samples its Collector took every
-// SAMPLE_INTERVAL_MS, counted per 5-minute bucket up to `now`, for grace
-// periods up to `maxGraceMs`. A bucket after `now` comes from a clock running
-// ahead and is not counted. Only the buckets up to the one that completes the
-// longest grace period are read, since no older one is ever a cutoff.
-const awakeCutoffOf = async (
-  tx: SQL,
-  { maxGraceMs, now, system }: { maxGraceMs: number; now: number; system: string },
-): Promise<AwakeCutoff> => {
-  const buckets: BucketRow[] = await tx`
-    SELECT bucket, awake_samples FROM (
-      SELECT bucket, LEAST(samples, ${SAMPLES_PER_BUCKET}) AS counted,
-             sum(LEAST(samples, ${SAMPLES_PER_BUCKET})) OVER (ORDER BY bucket DESC) AS awake_samples
-      FROM vitals_rollups
-      WHERE system = ${system} AND bucket <= ${new Date(now)}
-        AND bucket > ${new Date(now - AWAKE_HORIZON_MS)}
-    ) b
-    WHERE awake_samples - counted < ${Math.ceil(maxGraceMs / SAMPLE_INTERVAL_MS)}
-    ORDER BY bucket DESC
-  `;
-  return (graceMs) =>
-    buckets.find((b) => Number(b.awake_samples) * SAMPLE_INTERVAL_MS >= graceMs)?.bucket.getTime();
-};
-
 // Raises and clears one System's job Conditions under the System's row lock,
 // so they order with its Reports (ADR-0005), at the time `clock` reads once
 // the lock is held.
@@ -216,8 +180,8 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
         0,
         ...records.map(({ parsed }) => (parsed.success ? graceMsOf(parsed.data) : 0)),
       ),
-      now,
       system,
+      through: now,
     });
 
     const verdicts = new Map<string, Record<'job_failing' | 'job_overdue', Verdict>>();
