@@ -45,15 +45,35 @@ const instantOf = (date: Temporal.PlainDate, minuteOfDay: number, timeZone: stri
     .toPlainDateTime({ hour: Math.floor(minuteOfDay / 60), minute: minuteOfDay % 60 })
     .toZonedDateTime(timeZone, { disambiguation: 'compatible' }).epochMilliseconds;
 
+// The latest of `date`'s scheduled times at or before `atOrBefore`, as an
+// instant, or undefined when it has none.
+const latestOnDay = (
+  schedule: readonly CalendarEntry[],
+  date: Temporal.PlainDate,
+  timeZone: string,
+  atOrBefore: number,
+) => {
+  let latest: number | undefined;
+  for (const minute of new Set(schedule.filter((e) => firesOn(e, date)).flatMap(minutesOfDay))) {
+    const instant = instantOf(date, minute, timeZone);
+    if (instant <= atOrBefore && (latest === undefined || instant > latest)) {
+      latest = instant;
+    }
+  }
+  return latest;
+};
+
 // The latest time `schedule` names at or before `atOrBefore` and no earlier
 // than `notBefore` (epoch milliseconds), reading its entries as wall-clock
 // times in `timeZone`, or undefined when there is none. Throws a RangeError for
 // a zone this runtime does not know.
 //
-// Each day's times are compared as instants, since a clock change can resolve
-// a minute earlier on the clock to a later instant. Every time of a day falls
-// after every time of the day before, so the search stops at the first day,
-// going back, that has a time at or before `atOrBefore`.
+// Times are compared as instants, since a clock change can resolve a minute
+// earlier on the clock to a later instant, even one on the day before: Nuuk
+// skips from 23:00 to midnight. No clock skips more than a day, so every time
+// of a day falls before every time two days later. The search therefore goes
+// back to the first day with a time, or the first that starts at or before
+// `notBefore`, and then one day more.
 export const latestScheduledTime = ({
   atOrBefore,
   notBefore,
@@ -68,23 +88,24 @@ export const latestScheduledTime = ({
   let date = Temporal.Instant.fromEpochMilliseconds(atOrBefore)
     .toZonedDateTimeISO(timeZone)
     .toPlainDate();
-  for (let days = 0; days <= MAX_DAYS_BACK; days += 1) {
-    const minutes = new Set(schedule.filter((e) => firesOn(e, date)).flatMap(minutesOfDay));
-    let latest: number | undefined;
-    for (const minute of minutes) {
-      const instant = instantOf(date, minute, timeZone);
-      if (instant <= atOrBefore && (latest === undefined || instant > latest)) {
-        latest = instant;
-      }
+  let latest: number | undefined;
+  let lastDay: number | undefined;
+  for (
+    let days = 0;
+    days <= MAX_DAYS_BACK && (lastDay === undefined || days <= lastDay);
+    days += 1
+  ) {
+    const onDay = latestOnDay(schedule, date, timeZone, atOrBefore);
+    if (onDay !== undefined && (latest === undefined || onDay > latest)) {
+      latest = onDay;
     }
-    if (latest !== undefined) {
-      return latest >= notBefore ? latest : undefined;
-    }
-    // Every time of an earlier day falls before this day starts.
-    if (instantOf(date, 0, timeZone) <= notBefore) {
-      return undefined;
+    if (
+      lastDay === undefined &&
+      (onDay !== undefined || instantOf(date, 0, timeZone) <= notBefore)
+    ) {
+      lastDay = days + 1;
     }
     date = date.subtract({ days: 1 });
   }
-  return undefined;
+  return latest !== undefined && latest >= notBefore ? latest : undefined;
 };

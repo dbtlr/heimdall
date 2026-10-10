@@ -142,6 +142,27 @@ describe('latestScheduledTime', () => {
     );
   });
 
+  test("a skipped time late in a day can fall after the next day's first times", () => {
+    // Nuuk skips from 23:00 on 28 March to 00:00 the next day: Saturday's
+    // 23:30 falls at 01:30 UTC, after Sunday's 00:10 at 01:10 UTC.
+    const schedule = [
+      { hour: 23, minute: 30 },
+      { hour: 0, minute: 10 },
+    ];
+
+    expect(latestIn('America/Nuuk', schedule, '2026-03-29T01:40:00Z')).toBe(
+      at('2026-03-29T01:30:00Z'),
+    );
+    expect(
+      latestIn(
+        'America/Nuuk',
+        [{ hour: 23, minute: 30 }],
+        '2026-03-29T01:40:00Z',
+        at('2026-03-29T01:20:00Z'),
+      ),
+    ).toBe(at('2026-03-29T01:30:00Z'));
+  });
+
   test("during a repeated hour, the first pass of a later time is today's", () => {
     // At 01:10 EST, the second pass, 01:45 EDT has already passed.
     expect(latestIn('America/New_York', [{ hour: 1, minute: 45 }], '2026-11-01T06:10:00Z')).toBe(
@@ -174,4 +195,81 @@ describe('latestScheduledTime', () => {
       RangeError,
     );
   });
+});
+
+// The definition, by brute force: every wall-clock minute of the days around
+// `atOrBefore` that an entry names, resolved as Temporal's `compatible` does,
+// and the latest instant in range.
+const bruteForce = ({
+  atOrBefore,
+  notBefore,
+  schedule,
+  timeZone,
+}: Parameters<typeof latestScheduledTime>[0]) => {
+  const last = Temporal.Instant.fromEpochMilliseconds(atOrBefore)
+    .toZonedDateTimeISO(timeZone)
+    .toPlainDate()
+    .add({ days: 1 });
+  let latest: number | undefined;
+  for (let back = 0; back < 6; back += 1) {
+    const date = last.subtract({ days: back });
+    for (let minute = 0; minute < 1440; minute += 1) {
+      const fires = schedule.some(
+        (e) =>
+          (e.hour === undefined || e.hour === Math.floor(minute / 60)) &&
+          (e.minute === undefined || e.minute === minute % 60),
+      );
+      if (fires) {
+        const instant = date
+          .toPlainDateTime({ hour: Math.floor(minute / 60), minute: minute % 60 })
+          .toZonedDateTime(timeZone, { disambiguation: 'compatible' }).epochMilliseconds;
+        if (
+          instant <= atOrBefore &&
+          instant >= notBefore &&
+          (latest === undefined || instant > latest)
+        ) {
+          latest = instant;
+        }
+      }
+    }
+  }
+  return latest;
+};
+
+test('agrees with brute force around clock changes in several zones', () => {
+  // A seeded generator, so a failure repeats.
+  let seed = 39;
+  const random = (n: number) => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
+    return seed % n;
+  };
+  const transitions = [
+    ['America/New_York', '2026-03-08T07:00:00Z'],
+    ['America/New_York', '2026-11-01T06:00:00Z'],
+    ['America/Havana', '2026-03-08T05:00:00Z'],
+    ['America/Havana', '2026-11-01T05:00:00Z'],
+    ['America/Nuuk', '2026-03-29T01:00:00Z'],
+    ['America/Nuuk', '2026-10-25T01:00:00Z'],
+    ['Australia/Lord_Howe', '2026-10-03T15:30:00Z'],
+    ['Australia/Lord_Howe', '2026-04-04T15:00:00Z'],
+    ['Pacific/Apia', '2011-12-30T10:00:00Z'],
+    ['Asia/Kathmandu', '2026-10-10T00:00:00Z'],
+  ] as const;
+  for (const [timeZone, transition] of transitions) {
+    for (let i = 0; i < 200; i += 1) {
+      // Hours near midnight and the small hours, where clocks change, half the time.
+      const hour = () => (random(2) === 0 ? random(24) : [22, 23, 0, 1, 2, 3][random(6)]);
+      const schedule = Array.from({ length: 1 + random(3) }, () =>
+        random(4) === 0 ? { minute: random(60) } : { hour: hour(), minute: random(60) },
+      );
+      const atOrBefore = at(transition) + (random(48 * 60) - 24 * 60) * 60_000;
+      const notBefore = atOrBefore - random(36 * 60) * 60_000;
+      const input = { atOrBefore, notBefore, schedule, timeZone };
+
+      expect({ input, latest: latestScheduledTime(input) }).toEqual({
+        input,
+        latest: bruteForce(input),
+      });
+    }
+  }
 });
