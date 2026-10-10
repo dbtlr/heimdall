@@ -326,6 +326,13 @@ describe('a text field', () => {
     },
   );
 
+  test.each(['com.example/web', '/com.example.web', 'gui/501/com.example.web'])(
+    'a launchd label of %s is refused, since launchctl reads a / as part of the service target',
+    (label) => {
+      expect(accepts(ServiceRecordSchema, { label, name: 's', supervisor: 'launchd' })).toBe(false);
+    },
+  );
+
   test('a launchd label and a container are not read as patterns', () => {
     expect(
       accepts(ServiceRecordSchema, { label: 'com.example.*', name: 's', supervisor: 'launchd' }),
