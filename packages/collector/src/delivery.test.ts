@@ -274,7 +274,7 @@ describe('flushing the queue', () => {
       transcripts: () => NO_TRANSCRIPTS,
     });
 
-    // Only the first Report of the flush carries the sections.
+    // Only the first Report that fits under the cap carries the sections.
     expect(hub.reports.map((r) => [r.records !== undefined, r.runs !== undefined])).toEqual([
       [false, true],
       [false, false],

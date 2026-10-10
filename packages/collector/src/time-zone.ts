@@ -27,7 +27,7 @@ export const zoneOfLocaltimeLink = (target: string): string | undefined => {
 // `readLink` returns a link's target, and is a parameter so a test can supply
 // another.
 export const systemTimeZone = (
-  // One syscall, at most every 15 seconds, so it blocks the loop for no time worth an async hop.
+  // One syscall per Report, which blocks the loop for no time worth an async hop.
   // oxlint-disable-next-line node/no-sync -- see above.
   readLink: (path: string) => string = (path) => readlinkSync(path),
 ): string | undefined => {
