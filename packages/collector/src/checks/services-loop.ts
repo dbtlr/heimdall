@@ -105,7 +105,7 @@ export const createServiceChecks = ({
       );
     }
     warnedAbout = warning;
-    const tools = { run, systemctl: await locateSystemctl() };
+    const tools = { run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
     const checkedAt = now();
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.

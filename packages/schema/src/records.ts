@@ -36,6 +36,13 @@ const systemdUnit = text().refine((unit) => !/[*?[]/u.test(unit) && !/^\d+$/u.te
   message: 'must name one unit: no *, ? or [ and not only digits',
 });
 
+// The label of one launchd service. `launchctl print` takes the service as
+// `<domain>/<label>`, so a label with a `/` would name a different target or
+// none. launchctl takes every other character literally, `*` and `?` included.
+const launchdLabel = text().refine((label) => !label.includes('/'), {
+  message: 'must name one label: no /',
+});
+
 const MAX_PORT = 65_535;
 
 const port = z.int().min(1).max(MAX_PORT);
@@ -165,7 +172,7 @@ const recordSchemas = (
     service: z.discriminatedUnion('supervisor', [
       object({ ...service, supervisor: z.literal('systemd'), unit: systemdUnit }),
       object({ ...service, supervisor: z.literal('systemd-user'), unit: systemdUnit }),
-      object({ ...service, label: text(), supervisor: z.literal('launchd') }),
+      object({ ...service, label: launchdLabel, supervisor: z.literal('launchd') }),
       object({ ...service, container: text(), supervisor: z.literal('docker') }),
       object({ ...service, supervisor: z.literal('none') }),
     ]),

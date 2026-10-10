@@ -2,6 +2,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { readIfPresent } from './files.ts';
+import { isServiceNotLoaded, readPrintedService } from './launchctl.ts';
+import type { PrintedService } from './launchctl.ts';
 import { launchdPlistPath } from './names.ts';
 import { renderLaunchdPlist } from './plist.ts';
 import type { CommandResult, CommandRunner } from './runner.ts';
@@ -10,9 +12,11 @@ import type { Supervisor, UnitStatus } from './supervisor.ts';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// The exit codes launchctl gives when the service is not in the domain:
-// 113 "Could not find specified service", and 3 "No such process" from some
-// releases' bootout.
+// The exit codes launchctl gives for a `bootout` or a domain `print` of
+// something that is not there: 113, and 3 "No such process" from some releases'
+// bootout. Neither prints the "Could not find service" message that `print` of
+// a service does, so they are judged by code alone; `print` of the service goes
+// through `isServiceNotLoaded`, which also needs the message.
 const NOT_LOADED_CODES = new Set([3, 113]);
 
 // `bootout` can return, or report 36 "Operation now in progress", before
@@ -43,30 +47,16 @@ const failure = (verb: string, result: CommandResult) => {
   );
 };
 
-// The service's own properties from `launchctl print`: the lines one tab in,
-// `key = value`. Nested blocks sit deeper and are skipped.
-const topLevel = (stdout: string) =>
-  new Map(
-    stdout.split('\n').flatMap((line) => {
-      const match = /^\t([^\t=][^=]*?) = (.*)$/u.exec(line);
-      return match?.[1] === undefined || match[2] === undefined
-        ? []
-        : [[match[1], match[2].trim()] as const];
-    }),
-  );
-
 // The agent's state in plain words, as systemd's backend words its own:
 // `running (pid N)`, `stopped`, or launchd's state, such as `spawn scheduled`.
-const activity = (props: Map<string, string>) => {
-  const state = props.get('state') ?? 'unknown';
-  const pid = Number(props.get('pid') ?? '0');
-  if (state === 'running') {
+const activity = ({ pid, running, state }: PrintedService) => {
+  if (running) {
     return {
-      running: true,
-      words: Number.isInteger(pid) && pid > 0 ? `running (pid ${String(pid)})` : 'running',
+      running,
+      words: pid === undefined || pid === 0 ? 'running' : `running (pid ${String(pid)})`,
     };
   }
-  return { running: false, words: state === 'not running' ? 'stopped' : state };
+  return { running, words: state === 'not running' ? 'stopped' : (state ?? 'unknown') };
 };
 
 // The launchd user-agent backend. The plist lives in `~/Library/LaunchAgents/`
@@ -116,13 +106,13 @@ export const launchdSupervisor = ({
 
   const installed = async () => (await readIfPresent(unit)) !== undefined;
 
-  // The service's properties, or undefined when it is not loaded.
+  // The service as launchctl prints it, or undefined when it is not loaded.
   const printed = async () => {
     const result = await attempt(['print', service]);
     if (result.code === 0) {
-      return topLevel(result.stdout);
+      return readPrintedService(result.stdout);
     }
-    if (NOT_LOADED_CODES.has(result.code)) {
+    if (isServiceNotLoaded(result)) {
       return undefined;
     }
     throw failure('print', result);
@@ -188,8 +178,8 @@ export const launchdSupervisor = ({
     Pick<UnitStatus, 'notes' | 'running' | 'stateKnown' | 'summary'>
   > => {
     try {
-      const props = await printed();
-      if (props === undefined) {
+      const printedService = await printed();
+      if (printedService === undefined) {
         return {
           notes: await sessionNotes(),
           running: false,
@@ -197,9 +187,16 @@ export const launchdSupervisor = ({
           summary: 'not loaded, stopped',
         };
       }
-      const { running, words } = activity(props);
+      const { running, words } = activity(printedService);
       return { notes: [], running, stateKnown: true, summary: `loaded, ${words}` };
     } catch (error) {
+      // A print that failed may be launchctl saying the whole GUI domain is
+      // missing, which names the domain, not the service: then the agent is not
+      // loaded, with the note why.
+      const notes = await sessionNotes();
+      if (notes.length > 0) {
+        return { notes, running: false, stateKnown: true, summary: 'not loaded, stopped' };
+      }
       const reason = describeError(error).replace(/:.*$/su, '');
       return {
         notes: [],

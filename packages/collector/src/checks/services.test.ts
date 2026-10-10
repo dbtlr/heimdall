@@ -187,6 +187,12 @@ describe('a systemd Service', () => {
     expect(outcomes[0]?.detail.startsWith('ActiveState=xxx')).toBe(true);
   });
 
+  test('keeps control characters out of its detail', async () => {
+    const { outcomes } = await check(WEB, shown({ active: 'fa\u0000il\u001b' }));
+
+    expect(outcomes[0]?.detail).toBe('ActiveState=fail');
+  });
+
   test('is unknown when systemctl cannot be started', async () => {
     const { outcomes } = await check(WEB, new Error('ENOENT'));
 
@@ -245,7 +251,6 @@ describe('a systemd-user Service', () => {
 
 describe('a Service whose supervisor this Collector does not check yet', () => {
   test.each([
-    ['launchd', { label: 'com.example.web', name: 'web', supervisor: 'launchd' }],
     ['docker', { container: 'web', name: 'web', supervisor: 'docker' }],
     ['none', { name: 'web', supervisor: 'none' }],
   ] as const)('is unchecked under %s, not down, and nothing is run', async (supervisor, record) => {

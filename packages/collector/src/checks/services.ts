@@ -1,22 +1,21 @@
 import { access } from 'node:fs/promises';
 
-import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
-import type { ServiceCheckKind, ServiceCheckState, ServiceRecord } from '@heimdall/schema';
+import type { ServiceRecord } from '@heimdall/schema';
 
 import type { CommandResult } from '../subprocess.ts';
+import { launchdOutcome } from './launchd.ts';
+import { supervisorOutcome } from './outcome.ts';
+import type { ServiceOutcome } from './outcome.ts';
 
-// What one check of a Service found.
-export type ServiceOutcome = {
-  check: ServiceCheckKind;
-  detail: string;
-  state: ServiceCheckState;
-};
+export type { ServiceOutcome } from './outcome.ts';
 
 // What a check needs from the System: a way to run a command and the absolute
-// path of systemctl, or undefined when this System has none.
+// path of systemctl, or undefined when this System has none, and the id of the
+// account the Collector runs as, which names its launchd gui domain.
 export type ServiceTools = {
   run: (cmd: readonly string[]) => Promise<CommandResult>;
   systemctl: string | undefined;
+  uid?: number | undefined;
 };
 
 // Where systemctl lives on the Linux distributions the Collector runs on. A
@@ -45,14 +44,6 @@ export const findSystemctl = async (
   }
   return undefined;
 };
-
-// The detail is cut to what the Hub takes, so a value systemctl prints that is
-// longer than expected cannot get the whole checks section refused.
-const supervisorOutcome = (state: ServiceCheckState, detail: string): ServiceOutcome => ({
-  check: 'supervisor',
-  detail: detail.slice(0, MAX_CHECK_DETAIL_LENGTH),
-  state,
-});
 
 // What `systemctl show` printed, as the properties of each unit it answered
 // for. systemctl separates units with a blank line, and treats a name as a
@@ -145,7 +136,7 @@ const systemdOutcome = async (
 };
 
 // The supervisor check of a Service, by the supervisor that runs it. Checks for
-// launchd and docker join here as they are built.
+// docker join here as they are built.
 const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<ServiceOutcome> => {
   switch (record.supervisor) {
     case 'systemd': {
@@ -154,7 +145,9 @@ const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<Se
     case 'systemd-user': {
       return systemdOutcome(tools, { scope: 'user', unit: record.unit });
     }
-    case 'launchd':
+    case 'launchd': {
+      return launchdOutcome(tools, record.label);
+    }
     case 'docker':
     case 'none': {
       return Promise.resolve(supervisorOutcome('unchecked', `${record.supervisor} is not checked`));
