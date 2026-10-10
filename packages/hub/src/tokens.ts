@@ -36,6 +36,22 @@ export const systemForToken = async (sql: SQL, token: string): Promise<string | 
   return rows[0]?.system;
 };
 
+// When `system` was paired, in epoch milliseconds, or undefined while it holds
+// no token. A System is paired exactly while it has a row in `paired_systems`;
+// every reader of "is this System paired" goes through here or `pairedSystems`.
+export const whenPaired = async (sql: SQL, system: string): Promise<number | undefined> => {
+  const [row]: { paired_at: Date }[] = await sql`
+    SELECT paired_at FROM paired_systems WHERE system = ${system}
+  `;
+  return row?.paired_at.getTime();
+};
+
+// The names of every paired System.
+export const pairedSystems = async (sql: SQL): Promise<Set<string>> => {
+  const rows: { system: string }[] = await sql`SELECT system FROM paired_systems`;
+  return new Set(rows.map((row) => row.system));
+};
+
 // How many Systems hold a token.
 export const pairedSystemCount = async (sql: SQL): Promise<number> => {
   const [row]: { n: number }[] = await sql`SELECT count(*)::int AS n FROM paired_systems`;

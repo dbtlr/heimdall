@@ -339,12 +339,12 @@ const route = async (
     return health(deps);
   }
   if (pathname === '/api/v1/records' && request.method === 'GET') {
-    const unpaired = searchParams.get('unpaired');
-    if (unpaired !== null && unpaired !== 'include') {
+    const unpaired = searchParams.getAll('unpaired');
+    if (unpaired.some((value) => value !== 'include')) {
       return answer(400, 'The only value for unpaired is include: ?unpaired=include.');
     }
     return Response.json({
-      systems: await readRecords(deps.sql, { includeUnpaired: unpaired !== null }),
+      systems: await readRecords(deps.sql, { includeUnpaired: unpaired.length > 0 }),
     });
   }
   if (pathname === '/' && request.method === 'GET') {

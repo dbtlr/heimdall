@@ -91,6 +91,13 @@ const status = (conditions: OpenCondition[]) =>
 // Shown in place of Vitals for a System with no stored Report yet.
 const UNKNOWN = '—';
 
+// An unpaired System's status: that it is unpaired, then the Conditions still
+// open, which no new Report will change.
+const unpairedStatus = (conditions: OpenCondition[]) =>
+  conditions.length === 0
+    ? '<strong>Unpaired</strong>'
+    : `<strong>Unpaired</strong><br>${status(conditions)}`;
+
 const row = (system: SystemSummary, now: number) => {
   const reported =
     system.reported === undefined
@@ -106,7 +113,7 @@ const row = (system: SystemSummary, now: number) => {
     system.lastSeenAt === undefined
       ? 'Never seen'
       : `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
-    system.paired ? status(system.conditions) : '<strong>Unpaired</strong>',
+    system.paired ? status(system.conditions) : unpairedStatus(system.conditions),
     ...reported,
   ];
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
@@ -163,7 +170,8 @@ const bodyOf = ({ now, systems, view }: { now: number; systems: SystemSummary[];
 ${shown.length === 0 ? '<p>No System is unpaired.</p>' : tables(shown, now)}`;
   }
   const hidden = systems.length - shown.length;
-  return `${shown.length === 0 ? '<p>No System has reported yet.</p>' : tables(shown, now)}
+  const none = hidden === 0 ? 'No System has reported yet.' : 'No System is paired.';
+  return `${shown.length === 0 ? `<p>${none}</p>` : tables(shown, now)}
 ${hidden === 0 ? '' : unpairedLink(hidden)}`;
 };
 

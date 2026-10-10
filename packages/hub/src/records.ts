@@ -9,6 +9,7 @@ import type {
 import type { SQL } from 'bun';
 
 import { compareCodeUnits } from './compare.ts';
+import { pairedSystems } from './tokens.ts';
 
 type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
@@ -21,7 +22,6 @@ type SetRow = {
   check_services_over_budget_bytes: string | null;
   name: string;
   over_budget_bytes: string | null;
-  paired: boolean;
   received_at: Date | null;
   runs_over_budget_bytes: string | null;
   runs_received_at: Date | null;
@@ -136,10 +136,13 @@ const checksOf = (row: SetRow): Checks => {
 
 // One System's entry in the read: its records, latest checks and runs, time
 // zone, and whether it is paired.
-const entryOf = (row: SetRow, records: MirroredRecord[], jobs: JobRuns[]): Entry => ({
+const entryOf = (
+  row: SetRow,
+  { jobs, paired, records }: { jobs: JobRuns[]; paired: boolean; records: MirroredRecord[] },
+): Entry => ({
   ...recordsOf(row, records),
   checks: checksOf(row),
-  paired: row.paired,
+  paired,
   runs: runsOf(row, jobs),
   system: row.name,
   timeZone: row.time_zone,
@@ -157,7 +160,6 @@ export const readRecords = (
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
     const sets: SetRow[] = await tx`
       SELECT s.name, s.time_zone,
-             EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name) AS paired,
              r.sent_at, r.received_at, r.unreadable, r.over_budget_bytes,
              u.sent_at AS runs_sent_at, u.received_at AS runs_received_at,
              u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes,
@@ -170,7 +172,6 @@ export const readRecords = (
       LEFT JOIN record_sets r ON r.system = s.name
       LEFT JOIN run_sets u ON u.system = s.name
       LEFT JOIN check_sets c ON c.system = s.name
-      WHERE ${includeUnpaired}::boolean OR EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name)
       ORDER BY s.name
     `;
     const rows: RecordRow[] = await tx`
@@ -187,11 +188,14 @@ export const readRecords = (
     `;
     const recordsBySystem = Map.groupBy(rows, (row) => row.system);
     const runsBySystem = Map.groupBy(runRows, (row) => row.system);
-    return sets.map((row) =>
-      entryOf(
-        row,
-        (recordsBySystem.get(row.name) ?? []).map((r) => r.entry),
-        (runsBySystem.get(row.name) ?? []).map((r) => r.entry),
-      ),
-    );
+    const paired = await pairedSystems(tx);
+    return sets
+      .filter((row) => includeUnpaired || paired.has(row.name))
+      .map((row) =>
+        entryOf(row, {
+          jobs: (runsBySystem.get(row.name) ?? []).map((r) => r.entry),
+          paired: paired.has(row.name),
+          records: (recordsBySystem.get(row.name) ?? []).map((r) => r.entry),
+        }),
+      );
   });

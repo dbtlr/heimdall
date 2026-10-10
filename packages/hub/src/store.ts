@@ -10,6 +10,8 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { pairedSystems } from './tokens.ts';
+
 export type StoreResult = { skipped: number; stored: number };
 
 // Text PostgreSQL can store: NUL and lone surrogates, which the Report schema
@@ -419,7 +421,6 @@ type SystemRow = {
   memory_total_bytes: string;
   memory_used_bytes: string;
   name: string;
-  paired: boolean;
   // Null when no sample from the System is stored.
   t: Date | null;
   uptime_seconds: number;
@@ -499,14 +500,14 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
              v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
              v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
-             v.collector_cpu_percent, v.collector_rss_bytes,
-             EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name) AS paired
+             v.collector_cpu_percent, v.collector_rss_bytes
       FROM systems s
       LEFT JOIN LATERAL (
         SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
       ) v ON true
       ORDER BY s.name
     `;
+    const paired = await pairedSystems(tx);
     // Status reads every open Condition, however far back the Timeline's cap reaches.
     const open: OpenRow[] = await tx`
       SELECT system, kind, subject, raised_at, latest_reason FROM conditions
@@ -535,7 +536,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
         })),
       lastSeenAt: row.last_seen_at?.getTime(),
       name: row.name,
-      paired: row.paired,
+      paired: paired.has(row.name),
       reported: reportedOf(row),
       // Each Condition's lines stay together, the newest Condition first.
       timeline: recent.filter((c) => c.system === row.name).flatMap(timelineOf),

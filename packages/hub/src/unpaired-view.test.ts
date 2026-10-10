@@ -68,7 +68,7 @@ test('a paired System with no Report yet does not count as unpaired', async () =
   const html = await page(h.hub);
 
   expect(html).toContain('Never seen');
-  expect(html).not.toContain('Show');
+  expect(html).not.toMatch(/Show \d+ unpaired/u);
   expect(await page(h.hub, '/?unpaired')).not.toContain('Never seen');
 });
 
@@ -90,6 +90,18 @@ test('the unpaired view lists them as Unpaired with their Vitals, Last seen, and
   expect(html).toContain('System stale');
   expect(html).toContain('System heard from again');
   expect(html).toContain('<a href="/">');
+});
+
+test('the normal view says no System is paired when Systems exist and none is paired', async () => {
+  await using h = await startHub();
+  await unpairedLaptop(h);
+  await unpair(h.db.sql, 'server-1');
+
+  const html = await page(h.hub);
+
+  expect(html).toContain('No System is paired.');
+  expect(html).not.toContain('No System has reported yet.');
+  expect(html).toContain('Show 2 unpaired Systems</a>');
 });
 
 test('the unpaired view says so when no System is unpaired', async () => {
@@ -134,16 +146,63 @@ test('an unpaired System paired again is back in the default read', async () => 
   expect((await readRecords(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
 });
 
-test('a records read with another value for unpaired is refused', async () => {
+test('a System unpaired and given a new code stays hidden until the code is redeemed', async () => {
+  await using h = await startHub();
+  await unpairedLaptop(h);
+
+  const code = await issue(h, 'laptop-1');
+
+  expect(await page(h.hub)).not.toContain('laptop-1');
+  expect((await readRecords(h)).map((s) => s.system)).toEqual(['server-1']);
+
+  expect((await redeem(h.hub, { code })).status).toBe(200);
+
+  expect(await page(h.hub)).toContain('laptop-1');
+  expect((await readRecords(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
+});
+
+test("the default read lists exactly the paired entries of the Hub's Systems", async () => {
+  await using h = await startHub();
+  await unpairedLaptop(h);
+
+  const paired = (await listSystems(h.db.sql)).filter((s) => s.paired).map((s) => s.name);
+
+  expect((await readRecords(h)).map((s) => s.system)).toEqual(paired);
+});
+
+test.each([
+  ['an unknown value', '?unpaired=yes'],
+  ['a different case', '?unpaired=INCLUDE'],
+  ['an empty value', '?unpaired='],
+  ['no value', '?unpaired'],
+  ['a repeated value that is not include', '?unpaired=include&unpaired=yes'],
+])('a records read with %s for unpaired is refused', async (_name, query) => {
   await using h = await startHub();
 
-  const response = await h.hub.fetch(new Request('http://hub.test/api/v1/records?unpaired=yes'));
+  const response = await h.hub.fetch(new Request(`http://hub.test/api/v1/records${query}`));
 
   expect(response.status).toBe(400);
   expect(await response.text()).toContain('unpaired=include');
 });
 
-test('the Hub still holds an unpaired System for its Conditions', async () => {
+test('a records read that repeats include still includes unpaired Systems', async () => {
+  await using h = await startHub();
+  await unpairedLaptop(h);
+
+  const included = await readRecords(h, '?unpaired=include&unpaired=include');
+
+  expect(included.map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
+});
+
+test('the unpaired page view shows whatever the value of unpaired', async () => {
+  await using h = await startHub();
+  await unpairedLaptop(h);
+
+  expect(await page(h.hub, '/?unpaired=')).toContain('laptop-1');
+  expect(await page(h.hub, '/?unpaired=anything')).toContain('laptop-1');
+});
+
+test('listSystems still holds an unpaired System and marks which Systems are paired', async () => {
   await using h = await startHub();
   await unpairedLaptop(h);
 
