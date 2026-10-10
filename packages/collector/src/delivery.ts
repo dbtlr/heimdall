@@ -60,8 +60,9 @@ export const sendReport = async ({
   return { kind: 'failed', reason: `Hub answered ${String(response.status)}` };
 };
 
-// Who sends the Reports: the System and this Collector build.
-export type ReportIdentity = Pick<Report, 'collector' | 'system'>;
+// Who sends the Reports: the System and this Collector build, and whether the
+// System sleeps, which every Report carries.
+export type ReportIdentity = Pick<Report, 'collector' | 'system'> & { sleeps: boolean };
 
 // A section waiting for a Report. The caller says how the Hub answered the
 // Report that carried it; a failed delivery is not settled, so the section is

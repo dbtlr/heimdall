@@ -17,6 +17,19 @@ describe('a Report', () => {
     expect(ReportSchema.safeParse(report())).toEqual({ data: report(), success: true });
   });
 
+  test.each([true, false])('carries sleeps: %p, and parses without it', (sleeps) => {
+    expect(ReportSchema.parse({ ...report(), sleeps }).sleeps).toBe(sleeps);
+    expect(ReportSchema.parse(report()).sleeps).toBeUndefined();
+  });
+
+  test('ignores a sleeps that is not a boolean, keeping the rest of the Report', () => {
+    const parsed = ReportSchema.safeParse({ ...report(), sleeps: 'yes' });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.sleeps).toBeUndefined();
+    expect(parsed.data?.samples).toEqual(report().samples);
+  });
+
   // A newer Collector may carry sections this Hub predates (ADR-0004).
   test('drops fields it does not know instead of rejecting them', () => {
     const fromNewerCollector = {

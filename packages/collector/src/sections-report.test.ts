@@ -17,6 +17,7 @@ import { NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },
+  sleeps: false,
   system: 'server-1',
 } as const;
 

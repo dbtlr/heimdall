@@ -96,17 +96,18 @@ target = ".config/heimdall/collector.toml"
 mode = "0600"
 ```
 
-The template, `apps/heimdall-collector/config/collector.toml.tmpl`, holds no secret and renders the same on every System:
+The template, `apps/heimdall-collector/config/collector.toml.tmpl`, holds no secret and renders the same on every System, apart from `sleeps`:
 
 ```toml
 hub = "http://hub-host.example.ts.net:8080"
 ```
 
+- `sleeps` is set per System. A System that sleeps, such as a laptop, sets `sleeps = true`, so that the Hub waits 7 days, not 10 minutes, before it raises stale System. A System that never sleeps leaves it out. Fleet renders no per-System value today, so the template needs one for `sleeps` before a sleeping System stops showing stale System.
 - `hub` is the Hub's tailnet ingress URL: the host name of the System that hosts the Hub and the `tailnet_port` of the Hub's Service file. Fleet's native Services publish `tailnet_port` as raw TCP inside the tailnet, so the scheme is `http`.
 - `stateDir` is optional and absent here. The default is `$XDG_STATE_HOME/heimdall`, which is `~/.local/state/heimdall` on Linux, and `~/Library/Application Support/heimdall` on macOS.
 - A Collector sends its token only to the Hub it paired with, so a wrong `hub` cannot send a token elsewhere: `run` refuses when the origin (scheme, host, and port) differs from the one in `identity.json`.
 
-One secret reference serves every System an Application targets, and Fleet renders no per-System values. Pairing makes them unnecessary.
+One secret reference serves every System an Application targets. Pairing makes per-System secrets unnecessary; `sleeps` is the only per-System value.
 
 ## Native Services
 

@@ -7,7 +7,8 @@ export type Migration = { sql: string; version: number };
 
 export const MIGRATIONS: readonly Migration[] = [
   {
-    // Each System the Hub has heard from, and the time it last did (glossary: Last seen).
+    // Each System the Hub has heard from, and the time it last did (glossary: Last
+    // seen). Migration 10 also lets a paired System it never heard from have a row.
     // Samples keep their Vitals in columns and their disks as JSON, keyed by
     // System and time so a resent sample is skipped (ADR-0004).
     sql: `
@@ -288,6 +289,17 @@ export const MIGRATIONS: readonly Migration[] = [
       SELECT system, kind, name, now() FROM mirrored_records;
     `,
     version: 9,
+  },
+  {
+    // Whether a System sleeps, as its Collector says in every Report. Null until
+    // a Report says, which counts as always on. A paired System the Hub has
+    // never heard from can have a row, so that a Condition can be about it; its
+    // last seen is null.
+    sql: `
+      ALTER TABLE systems ADD COLUMN sleeps boolean;
+      ALTER TABLE systems ALTER COLUMN last_seen_at DROP NOT NULL;
+    `,
+    version: 10,
   },
 ];
 

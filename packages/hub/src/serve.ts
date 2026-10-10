@@ -8,14 +8,15 @@ import type { ActionHandler } from '@loomcli/core';
 import type { serve } from './application.ts';
 import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
+import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
-import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate } from './migrations.ts';
 import { pruneVitals } from './retention.ts';
+import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
-const JOB_CONDITIONS_INTERVAL_MS = 60_000;
+const CONDITIONS_INTERVAL_MS = 60_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -74,10 +75,10 @@ const serveUntilStopped = async ({
       sql,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
-    // Pruning and judging jobs are routine, so only a failure is logged, and
+    // Pruning and judging Conditions are routine, so only a failure is logged, and
     // the next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
-    let stopJudgingJobs: (() => Promise<void>) | undefined;
+    let stopJudging: (() => Promise<void>) | undefined;
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
@@ -88,12 +89,12 @@ const serveUntilStopped = async ({
         },
         task: () => pruneVitals(sql, Date.now()),
       });
-      stopJudgingJobs = every({
-        intervalMs: JOB_CONDITIONS_INTERVAL_MS,
+      stopJudging = every({
+        intervalMs: CONDITIONS_INTERVAL_MS,
         onError: (error) => {
-          void log.warn(clean(`Could not judge jobs: ${describeError(error)}`));
+          void log.warn(clean(`Could not judge Conditions: ${describeError(error)}`));
         },
-        task: () => evaluateJobConditions(sql, Date.now),
+        task: () => evaluateConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
       });
       if (!signal.aborted) {
         await once(signal, 'abort');
@@ -101,7 +102,7 @@ const serveUntilStopped = async ({
     } finally {
       // A prune or judgment still running must finish before the database closes.
       await stopPruning?.();
-      await stopJudgingJobs?.();
+      await stopJudging?.();
       await server.stop();
     }
   } finally {

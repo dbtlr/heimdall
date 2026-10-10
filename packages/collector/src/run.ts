@@ -10,6 +10,7 @@ import packageJson from '../package.json' with { type: 'json' };
 import type { run } from './application.ts';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
+import type { ReportIdentity } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
@@ -87,6 +88,28 @@ const captureLine = (sources: readonly Source[]) =>
     ? 'Transcript capture is off; collector.toml lists no sessions.sources.'
     : `Capturing transcripts from ${sources.map((s) => `${s.name} (${s.dir})`).join(', ')}.`;
 
+// The startup line about whether the Hub should expect this System always.
+export const sleepsLine = (sleeps: boolean) =>
+  sleeps
+    ? 'This System sleeps; the Hub raises stale System after 7 days without hearing from it.'
+    : 'This System is always on; the Hub raises stale System after 10 minutes without hearing from it.';
+
+// Who the Reports come from: this System and Collector build, and whether the
+// System sleeps, which collector.toml says and defaults to no.
+export const reportIdentity = ({
+  platform,
+  sleeps = false,
+  system,
+}: {
+  platform: 'darwin' | 'linux';
+  sleeps?: boolean | undefined;
+  system: string;
+}): ReportIdentity => ({
+  collector: { arch: arch(), platform, version: packageJson.version },
+  sleeps,
+  system,
+});
+
 // `heimdall-collector run`: samples this System and pushes Reports to the Hub,
 // as the System `pair` stored, until launchd, systemd, or a terminal stops it.
 // Beside the samples it uploads the transcripts of the sources collector.toml
@@ -153,6 +176,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       sources,
       spool,
     });
+    const identity = reportIdentity({ platform, sleeps: options.sleeps, system });
     const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
     try {
       await log.info(
@@ -160,12 +184,10 @@ export const runAction: ActionHandler<typeof run> = async ({
           `Sampling ${system} every ${String(SAMPLE_INTERVAL_MS / 1000)} seconds for ${options.hub.href}; queue in ${stateDir}.`,
         ),
       );
+      await log.info(sleepsLine(identity.sleeps));
       await log.info(clean(captureLine(sources)));
       await runCollector({
-        identity: {
-          collector: { arch: arch(), platform, version: packageJson.version },
-          system,
-        },
+        identity,
         log: runtime,
         queue,
         sampler: createSampler(hostProbe(platform)),

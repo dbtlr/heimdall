@@ -62,7 +62,9 @@ const vitalsCells = (v: VitalsSample | undefined) =>
 const CONDITION_LABELS: Record<ConditionKind, { cleared: string; raised: string }> = {
   job_failing: { cleared: 'Job no longer failing', raised: 'Job failing' },
   job_overdue: { cleared: 'Job no longer overdue', raised: 'Job overdue' },
+  low_disk: { cleared: 'Low disk cleared', raised: 'Low disk' },
   reports_rejected: { cleared: 'Reports accepted again', raised: 'Reports rejected' },
+  system_stale: { cleared: 'System heard from again', raised: 'System stale' },
 };
 
 // A label followed by what the Condition is about, such as a job's name.
@@ -99,7 +101,9 @@ const row = (system: SystemSummary, now: number) => {
         ];
   const cells = [
     escape(system.name),
-    `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
+    system.lastSeenAt === undefined
+      ? 'Never seen'
+      : `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
     status(system.conditions),
     ...reported,
   ];

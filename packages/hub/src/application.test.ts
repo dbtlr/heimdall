@@ -458,6 +458,33 @@ test('serve prunes old Vitals as it starts, and says nothing about it', async ()
   expect(code).toBe(130);
 });
 
+test('serve judges Conditions as it starts: a paired System never heard from is stale', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await storeToken(db.sql, {
+    pairedAt: Date.now() - 3_600_000,
+    system: 'server-1',
+    token: 'server-token',
+  });
+  await using config = await configFile([
+    'host = "127.0.0.1"',
+    'port = 0',
+    '[database]',
+    `url = "${db.url.href}"`,
+  ]);
+
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  const open = await db.sql`
+    SELECT system, kind FROM conditions WHERE cleared_at IS NULL
+  `;
+  expect(open.map((c: { kind: string; system: string }) => [c.system, c.kind])).toEqual([
+    ['server-1', 'system_stale'],
+  ]);
+  expect(stderr).not.toContain('judge');
+  expect(code).toBe(130);
+});
+
 test('serve warns once when a prune fails, and keeps serving', async () => {
   await using db = await databaseWithOldSample();
   await db.sql`
