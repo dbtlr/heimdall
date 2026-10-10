@@ -118,7 +118,9 @@ const checksOf = (row: SetRow): Checks => {
       since: new Date(since).toISOString(),
       state,
     }))
-    .toSorted((a, b) => compareCodeUnits(a.service, b.service) || compareCodeUnits(a.check, b.check));
+    .toSorted(
+      (a, b) => compareCodeUnits(a.service, b.service) || compareCodeUnits(a.check, b.check),
+    );
   return {
     ...times,
     ...overBudgetOf(row),

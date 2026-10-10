@@ -13,8 +13,9 @@ const MINUTE = 60_000;
 
 const CONFIG = { files: [{ path: '/etc/app.conf', sha256: 'a'.repeat(64) }], name: 'app-config' };
 
-// laptop-1 reported a failed job run and a changed file at NOW and then went
-// quiet, so by NOW + 11 minutes it is failing a job, drifting, and stale.
+// laptop-1 reported a failed job run, a changed file, and a stopped Service at
+// NOW and then went quiet, so by NOW + 11 minutes it is failing a job, drifting,
+// has a Service down, and is stale.
 const failingAndQuiet = async (h: Hub) => {
   const response = await push(
     h.hub,
@@ -23,6 +24,15 @@ const failingAndQuiet = async (h: Hub) => {
       checks: {
         fileRecords: [{ digest: await filesRecordDigest(CONFIG), record: 'app-config' }],
         files: [{ path: '/etc/app.conf', record: 'app-config', since: NOW, state: 'drifted' }],
+        services: [
+          {
+            check: 'supervisor',
+            detail: 'ActiveState=failed',
+            service: 'webapp',
+            since: NOW,
+            state: 'stopped',
+          },
+        ],
       },
       records: {
         records: [
@@ -37,6 +47,11 @@ const failingAndQuiet = async (h: Hub) => {
             },
           },
           { kind: 'files', name: 'app-config', record: CONFIG },
+          {
+            kind: 'service',
+            name: 'webapp',
+            record: { name: 'webapp', supervisor: 'systemd', unit: 'webapp.service' },
+          },
         ],
         unreadable: [],
       },
@@ -70,19 +85,32 @@ const judge = (h: Hub) => {
 };
 
 describe('judging every Condition', () => {
-  test('runs the job, System, and Drift evaluators', async () => {
+  test('runs the job, System, Drift, and Service evaluators', async () => {
     await using h = await startHub();
     await failingAndQuiet(h);
 
     await judge(h);
 
-    expect(await openKinds(h)).toEqual(['drift', 'job_failing', 'system_stale']);
+    expect(await openKinds(h)).toEqual(['drift', 'job_failing', 'service_down', 'system_stale']);
+  });
+
+  test('judges Service down after Drift', async () => {
+    await using h = await startHub();
+    await failingAndQuiet(h);
+
+    await judge(h);
+
+    const raised: { kind: string }[] = await h.db.sql`
+      SELECT kind FROM conditions WHERE kind IN ('drift', 'service_down') ORDER BY id
+    `;
+    expect(raised.map((c) => c.kind)).toEqual(['drift', 'service_down']);
   });
 
   test.each<[ConditionKind, ConditionKind[]]>([
-    ['job_failing', ['drift', 'system_stale']],
-    ['system_stale', ['drift', 'job_failing']],
-    ['drift', ['job_failing', 'system_stale']],
+    ['job_failing', ['drift', 'service_down', 'system_stale']],
+    ['system_stale', ['drift', 'job_failing', 'service_down']],
+    ['drift', ['job_failing', 'service_down', 'system_stale']],
+    ['service_down', ['drift', 'job_failing', 'system_stale']],
   ])(
     'a database refusing %s does not stop the others, and the failure is reported',
     async (refused, others) => {
