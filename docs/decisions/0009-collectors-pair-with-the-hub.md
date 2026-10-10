@@ -4,7 +4,7 @@ title: ADR-0009 - Collectors pair with the Hub, and tokens live in the Hub's dat
 description: "An operator pairs each System once: the Hub issues a short single-use Pairing code bound to the System's name, and the Collector redeems it for its System name and token, which it keeps in its state directory. The Hub keeps only token hashes in its database, so no per-System secret is rendered by Fleet."
 status: accepted
 created: 2026-10-07
-modified: 2026-10-09
+modified: 2026-10-10
 ---
 
 # Collectors pair with the Hub, and tokens live in the Hub's database

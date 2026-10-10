@@ -89,7 +89,7 @@ A System's history of Conditions being raised and cleared, newest Condition firs
 _Avoid_: event feed, event log (a Report is never an event)
 
 **Pairing**:
-How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's normal view and the records read, and keeps its history, which the unpaired view and `?unpaired=include` still show.
+How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's normal view and the records read, and keeps its history, which the dashboard's unpaired view still shows; `?unpaired=include` adds its last records to the records read.
 _Avoid_: enrollment, registration, provisioning (a provisioner's install, not Heimdall's identity)
 
 **Pairing code**:

@@ -4,7 +4,7 @@ title: ADR-0005 - A rejected Report still counts as seeing its System, and Condi
 description: "Last seen moves on every request whose token names a System, whether the Hub stores or rejects the Report. A rejection raises that System's Reports-rejected Condition; each Condition records when it was raised and cleared, and those records form the System's Timeline."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-09
+modified: 2026-10-10
 ---
 
 # A rejected Report still counts as seeing its System, and Conditions keep a Timeline
