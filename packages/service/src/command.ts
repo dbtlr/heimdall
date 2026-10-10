@@ -8,6 +8,8 @@ import { configInput } from '@loomcli/plugins/config/extension';
 import { integer } from '@loomcli/validators';
 
 import { runsCompiled } from './compiled.ts';
+import { httpGet } from './http-get.ts';
+import type { HttpGet } from './http-get.ts';
 import { displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts';
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
@@ -21,7 +23,6 @@ import {
   renderStatus,
   systemWords,
 } from './status.ts';
-import type { HealthFetch } from './status.ts';
 import { UnitNotInstalledError } from './supervisor.ts';
 import type { Supervisor, UnitStatus } from './supervisor.ts';
 
@@ -51,7 +52,7 @@ export type ServiceSpec =
 export type ServiceEnvironment = {
   compiled: () => boolean;
   executable: string;
-  fetch: HealthFetch;
+  httpGet: HttpGet;
   // The clock, in epoch milliseconds.
   now: () => number;
   platform: NodeJS.Platform;
@@ -62,7 +63,7 @@ export type ServiceEnvironment = {
 const defaultEnvironment = (): ServiceEnvironment => ({
   compiled: runsCompiled,
   executable: process.execPath,
-  fetch: (url, init) => fetch(url, init),
+  httpGet,
   now: () => Date.now(),
   platform: process.platform,
   supervisor: (place) => {
@@ -277,7 +278,7 @@ export const serviceCommand = (
       ];
     }
     const url = healthUrl(host, port);
-    const answer = await probeHealth({ fetch: settings().fetch, url });
+    const answer = await probeHealth({ get: settings().httpGet, url });
     return [['health', healthWords(answer, spec.version, url)] as const];
   };
 
