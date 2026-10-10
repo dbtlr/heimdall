@@ -39,6 +39,8 @@ The configuration file is the one `--config` names, or else `.config/heimdall/co
 hub = "http://hub-host.example.ts.net:8080"
 ```
 
+The docker Service check reads `DOCKER_HOST` (a `unix://` URL) or else `$XDG_RUNTIME_DIR/docker.sock`, the socket of rootless Docker under the Collector's account. A System that runs rootful Docker or Podman sets `DOCKER_HOST` in the Collector's service environment.
+
 Set `sleeps = true` on a System that sleeps, such as a laptop. Every Report carries the setting, and the Hub raises the stale System Condition after 7 days without hearing from a System that sleeps, and after 10 minutes without hearing from one that does not ([spec](docs/spec.md#system-conditions)).
 
 ### Capturing transcripts
