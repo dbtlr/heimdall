@@ -294,7 +294,10 @@ describe('a docker Service', () => {
   test('is stopped when the container is gone, as a supervisor check', async () => {
     await using dir = await tempStateDir();
     const unix = join(dir.path, 'docker.sock');
-    const server = Bun.serve({ fetch: () => new Response('{}', { status: 404 }), unix });
+    const server = Bun.serve({
+      fetch: () => Response.json({ message: 'No such container: web' }, { status: 404 }),
+      unix,
+    });
     try {
       const outcomes = await checkService(WEB_CONTAINER, {
         docker: { endpoint: { kind: 'unix', path: unix } },

@@ -29,6 +29,7 @@ const shown = (active: string): CommandResult => ({
 // own, as `record` and `forget` do.
 const setup = async (
   dir: { path: string },
+<<<<<<< HEAD
   {
     httpGet,
     open,
@@ -38,12 +39,18 @@ const setup = async (
     open?: () => Promise<RecordStore>;
     run?: (cmd: readonly string[]) => Promise<CommandResult>;
   } = {},
+=======
+  { docker, open }: { docker?: 'real'; open?: () => Promise<RecordStore> } = {},
+>>>>>>> b14ffd9 (fix(collector): the docker check follows no redirect, trusts only a 404 that says no such container and an answer for the container asked, and reads at most 1 MiB (HMD-60))
 ) => {
   const warnings: string[] = [];
   const states = new Map<string, string>();
   let now = START;
   const checks = createServiceChecks({
-    docker: { endpoint: { host: 'tcp://127.0.0.1:1', kind: 'unsupported' } },
+    // 'real' leaves the option out, as production does, so the environment decides.
+    ...(docker === 'real'
+      ? {}
+      : { docker: { endpoint: { host: 'tcp://127.0.0.1:1', kind: 'unsupported' } as const } }),
     findSystemctl: () => Promise.resolve('/usr/bin/systemctl'),
     ...(httpGet === undefined ? {} : { httpGet }),
     log: { info: () => 0, warn: (m) => warnings.push(m) },
@@ -305,6 +312,31 @@ test('a service whose supervisor is not checked yet is unchecked', async () => {
   expect(c.checks.latest()).toEqual({
     services: [sent('web', 'unchecked', 'launchd is not checked', START)],
   });
+});
+
+test('a docker service is checked at the DOCKER_HOST of the real environment when no endpoint is given', async () => {
+  const kept = process.env.DOCKER_HOST;
+  process.env.DOCKER_HOST = 'ssh://elsewhere.example';
+  try {
+    await using dir = await tempStateDir();
+    const c = await setup(dir, { docker: 'real' });
+    await c.elsewhere((store) =>
+      store.put('service', { container: 'web', name: 'web', supervisor: 'docker' }),
+    );
+
+    await c.checks.tick();
+    c.checks.close();
+
+    expect(c.checks.latest()).toEqual({
+      services: [sent('web', 'unknown', 'DOCKER_HOST is not a unix socket', START)],
+    });
+  } finally {
+    if (kept === undefined) {
+      delete process.env.DOCKER_HOST;
+    } else {
+      process.env.DOCKER_HOST = kept;
+    }
+  }
 });
 
 test('a docker service is checked through the Docker endpoint', async () => {

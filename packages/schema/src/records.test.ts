@@ -348,8 +348,9 @@ describe('a text field', () => {
     },
   );
 
-  // Docker names a container [a-zA-Z0-9][a-zA-Z0-9_.-]*; anything else could
-  // change the Engine API path the Collector asks.
+  // Docker names a container with [a-zA-Z0-9][a-zA-Z0-9_.-]*, and an ID is hex.
+  // Anything else, including `:`, which Docker refuses in a name, could change
+  // the Engine API path the Collector asks.
   test.each([
     '',
     '.',
@@ -357,6 +358,7 @@ describe('a text field', () => {
     '-web',
     '_web',
     'a/b',
+    'a:b',
     'a?b',
     'a#b',
     'a%2Fb',
