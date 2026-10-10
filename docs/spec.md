@@ -80,7 +80,7 @@ The Collector reports its records to the Hub, as [Reading the records back](#rea
 | Kind | Heimdall checks and reports |
 | --- | --- |
 | `application` | Reported as recorded; the version is not observed. |
-| `service` | Supervisor state for `systemd`, `systemd-user`, `launchd`, and `docker` Services, which the Collector asks each minute; a stopped Service raises Service down. The `health` URL, when the record has one, which the Collector requests each minute and only on loopback; an unhealthy Service raises Service down too. A Service whose supervisor the Collector does not check yet is reported as unchecked for the supervisor, never as down; a `none` Service with no `health` URL is unchecked. |
+| `service` | Supervisor state for `systemd`, `systemd-user`, `launchd`, and `docker` Services, which the Collector asks each minute; a stopped Service raises Service down. The `health` URL, when the record has one, which the Collector requests each minute and only on loopback; an unhealthy Service raises Service down too. A `none` Service with no `health` URL has nothing to check and is reported as unchecked, never as down. |
 | `job` | Each run the job reports. A failed latest run raises job failing; a scheduled time followed by a grace period of awake time, with no successful run since, raises job overdue. |
 | `files` | Each file's current hash, which the Collector compares with the recorded one. A file that no longer matches, or no longer exists, raises Drift. A file the Collector cannot read is reported as unreadable and raises nothing. |
 
@@ -140,7 +140,7 @@ The Collector checks every `service` record once a minute, in a loop of its own,
 - **Stopped**: the supervisor says it is not running.
 - **Unhealthy**: the health URL did not answer with a 2xx or 3xx status, or did not answer at all.
 - **Unknown**: the Collector could not ask the supervisor, or got no answer; or the Collector could not make the health request, as when it has run out of file descriptors.
-- **Unchecked**: the Collector does not check this supervisor yet, which holds for `none` when the record has no `health` URL.
+- **Unchecked**: the Collector has nothing to check, which holds for a `none` Service with no `health` URL.
 
 For a `systemd` Service the Collector runs `systemctl show --property=ActiveState,SubState,LoadState -- <unit>` and for a `systemd-user` Service the same with `systemctl --user`, so the first asks the system manager and the second the account's user manager. It runs `systemctl` by absolute path, from the first of `/usr/bin`, `/bin`, and `/usr/local/bin` that has it, since a launchd agent or a systemd service has a minimal PATH, and gives it 5 seconds before it kills it. An `ActiveState` of `active` is up, including a unit that exited and remains. Any other `ActiveState` is stopped, including `activating`, which a unit that fails and restarts shows between attempts, and so is a unit systemd does not know (`LoadState=not-found`). A check is unknown when `systemctl` cannot reach the manager, as when the account has no user bus (the error says it failed to connect to the bus, or that systemd was not booted), when it exits non-zero for any other reason, when it times out or cannot run, when it is not installed, or when its answer lacks the states asked for or is not about exactly one unit. A stopped Service is therefore never confused with one the Collector could not ask.
 
