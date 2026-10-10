@@ -21,7 +21,7 @@ const fakeEngine = async (answers: Record<string, Answer>) => {
   const server = Bun.serve({
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
-      requested.push(request.method + ' ' + pathname);
+      requested.push(`${request.method} ${pathname}`);
       const answer = answers[pathname];
       if (answer === undefined) {
         return Response.json({ message: 'No such container' }, { status: 404 });
@@ -91,16 +91,19 @@ describe('a container the Engine reports', () => {
   });
 
   // The Engine reports Running: true for these two, so the status decides.
-  test.each(['paused', 'restarting'])('%s is stopped though the Engine calls it running', async (status) => {
-    const { socket } = await fakeEngine({
-      '/containers/web/json': { body: inspected({ ExitCode: 1, Running: true, Status: status }) },
-    });
+  test.each(['paused', 'restarting'])(
+    '%s is stopped though the Engine calls it running',
+    async (status) => {
+      const { socket } = await fakeEngine({
+        '/containers/web/json': { body: inspected({ ExitCode: 1, Running: true, Status: status }) },
+      });
 
-    expect(await checkContainer('web', engineAt(socket))).toEqual({
-      detail: `status ${status}`,
-      state: 'stopped',
-    });
-  });
+      expect(await checkContainer('web', engineAt(socket))).toEqual({
+        detail: `status ${status}`,
+        state: 'stopped',
+      });
+    },
+  );
 
   test('dead is stopped', async () => {
     const { socket } = await fakeEngine({
@@ -193,7 +196,10 @@ describe('a container the Engine cannot say anything sure about is unknown', () 
 
   test('when the Engine does not answer in time', async () => {
     const { socket } = await fakeEngine({
-      '/containers/web/json': { body: inspected({ Running: true, Status: 'running' }), delayMs: 500 },
+      '/containers/web/json': {
+        body: inspected({ Running: true, Status: 'running' }),
+        delayMs: 500,
+      },
     });
 
     expect(await checkContainer('web', { ...engineAt(socket), timeoutMs: 50 })).toEqual({
@@ -213,14 +219,18 @@ describe('a container the Engine cannot say anything sure about is unknown', () 
 
   test('when the endpoint is not a unix socket', async () => {
     expect(
-      await checkContainer('web', { endpoint: { host: 'tcp://10.0.0.1:2375', kind: 'unsupported' } }),
+      await checkContainer('web', {
+        endpoint: { host: 'tcp://10.0.0.1:2375', kind: 'unsupported' },
+      }),
     ).toEqual({ detail: 'DOCKER_HOST is not a unix socket', state: 'unknown' });
   });
 });
 
 describe('finding the Engine socket', () => {
   test('is DOCKER_HOST when it is a unix URL', () => {
-    expect(dockerEndpoint({ env: { DOCKER_HOST: 'unix:///run/user/1001/docker.sock' }, uid: 5 })).toEqual({
+    expect(
+      dockerEndpoint({ env: { DOCKER_HOST: 'unix:///run/user/1001/docker.sock' }, uid: 5 }),
+    ).toEqual({
       kind: 'unix',
       path: '/run/user/1001/docker.sock',
     });
@@ -228,26 +238,33 @@ describe('finding the Engine socket', () => {
 
   test('is DOCKER_HOST even when XDG_RUNTIME_DIR is set', () => {
     expect(
-      dockerEndpoint({ env: { DOCKER_HOST: 'unix:///x.sock', XDG_RUNTIME_DIR: '/run/user/7' }, uid: 5 }),
+      dockerEndpoint({
+        env: { DOCKER_HOST: 'unix:///x.sock', XDG_RUNTIME_DIR: '/run/user/7' },
+        uid: 5,
+      }),
     ).toEqual({ kind: 'unix', path: '/x.sock' });
   });
 
-  test.each(['tcp://127.0.0.1:2375', 'ssh://host', 'npipe:////./pipe/docker_engine', 'unix://relative.sock'])(
-    'is unsupported when DOCKER_HOST is %s',
-    (host) => {
-      expect(dockerEndpoint({ env: { DOCKER_HOST: host }, uid: 5 })).toEqual({
-        host,
-        kind: 'unsupported',
-      });
-    },
-  );
+  test.each([
+    'tcp://127.0.0.1:2375',
+    'ssh://host',
+    'npipe:////./pipe/docker_engine',
+    'unix://relative.sock',
+  ])('is unsupported when DOCKER_HOST is %s', (host) => {
+    expect(dockerEndpoint({ env: { DOCKER_HOST: host }, uid: 5 })).toEqual({
+      host,
+      kind: 'unsupported',
+    });
+  });
 
   test('is docker.sock under XDG_RUNTIME_DIR when DOCKER_HOST is unset or empty', () => {
     expect(dockerEndpoint({ env: { XDG_RUNTIME_DIR: '/run/user/7' }, uid: 5 })).toEqual({
       kind: 'unix',
       path: '/run/user/7/docker.sock',
     });
-    expect(dockerEndpoint({ env: { DOCKER_HOST: '', XDG_RUNTIME_DIR: '/run/user/7' }, uid: 5 })).toEqual({
+    expect(
+      dockerEndpoint({ env: { DOCKER_HOST: '', XDG_RUNTIME_DIR: '/run/user/7' }, uid: 5 }),
+    ).toEqual({
       kind: 'unix',
       path: '/run/user/7/docker.sock',
     });

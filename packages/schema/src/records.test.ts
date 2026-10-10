@@ -350,14 +350,26 @@ describe('a text field', () => {
 
   // Docker names a container [a-zA-Z0-9][a-zA-Z0-9_.-]*; anything else could
   // change the Engine API path the Collector asks.
-  test.each(['', '.', '..', '-web', '_web', 'a/b', 'a?b', 'a#b', 'a%2Fb', 'a b', 'web\n', 'wéb', '/web', 'a'.repeat(257)])(
-    'a docker container of %j is refused',
-    (container) => {
-      expect(accepts(ServiceRecordSchema, { container, name: 's', supervisor: 'docker' })).toBe(
-        false,
-      );
-    },
-  );
+  test.each([
+    '',
+    '.',
+    '..',
+    '-web',
+    '_web',
+    'a/b',
+    'a?b',
+    'a#b',
+    'a%2Fb',
+    'a b',
+    'web\n',
+    'wéb',
+    '/web',
+    'a'.repeat(257),
+  ])('a docker container of %j is refused', (container) => {
+    expect(accepts(ServiceRecordSchema, { container, name: 's', supervisor: 'docker' })).toBe(
+      false,
+    );
+  });
 
   test('a Service unit, a launchd label, and a container are text too', () => {
     expect(

@@ -7,8 +7,8 @@ import { describeError } from '../errors.ts';
 import type { RecordStore } from '../records.ts';
 import { describeRows } from '../sections-report.ts';
 import { runCommand } from '../subprocess.ts';
-import type { CheckParts } from './parts.ts';
 import { dockerEndpoint } from './docker.ts';
+import type { CheckParts } from './parts.ts';
 import { checkService, findSystemctl } from './services.ts';
 import type { ServiceTools } from './services.ts';
 

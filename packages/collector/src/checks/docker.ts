@@ -5,8 +5,7 @@ export type ContainerOutcome = { detail: string; state: ServiceCheckState };
 
 // Where the Docker Engine listens: a unix socket, or an address this Collector
 // cannot talk to (`DOCKER_HOST` names another transport).
-export type DockerEndpoint =
-  { kind: 'unix'; path: string } | { host: string; kind: 'unsupported' };
+export type DockerEndpoint = { kind: 'unix'; path: string } | { host: string; kind: 'unsupported' };
 
 // What a container check needs from the System: the Engine's endpoint, and how
 // long to wait for it (tests shorten it).
@@ -26,14 +25,16 @@ export const dockerEndpoint = ({
   env?: Record<string, string | undefined>;
   uid?: number;
 } = {}): DockerEndpoint => {
-  const host = env['DOCKER_HOST'];
+  const host = env.DOCKER_HOST;
   if (host !== undefined && host !== '') {
     const path = /^unix:\/\/(\/.+)$/u.exec(host)?.[1];
     return path === undefined ? { host, kind: 'unsupported' } : { kind: 'unix', path };
   }
-  const runtimeDir = env['XDG_RUNTIME_DIR'];
+  const runtimeDir = env.XDG_RUNTIME_DIR;
   const dir =
-    runtimeDir?.startsWith('/') === true ? runtimeDir.replace(/\/+$/u, '') : `/run/user/${String(uid)}`;
+    runtimeDir?.startsWith('/') === true
+      ? runtimeDir.replace(/\/+$/u, '')
+      : `/run/user/${String(uid)}`;
   return { kind: 'unix', path: `${dir}/docker.sock` };
 };
 
@@ -59,7 +60,9 @@ const containerOutcome = (body: unknown): ContainerOutcome => {
     return { detail: `status ${status ?? 'running'}`, state: 'up' };
   }
   const exitCode =
-    'ExitCode' in state && typeof state.ExitCode === 'number' && (status === 'exited' || status === 'dead')
+    'ExitCode' in state &&
+    typeof state.ExitCode === 'number' &&
+    (status === 'exited' || status === 'dead')
       ? `, exit code ${String(state.ExitCode)}`
       : '';
   return { detail: `status ${status ?? 'not running'}${exitCode}`, state: 'stopped' };
@@ -83,11 +86,14 @@ export const checkContainer = async (
   }
   const signal = AbortSignal.timeout(timeoutMs);
   try {
-    const response = await fetch(`http://localhost/containers/${encodeURIComponent(container)}/json`, {
-      method: 'GET',
-      signal,
-      unix: endpoint.path,
-    });
+    const response = await fetch(
+      `http://localhost/containers/${encodeURIComponent(container)}/json`,
+      {
+        method: 'GET',
+        signal,
+        unix: endpoint.path,
+      },
+    );
     if (response.status === 404) {
       await response.body?.cancel();
       return { detail: 'no such container', state: 'stopped' };

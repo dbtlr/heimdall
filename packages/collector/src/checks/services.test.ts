@@ -46,12 +46,12 @@ const check = async (
 ) => {
   const ran: string[][] = [];
   const outcomes = await checkService(record, {
+    docker: { endpoint: UNREACHABLE_DOCKER },
     httpGet,
     run: (cmd) => {
       ran.push([...cmd]);
       return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
     },
-    docker: { endpoint: UNREACHABLE_DOCKER },
     systemctl: 'systemctl' in options ? options.systemctl : SYSTEMCTL,
   });
   return { outcomes, ran };
