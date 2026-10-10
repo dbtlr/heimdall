@@ -11,5 +11,8 @@ export const tempStateDir = async () => {
   };
 };
 
-// A records source with nothing to send, for tests that are not about records.
-export const NO_RECORDS = { pending: () => Promise.resolve(undefined) };
+// A sections source with nothing to send, for tests that are not about records or runs.
+export const NO_SECTIONS = { pending: () => Promise.resolve({}) };
+
+// A Collector whose time zone is not known, for tests that are not about it.
+export const NO_TIME_ZONE = () => undefined;

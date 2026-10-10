@@ -175,6 +175,119 @@ test('putRun says whether it kept the run: kept, expired, or for a job nobody re
   expect(kept).toEqual([run(5).started, run(199).started]);
 });
 
+test('latestRuns gives each job its latest run and latest success, whatever order they were recorded in', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+  store.put('job', { ...job, name: 'sync' });
+  store.put('job', { ...job, name: 'idle' });
+  for (const day of [3, 1, 4]) {
+    store.putRun('backup', run(day, day === 4 ? 1 : 0));
+  }
+  store.putRun('sync', run(2, 1));
+  const latest = store.latestRuns();
+  store.close();
+
+  // `idle` has no runs, so it is in neither list. `backup` failed last, so its latest run and success differ.
+  expect(latest).toEqual({
+    jobs: [
+      { job: 'backup', latestRun: run(4, 1), latestSuccess: run(3) },
+      { job: 'sync', latestRun: run(2, 1), latestSuccess: null },
+    ],
+    unreadable: [],
+  });
+});
+
+test('latestRuns names a job whose latest run or latest success it cannot read, and still reads the others', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  for (const name of ['backup', 'sync', 'tidy']) {
+    store.put('job', { ...job, name });
+  }
+  store.putRun('backup', run(1));
+  store.putRun('backup', run(2, 1));
+  store.putRun('sync', run(1));
+  store.putRun('tidy', run(1));
+  store.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const damage = db.query('UPDATE runs SET body = $body WHERE job = $job AND started = $started');
+  // The latest run of backup, and the only success of sync, are damaged.
+  damage.run({ $body: '{"surprise":true}', $job: 'backup', $started: run(2).started });
+  damage.run({ $body: '{not json', $job: 'sync', $started: run(1).started });
+  db.close();
+
+  const reopened = await openRecords({ stateDir: dir.path });
+  const latest = reopened.latestRuns();
+  reopened.close();
+
+  expect(latest).toEqual({
+    jobs: [{ job: 'tidy', latestRun: run(1), latestSuccess: run(1) }],
+    unreadable: ['backup', 'sync'],
+  });
+});
+
+test('latestRuns names a job whose latest success it cannot read, though its latest run reads', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(1));
+  store.putRun('backup', run(2, 1));
+  store.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  db.query('UPDATE runs SET body = $body WHERE started = $started').run({
+    $body: '{not json',
+    $started: run(1).started,
+  });
+  db.close();
+
+  const reopened = await openRecords({ stateDir: dir.path });
+  const latest = reopened.latestRuns();
+  reopened.close();
+
+  expect(latest).toEqual({ jobs: [], unreadable: ['backup'] });
+});
+
+test('latestRuns and readRecords read no run beyond the latest ones', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(1));
+  store.putRun('backup', run(2));
+  store.putRun('backup', run(3));
+  store.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  // Neither the oldest run nor the middle one is the latest or the latest success.
+  db.query('UPDATE runs SET body = $body WHERE startedMs < $cutoff').run({
+    $body: '{not json',
+    $cutoff: START + 3 * DAY_MS,
+  });
+  db.close();
+
+  const reopened = await openRecords({ stateDir: dir.path });
+  const latest = reopened.latestRuns();
+  const records = reopened.readRecords();
+  reopened.close();
+
+  expect(latest).toEqual({
+    jobs: [{ job: 'backup', latestRun: run(3), latestSuccess: run(3) }],
+    unreadable: [],
+  });
+  expect(records.records.map(({ name }) => name)).toEqual(['backup']);
+  expect(records.unreadable).toEqual([]);
+});
+
+test('a forgotten job has no latest runs', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(1));
+  store.forget('job', 'backup');
+  const latest = store.latestRuns();
+  store.close();
+
+  expect(latest).toEqual({ jobs: [], unreadable: [] });
+});
+
 test('the database is in WAL mode, which lets a reader proceed while another process writes', async () => {
   await using dir = await tempStateDir();
   (await openRecords({ stateDir: dir.path })).close();

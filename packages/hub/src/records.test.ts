@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 
-import { RecordsReadSchema } from '@heimdall/schema';
-import type { JobRecord, MirroredRecord, ServiceRecord } from '@heimdall/schema';
+import { MAX_REPORT_BYTES, RecordsReadSchema } from '@heimdall/schema';
+import type {
+  JobRecord,
+  JobRuns,
+  MirroredRecord,
+  RunRecord,
+  ServiceRecord,
+} from '@heimdall/schema';
 
-import { MAX_REPORT_BYTES } from './hub.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { listSystems, storeReport } from './store.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
@@ -33,22 +38,58 @@ const set = (records: object[], unreadable: { kind: string; name: string }[] = [
   unreadable,
 });
 
-// Sends `laptop-1`'s Report at `sentAt` (epoch milliseconds), with `records`
-// unless it is undefined. Each Report carries a sample no earlier one has.
+// A run that took a minute from `started`, with `exitStatus`.
+const run = (started: string, exitStatus = 0): RunRecord => ({
+  exitStatus,
+  finished: new Date(Date.parse(started) + 60_000).toISOString().replace('.000Z', 'Z'),
+  started,
+});
+
+const FAILED = run('2026-10-06T03:30:00Z', 1);
+const SUCCEEDED = run('2026-10-07T03:30:00Z');
+
+type SentRuns = { job: string; latestRun: object; latestSuccess: object | null };
+
+// A runs section as a Collector sends it.
+const runs = (jobs: SentRuns[], unreadable: string[] = []) => ({ jobs, unreadable });
+
+// A job that has only failed, and one whose latest run succeeded.
+const failing = (job: string): JobRuns => ({ job, latestRun: FAILED, latestSuccess: null });
+const passing = (job: string): JobRuns => ({
+  job,
+  latestRun: SUCCEEDED,
+  latestSuccess: SUCCEEDED,
+});
+
+// The jobs of an entry's runs, when it holds runs that fit.
+const jobsOf = (entry: Awaited<ReturnType<typeof entryOf>>) =>
+  entry?.runs && 'jobs' in entry.runs ? entry.runs.jobs : undefined;
+
+// Sends `laptop-1`'s Report at `sentAt` (epoch milliseconds), with `records`,
+// `runs`, and `timeZone` unless they are undefined. Each Report carries a
+// sample no earlier one has.
 let sampleTime = NOW;
 const send = async (
   h: Hub,
   {
     records,
+    runs: sentRuns,
     sentAt = NOW,
     system = 'laptop-1',
-  }: { records?: unknown; sentAt?: number; system?: string },
+    timeZone,
+  }: { records?: unknown; runs?: unknown; sentAt?: number; system?: string; timeZone?: string },
 ) => {
   sampleTime += 15_000;
   const token = system === 'laptop-1' ? 'laptop-token' : 'server-token';
   const response = await push(
     h.hub,
-    { ...report(system, [sampleTime]), sentAt, ...(records === undefined ? {} : { records }) },
+    {
+      ...report(system, [sampleTime]),
+      sentAt,
+      ...(records === undefined ? {} : { records }),
+      ...(sentRuns === undefined ? {} : { runs: sentRuns }),
+      ...(timeZone === undefined ? {} : { timeZone }),
+    },
     { token },
   );
   expect(response.status).toBe(200);
@@ -75,8 +116,10 @@ describe('the records a Report carries', () => {
     expect(await entryOf(h)).toEqual({
       receivedAt: new Date(NOW + 2500).toISOString(),
       records: [service(WEBAPP)],
+      runs: null,
       sentAt: new Date(NOW + 1000).toISOString(),
       system: 'laptop-1',
+      timeZone: null,
       unreadable: [],
     });
   });
@@ -220,8 +263,10 @@ describe('a set over budget', () => {
     expect(await entryOf(h)).toEqual({
       overBudget: { bytes: 9_000_000 },
       receivedAt: new Date(NOW).toISOString(),
+      runs: null,
       sentAt: new Date(NOW + 1000).toISOString(),
       system: 'laptop-1',
+      timeZone: null,
     });
   });
 
@@ -245,12 +290,300 @@ describe('a set over budget', () => {
   });
 });
 
+describe('the latest runs a Report carries', () => {
+  test('are read back with the time they were sent and received', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 2500;
+
+    await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 1000 });
+
+    expect((await entryOf(h))?.runs).toEqual({
+      jobs: [passing('backup')],
+      receivedAt: new Date(NOW + 2500).toISOString(),
+      sentAt: new Date(NOW + 1000).toISOString(),
+      unreadable: [],
+    });
+  });
+
+  test('read a failed run, then a later success, as the latest run and latest success', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([failing('backup')]) });
+    expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
+
+    await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 1000 });
+
+    expect(jobsOf(await entryOf(h))).toEqual([
+      { job: 'backup', latestRun: SUCCEEDED, latestSuccess: SUCCEEDED },
+    ]);
+  });
+
+  test('keep the success a later failure follows as the latest success', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      runs: runs([{ job: 'backup', latestRun: FAILED, latestSuccess: SUCCEEDED }]),
+    });
+
+    expect(jobsOf(await entryOf(h))).toEqual([
+      { job: 'backup', latestRun: FAILED, latestSuccess: SUCCEEDED },
+    ]);
+  });
+
+  test('read a job that has never succeeded as having no latest success', async () => {
+    await using h = await startHub();
+
+    await send(h, { runs: runs([failing('backup')]) });
+
+    expect(jobsOf(await entryOf(h))?.[0]?.latestSuccess).toBeNull();
+  });
+
+  test('replace the earlier runs, so a job a later section lacks is gone', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([passing('backup'), failing('prune')]) });
+
+    await send(h, { runs: runs([failing('prune')]), sentAt: NOW + 1000 });
+
+    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['prune']);
+  });
+
+  test('may be empty, which reads as a System whose jobs have not run', async () => {
+    await using h = await startHub();
+
+    await send(h, { runs: runs([]) });
+
+    expect(await entryOf(h)).toMatchObject({ runs: { jobs: [], unreadable: [] } });
+  });
+
+  test('come back sorted by job name, whatever the collation', async () => {
+    await using h = await startHub();
+
+    await send(h, { runs: runs(['b', 'a-c', 'B', 'ab', 'a_b'].map(failing)) });
+
+    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['B', 'a-c', 'a_b', 'ab', 'b']);
+  });
+
+  test('are ignored when the Hub holds runs sent later', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 2000;
+    await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 1000 });
+
+    await send(h, { runs: runs([failing('prune')]), sentAt: NOW });
+
+    expect(await entryOf(h)).toMatchObject({
+      runs: { jobs: [passing('backup')], sentAt: new Date(NOW + 1000).toISOString() },
+    });
+  });
+
+  test('replace runs that claim a time in the Hub future, so a bad clock cannot freeze them', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 10 * YEAR });
+    h.clock.now = NOW + 60_000;
+
+    await send(h, { runs: runs([failing('prune')]), sentAt: NOW + 60_000 });
+
+    expect(await entryOf(h)).toMatchObject({
+      runs: { jobs: [failing('prune')], sentAt: new Date(NOW + 60_000).toISOString() },
+    });
+  });
+
+  test('replace runs sent at the same moment', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([failing('backup')]) });
+
+    await send(h, { runs: runs([failing('prune')]) });
+
+    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['prune']);
+  });
+
+  test('are left as they were by a Report without a runs section', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([failing('backup')]) });
+
+    await send(h, { sentAt: NOW + 60_000 });
+
+    expect(await entryOf(h)).toMatchObject({
+      runs: { jobs: [failing('backup')], sentAt: new Date(NOW).toISOString() },
+    });
+  });
+
+  test('keep each System to its own runs', async () => {
+    await using h = await startHub();
+
+    await send(h, { runs: runs([failing('backup')]) });
+    await send(h, { runs: runs([failing('prune')]), system: 'server-1' });
+
+    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['backup']);
+    expect(jobsOf(await entryOf(h, 'server-1'))?.map((j) => j.job)).toEqual(['prune']);
+  });
+
+  test('lose a field the Hub does not know', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      runs: runs([
+        {
+          job: 'backup',
+          latestRun: { ...SUCCEEDED, newerField: 'x' },
+          latestSuccess: { ...SUCCEEDED, newerField: 'x' },
+        },
+      ]),
+    });
+
+    expect(jobsOf(await entryOf(h))).toEqual([passing('backup')]);
+  });
+
+  test('count a job whose runs the Hub cannot read as unreadable', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      runs: runs([
+        passing('backup'),
+        { job: 'prune', latestRun: { exitStatus: 'unknown' }, latestSuccess: null },
+      ]),
+    });
+
+    expect(await entryOf(h)).toMatchObject({
+      runs: { jobs: [passing('backup')], unreadable: ['prune'] },
+    });
+  });
+
+  test('list the jobs the Collector could not read itself', async () => {
+    await using h = await startHub();
+
+    await send(h, { runs: runs([passing('backup')], ['prune']) });
+
+    expect(await entryOf(h)).toMatchObject({
+      runs: { jobs: [passing('backup')], unreadable: ['prune'] },
+    });
+  });
+});
+
+describe('runs over budget', () => {
+  test('read as unavailable and drop the earlier jobs', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([failing('backup')]) });
+
+    await send(h, { runs: { overBudget: { bytes: 3_000_000 } }, sentAt: NOW + 1000 });
+
+    expect((await entryOf(h))?.runs).toEqual({
+      overBudget: { bytes: 3_000_000 },
+      receivedAt: new Date(NOW).toISOString(),
+      sentAt: new Date(NOW + 1000).toISOString(),
+    });
+  });
+
+  test('give way to the next runs that fit', async () => {
+    await using h = await startHub();
+    await send(h, { runs: { overBudget: { bytes: 3_000_000 } } });
+
+    await send(h, { runs: runs([failing('backup')]), sentAt: NOW + 1000 });
+
+    expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
+  });
+
+  test('do not replace runs sent later', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 2000;
+    await send(h, { runs: runs([failing('backup')]), sentAt: NOW + 1000 });
+
+    await send(h, { runs: { overBudget: { bytes: 3_000_000 } }, sentAt: NOW });
+
+    expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
+  });
+});
+
+describe('the time zone a Report carries', () => {
+  test('is read back', async () => {
+    await using h = await startHub();
+
+    await send(h, { timeZone: 'America/New_York' });
+
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
+  });
+
+  test('is kept by a Report without one', async () => {
+    await using h = await startHub();
+    await send(h, { timeZone: 'America/New_York' });
+
+    await send(h, { sentAt: NOW + 60_000 });
+
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
+  });
+
+  test('is changed by a Report with another', async () => {
+    await using h = await startHub();
+    await send(h, { timeZone: 'America/New_York' });
+
+    await send(h, { timeZone: 'Europe/Berlin' });
+
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'Europe/Berlin' });
+  });
+
+  test('that the Hub cannot read costs no Report, and the Hub keeps the zone it holds', async () => {
+    await using h = await startHub();
+    await send(h, { timeZone: 'America/New_York' });
+
+    await send(h, { sentAt: NOW + 60_000, timeZone: 'America/New York' });
+
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
+  });
+});
+
+describe('records and runs', () => {
+  test('arrive independently: runs leave the records as they were', async () => {
+    await using h = await startHub();
+    await send(h, { records: set([service(WEBAPP)]) });
+
+    await send(h, { runs: runs([failing('backup')]), sentAt: NOW + 1000 });
+
+    expect(await entryOf(h)).toMatchObject({
+      records: [service(WEBAPP)],
+      runs: { jobs: [failing('backup')] },
+      sentAt: new Date(NOW).toISOString(),
+    });
+  });
+
+  test('arrive independently: records leave the runs as they were', async () => {
+    await using h = await startHub();
+    await send(h, { runs: runs([failing('backup')]) });
+
+    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
+
+    expect(await entryOf(h)).toMatchObject({
+      records: [service(WEBAPP)],
+      runs: { jobs: [failing('backup')], sentAt: new Date(NOW).toISOString() },
+    });
+  });
+
+  test('are each held against their own sent time', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 2000;
+    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
+
+    await send(h, { runs: runs([failing('backup')]), sentAt: NOW });
+
+    expect(await entryOf(h)).toMatchObject({
+      records: [service(WEBAPP)],
+      runs: { jobs: [failing('backup')] },
+    });
+  });
+});
+
 describe('reading the records', () => {
   test('answers null for a System no Report has carried a set for', async () => {
     await using h = await startHub();
     await send(h, {});
 
-    expect(await read(h)).toEqual([{ records: null, system: 'laptop-1' }]);
+    expect(await read(h)).toEqual([
+      { records: null, runs: null, system: 'laptop-1', timeZone: null },
+    ]);
+  });
+
+  test('answers null runs and time zone for a System that never sent them', async () => {
+    await using h = await startHub();
+    await send(h, { records: set([service(WEBAPP)]) });
+
+    expect(await entryOf(h)).toMatchObject({ runs: null, timeZone: null });
   });
 
   test('lists Systems by name, as the dashboard does', async () => {
@@ -327,8 +660,30 @@ test('migration 7 applies on top of version 6 and keeps what was there', async (
   );
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
 
-  expect(await migrate(db.sql)).toEqual([7]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 7),
+    ),
+  ).toEqual([7]);
 
   const rows = await db.sql`SELECT name FROM systems`;
   expect(rows).toHaveLength(1);
+});
+
+test('migration 8 applies on top of version 7 and leaves a System with no time zone or runs', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 7),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+
+  expect(await migrate(db.sql)).toEqual([8]);
+
+  const rows = await db.sql`
+    SELECT s.name, s.time_zone, r.system AS runs_system
+    FROM systems s LEFT JOIN run_sets r ON r.system = s.name
+  `;
+  expect(rows).toEqual([{ name: 'laptop-1', runs_system: null, time_zone: null }]);
 });

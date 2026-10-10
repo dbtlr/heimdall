@@ -1,12 +1,13 @@
 import { expect, test } from 'bun:test';
 
 import { ReportSchema } from '@heimdall/schema';
+import type { Report } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import { openQueue } from './queue.ts';
-import { NO_RECORDS, tempStateDir } from './testing/fixtures.ts';
+import { NO_SECTIONS, NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
 
@@ -65,15 +66,16 @@ test('samples taken while the Hub is down arrive once it is back, each once', as
     log: { info: (m) => logs.push(`info ${m}`), warn: (m) => logs.push(`warn ${m}`) },
     maxBackoffMs: 30,
     queue,
-    records: NO_RECORDS,
     sampler: {
       sample: () => {
         sampled.push(sampled.length + 1);
         return Promise.resolve(sample(sampled.length));
       },
     },
+    sections: NO_SECTIONS,
     send: (report) => sendReport({ hub: hub.url, report, token: 't' }),
     signal: controller.signal,
+    timeZone: NO_TIME_ZONE,
     transcripts: () => NO_TRANSCRIPTS,
   });
 
@@ -95,6 +97,45 @@ test('samples taken while the Hub is down arrive once it is back, each once', as
   expect(logs.filter((l) => l.startsWith('info Pushing to the Hub works again'))).toHaveLength(1);
 });
 
+test('every Report it sends carries the time zone its dependency gives', async () => {
+  await using dir = await tempStateDir();
+  const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+  const controller = new AbortController();
+  const reports: Report[] = [];
+  let taken = 0;
+
+  const running = runCollector({
+    identity,
+    intervalMs: 5,
+    log: { info: () => 0, warn: () => 0 },
+    maxBackoffMs: 5,
+    queue,
+    sampler: {
+      sample: () => {
+        taken += 1;
+        return Promise.resolve(sample(taken));
+      },
+    },
+    sections: NO_SECTIONS,
+    send: (report) => {
+      reports.push(report);
+      return Promise.resolve({ kind: 'delivered' });
+    },
+    signal: controller.signal,
+    timeZone: () => 'Europe/Paris',
+    transcripts: () => NO_TRANSCRIPTS,
+  });
+  await until(() => reports.length >= 2);
+  controller.abort();
+  await running;
+  queue.close();
+
+  expect(reports.slice(0, 2).map((report) => report.timeZone)).toEqual([
+    'Europe/Paris',
+    'Europe/Paris',
+  ]);
+});
+
 test('stops between samples when its signal aborts', async () => {
   await using dir = await tempStateDir();
   const queue = await openQueue({ capacity: 10, stateDir: dir.path });
@@ -107,15 +148,16 @@ test('stops between samples when its signal aborts', async () => {
     log: { info: () => 0, warn: () => 0 },
     maxBackoffMs: 60_000,
     queue,
-    records: NO_RECORDS,
     sampler: {
       sample: () => {
         taken += 1;
         return Promise.resolve(sample(taken));
       },
     },
+    sections: NO_SECTIONS,
     send: () => Promise.resolve({ kind: 'delivered' }),
     signal: controller.signal,
+    timeZone: NO_TIME_ZONE,
     transcripts: () => NO_TRANSCRIPTS,
   });
   controller.abort();
@@ -139,7 +181,6 @@ test('a sample that fails is skipped with a warning and collection carries on', 
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     maxBackoffMs: 5,
     queue,
-    records: NO_RECORDS,
     sampler: {
       sample: () => {
         attempts += 1;
@@ -148,11 +189,13 @@ test('a sample that fails is skipped with a warning and collection carries on', 
           : Promise.resolve(sample(attempts));
       },
     },
+    sections: NO_SECTIONS,
     send: (report) => {
       delivered.push(...report.samples.map((s) => s.t));
       return Promise.resolve({ kind: 'delivered' });
     },
     signal: controller.signal,
+    timeZone: NO_TIME_ZONE,
     transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => delivered.length >= 2);
@@ -176,13 +219,13 @@ test('a slow push does not crowd the next sample', async () => {
     intervalMs: 40,
     log: { info: () => 0, warn: () => 0 },
     queue,
-    records: NO_RECORDS,
     sampler: {
       sample: () => {
         sampledAt.push(performance.now());
         return Promise.resolve(sample(sampledAt.length));
       },
     },
+    sections: NO_SECTIONS,
     send: async () => {
       sends += 1;
       // The first push takes three intervals.
@@ -190,6 +233,7 @@ test('a slow push does not crowd the next sample', async () => {
       return { kind: 'delivered' };
     },
     signal: controller.signal,
+    timeZone: NO_TIME_ZONE,
     transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => sampledAt.length >= 4);
@@ -225,18 +269,19 @@ test('a queue error warns and backs off instead of stopping the Collector', asyn
         return queue.oldest(limit);
       },
     },
-    records: NO_RECORDS,
     sampler: {
       sample: () => {
         taken += 1;
         return Promise.resolve(sample(taken));
       },
     },
+    sections: NO_SECTIONS,
     send: (report) => {
       delivered.push(...report.samples.map((s) => s.t));
       return Promise.resolve({ kind: 'delivered' });
     },
     signal: controller.signal,
+    timeZone: NO_TIME_ZONE,
     transcripts: () => NO_TRANSCRIPTS,
   });
   await until(() => delivered.includes(1));

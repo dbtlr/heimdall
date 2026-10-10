@@ -1,5 +1,11 @@
-import { mirrorRecords } from '@heimdall/schema';
-import type { RecordsSection, Report, TranscriptsSection, VitalsSample } from '@heimdall/schema';
+import { mirrorRecords, mirrorRuns } from '@heimdall/schema';
+import type {
+  RecordsSection,
+  Report,
+  RunsSection,
+  TranscriptsSection,
+  VitalsSample,
+} from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 export type StoreResult = { skipped: number; stored: number };
@@ -31,14 +37,20 @@ export const storeReport = (
   sql.begin(async (tx) => {
     const seenAt = new Date(receivedAt);
     await tx`
-      INSERT INTO systems (name, last_seen_at, collector_version, collector_platform, collector_arch)
+      INSERT INTO systems (
+        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone
+      )
       VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
-              ${report.collector.platform}, ${storable(report.collector.arch)})
+              ${report.collector.platform}, ${storable(report.collector.arch)},
+              ${report.timeZone ?? null})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
         collector_version = excluded.collector_version,
         collector_platform = excluded.collector_platform,
-        collector_arch = excluded.collector_arch
+        collector_arch = excluded.collector_arch,
+        -- A Report without a zone leaves the one the System has. The last Report to
+        -- arrive wins, which is fine with one Collector per System.
+        time_zone = COALESCE(excluded.time_zone, systems.time_zone)
     `;
     // The samples travel as one JSON parameter, so a Report of any size is one
     // statement. The samples the insert stored, and only those, roll up into
@@ -135,6 +147,9 @@ export const storeReport = (
     if (report.records !== undefined) {
       await storeRecords(tx, { receivedAt: seenAt, report, section: report.records });
     }
+    if (report.runs !== undefined) {
+      await storeRuns(tx, { receivedAt: seenAt, report, section: report.runs });
+    }
     // A stored Report ends a run of rejections (ADR-0005).
     await tx`
       UPDATE conditions SET cleared_at = GREATEST(raised_at, ${seenAt})
@@ -204,6 +219,44 @@ const storeRecords = async (
     INSERT INTO mirrored_records (system, kind, name, record)
     SELECT ${report.system}, r->>'kind', r->>'name', r->'record'
     FROM jsonb_array_elements(${storableJson(records)}::text::jsonb) AS r
+  `;
+};
+
+// Replaces the System's latest runs with a Report's, unless the Hub holds runs
+// from a Report sent later. Held runs that claim a time after `receivedAt` come
+// from a bad clock, and give way. Runs over budget leave no jobs, so none that
+// may have changed is served. The runs' row is locked until the transaction
+// ends, so concurrent Reports apply in order.
+const storeRuns = async (
+  sql: SQL,
+  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: RunsSection },
+) => {
+  const mirrored = mirrorRuns(section);
+  const overBudget = 'overBudget' in mirrored ? mirrored.overBudget.bytes : null;
+  const unreadable = 'unreadable' in mirrored ? mirrored.unreadable : [];
+  const jobs = 'jobs' in mirrored ? mirrored.jobs : [];
+  const replaced: unknown[] = await sql`
+    INSERT INTO run_sets (system, sent_at, received_at, unreadable, over_budget_bytes)
+    VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt},
+            ${storableJson(unreadable)}::text::jsonb, ${overBudget})
+    ON CONFLICT (system) DO UPDATE SET
+      sent_at = excluded.sent_at,
+      received_at = excluded.received_at,
+      unreadable = excluded.unreadable,
+      over_budget_bytes = excluded.over_budget_bytes
+    WHERE run_sets.sent_at <= excluded.sent_at
+       OR run_sets.sent_at > ${receivedAt}
+    RETURNING system
+  `;
+  if (replaced.length === 0) {
+    return;
+  }
+  await sql`DELETE FROM mirrored_runs WHERE system = ${report.system}`;
+  // A job with no success sends null, which `->` reads as a JSON null, not NULL.
+  await sql`
+    INSERT INTO mirrored_runs (system, job, latest_run, latest_success)
+    SELECT ${report.system}, j->>'job', j->'latestRun', NULLIF(j->'latestSuccess', 'null'::jsonb)
+    FROM jsonb_array_elements(${storableJson(jobs)}::text::jsonb) AS j
   `;
 };
 
