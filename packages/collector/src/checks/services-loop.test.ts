@@ -125,6 +125,36 @@ test('a check keeps its since time while its state holds, and takes a new one wh
   });
 });
 
+test('a check keeps the since time of its latest state across ticks, after a change', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.elsewhere((store) => store.put('service', WEB));
+  c.states.set('web.service', 'active');
+  await c.checks.tick();
+
+  c.advance(60_000);
+  c.states.set('web.service', 'failed');
+  await c.checks.tick();
+  c.advance(60_000);
+  await c.checks.tick();
+  c.advance(60_000);
+  await c.checks.tick();
+  const stopped = c.checks.latest();
+  c.advance(60_000);
+  c.states.set('web.service', 'active');
+  await c.checks.tick();
+  c.advance(60_000);
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(stopped).toEqual({
+    services: [sent('web', 'stopped', 'ActiveState=failed', START + 60_000)],
+  });
+  expect(c.checks.latest()).toEqual({
+    services: [sent('web', 'up', 'ActiveState=active', START + 240_000)],
+  });
+});
+
 test('answers the same object while nothing about the checks changed, so nothing is sent again', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
