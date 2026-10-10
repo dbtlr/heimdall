@@ -99,6 +99,17 @@ The Hub reads a schedule's entries as wall-clock times in the System's time zone
 
 A job Condition stays as it is while what decides it is unknown: while the System's record set or runs are over budget, while the Collector or the Hub cannot read the job's record or runs, while the System has never sent runs, and, for job overdue, while the Hub has no time zone for the System or does not know its zone. A job whose record is forgotten clears both.
 
+## System Conditions
+
+Once a minute the Hub judges every paired System for two Conditions about the System itself, in the same pass as the job Conditions.
+
+- **Stale System** is raised when the Hub last heard from the System more than 10 minutes ago, or more than 7 days ago when the System sleeps. Any Report counts as hearing from it, including one the Hub rejects, and so does any transcript upload. A paired System the Hub has never heard from counts from when it was paired, so a Collector that never starts is stale too, and it appears on the page with that time as its last seen. A System paired again counts from the new pairing if that is later than it last reported. The Condition has no subject, its reason names the time the System was last heard from, and it clears at the next judgment after the System is heard from again.
+- **Low disk** is raised for a mount whose free space in the System's latest Vitals sample is below 10% of its size, and clears when it is above 15%. Between the two an open Condition stays open and a mount that is not low stays unraised, so a mount near the limit does not flap. The subject is the mount, and the reason gives its free space and its percentage, such as `9.9 GiB free of 100.0 GiB (9.9%).`; a Condition that stays open takes the newer reason when it changes. A mount that leaves the latest sample clears its Condition. A mount with a size of 0 is left as it is, and a System with no readable sample is not judged for disk.
+
+The limits are named constants that the Hub passes to the evaluation as parameters, so that Hub configuration can supply them later.
+
+The Collector says whether its System sleeps with `sleeps = true` in `collector.toml`, `--sleeps`, or `HEIMDALL_SLEEPS`, and false when left out, and puts that in every Report as the boolean `sleeps`. The Hub stores the latest value it received. A Report without `sleeps`, from a Collector that predates it, leaves the stored value as it is, and a System that has never sent it counts as always on. Upgrade the Hub, then the Collectors: a laptop whose Collector predates `sleeps` is stale after 10 minutes until it is upgraded and configured.
+
 ## Reading the records back
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.

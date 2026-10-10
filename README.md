@@ -31,12 +31,15 @@ Each setting comes from its flag, then its environment variable, then the config
 | ------------- | -------------------- | ---------- | ----------------------------------------------------------------------- |
 | `--hub`       | `HEIMDALL_HUB`       | `hub`      | none                                                                    |
 | `--state-dir` | `HEIMDALL_STATE_DIR` | `stateDir` | `~/Library/Application Support/heimdall` on macOS, `$XDG_STATE_HOME/heimdall` on Linux |
+| `--sleeps`    | `HEIMDALL_SLEEPS`    | `sleeps`   | `false`                                                                 |
 
 The configuration file is the one `--config` names, or else `.config/heimdall/collector.toml` or `.config/heimdall/collector.json` in the working directory and then the home directory, which is `~/.config/heimdall/collector.toml`. It holds no secret and is the same on every System:
 
 ```toml
 hub = "http://hub-host.example.ts.net:8080"
 ```
+
+Set `sleeps = true` on a System that sleeps, such as a laptop. Every Report carries the setting, and the Hub raises the stale System Condition after 7 days without hearing from a System that sleeps, and after 10 minutes without hearing from one that does not ([spec](docs/spec.md#system-conditions)).
 
 ### Capturing transcripts
 
