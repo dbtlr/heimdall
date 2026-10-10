@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import { httpGet } from '@heimdall/service';
 import type { HttpGet, HttpGetResult } from '@heimdall/service';
+import { runWithProxy } from '@heimdall/service/testing';
 
 import { checkHealth } from './health.ts';
 
@@ -202,32 +203,25 @@ describe('a health check', () => {
     expect(outcome.detail).toHaveLength(MAX_CHECK_DETAIL_LENGTH);
   });
 
-  describe('with a proxy in the environment', () => {
-    const saved = { HTTP_PROXY: process.env.HTTP_PROXY, http_proxy: process.env.http_proxy };
+  test.each(['HTTP_PROXY', 'http_proxy'] as const)(
+    'reaches the target directly and sends nothing to the proxy (%s)',
+    async (variable) => {
+      const proxy = serve(() => new Response('from the proxy'));
+      const target = serve(() => new Response('ok'));
 
-    afterEach(() => {
-      for (const [name, value] of Object.entries(saved)) {
-        if (value === undefined) {
-          delete process.env[name];
-        } else {
-          process.env[name] = value;
-        }
-      }
-    });
+      const printed = await runWithProxy({
+        proxy: proxy.url.replace('http://', 'http://user:secret@'),
+        script: `
+          const { checkHealth } = await import(${JSON.stringify(`${import.meta.dir}/health.ts`)});
+          const { httpGet } = await import(${JSON.stringify(import.meta.resolve('@heimdall/service'))});
+          console.log(JSON.stringify(await checkHealth('${target.url}/healthz', { get: httpGet })));
+        `,
+        variable,
+      });
 
-    test.each(['HTTP_PROXY', 'http_proxy'])(
-      'reaches the target directly and sends nothing to the proxy (%s)',
-      async (name) => {
-        const proxy = serve(() => new Response('from the proxy'));
-        const target = serve(() => new Response('ok'));
-        process.env[name] = proxy.url.replace('http://', 'http://user:secret@');
-
-        const outcome = await checkHealth(`${target.url}/healthz`, { get: httpGet });
-
-        expect(outcome.state).toBe('up');
-        expect(target.seen).toEqual(['/healthz']);
-        expect(proxy.seen).toEqual([]);
-      },
-    );
-  });
+      expect(JSON.parse(printed)).toMatchObject({ detail: 'HTTP 200', state: 'up' });
+      expect(target.seen).toEqual(['/healthz']);
+      expect(proxy.seen).toEqual([]);
+    },
+  );
 });

@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 
-import { httpGet } from './http-get.ts';
 import type { HttpGetResult } from './http-get.ts';
 import { healthWords, probeHealth, queueWords, renderStatus, spoolWords } from './status.ts';
+import { runWithProxy } from './testing.ts';
 
 const URL_8080 = 'http://127.0.0.1:8080/api/health';
 
@@ -110,19 +110,23 @@ test('the probe asks the address it was given, and no proxy in the environment',
     hostname: '127.0.0.1',
     port: 0,
   });
-  const saved = process.env.HTTP_PROXY;
-  process.env.HTTP_PROXY = `http://127.0.0.1:${String(proxy.port)}`;
   try {
-    expect(
-      await probeHealth({ get: httpGet, url: `http://127.0.0.1:${String(hub.port)}/api/health` }),
-    ).toEqual({ database: 'ok', kind: 'answered', version: '0.2.0' });
+    const printed = await runWithProxy({
+      proxy: `http://127.0.0.1:${String(proxy.port)}`,
+      script: `
+        const { probeHealth } = await import(${JSON.stringify(`${import.meta.dir}/status.ts`)});
+        const { httpGet } = await import(${JSON.stringify(`${import.meta.dir}/http-get.ts`)});
+        console.log(JSON.stringify(await probeHealth({
+          get: httpGet,
+          url: 'http://127.0.0.1:${String(hub.port)}/api/health',
+        })));
+      `,
+      variable: 'HTTP_PROXY',
+    });
+
+    expect(JSON.parse(printed)).toEqual({ database: 'ok', kind: 'answered', version: '0.2.0' });
     expect(proxied).toEqual([]);
   } finally {
-    if (saved === undefined) {
-      delete process.env.HTTP_PROXY;
-    } else {
-      process.env.HTTP_PROXY = saved;
-    }
     await proxy.stop(true);
     await hub.stop(true);
   }

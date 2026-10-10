@@ -192,3 +192,28 @@ export const fakeLaunchd = ({
   };
   return { calls, runner, state };
 };
+
+// Runs `script`, the body of an ES module, in a Bun child process whose
+// environment names `proxy` in `variable` (`HTTP_PROXY` or `http_proxy`), and
+// answers what it printed. A test cannot set the variable in its own process:
+// once the environment has named a proxy, Bun's `fetch` keeps using it, even
+// after the variable is deleted, which would break every later request in the
+// test run.
+export const runWithProxy = async ({
+  proxy,
+  script,
+  variable,
+}: {
+  proxy: string;
+  script: string;
+  variable: 'HTTP_PROXY' | 'http_proxy';
+}): Promise<string> => {
+  const child = Bun.spawn({
+    cmd: [process.execPath, '--eval', script],
+    env: { ...process.env, [variable]: proxy },
+    stderr: 'inherit',
+    stdout: 'pipe',
+  });
+  const [stdout] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  return stdout;
+};

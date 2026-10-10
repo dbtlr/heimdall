@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { httpGet } from './http-get.ts';
+import { runWithProxy } from './testing.ts';
 
 const stoppers: (() => unknown)[] = [];
 
@@ -221,38 +222,31 @@ describe('httpGet', () => {
     });
   });
 
-  describe('with a proxy in the environment', () => {
-    const saved = {
-      HTTP_PROXY: process.env.HTTP_PROXY,
-      http_proxy: process.env.http_proxy,
-    };
+  test.each(['HTTP_PROXY', 'http_proxy'] as const)(
+    'ignores a proxy in %s: the request reaches the target directly',
+    async (variable) => {
+      const proxied: string[] = [];
+      const proxy = serve((request) => {
+        proxied.push(request.url);
+        return new Response('from the proxy');
+      });
+      const target = serve(() => new Response('from the target'));
 
-    afterEach(() => {
-      for (const [name, value] of Object.entries(saved)) {
-        if (value === undefined) {
-          delete process.env[name];
-        } else {
-          process.env[name] = value;
-        }
-      }
-    });
+      const printed = await runWithProxy({
+        proxy: `http://user:secret@${proxy.host}:${String(proxy.port)}`,
+        script: `
+          const { httpGet } = await import(${JSON.stringify(`${import.meta.dir}/http-get.ts`)});
+          const result = await httpGet(
+            { host: '127.0.0.1', path: '/', port: ${String(target.port)} },
+            { maxBodyBytes: 100, timeoutMs: 2000 },
+          );
+          console.log(JSON.stringify(result));
+        `,
+        variable,
+      });
 
-    test.each(['HTTP_PROXY', 'http_proxy'])(
-      '%s is ignored: the request reaches the target directly',
-      async (name) => {
-        const proxied: string[] = [];
-        const proxy = serve((request) => {
-          proxied.push(request.url);
-          return new Response('from the proxy');
-        });
-        const target = serve(() => new Response('from the target'));
-        process.env[name] = `http://user:secret@${proxy.host}:${String(proxy.port)}`;
-
-        const result = await httpGet({ ...target, path: '/' }, OPTIONS);
-
-        expect(result).toMatchObject({ body: 'from the target', status: 200 });
-        expect(proxied).toEqual([]);
-      },
-    );
-  });
+      expect(JSON.parse(printed)).toMatchObject({ body: 'from the target', status: 200 });
+      expect(proxied).toEqual([]);
+    },
+  );
 });
