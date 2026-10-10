@@ -1,6 +1,8 @@
 import type { FileCheck, JobRuns, MirroredRecord, RecordRef, RecordsRead } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { compareCodeUnits } from './compare.ts';
+
 type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
   check_files: FileCheck[] | null;
@@ -61,7 +63,7 @@ const runsOf = (row: SetRow, jobs: JobRuns[]): Runs => {
 };
 
 // One System's latest checks in the read, from its checks row, or null when no
-// Report has carried checks. Files sort by record, then path.
+// Report has carried checks. Files sort by record, then path, by code unit like records and runs.
 const checksOf = (row: SetRow): Checks => {
   if (row.check_sent_at === null || row.check_received_at === null) {
     return null;
@@ -80,7 +82,7 @@ const checksOf = (row: SetRow): Checks => {
       since: new Date(since).toISOString(),
       state,
     }))
-    .toSorted((a, b) => a.record.localeCompare(b.record) || a.path.localeCompare(b.path));
+    .toSorted((a, b) => compareCodeUnits(a.record, b.record) || compareCodeUnits(a.path, b.path));
   return { ...times, files };
 };
 

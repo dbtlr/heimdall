@@ -614,6 +614,48 @@ describe('the checks a Report carries', () => {
     });
   });
 
+  test('sort by code unit, as records and runs do, not by locale', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: {
+        files: [
+          sentCheck({ ...CONF, path: '/a', record: 'b' }),
+          sentCheck({ ...CONF, path: '/b', record: 'B' }),
+          sentCheck({ ...CONF, path: '/a', record: 'B' }),
+        ],
+      },
+    });
+
+    const checks = (await entryOf(h))?.checks;
+    expect(checks && 'files' in checks ? checks.files.map((f) => [f.record, f.path]) : []).toEqual([
+      ['B', '/a'],
+      ['B', '/b'],
+      ['b', '/a'],
+    ]);
+  });
+
+  test('give way to the next when the held ones claim a time after the Hub clock', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 10 * YEAR });
+
+    await send(h, { checks: { files: [] }, sentAt: NOW + 60_000 });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      files: [],
+      sentAt: new Date(NOW + 60_000).toISOString(),
+    });
+  });
+
+  test('are replaced by checks sent at the very same time', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW });
+
+    await send(h, { checks: { files: [] }, sentAt: NOW });
+
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
+  });
+
   test('show a file the Collector could not read as unreadable, not as drifted', async () => {
     await using h = await startHub();
 
@@ -797,4 +839,26 @@ test('migration 8 applies on top of version 7 and leaves a System with no time z
     FROM systems s LEFT JOIN run_sets r ON r.system = s.name
   `;
   expect(rows).toEqual([{ name: 'laptop-1', runs_system: null, time_zone: null }]);
+});
+
+test('migration 11 applies on top of the earlier versions and leaves a System with no checks', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version < 11),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 11),
+    ),
+  ).toEqual([11]);
+
+  const rows = await db.sql`
+    SELECT s.name, c.system AS checks_system
+    FROM systems s LEFT JOIN check_sets c ON c.system = s.name
+  `;
+  expect(rows).toEqual([{ checks_system: null, name: 'laptop-1' }]);
 });

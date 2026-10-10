@@ -1,7 +1,8 @@
-import { FILE_CHECK_STATES, REPORTED_RECORD_SCHEMAS } from '@heimdall/schema';
+import { FILE_CHECK_STATES, filesRecordDigest, REPORTED_RECORD_SCHEMAS } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { compareCodeUnits } from './compare.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
 
@@ -22,82 +23,125 @@ const StoredFilesSchema = z.array(
   }),
 );
 
-type FileCheck = z.infer<typeof StoredFilesSchema>[number];
+// The files records the Collector hashed, each with the digest it read.
+const StoredFileRecordsSchema = z.array(z.object({ digest: z.string(), record: z.string() }));
 
 const UnreadableRecordsSchema = z.array(z.object({ kind: z.string(), name: z.string() }));
 
-type CheckSetRow = { files: unknown; over_budget_bytes: string | null };
+type FileCheck = z.infer<typeof StoredFilesSchema>[number];
+
+type CheckSetRow = {
+  file_records: unknown;
+  files: unknown;
+  over_budget_bytes: string | null;
+};
 type RecordSetRow = { over_budget_bytes: string | null; unreadable: unknown };
+type MirroredRow = { name: string; record: unknown };
 
-// The names of the files records the Hub cannot read: those the Collector
-// listed as unreadable, and those whose mirrored shape this Hub does not know.
-const unreadableFilesRecords = (
-  recordSet: RecordSetRow,
-  mirrored: { name: string; record: unknown }[],
-) =>
-  new Set([
-    ...(UnreadableRecordsSchema.safeParse(recordSet.unreadable).data ?? [])
-      .filter((ref) => ref.kind === 'files')
-      .map((ref) => ref.name),
-    ...mirrored
-      .filter((row) => !REPORTED_RECORD_SCHEMAS.files.safeParse(row.record).success)
-      .map((row) => row.name),
-  ]);
+// A mirrored files record this Hub can read, with its digest.
+type ReadableRecord = { digest: string; name: string; paths: Set<string> };
 
-// The paths each readable files record names.
-const pathsByRecord = (mirrored: { name: string; record: unknown }[]) =>
-  new Map(
-    mirrored.flatMap((row) => {
-      const parsed = REPORTED_RECORD_SCHEMAS.files.safeParse(row.record);
-      return parsed.success ? [[row.name, new Set(parsed.data.files.map((f) => f.path))]] : [];
-    }),
-  );
-
-const reasonOf = ({ record, state }: FileCheck) =>
+const reasonOf = ({ record, state }: Pick<FileCheck, 'record' | 'state'>) =>
   state === 'missing'
     ? `Missing: the file recorded in ${record} does not exist.`
     : `Changed: its content no longer matches the hash recorded in ${record}.`;
 
-// What each file the checks list decides. A file a record no longer names does
-// not count, since its provisioner forgot it or stopped recording it; a file
-// whose record the Hub cannot read, or the Collector could not read, is
-// unknown, and so is one the Collector could not read, which says nothing of
-// its content. Drift wins over unknown, so a path is raised while any record
-// shows it changed or missing.
+// What each path in the mirrored files records decides, and whether some files
+// record is unreadable.
+//
+// The Collector's verdict on a record's files counts only when the checks list
+// the record with the digest of the record this Hub mirrors, since the record
+// and the checks reach the Hub apart and can describe different versions. For
+// any other record every path it names is unknown. In a record the checks
+// judged, a path listed as changed or missing is raised, one listed as
+// unreadable is unknown, and one not listed matches. A path several records
+// name is raised if any judged record shows it changed or missing, otherwise
+// unknown if anything about it is unknown, and clear only when every record
+// naming it was judged and shows it matching. The reason names the first
+// record, by name, that shows the path changed or missing.
 const verdictsOf = ({
   files,
-  paths,
-  unreadable,
+  judged,
+  records,
 }: {
-  files: FileCheck[];
-  paths: Map<string, Set<string>>;
-  unreadable: Set<string>;
+  files: readonly FileCheck[];
+  judged: ReadonlyMap<string, string>;
+  records: readonly ReadableRecord[];
 }) => {
+  const mismatched = new Map(files.map((file) => [JSON.stringify([file.record, file.path]), file]));
   const verdicts = new Map<string, Verdict>();
-  const ordered = files.toSorted((a, b) => a.record.localeCompare(b.record));
-  for (const file of ordered) {
-    let verdict: Verdict | undefined;
-    if (unreadable.has(file.record)) {
-      verdict = 'unknown';
-    } else if (paths.get(file.record)?.has(file.path) === true) {
-      verdict = file.state === 'unreadable' ? 'unknown' : { raise: reasonOf(file) };
-    }
-    const held = verdicts.get(file.path);
-    if (
-      verdict !== undefined &&
-      (held === undefined || (held === 'unknown' && verdict !== 'unknown'))
-    ) {
-      verdicts.set(file.path, verdict);
+  const ordered = records.toSorted((a, b) => compareCodeUnits(a.name, b.name));
+  for (const record of ordered) {
+    const isJudged = judged.get(record.name) === record.digest;
+    for (const path of record.paths) {
+      const held = verdicts.get(path);
+      const mismatch = mismatched.get(JSON.stringify([record.name, path]));
+      verdicts.set(path, strongest(held, verdictOf({ isJudged, mismatch })));
     }
   }
   return verdicts;
+};
+
+// What one judged-or-not record says of one of its paths.
+const verdictOf = ({
+  isJudged,
+  mismatch,
+}: {
+  isJudged: boolean;
+  mismatch: FileCheck | undefined;
+}): Verdict => {
+  if (!isJudged || mismatch?.state === 'unreadable') {
+    return 'unknown';
+  }
+  return mismatch === undefined ? 'clear' : { raise: reasonOf(mismatch) };
+};
+
+// Drift beats unknown, which beats clear; of two Drift verdicts the held one,
+// from the record sorted first, stands.
+const strongest = (held: Verdict | undefined, next: Verdict): Verdict => {
+  if (held === undefined) {
+    return next;
+  }
+  if (typeof held === 'object') {
+    return held;
+  }
+  if (typeof next === 'object') {
+    return next;
+  }
+  return held === 'unknown' || next === 'unknown' ? 'unknown' : 'clear';
+};
+
+// The mirrored files records this Hub can read, and whether any files record is
+// unreadable: one the Collector listed as unreadable, or one whose mirrored
+// shape this Hub does not know. Paths of an unreadable record are not known, so
+// Drift for a path no readable record names stays as it is.
+const readRecords = async (recordSet: RecordSetRow, mirrored: readonly MirroredRow[]) => {
+  const records: ReadableRecord[] = [];
+  let unreadable = (UnreadableRecordsSchema.safeParse(recordSet.unreadable).data ?? []).some(
+    (ref) => ref.kind === 'files',
+  );
+  for (const row of mirrored) {
+    const parsed = REPORTED_RECORD_SCHEMAS.files.safeParse(row.record);
+    if (parsed.success) {
+      records.push({
+        // oxlint-disable-next-line no-await-in-loop -- digests are small and few.
+        digest: await filesRecordDigest(parsed.data),
+        name: row.name,
+        paths: new Set(parsed.data.files.map((file) => file.path)),
+      });
+    } else {
+      unreadable = true;
+    }
+  }
+  return { records, unreadable };
 };
 
 // Raises and clears one System's Drift under the System's row lock, so it
 // orders with its Reports (ADR-0005), at the time `clock` reads once the lock
 // is held. Drift is one Condition per path. It is left as it is while the
 // System's checks or records are absent or over budget, since neither says what
-// the files are now.
+// the files are now, and for the paths of a record the checks did not judge as
+// the Hub mirrors it.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -105,7 +149,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     `;
     const now = clock();
     const [checkSet]: CheckSetRow[] = await tx`
-      SELECT over_budget_bytes, files FROM check_sets WHERE system = ${system}
+      SELECT over_budget_bytes, files, file_records FROM check_sets WHERE system = ${system}
     `;
     const [recordSet]: RecordSetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
@@ -120,26 +164,29 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       return;
     }
     const files = StoredFilesSchema.safeParse(checkSet.files);
-    if (!files.success) {
+    const fileRecords = StoredFileRecordsSchema.safeParse(checkSet.file_records);
+    if (!files.success || !fileRecords.success) {
       return;
     }
-    const mirrored: { name: string; record: unknown }[] = await tx`
+    const mirrored: MirroredRow[] = await tx`
       SELECT name, record FROM mirrored_records WHERE system = ${system} AND kind = 'files'
     `;
     const open: { subject: string }[] = await tx`
       SELECT subject FROM conditions
       WHERE system = ${system} AND kind = ${DRIFT} AND cleared_at IS NULL
     `;
+    const { records, unreadable } = await readRecords(recordSet, mirrored);
     const verdicts = verdictsOf({
       files: files.data,
-      paths: pathsByRecord(mirrored),
-      unreadable: unreadableFilesRecords(recordSet, mirrored),
+      judged: new Map(fileRecords.data.map((entry) => [entry.record, entry.digest])),
+      records,
     });
-    // A path nothing says is not drifted is cleared, which also clears the
-    // Drift of a record forgotten since the checks were sent.
+    // Drift for a path no files record names any more is cleared, which is how
+    // a forgotten record clears its Drift, unless some record is unreadable and
+    // might still name the path.
     for (const { subject } of open) {
       if (!verdicts.has(subject)) {
-        verdicts.set(subject, 'clear');
+        verdicts.set(subject, unreadable ? 'unknown' : 'clear');
       }
     }
 

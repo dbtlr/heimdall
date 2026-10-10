@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { filesRecordDigest } from '@heimdall/schema';
+
 import { evaluateConditions, runInTurn } from './evaluate-conditions.ts';
 import { listSystems } from './store.ts';
 import type { ConditionKind } from './store.ts';
@@ -19,6 +21,7 @@ const failingAndQuiet = async (h: Hub) => {
     {
       ...report('laptop-1', [NOW]),
       checks: {
+        fileRecords: [{ digest: await filesRecordDigest(CONFIG), record: 'app-config' }],
         files: [{ path: '/etc/app.conf', record: 'app-config', since: NOW, state: 'drifted' }],
       },
       records: {

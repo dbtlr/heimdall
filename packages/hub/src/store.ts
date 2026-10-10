@@ -311,15 +311,17 @@ const storeChecks = async (
   const mirrored = mirrorChecks(section);
   const overBudget = 'overBudget' in mirrored ? mirrored.overBudget.bytes : null;
   const files = 'files' in mirrored ? mirrored.files : [];
+  const fileRecords = 'fileRecords' in mirrored ? mirrored.fileRecords : [];
   await sql`
-    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes, files)
+    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes, files, file_records)
     VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt}, ${overBudget},
-            ${storableJson(files)}::text::jsonb)
+            ${storableJson(files)}::text::jsonb, ${storableJson(fileRecords)}::text::jsonb)
     ON CONFLICT (system) DO UPDATE SET
       sent_at = excluded.sent_at,
       received_at = excluded.received_at,
       over_budget_bytes = excluded.over_budget_bytes,
-      files = excluded.files
+      files = excluded.files,
+      file_records = excluded.file_records
     WHERE check_sets.sent_at <= excluded.sent_at
        OR check_sets.sent_at > ${receivedAt}
   `;
