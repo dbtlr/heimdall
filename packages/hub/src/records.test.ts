@@ -989,7 +989,7 @@ test('migration 11 applies on top of the earlier versions and leaves a System wi
   expect(rows).toEqual([{ checks_system: null, name: 'laptop-1' }]);
 });
 
-test('migration 12 keeps the size of checks that were over budget as that of the files part, and has no services', async () => {
+test('migration 12 keeps the size of checks that were over budget as that of the files part, has no services, and lets the files be null', async () => {
   await using db = await testDatabase();
   await migrate(
     db.sql,
@@ -997,40 +997,24 @@ test('migration 12 keeps the size of checks that were over budget as that of the
   );
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
   await db.sql`
-    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes)
-    VALUES ('laptop-1', now(), now(), 2000000)
+    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes, files)
+    VALUES ('laptop-1', now(), now(), 2000000, '[{"path":"/a"}]')
   `;
 
-  expect(
-    await migrate(
-      db.sql,
-      MIGRATIONS.filter((m) => m.version <= 12),
-    ),
-  ).toEqual([12]);
-
-  const rows = await db.sql`
-    SELECT files_over_budget_bytes, services, services_over_budget_bytes FROM check_sets
-  `;
-  expect(rows).toEqual([
-    { files_over_budget_bytes: '2000000', services: null, services_over_budget_bytes: null },
-  ]);
-});
-
-test('migration 13 lets checks hold no files part, and keeps the files already stored', async () => {
-  await using db = await testDatabase();
-  await migrate(
-    db.sql,
-    MIGRATIONS.filter((m) => m.version <= 12),
-  );
-  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
-  await db.sql`
-    INSERT INTO check_sets (system, sent_at, received_at, files)
-    VALUES ('laptop-1', now(), now(), '[{"path":"/a"}]')
-  `;
-
-  expect(await migrate(db.sql)).toEqual([13]);
+  expect(await migrate(db.sql)).toEqual([12]);
   await db.sql`UPDATE check_sets SET file_records = NULL`;
 
-  const rows = await db.sql`SELECT files, file_records FROM check_sets`;
-  expect(rows).toEqual([{ file_records: null, files: [{ path: '/a' }] }]);
+  const rows = await db.sql`
+    SELECT files, file_records, files_over_budget_bytes, services, services_over_budget_bytes
+    FROM check_sets
+  `;
+  expect(rows).toEqual([
+    {
+      file_records: null,
+      files: [{ path: '/a' }],
+      files_over_budget_bytes: '2000000',
+      services: null,
+      services_over_budget_bytes: null,
+    },
+  ]);
 });
