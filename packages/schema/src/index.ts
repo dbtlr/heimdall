@@ -68,6 +68,7 @@ export {
   ChecksSectionSchema,
   FILE_CHECK_STATES,
   filesRecordDigest,
+  MAX_CHECK_DETAIL_LENGTH,
   MAX_CHECKS_PART_BYTES,
   mirrorChecks,
   SERVICE_CHECK_KINDS,

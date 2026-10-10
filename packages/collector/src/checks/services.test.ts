@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceRecord } from '@heimdall/schema';
 
 import type { CommandResult } from '../subprocess.ts';
@@ -18,6 +19,9 @@ const shown = (states: { active: string; load?: string; sub?: string }): Command
   stderr: '',
   stdout: `LoadState=${states.load ?? 'loaded'}\nActiveState=${states.active}\nSubState=${states.sub ?? 'running'}\n`,
 });
+
+// One unit's block of `systemctl show` output.
+const block = (active: string) => `LoadState=loaded\nActiveState=${active}\nSubState=running\n`;
 
 const failed = (exitCode: number, stderr: string): CommandResult => ({
   exitCode,
@@ -127,6 +131,62 @@ describe('a systemd Service', () => {
     ]);
   });
 
+  test.each([
+    ['SubState', 'LoadState=loaded\nActiveState=active\n'],
+    ['LoadState', 'ActiveState=active\nSubState=running\n'],
+    ['ActiveState', 'LoadState=loaded\nSubState=running\n'],
+  ])('is unknown when systemctl answers without %s', async (_, stdout) => {
+    const { outcomes } = await check(WEB, { exitCode: 0, kind: 'exited', stderr: '', stdout });
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'unexpected systemctl output', state: 'unknown' },
+    ]);
+  });
+
+  test('is unknown when systemctl answers for more than one unit, as it does for a name that matches several', async () => {
+    const { outcomes } = await check(WEB, {
+      exitCode: 0,
+      kind: 'exited',
+      stderr: '',
+      stdout: `${block('failed')}\n${block('active')}`,
+    });
+
+    expect(outcomes).toEqual([
+      {
+        check: 'supervisor',
+        detail: 'systemctl answered for more than one unit',
+        state: 'unknown',
+      },
+    ]);
+  });
+
+  test('is unknown when systemctl answers for no unit, as it does for a name that matches none', async () => {
+    const { outcomes } = await check(WEB, { exitCode: 0, kind: 'exited', stderr: '', stdout: '' });
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'systemctl answered for no unit', state: 'unknown' },
+    ]);
+  });
+
+  test('is not read as a bus failure because a unit name echoed by systemctl contains "bus"', async () => {
+    const { outcomes } = await check(
+      WEB,
+      failed(1, 'Failed to get properties: Access denied for unit dbus@.service'),
+    );
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'systemctl exited 1', state: 'unknown' },
+    ]);
+  });
+
+  test('keeps its detail within what the Hub takes', async () => {
+    const { outcomes } = await check(WEB, shown({ active: 'x'.repeat(500) }));
+
+    expect(outcomes).toMatchObject([{ state: 'stopped' }]);
+    expect(outcomes[0]?.detail).toHaveLength(MAX_CHECK_DETAIL_LENGTH);
+    expect(outcomes[0]?.detail.startsWith('ActiveState=xxx')).toBe(true);
+  });
+
   test('is unknown when systemctl cannot be started', async () => {
     const { outcomes } = await check(WEB, new Error('ENOENT'));
 
@@ -164,11 +224,12 @@ describe('a systemd-user Service', () => {
     ]);
   });
 
-  test('is unknown, not stopped, when the account has no user bus', async () => {
-    const { outcomes } = await check(
-      WEB_USER,
-      failed(1, 'Failed to connect to bus: No medium found'),
-    );
+  test.each([
+    'Failed to connect to bus: No medium found',
+    'Failed to connect to user scope bus via local transport: No such file or directory',
+    'Failed to get D-Bus connection: No such file or directory',
+  ])('is unknown, not stopped, when the account has no user bus (%s)', async (stderr) => {
+    const { outcomes } = await check(WEB_USER, failed(1, stderr));
 
     expect(outcomes).toEqual([
       { check: 'supervisor', detail: 'bus unavailable', state: 'unknown' },

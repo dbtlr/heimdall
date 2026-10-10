@@ -28,7 +28,8 @@ export const SERVICE_CHECK_STATES = ['up', 'stopped', 'unknown', 'unchecked'] as
 export type ServiceCheckState = (typeof SERVICE_CHECK_STATES)[number];
 
 const MAX_PATH_LENGTH = 4096;
-const MAX_DETAIL_LENGTH = 200;
+// The most characters of `detail` the Hub takes in a check.
+export const MAX_CHECK_DETAIL_LENGTH = 200;
 
 // A file that does not match, as the Collector sends it. The state is any short
 // word, so a state only a newer Collector knows does not reject a Report
@@ -48,7 +49,7 @@ const SentFileCheckSchema = z.object({
 // check in this state.
 const SentServiceCheckSchema = z.object({
   check: z.string().min(1).max(64),
-  detail: z.string().max(MAX_DETAIL_LENGTH),
+  detail: z.string().max(MAX_CHECK_DETAIL_LENGTH),
   service: z.string().regex(RECORD_NAME),
   since: epochMs,
   state: z.string().min(1).max(64),
