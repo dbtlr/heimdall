@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { filesRecordDigest } from '@heimdall/schema';
+
 import { evaluateConditions, runInTurn } from './evaluate-conditions.ts';
 import { listSystems } from './store.ts';
 import type { ConditionKind } from './store.ts';
@@ -9,13 +11,19 @@ import type { Hub } from './testing/hub.ts';
 
 const MINUTE = 60_000;
 
-// laptop-1 reported a failed job run at NOW and then went quiet, so by
-// NOW + 11 minutes it is both failing a job and stale.
+const CONFIG = { files: [{ path: '/etc/app.conf', sha256: 'a'.repeat(64) }], name: 'app-config' };
+
+// laptop-1 reported a failed job run and a changed file at NOW and then went
+// quiet, so by NOW + 11 minutes it is failing a job, drifting, and stale.
 const failingAndQuiet = async (h: Hub) => {
   const response = await push(
     h.hub,
     {
       ...report('laptop-1', [NOW]),
+      checks: {
+        fileRecords: [{ digest: await filesRecordDigest(CONFIG), record: 'app-config' }],
+        files: [{ path: '/etc/app.conf', record: 'app-config', since: NOW, state: 'drifted' }],
+      },
       records: {
         records: [
           {
@@ -28,6 +36,7 @@ const failingAndQuiet = async (h: Hub) => {
               scheduler: 'launchd',
             },
           },
+          { kind: 'files', name: 'app-config', record: CONFIG },
         ],
         unreadable: [],
       },
@@ -61,21 +70,22 @@ const judge = (h: Hub) => {
 };
 
 describe('judging every Condition', () => {
-  test('runs the job evaluator and the System evaluator', async () => {
+  test('runs the job, System, and Drift evaluators', async () => {
     await using h = await startHub();
     await failingAndQuiet(h);
 
     await judge(h);
 
-    expect(await openKinds(h)).toEqual(['job_failing', 'system_stale']);
+    expect(await openKinds(h)).toEqual(['drift', 'job_failing', 'system_stale']);
   });
 
-  test.each<[ConditionKind, ConditionKind]>([
-    ['job_failing', 'system_stale'],
-    ['system_stale', 'job_failing'],
+  test.each<[ConditionKind, ConditionKind[]]>([
+    ['job_failing', ['drift', 'system_stale']],
+    ['system_stale', ['drift', 'job_failing']],
+    ['drift', ['job_failing', 'system_stale']],
   ])(
-    'a database refusing %s does not stop %s, and the failure is reported',
-    async (refused, other) => {
+    'a database refusing %s does not stop the others, and the failure is reported',
+    async (refused, others) => {
       await using h = await startHub();
       await failingAndQuiet(h);
       await h.db.sql.unsafe(`
@@ -92,7 +102,7 @@ describe('judging every Condition', () => {
 
       expect(failure).toBeInstanceOf(AggregateError);
       expect(failure).toMatchObject({ message: expect.stringContaining('refused') });
-      expect(await openKinds(h)).toEqual([other]);
+      expect(await openKinds(h)).toEqual(others);
     },
   );
 });

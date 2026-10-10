@@ -1,5 +1,11 @@
 import { MAX_REPORT_BYTES, MAX_SAMPLES_PER_REPORT, REPORT_SCHEMA_VERSION } from '@heimdall/schema';
-import type { RecordsSection, Report, RunsSection, TranscriptsSection } from '@heimdall/schema';
+import type {
+  ChecksSection,
+  RecordsSection,
+  Report,
+  RunsSection,
+  TranscriptsSection,
+} from '@heimdall/schema';
 
 import { describeError } from './errors.ts';
 import type { SampleQueue } from './queue.ts';
@@ -74,11 +80,12 @@ export type PendingSection<Section> = {
 
 // The sections that are due, each ready to ride on a Report.
 export type PendingSections = {
+  checks?: PendingSection<ChecksSection>;
   records?: PendingSection<RecordsSection>;
   runs?: PendingSection<RunsSection>;
 };
 
-// Where `flushQueue` asks for the records and runs sections to put in a Report.
+// Where `flushQueue` asks for the records, runs, and checks sections to put in a Report.
 export type SectionsSource = { pending: () => Promise<PendingSections> };
 
 export type Rejection = { detail: string; samples: number };
@@ -90,8 +97,8 @@ export type FlushResult =
 // Sends the queued backlog oldest first, in Reports of at most `batchSize`
 // samples, until the queue is empty or a delivery fails. Every Report carries
 // the transcripts section as it stands when the Report is sent (ADR-0013), and
-// the System's time zone when it has one. The pending records and runs sections
-// are asked for once per flush and ride on the first Report that stays within
+// the System's time zone when it has one. The pending records, runs, and checks
+// sections are asked for once per flush and ride on the first Report that stays within
 // the Hub's cap. A Report that would exceed it goes without them, and they stay
 // pending, not settled, for a later and smaller Report, such as the end of a
 // backlog. If the Hub refuses a Report carrying them, its samples are sent again
@@ -137,22 +144,24 @@ export const flushQueue = async ({
       ...(zone === undefined ? {} : { timeZone: zone }),
       transcripts: transcripts(),
     };
-    const reportWith = (carried: Pick<Report, 'records' | 'runs'>): Report => ({
+    const reportWith = (carried: Pick<Report, 'checks' | 'records' | 'runs'>): Report => ({
       ...base,
       ...carried,
     });
-    const { records, runs } = waiting;
+    const { checks, records, runs } = waiting;
     const withSections = reportWith({
+      ...(checks === undefined ? {} : { checks: checks.section }),
       ...(records === undefined ? {} : { records: records.section }),
       ...(runs === undefined ? {} : { runs: runs.section }),
     });
     const carrying =
-      (records !== undefined || runs !== undefined) &&
+      (checks !== undefined || records !== undefined || runs !== undefined) &&
       Buffer.byteLength(JSON.stringify(withSections)) <= MAX_REPORT_BYTES;
     // oxlint-disable-next-line no-await-in-loop -- batches go one at a time, oldest first.
     let outcome = await send(carrying ? withSections : reportWith({}));
     if (carrying && outcome.kind !== 'failed') {
       waiting = {};
+      checks?.settle(outcome);
       records?.settle(outcome);
       runs?.settle(outcome);
       if (outcome.kind === 'rejected') {

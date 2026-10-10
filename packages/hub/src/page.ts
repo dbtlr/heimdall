@@ -60,6 +60,7 @@ const vitalsCells = (v: VitalsSample | undefined) =>
 
 // What the page calls each Condition when it is raised and when it is cleared.
 const CONDITION_LABELS: Record<ConditionKind, { cleared: string; raised: string }> = {
+  drift: { cleared: 'Drift cleared', raised: 'Drift' },
   job_failing: { cleared: 'Job no longer failing', raised: 'Job failing' },
   job_overdue: { cleared: 'Job no longer overdue', raised: 'Job overdue' },
   low_disk: { cleared: 'Low disk cleared', raised: 'Low disk' },

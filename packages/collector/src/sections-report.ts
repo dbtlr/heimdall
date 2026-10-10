@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 
-import { MAX_RECORDS_SECTION_BYTES, MAX_RUNS_SECTION_BYTES, RECORD_NAME } from '@heimdall/schema';
-import type { RecordsSection, RunsSection } from '@heimdall/schema';
+import {
+  MAX_CHECKS_SECTION_BYTES,
+  MAX_RECORDS_SECTION_BYTES,
+  MAX_RUNS_SECTION_BYTES,
+  RECORD_NAME,
+} from '@heimdall/schema';
+import type { ChecksSection, RecordsSection, RunsSection } from '@heimdall/schema';
 
 import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
@@ -9,7 +14,7 @@ import { describeError } from './errors.ts';
 import type { RecordStore } from './records.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
-// restored from backup gets the System's records and runs back (ADR-0011).
+// restored from backup gets the System's records, runs, and checks back (ADR-0011).
 export const SECTIONS_REFRESH_MS = 60 * 60_000;
 
 const MAX_KIND_LENGTH = 64;
@@ -20,7 +25,7 @@ const MAX_LISTED_ROWS = 5;
 const carriable = ({ kind, name }: { kind: string; name: string }) =>
   kind.length >= 1 && kind.length <= MAX_KIND_LENGTH && RECORD_NAME.test(name);
 
-const describeRows = (rows: string[]) => {
+export const describeRows = (rows: string[]) => {
   const listed = rows.slice(0, MAX_LISTED_ROWS);
   const more = rows.length - listed.length;
   return more > 0 ? `${listed.join(', ')} and ${String(more)} more` : listed.join(', ');
@@ -145,12 +150,19 @@ const createSectionState = <Section>({
   };
 };
 
-// Decides which Report carries the Collector's record set (ADR-0011) and its
-// jobs' latest runs. Each section is due at start, when another process changes
-// the store's content and the section's digest differs from the last one
-// settled, and once `refreshMs` after the last one the Hub answered. The two
-// settle apart, so recording a run sends the runs and not the record set, and
-// changing a record sends the set, and the runs only if they changed too.
+// What the checks section is built from: the checks the Collector's loop built
+// last, or undefined while it has not finished a pass.
+export type ChecksSource = { latest: () => ChecksSection | undefined };
+
+// Decides which Report carries the Collector's record set (ADR-0011), its
+// jobs' latest runs, and its checks. Each section is due at start, when its
+// content may have changed and its digest differs from the last one settled,
+// and once `refreshMs` after the last one the Hub answered. The store's content
+// may have changed when another process commits; the checks' when `checks`
+// answers another section than before, which is none until the loop's first
+// pass. The sections settle apart, so recording a run sends the runs and not the
+// record set, and changing a record sends the set, and the runs only if they
+// changed too.
 //
 // The store is opened on the first call that needs it, and again on each call
 // until it opens, so a database that cannot be opened costs the sections, never
@@ -162,14 +174,18 @@ const createSectionState = <Section>({
 // differs from the last one settled, so recording the same content again sends
 // nothing.
 export const createSectionsReporter = ({
+  checks,
   log,
+  maxChecksBytes = MAX_CHECKS_SECTION_BYTES,
   maxRecordsBytes = MAX_RECORDS_SECTION_BYTES,
   maxRunsBytes = MAX_RUNS_SECTION_BYTES,
   now,
   open,
   refreshMs = SECTIONS_REFRESH_MS,
 }: {
+  checks: ChecksSource;
   log: Log;
+  maxChecksBytes?: number;
   maxRecordsBytes?: number;
   maxRunsBytes?: number;
   now: () => number;
@@ -178,6 +194,7 @@ export const createSectionsReporter = ({
 }): SectionsSource & { close: () => void } => {
   let store: RecordStore | undefined;
   let seenVersion: number | undefined;
+  let seenChecks: ChecksSection | undefined;
   let failing = false;
 
   const records = createSectionState<RecordsSection>({
@@ -195,15 +212,34 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
+  const checked = createSectionState<ChecksSection>({
+    // Asked for only once the checks have a section.
+    build: () => digested<ChecksSection>(checks.latest() ?? {}, maxChecksBytes),
+    label: 'checks',
+    log,
+    now,
+    refreshMs,
+  });
+
   const pending = async () => {
     store ??= await open();
     // The version is read before the sections, so a write landing between the
     // two shows as another change on the next call.
     const version = store.version();
     const changed = version !== seenVersion;
-    const due = { records: records.pending(store, changed), runs: runs.pending(store, changed) };
+    const latestChecks = checks.latest();
+    const due = {
+      checks:
+        latestChecks === undefined
+          ? undefined
+          : checked.pending(store, latestChecks !== seenChecks),
+      records: records.pending(store, changed),
+      runs: runs.pending(store, changed),
+    };
     seenVersion = version;
+    seenChecks = latestChecks;
     return {
+      ...(due.checks === undefined ? {} : { checks: due.checks }),
       ...(due.records === undefined ? {} : { records: due.records }),
       ...(due.runs === undefined ? {} : { runs: due.runs }),
     };
@@ -215,6 +251,7 @@ export const createSectionsReporter = ({
       store = undefined;
       // A store opened again may carry a version this one never saw.
       seenVersion = undefined;
+      seenChecks = undefined;
     },
     // A store that cannot be opened or read costs the sections, never the
     // Vitals, and is warned about once until it works again.

@@ -1,0 +1,4 @@
+### Added
+
+- **The Hub raises Drift for recorded files that changed or went missing** (HMD-35). The Collector hashes every file in its `files` records when it starts, right after a record changes, and hourly, following symbolic links, and reports those that do not match in a new `checks` section of the Report. The Hub raises one Drift Condition for each path, whose reason says whether the file changed or is missing, and clears it when the file matches again, or when its record is forgotten and no other `files` record is unreadable. A file the Collector cannot read, such as a directory or a file it lacks permission for, raises nothing and leaves an open Drift as it is. See [Drift](docs/spec.md#drift).
+- **`GET /api/v1/records` returns each System's checks**, so a provisioner can see which recorded files were unreadable. A Hub with this change accepts Reports from Collectors without it. Upgrade the Hub, then the Collectors.

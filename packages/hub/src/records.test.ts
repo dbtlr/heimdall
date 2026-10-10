@@ -72,12 +72,20 @@ let sampleTime = NOW;
 const send = async (
   h: Hub,
   {
+    checks,
     records,
     runs: sentRuns,
     sentAt = NOW,
     system = 'laptop-1',
     timeZone,
-  }: { records?: unknown; runs?: unknown; sentAt?: number; system?: string; timeZone?: string },
+  }: {
+    checks?: unknown;
+    records?: unknown;
+    runs?: unknown;
+    sentAt?: number;
+    system?: string;
+    timeZone?: string;
+  },
 ) => {
   sampleTime += 15_000;
   const token = system === 'laptop-1' ? 'laptop-token' : 'server-token';
@@ -86,6 +94,7 @@ const send = async (
     {
       ...report(system, [sampleTime]),
       sentAt,
+      ...(checks === undefined ? {} : { checks }),
       ...(records === undefined ? {} : { records }),
       ...(sentRuns === undefined ? {} : { runs: sentRuns }),
       ...(timeZone === undefined ? {} : { timeZone }),
@@ -114,6 +123,7 @@ describe('the records a Report carries', () => {
     await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
 
     expect(await entryOf(h)).toEqual({
+      checks: null,
       receivedAt: new Date(NOW + 2500).toISOString(),
       records: [service(WEBAPP)],
       runs: null,
@@ -261,6 +271,7 @@ describe('a set over budget', () => {
     await send(h, { records: { overBudget: { bytes: 9_000_000 } }, sentAt: NOW + 1000 });
 
     expect(await entryOf(h)).toEqual({
+      checks: null,
       overBudget: { bytes: 9_000_000 },
       receivedAt: new Date(NOW).toISOString(),
       runs: null,
@@ -569,13 +580,174 @@ describe('records and runs', () => {
   });
 });
 
+const CONF = {
+  path: '/etc/webapp/webapp.conf',
+  record: 'webapp-config',
+  state: 'drifted',
+} as const;
+const DIR = { path: '/etc/webapp', record: 'webapp-config', state: 'unreadable' } as const;
+
+// A file check as a Collector sends it, since `since` (epoch milliseconds).
+const sentCheck = (
+  file: { path: string; record: string; state: string },
+  since = NOW - 60_000,
+) => ({ ...file, since });
+
+describe('the checks a Report carries', () => {
+  test('are read back with the time each file was first seen, sorted by record and path', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 2500;
+
+    await send(h, {
+      checks: { files: [sentCheck(CONF), sentCheck(DIR), sentCheck({ ...CONF, record: 'a' })] },
+      sentAt: NOW + 1000,
+    });
+
+    expect((await entryOf(h))?.checks).toEqual({
+      fileRecords: [],
+      files: [
+        { ...CONF, record: 'a', since: new Date(NOW - 60_000).toISOString() },
+        { ...DIR, since: new Date(NOW - 60_000).toISOString() },
+        { ...CONF, since: new Date(NOW - 60_000).toISOString() },
+      ],
+      receivedAt: new Date(NOW + 2500).toISOString(),
+      sentAt: new Date(NOW + 1000).toISOString(),
+    });
+  });
+
+  test('are read back with the digest of each files record they judged, sorted by record', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: {
+        fileRecords: [
+          { digest: 'b'.repeat(64), record: 'b' },
+          { digest: 'c'.repeat(64), record: 'B' },
+          { digest: 'a'.repeat(64), record: 'a' },
+        ],
+        files: [],
+      },
+    });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      fileRecords: [
+        { digest: 'c'.repeat(64), record: 'B' },
+        { digest: 'a'.repeat(64), record: 'a' },
+        { digest: 'b'.repeat(64), record: 'b' },
+      ],
+    });
+  });
+
+  test('sort by code unit, as records and runs do, not by locale', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: {
+        files: [
+          sentCheck({ ...CONF, path: '/a', record: 'b' }),
+          sentCheck({ ...CONF, path: '/b', record: 'B' }),
+          sentCheck({ ...CONF, path: '/a', record: 'B' }),
+        ],
+      },
+    });
+
+    const checks = (await entryOf(h))?.checks;
+    expect(checks && 'files' in checks ? checks.files.map((f) => [f.record, f.path]) : []).toEqual([
+      ['B', '/a'],
+      ['B', '/b'],
+      ['b', '/a'],
+    ]);
+  });
+
+  test('give way to the next when the held ones claim a time after the Hub clock', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 10 * YEAR });
+
+    await send(h, { checks: { files: [] }, sentAt: NOW + 60_000 });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      files: [],
+      sentAt: new Date(NOW + 60_000).toISOString(),
+    });
+  });
+
+  test('are replaced by checks sent at the very same time', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW });
+
+    await send(h, { checks: { files: [] }, sentAt: NOW });
+
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
+  });
+
+  test('show a file the Collector could not read as unreadable, not as drifted', async () => {
+    await using h = await startHub();
+
+    await send(h, { checks: { files: [sentCheck(DIR)] } });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      files: [{ path: '/etc/webapp', state: 'unreadable' }],
+    });
+  });
+
+  test('read as no files when every recorded file matches', async () => {
+    await using h = await startHub();
+
+    await send(h, { checks: { files: [] } });
+
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
+  });
+
+  test('replace the earlier checks, and an older Report does not replace newer ones', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + 5000;
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 1000 });
+    await send(h, { checks: { files: [] }, sentAt: NOW });
+
+    const kept = (await entryOf(h))?.checks;
+    await send(h, { checks: { files: [] }, sentAt: NOW + 2000 });
+
+    expect(kept).toMatchObject({ files: [{ path: CONF.path }] });
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
+  });
+
+  test('are kept by a Report that carries none', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] } });
+
+    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
+
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [{ path: CONF.path }] });
+  });
+
+  test('read as their size alone when too large to send, and drop the earlier files', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [sentCheck(CONF)] } });
+
+    await send(h, { checks: { overBudget: { bytes: 2_000_000 } }, sentAt: NOW + 1000 });
+
+    expect((await entryOf(h))?.checks).toEqual({
+      overBudget: { bytes: 2_000_000 },
+      receivedAt: new Date(NOW).toISOString(),
+      sentAt: new Date(NOW + 1000).toISOString(),
+    });
+  });
+
+  test('read as null for a System whose Collector never sent them', async () => {
+    await using h = await startHub();
+    await send(h, { records: set([service(WEBAPP)]) });
+
+    expect((await entryOf(h))?.checks).toBeNull();
+  });
+});
+
 describe('reading the records', () => {
   test('answers null for a System no Report has carried a set for', async () => {
     await using h = await startHub();
     await send(h, {});
 
     expect(await read(h)).toEqual([
-      { records: null, runs: null, system: 'laptop-1', timeZone: null },
+      { checks: null, records: null, runs: null, system: 'laptop-1', timeZone: null },
     ]);
   });
 
@@ -691,4 +863,26 @@ test('migration 8 applies on top of version 7 and leaves a System with no time z
     FROM systems s LEFT JOIN run_sets r ON r.system = s.name
   `;
   expect(rows).toEqual([{ name: 'laptop-1', runs_system: null, time_zone: null }]);
+});
+
+test('migration 11 applies on top of the earlier versions and leaves a System with no checks', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version < 11),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 11),
+    ),
+  ).toEqual([11]);
+
+  const rows = await db.sql`
+    SELECT s.name, c.system AS checks_system
+    FROM systems s LEFT JOIN check_sets c ON c.system = s.name
+  `;
+  expect(rows).toEqual([{ checks_system: null, name: 'laptop-1' }]);
 });

@@ -37,7 +37,7 @@ A scheduled program a provisioner recorded, with its scheduler and schedule, suc
 _Avoid_: cron, task, Backup Job (a backup is a job whose runs report an output file)
 
 **Drift**:
-A recorded file whose content no longer matches the hash its provisioner recorded.
+A recorded file whose content no longer matches the hash its provisioner recorded, or that no longer exists. A file the Collector cannot read is not Drift.
 _Avoid_: change, diff
 
 **Collector**:

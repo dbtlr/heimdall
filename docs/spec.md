@@ -75,14 +75,14 @@ The last example is the input to `heimdall-collector record run nightly-backup`.
 
 ### What Heimdall checks and reports
 
-The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The Hub raises the job Conditions described in [Job Conditions](#job-conditions); the Service and file checks are planned for later M4 work.
+The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The Hub raises the job Conditions described in [Job Conditions](#job-conditions), the stale System and low disk Conditions described in [System Conditions](#system-conditions), and Drift as described in [Drift](#drift); the Service checks are planned for later M4 work.
 
 | Kind | Heimdall checks and reports |
 | --- | --- |
 | `application` | Reported as recorded; the version is not observed. |
 | `service` | Supervisor state, and health from the URL, which the Collector requests only on loopback. A stopped or unhealthy Service raises Service down. |
 | `job` | Each run the job reports. A failed latest run raises job failing; a scheduled time followed by a grace period of awake time, with no successful run since, raises job overdue. |
-| `files` | Each file's current hash. A file that no longer matches raises Drift. |
+| `files` | Each file's current hash, which the Collector compares with the recorded one. A file that no longer matches, or no longer exists, raises Drift. A file the Collector cannot read is reported as unreadable and raises nothing. |
 
 A new field reaches the dashboard only when every layer knows it, so the Hub is upgraded first, then the Collectors, and only then does a provisioner send the field.
 
@@ -112,19 +112,41 @@ The limits are named constants that the Hub passes to the evaluation as paramete
 
 The Collector says whether its System sleeps with `sleeps = true` in `collector.toml`, `--sleeps`, or `HEIMDALL_SLEEPS`, and false when left out, and puts that in every Report as the boolean `sleeps`. The Hub stores the latest value it received. A Report without `sleeps`, from a Collector that predates it, leaves the stored value as it is, and so does one whose `sleeps` is not a boolean, which the Hub drops without rejecting the Report. A System that has never sent it counts as always on. Upgrade the Hub, then the Collectors: a laptop whose Collector predates `sleeps` is stale after 10 minutes until it is upgraded and configured.
 
+## Drift
+
+The Collector hashes every file in its `files` records with SHA-256 when it starts, right after the `files` records change, and an hour after the last time it hashed them. Recording a run, an application, or the same `files` record again does not start a pass. It follows symbolic links and hashes one file at a time, reading each as a stream, so a large file is never held in memory, and reading no more than the file's size when it opened it, so a file that keeps growing cannot stall a pass. It reads no file a provisioner keeps as its own record, and hashes only the paths its own `files` records name. A pass stops between chunks when the Collector stops. A read that hangs, as on an unreachable network mount, cannot be cancelled and holds the pass until the operating system returns. Each file is in one of four states:
+
+- **Matching**: the content hashes to the recorded value.
+- **Drifted**: the content hashes to another value.
+- **Missing**: no file exists at the path, including a symbolic link whose target does not exist, or a path under something that is not a directory.
+- **Unreadable**: the Collector could not read the content, such as when permission is denied, when the path is a directory, a device, or a named pipe, or when symbolic links loop.
+
+The Collector reports every file that is not matching in the `checks` section described under [Reading the records back](#reading-the-records-back), with the record that names it, the state, and `since`, the Collector's clock when it first saw the file in that state. A file that stays in one state keeps its `since` for as long as the Collector runs, and one that changes state takes the time of the pass that saw it. A restart forgets `since`, so a file still mismatched then takes the time of the first pass after it. The section also lists, for each `files` record the pass hashed, the record's name and its digest.
+
+A record's digest is the SHA-256, in lowercase hexadecimal, of its files in path order, compared by UTF-16 code unit, each written as the path, a NUL byte, the recorded `sha256`, and a newline. The order in which the provisioner listed the files does not matter. A record and the checks about it reach the Hub apart, so the Hub computes the digest of each `files` record it mirrors and trusts the Collector's verdict on the record only when the checks list the record with the same digest. A record the checks do not list, or list with another digest, has not been judged as the Hub knows it, and every path it names is unknown.
+
+The Hub judges every System's checks once a minute, in the same pass as the [job Conditions](#job-conditions) and the [System Conditions](#system-conditions), after them. Drift is one Condition per path, whichever records name it, and its subject is the path.
+
+- **Drift** is raised for a path that a judged record names and the checks list as drifted or missing. Its reason says whether the file changed or is missing, and names the first such record by name, compared by code unit; the Condition takes the new reason when the file goes from one to the other. A path several records name is raised if any judged record shows it drifted or missing.
+- **Drift clears** when every record that names the path was judged and shows the file matching, and when no `files` record the Hub mirrors names the path at all, which is how forgetting a record clears its Drift. Neither clears while any `files` record is unreadable.
+
+Drift stays as it is while what decides it is unknown: while the Collector reports the path unreadable, for the paths of a record the checks did not judge as the Hub mirrors it, while the System's record set is over budget, while the System has never sent checks, and while any `files` record is unreadable, whether the Collector could not read it or the Hub does not know its shape, since that record may name the path. While a `files` record is unreadable no path's Drift clears, though a path a judged record shows drifted or missing is still raised. Checks over budget judge no record, so they leave every path a record names as it is, but a path no record names clears, so forgetting a record clears its Drift even then. A Condition raised for a path the Collector can no longer read therefore stays open until the Collector reads it again, or the record is forgotten, which clears it only while no `files` record is unreadable.
+
 ## Reading the records back
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.
 
 The Collector sends its jobs' latest runs in a Report's `runs` section when it starts, when a `record run` or `forget` changes them, and an hour after the Hub last answered a Report carrying them, so recording a run does not resend the record set. For each job that has reported a run, the section carries its latest run and its latest successful run, which may be the same run, or `null` when none of the runs the Collector keeps succeeded. A job whose latest run or latest success the Collector cannot read is listed by name as unreadable. Runs whose JSON is larger than 1 MiB are sent as their size alone.
 
+The Collector sends the results of its file checks in a Report's `checks` section when it starts, when a pass changes them, and an hour after the Hub last answered a Report carrying them. The section has two parts, `fileRecords` and `files`. `fileRecords` lists each `files` record the Collector hashed, as the record's name (`record`) and its `digest`, which [Drift](#drift) defines. `files` lists only the recorded files in those records that are not matching. Each entry has the `record` that names the file, its `path`, its `state` (`drifted`, `missing`, or `unreadable`), and `since`, the Collector's clock as epoch milliseconds. A record whose row the Collector cannot read, or holds under a name other than its own or one the section cannot carry, is not listed in `fileRecords`, and the Collector logs a warning for the latter. An empty `files` beside a `fileRecords` that lists a record says every file in it matches, and is how the Hub learns that Drift has cleared. Every part is optional, and checks of other things join the section as further parts, so a section from a newer Collector that carries parts this Hub does not know, or only them, is still accepted, and the Hub drops what it does not know. The Collector sends no section until its first pass has finished. Checks whose JSON is larger than 1 MiB are sent as their size alone.
+
 Every Report also carries the System's IANA time zone, such as `America/New_York`, in which its jobs' schedules are read. The Collector reads it on each Report from the zone `/etc/localtime` names, which is where systemd and macOS record the zone their schedulers follow, so a change of zone shows in the next Report. A Report carries no zone when `/etc/localtime` names none.
 
-If the Hub refuses a Report carrying the set or the runs, the Collector sends the same samples again without them, so neither ever costs Vitals, and offers both again an hour later. A Report that would be too large for the Hub with them is sent without them, and they ride a later, smaller Report.
+If the Hub refuses a Report carrying the set, the runs, or the checks, the Collector sends the same samples again without them, so none ever costs Vitals, and offers each again an hour later. A Report that would be too large for the Hub with them is sent without them, and they ride a later, smaller Report.
 
-The Hub replaces the System's mirror with each set, so a forgotten record leaves the mirror, and replaces the System's latest runs with each runs section in the same way. It ignores a section sent earlier than the one it holds, unless the held one claims a time later than the Hub's own clock. A Report without a section leaves what the Hub holds for it unchanged, and one without a time zone keeps the zone the Hub holds.
+The Hub replaces the System's mirror with each set, so a forgotten record leaves the mirror, and replaces the System's latest runs and latest checks with each runs and checks section in the same way. It ignores a section sent earlier than the one it holds, unless the held one claims a time later than the Hub's own clock. A Report without a section leaves what the Hub holds for it unchanged, and one without a time zone keeps the zone the Hub holds.
 
-The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives; runs over budget likewise leave it no jobs. The Hub ignores a time zone it does not accept and keeps the one it holds. The shapes are in `packages/schema/src/records-section.ts` and `packages/schema/src/runs-section.ts`.
+The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives; runs over budget likewise leave it no jobs, and checks over budget no files. The Hub counts a file state it does not know as unreadable. It ignores a time zone it does not accept and keeps the one it holds. The shapes are in `packages/schema/src/records-section.ts`, `packages/schema/src/runs-section.ts`, and `packages/schema/src/checks-section.ts`.
 
 `GET /api/v1/records` returns every System's records, with the same trust as the dashboard. The answer lists each System the dashboard shows, sorted by name, in one of three forms:
 
@@ -134,6 +156,10 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:01.250Z",
    "records": [{"kind": "job", "name": "nightly-backup", "record": {"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}}],
    "unreadable": [{"kind": "service", "name": "webapp"}],
+   "checks": {"sentAt": "2026-10-10T07:43:00.000Z", "receivedAt": "2026-10-10T07:43:00.410Z",
+              "fileRecords": [{"record": "webapp-config", "digest": "9f2b5c0e4a7d13d86b0c5e2f71a4d98c3e6b1f07a2d5c8e94b3f6a1d0c7e5b82"}],
+              "files": [{"record": "webapp-config", "path": "/etc/webapp", "state": "unreadable", "since": "2026-10-10T07:41:12.000Z"},
+                        {"record": "webapp-config", "path": "/etc/webapp/webapp.conf", "state": "drifted", "since": "2026-10-10T06:12:40.000Z"}]},
    "runs": {"sentAt": "2026-10-10T07:43:00.000Z", "receivedAt": "2026-10-10T07:43:00.410Z",
             "jobs": [{"job": "nightly-backup",
                       "latestRun": {"started": "2026-10-10T07:30:00Z", "finished": "2026-10-10T07:30:09Z", "exitStatus": 1},
@@ -143,12 +169,13 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
   {"system": "build-1", "timeZone": "UTC",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
    "overBudget": {"bytes": 9437184},
+   "checks": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}},
    "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
-  {"system": "laptop-1", "timeZone": null, "records": null, "runs": null}
+  {"system": "laptop-1", "timeZone": null, "records": null, "checks": null, "runs": null}
 ]}
 ```
 
-`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records or runs are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` carries its own. Records are sorted by kind, then name, and jobs' runs by job. Times are UTC in ISO 8601.
+`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, `checks` until a Report carries its checks, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records, runs, or checks are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` and `checks` carry their own. `checks` holds the files that are not matching, so a file the Collector could not read shows there with the state `unreadable`, though it raises no Drift, and an empty `files` says every file in the records the Collector hashed matches. Its `fileRecords` lists each `files` record the Collector hashed with the [digest](#drift) it read, so a provisioner can tell checks that judged an older version of a record from the record the Hub mirrors now; a record missing from it, or listed with another digest, was not judged as mirrored. Checks over budget carry neither. Records are sorted by kind, then name, jobs' runs by job, checked records by record, and checked files by record, then path, each by code unit. Times are UTC in ISO 8601, including each file's `since`.
 
 ## Agent Session transcripts
 

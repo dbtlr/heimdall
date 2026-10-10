@@ -63,3 +63,20 @@ export type {
 } from './records-section.ts';
 export { MAX_RUNS_SECTION_BYTES, mirrorRuns, RunsSectionSchema } from './runs-section.ts';
 export type { JobRuns, MirroredRuns, RunsSection, SentJobRuns } from './runs-section.ts';
+export {
+  ChecksReadSchema,
+  ChecksSectionSchema,
+  FILE_CHECK_STATES,
+  filesRecordDigest,
+  MAX_CHECKS_SECTION_BYTES,
+  mirrorChecks,
+} from './checks-section.ts';
+export type {
+  ChecksSection,
+  FileCheck,
+  FileRecordCheck,
+  FileCheckState,
+  MirroredChecks,
+  SentFileCheck,
+  SentFileRecord,
+} from './checks-section.ts';

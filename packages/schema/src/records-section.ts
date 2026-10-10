@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ChecksReadSchema } from './checks-section.ts';
 import { RECORD_NAME, REPORTED_RECORD_SCHEMAS, REPORTED_RUN_SCHEMA } from './records.ts';
 import type { RecordKind, RecordOf } from './records.ts';
 import { bytes } from './values.ts';
@@ -147,9 +148,14 @@ const RunsReadSchema = z.union([
   z.null(),
 ]);
 
-// What every System's entry carries beside its records: its latest runs, and
-// its time zone, null until a Report names one.
-const systemFields = { runs: RunsReadSchema, system: z.string(), timeZone: z.string().nullable() };
+// What every System's entry carries beside its records: its latest checks and
+// runs, and its time zone, null until a Report names one.
+const systemFields = {
+  checks: ChecksReadSchema,
+  runs: RunsReadSchema,
+  system: z.string(),
+  timeZone: z.string().nullable(),
+};
 
 const SetReadSchema = z.object({
   ...systemFields,
@@ -172,7 +178,8 @@ const NoSetReadSchema = z.object({ ...systemFields, records: z.null() });
 // An entry holds the set the System last sent, the size of a set too large to
 // send, or `null` records while no Report has carried a set, which is not the
 // same as holding none. Records sort by kind, then name, and jobs' latest runs
-// by job. Every entry also carries the System's time zone and latest runs.
+// by job. Every entry also carries the System's time zone, latest runs, and
+// latest checks.
 export const RecordsReadSchema = z.object({
   systems: z.array(z.union([SetReadSchema, OverBudgetReadSchema, NoSetReadSchema])),
 });
