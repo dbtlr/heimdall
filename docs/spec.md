@@ -183,11 +183,11 @@ The Hub replaces the System's mirror with each set, so a forgotten record leaves
 
 The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives; runs over budget likewise leave it no jobs, a files part over budget no files, and a services part over budget no Service checks. The Hub counts a file state it does not know as unreadable and a Service state it does not know as unknown, and drops a Service check of a kind it does not know. It ignores a time zone it does not accept and keeps the one it holds. The shapes are in `packages/schema/src/records-section.ts`, `packages/schema/src/runs-section.ts`, and `packages/schema/src/checks-section.ts`.
 
-`GET /api/v1/records` returns every System's records, with the same trust as the dashboard. The answer lists each System the dashboard shows, sorted by name, in one of three forms:
+`GET /api/v1/records` returns every paired System's records, with the same trust as the dashboard. The answer lists each System the dashboard's normal view shows, sorted by name, in one of three forms:
 
 ```json
 {"systems": [
-  {"system": "web-1", "timeZone": "America/New_York",
+  {"system": "web-1", "paired": true, "timeZone": "America/New_York",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:01.250Z",
    "records": [{"kind": "job", "name": "nightly-backup", "record": {"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}}],
    "unreadable": [{"kind": "service", "name": "webapp"}],
@@ -202,15 +202,17 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
                       "latestSuccess": {"started": "2026-10-09T07:30:00Z", "finished": "2026-10-09T07:42:17Z", "exitStatus": 0,
                                         "output": {"file": "backup-2026-10-09.tar.gz", "sizeBytes": 73400320}}}],
             "unreadable": []}},
-  {"system": "build-1", "timeZone": "UTC",
+  {"system": "build-1", "paired": true, "timeZone": "UTC",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
    "overBudget": {"bytes": 9437184},
    "checks": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"files": {"bytes": 1310720}},
               "services": [{"service": "builder", "check": "supervisor", "state": "up", "detail": "ActiveState=active", "since": "2026-10-09T21:00:00.000Z"}]},
    "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
-  {"system": "laptop-1", "timeZone": null, "records": null, "checks": null, "runs": null}
+  {"system": "laptop-1", "paired": true, "timeZone": null, "records": null, "checks": null, "runs": null}
 ]}
 ```
+
+Every entry carries `paired`. The read leaves out a System that was unpaired, since a provisioner checks the paired fleet; `GET /api/v1/records?unpaired=include` lists those too, each with `"paired": false`, its history as the Hub kept it. `include` is the only value the parameter takes, and any other answers 400. Pairing the System again lists it without the parameter. The dashboard works the same way: its normal view lists paired Systems, and `/?unpaired` lists the unpaired ones with an Unpaired status, their Vitals, last seen, and Timeline.
 
 `records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, `checks` until a Report carries its checks, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records, runs, or checks are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` and `checks` carry their own. `checks` holds the files that are not matching, so a file the Collector could not read shows there with the state `unreadable`, though it raises no Drift, and an empty `files` says every file in the records the Collector hashed matches. A checks entry with no `files` and no `fileRecords` says no file pass has reached the Hub yet, or that the part was sent over budget, which is not the same as an empty `files`: nothing has been judged. Its `fileRecords` lists each `files` record the Collector hashed with the [digest](#drift) it read, so a provisioner can tell checks that judged an older version of a record from the record the Hub mirrors now; a record missing from it, or listed with another digest, was not judged as mirrored. Its `services` lists each check of each Service with its state, detail, and `since`, so a provisioner can see which Services the Collector found stopped, unknown, or unchecked. A part sent over budget is left out and named in `overBudget` with its size, and `services`, `files`, and `fileRecords` are also left out when the Collector sent no such part, which is not the same as an empty list. Records are sorted by kind, then name, jobs' runs by job, checked records by record, checked files by record, then path, and Service checks by service, then check, each by code unit. Times are UTC in ISO 8601, including each file's and each Service check's `since`.
 
