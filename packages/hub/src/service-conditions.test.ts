@@ -628,6 +628,59 @@ describe('Service down for a health check', () => {
     expect(open).toEqual([]);
   });
 
+  test('is raised while the supervisor check is unknown, since the failing health URL is direct evidence', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
+          health('web', 'unhealthy', at('07:55:00')),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+  });
+
+  test('stays open while the supervisor is up and the health check has failed less than 2 minutes', async () => {
+    await using h = await startHub();
+    await downAndEvaluated(h);
+    await send(h, '08:04:00', {
+      checks: {
+        services: [check('web', 'up', at('08:03:30')), health('web', 'unhealthy', at('08:03:50'))],
+      },
+    });
+
+    const { open, timeline } = await evaluate(h, '08:04:30');
+
+    expect(open).toMatchObject([{ raisedAt: at('08:03:00'), subject: 'web' }]);
+    expect(timeline).toHaveLength(1);
+  });
+
+  test('clears for a Service whose supervisor is unchecked once its health check passes', async () => {
+    await using h = await startHub();
+    const launchd: ServiceRecord = { label: 'com.example.web', name: 'web', supervisor: 'launchd' };
+    const unchecked = check('web', 'unchecked', at('07:00:00'), 'launchd is not checked');
+    await send(h, '08:00:00', {
+      checks: { services: [unchecked, health('web', 'unhealthy', at('07:55:00'))] },
+      records: set(launchd),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+    const raised = await evaluate(h, '08:03:00');
+    await send(h, '08:04:00', {
+      checks: { services: [unchecked, health('web', 'up', at('08:03:30'), 'HTTP 200')] },
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(subjects(raised.open)).toEqual(['web']);
+    expect(open).toEqual([]);
+  });
+
   test('does not clear while either check still fails', async () => {
     await using h = await startHub();
     await send(h, '08:00:00', {
