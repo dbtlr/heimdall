@@ -267,6 +267,7 @@ describe('finding the Engine socket', () => {
     'ssh://host',
     'npipe:////./pipe/docker_engine',
     'unix://relative.sock',
+    'unix:///a.sock\nfoo',
     'xunix:///a',
     'unix://',
   ])('is unsupported when DOCKER_HOST is %s', (host) => {
@@ -452,6 +453,19 @@ describe('an answer about another container than the one asked for', () => {
     });
 
     expect(await checkContainer(recorded, engineAt(socket))).toMatchObject({
+      detail: 'no such container',
+      state: 'stopped',
+    });
+  });
+
+  test('is stopped when its Name has no leading slash, which the Engine always puts there', async () => {
+    const { socket } = await fakeEngine({
+      '/containers/web/json': {
+        body: { Id: 'abc123', Name: 'web', State: { Running: true, Status: 'running' } },
+      },
+    });
+
+    expect(await checkContainer('web', engineAt(socket))).toEqual({
       detail: 'no such container',
       state: 'stopped',
     });

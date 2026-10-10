@@ -317,6 +317,33 @@ describe('a docker Service', () => {
   });
 });
 
+test("a docker Service's detail is cleaned and cut like every supervisor detail", async () => {
+  const status = `ex\u0007ited${'x'.repeat(500)}`;
+  const outcomes = await checkService(
+    { container: 'web', name: 'web', supervisor: 'docker' },
+    {
+      docker: { endpoint: { kind: 'unix', path: '/run/user/1/docker.sock' } },
+      httpGet: () =>
+        Promise.resolve({
+          body: JSON.stringify({ Name: '/web', State: { Running: false, Status: status } }),
+          kind: 'response',
+          status: 200,
+          truncated: false,
+        }),
+      run: () => Promise.reject(new Error('no command expected')),
+      systemctl: undefined,
+    },
+  );
+
+  expect(outcomes).toEqual([
+    {
+      check: 'supervisor',
+      detail: `status exited${'x'.repeat(MAX_CHECK_DETAIL_LENGTH - 'status exited'.length)}`,
+      state: 'stopped',
+    },
+  ]);
+});
+
 describe('finding systemctl', () => {
   test('is the first candidate that exists', async () => {
     const found = await findSystemctl((path) => Promise.resolve(path === '/bin/systemctl'));
