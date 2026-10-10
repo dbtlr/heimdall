@@ -44,7 +44,7 @@ A name is 1 to 128 characters: letters, digits, `.`, `_`, and `-`, starting with
 | --- | --- |
 | `application` | `name`, `version` (text of at most 128 characters), optional `source` (text), optional `provenance`. |
 | `service` | `name`, `supervisor`, optional `health`, optional `port`, optional `provenance`. The supervisor decides what names the Service to it: `unit` for `systemd` and `systemd-user`, `label` for `launchd`, `container` for `docker`, and no target for `none`. `health` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`, optionally followed by a path of printable ASCII other than space, with a port from 1 to 65535; `localhost` and every other host are refused. `port` is an integer from 1 to 65535. |
-| `job` | `name`, `scheduler`, `schedule`, optional `provenance`. The scheduler decides what names the job to it: `label` for `launchd`, `unit` for `systemd-timer`. `schedule` lists 1 to 100 calendar entries in the System's local time, with the meaning of launchd's `StartCalendarInterval`: each entry has at least one of `minute` (0 to 59), `hour` (0 to 23), `day` (1 to 31), `weekday` (0 to 7, where 0 and 7 are both Sunday), and `month` (1 to 12), all integers, and a field left out matches every value. Two identical entries, with weekday 0 and 7 counted as equal, are refused. Recording a job again keeps its runs. |
+| `job` | `name`, `scheduler`, `schedule`, optional `graceMinutes`, optional `provenance`. The scheduler decides what names the job to it: `label` for `launchd`, `unit` for `systemd-timer`. `schedule` lists 1 to 100 calendar entries in the System's local time, with the meaning of launchd's `StartCalendarInterval`: each entry has at least one of `minute` (0 to 59), `hour` (0 to 23), `day` (1 to 31), `weekday` (0 to 7, where 0 and 7 are both Sunday), and `month` (1 to 12), all integers, and a field left out matches every value. Two identical entries, with weekday 0 and 7 counted as equal, are refused. `graceMinutes`, an integer from 1 to 10,080, is how long the System must be awake after a scheduled time before the Hub raises job overdue; it is 60 when left out. Recording a job again keeps its runs. |
 | `files` | `name`, `files` (1 to 10,000 entries of `path` and `sha256`), optional `provenance`. A `path` is absolute and normalized, at most 4096 bytes, and has no control characters: it has no empty, `.`, or `..` segment and no trailing slash, and `/` alone is not a file. Paths within a record are unique. A `sha256` is 64 lowercase hexadecimal characters. |
 
 A job reports each run with `heimdall-collector record run <job>`, which reads one JSON object from standard input like the other kinds. The job must have a `job` record, and the command exits 1 for a run of one that has none. A run has `started` and `finished`, UTC times in ISO 8601 with whole seconds such as `2026-10-01T03:00:05Z`, where `finished` is not earlier than `started`; `exitStatus`, an integer from 0 to 255, where 0 is success; and optionally `output`, with `file`, the output file's name without any directory, and `sizeBytes`, a non-negative integer. Runs are keyed by job and `started`, so recording the same start again replaces the run. Recording a run prunes that job's runs that started more than 90 days earlier, except the job's latest successful run. A run that is itself that old, and not the latest success, is not kept: the command exits 0 and prints `Run of <job> started <started> is older than 90 days and was not kept.` instead of `Recorded run of <job> started <started>.` A job's runner should ignore a failure to record, so a broken Collector never fails the job.
@@ -75,16 +75,29 @@ The last example is the input to `heimdall-collector record run nightly-backup`.
 
 ### What Heimdall checks and reports _(planned, M4)_
 
-The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The checks arrive in later M4 work.
+The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The Hub raises the job Conditions described in [Job Conditions](#job-conditions); the other checks arrive in later M4 work.
 
 | Kind | Heimdall checks and reports |
 | --- | --- |
 | `application` | Reported as recorded; the version is not observed. |
 | `service` | Supervisor state, and health from the URL, which the Collector requests only on loopback. A stopped or unhealthy Service raises Service down. |
-| `job` | Each run the job reports. A failed run raises job failing; a scheduled time plus a grace period that passed while the System was awake, with no successful run since, raises job overdue. |
+| `job` | Each run the job reports. A failed latest run raises job failing; a scheduled time followed by a grace period of awake time, with no successful run since, raises job overdue. |
 | `files` | Each file's current hash. A file that no longer matches raises Drift. |
 
 A new field reaches the dashboard only when every layer knows it, so the Hub is upgraded first, then the Collectors, and only then does a provisioner send the field.
+
+### Job Conditions
+
+The Hub judges every System's recorded jobs once a minute, from the records and latest runs it mirrors, the System's time zone, and the System's Vitals. Each job Condition is about one job and names it on the page and the Timeline.
+
+- **Job failing** is raised when the job's latest run exited with a status other than 0, and its reason names the run's start and exit status. A later failing run replaces the reason. It clears when the latest run succeeds.
+- **Job overdue** is raised when one of the job's scheduled times passed, the System was then awake for the job's grace period, and no successful run started at or after that scheduled time. Its reason names the scheduled time in the System's local time, and it clears once such a run is reported. A job can be failing and overdue at once.
+
+Awake time is counted from the Vitals samples the Hub stored, which a Collector takes every 15 seconds while its System is awake. The Hub counts each 5-minute rollup bucket as awake for 15 seconds per sample, up to the whole bucket, and looks back at most 90 days. A System asleep through a scheduled time therefore gets its whole grace period after it wakes, as does one whose Collector stopped. Samples and runs both carry the System's own clock.
+
+The Hub reads a schedule's entries as wall-clock times in the System's time zone. As in cron, an entry that names both `day` and `weekday` fires on either, and `month` always applies. launchd also fires on either, but ignores `month` for a weekday, so the Hub never expects a run launchd would skip. A time that a clock change skips falls an hour later, and one it repeats falls the first time. Scheduled times count only from when the Hub first mirrored the job, so a job recorded today is not overdue for a time that passed before; recording a job again keeps that time.
+
+A job Condition stays as it is while what decides it is unknown: while the System's record set or runs are over budget, while the Collector or the Hub cannot read the job's record or runs, while the System has never sent runs, and, for job overdue, while the Hub has no time zone for the System or does not know its zone. A job whose record is forgotten clears both.
 
 ## Reading the records back
 
