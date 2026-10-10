@@ -25,7 +25,7 @@ const MAX_LISTED_ROWS = 5;
 const carriable = ({ kind, name }: { kind: string; name: string }) =>
   kind.length >= 1 && kind.length <= MAX_KIND_LENGTH && RECORD_NAME.test(name);
 
-const describeRows = (rows: string[]) => {
+export const describeRows = (rows: string[]) => {
   const listed = rows.slice(0, MAX_LISTED_ROWS);
   const more = rows.length - listed.length;
   return more > 0 ? `${listed.join(', ')} and ${String(more)} more` : listed.join(', ');
@@ -214,7 +214,7 @@ export const createSectionsReporter = ({
 
   const checked = createSectionState<ChecksSection>({
     // Asked for only once the checks have a section.
-    build: () => digested<ChecksSection>(checks.latest() ?? { files: [] }, maxChecksBytes),
+    build: () => digested<ChecksSection>(checks.latest() ?? {}, maxChecksBytes),
     label: 'checks',
     log,
     now,

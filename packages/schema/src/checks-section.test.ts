@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ChecksSectionSchema, mirrorChecks } from './checks-section.ts';
+import { ChecksSectionSchema, filesRecordDigest, mirrorChecks } from './checks-section.ts';
 import type { ChecksSection } from './checks-section.ts';
 import { ReportSchema } from './report.ts';
 import { sample } from './testing.ts';
@@ -65,11 +65,12 @@ describe('a Report', () => {
 
 describe('the checks a Hub mirrors', () => {
   test('are the files that do not match', () => {
-    expect(mirrored({ files: [DRIFTED] })).toEqual({ files: [DRIFTED] });
+    expect(mirrored({ files: [DRIFTED] })).toEqual({ fileRecords: [], files: [DRIFTED] });
   });
 
   test('count a state only a newer Collector knows as unreadable, so the file is not taken for clean', () => {
     expect(mirrored({ files: [{ ...DRIFTED, state: 'sparkling' }] })).toEqual({
+      fileRecords: [],
       files: [{ ...DRIFTED, state: 'unreadable' }],
     });
   });
@@ -77,12 +78,97 @@ describe('the checks a Hub mirrors', () => {
   test('keep the last of a file sent twice under one record', () => {
     expect(
       mirrored({ files: [DRIFTED, { ...DRIFTED, since: 1_759_691_000_000, state: 'missing' }] }),
-    ).toEqual({ files: [{ ...DRIFTED, since: 1_759_691_000_000, state: 'missing' }] });
+    ).toEqual({
+      fileRecords: [],
+      files: [{ ...DRIFTED, since: 1_759_691_000_000, state: 'missing' }],
+    });
   });
 
   test('keep the size of checks too large to send', () => {
     expect(mirrored({ overBudget: { bytes: 2_000_000 } })).toEqual({
       overBudget: { bytes: 2_000_000 },
     });
+  });
+});
+
+describe('a files record digest', () => {
+  const A = { path: '/etc/a', sha256: 'a'.repeat(64) };
+  const B = { path: '/etc/b', sha256: 'b'.repeat(64) };
+
+  // From sha256sum over "/etc/a\0<a's hash>\n/etc/b\0<b's hash>\n".
+  test('is the SHA-256 of the files as path, NUL, hash, newline lines in path order', async () => {
+    expect(await filesRecordDigest({ files: [A, B] })).toBe(
+      '226e294b986bd39fdfe1a31df234c45c9469895494cc1e1cfdae5a538a09976d',
+    );
+  });
+
+  test('does not depend on the order the files are listed in', async () => {
+    expect(await filesRecordDigest({ files: [B, A] })).toBe(
+      await filesRecordDigest({ files: [A, B] }),
+    );
+  });
+
+  test('orders paths by code unit, not by locale', async () => {
+    const upper = { path: '/etc/B', sha256: 'c'.repeat(64) };
+    const lower = { path: '/etc/a', sha256: 'd'.repeat(64) };
+
+    expect(await filesRecordDigest({ files: [lower, upper] })).toBe(
+      new Bun.CryptoHasher('sha256')
+        .update(`/etc/B\0${upper.sha256}\n/etc/a\0${lower.sha256}\n`)
+        .digest('hex'),
+    );
+  });
+
+  test('changes with a path or a hash', async () => {
+    const digest = await filesRecordDigest({ files: [A, B] });
+
+    expect(await filesRecordDigest({ files: [A, { ...B, sha256: 'c'.repeat(64) }] })).not.toBe(
+      digest,
+    );
+    expect(await filesRecordDigest({ files: [A, { ...B, path: '/etc/c' }] })).not.toBe(digest);
+    expect(await filesRecordDigest({ files: [A] })).not.toBe(digest);
+  });
+});
+
+describe('the parts of a checks section', () => {
+  test('are all optional, so a section a newer Collector sends with other parts still parses', () => {
+    expect(ReportSchema.parse(report({ checks: {} })).checks).toEqual({});
+    expect(
+      ReportSchema.parse(report({ checks: { services: [{ name: 'web' }] } as ChecksSection }))
+        .checks,
+    ).toEqual({});
+  });
+
+  test('list the files records the Collector hashed, beside the files that do not match', () => {
+    const checks = {
+      fileRecords: [{ digest: 'f'.repeat(64), record: 'webapp-config' }],
+      files: [DRIFTED],
+    };
+
+    expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
+  });
+
+  test('mirror as no files and no judged records when the section has neither', () => {
+    expect(mirrored({})).toEqual({ fileRecords: [], files: [] });
+  });
+
+  test('keep the last digest of a record sent twice', () => {
+    expect(
+      mirrored({
+        fileRecords: [
+          { digest: '1'.repeat(64), record: 'a' },
+          { digest: '2'.repeat(64), record: 'a' },
+        ],
+      }),
+    ).toEqual({ fileRecords: [{ digest: '2'.repeat(64), record: 'a' }], files: [] });
+  });
+
+  test.each([
+    ['a digest that is not hexadecimal', { digest: 'xyz', record: 'a' }],
+    ['a record name with a slash', { digest: 'f'.repeat(64), record: 'a/b' }],
+  ])('refuse %s', (_, entry) => {
+    expect(ReportSchema.safeParse(report({ checks: { fileRecords: [entry] } })).success).toBe(
+      false,
+    );
   });
 });

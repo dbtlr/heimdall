@@ -24,10 +24,11 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 
 // The largest Report body the Hub reads; a larger one is rejected, Vitals with
 // it. The records section may take 8 MiB, the runs section 1 MiB, and the
-// checks section 1 MiB, leaving 2 MiB for the samples and transcripts: 1,000
-// samples of 24 disks each come to about 2.2 MB. Disks per sample are not
-// bounded, so a Collector sends a Report that would exceed this without its
-// sections.
+// checks section 1 MiB, which leaves 2 MiB for the samples and transcripts when
+// all three are at their budget. A full batch of 1,000 samples of 24 disks each
+// comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
+// sends a Report that would exceed this without its sections, which ride a
+// later, smaller Report.
 export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
 
 // An IANA time zone name such as `America/New_York`, `UTC`, or `Etc/GMT+5`.

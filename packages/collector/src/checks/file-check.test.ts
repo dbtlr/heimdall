@@ -88,3 +88,37 @@ test('a file larger than one read chunk is hashed whole', async () => {
 
   expect(await checkFile(path, sha(content))).toBe('match');
 });
+
+test('an empty file hashes to the SHA-256 of nothing', async () => {
+  await using dir = await tempStateDir();
+  const path = join(dir.path, 'empty');
+  await writeFile(path, '');
+
+  expect(await checkFile(path, sha(''))).toBe('match');
+});
+
+test('a device is unreadable and is not read to its end', async () => {
+  // /dev/zero never ends, so reading it would hang the test.
+  expect(await checkFile('/dev/zero', sha('x'))).toBe('unreadable');
+});
+
+test('a check cut short by the signal answers nothing', async () => {
+  await using dir = await tempStateDir();
+  const path = join(dir.path, 'a.conf');
+  await writeFile(path, 'hello\n');
+
+  expect(await checkFile(path, HELLO, AbortSignal.abort())).toBeUndefined();
+  expect(await checkFile(path, HELLO, new AbortController().signal)).toBe('match');
+});
+
+test('a check of a large file stops between chunks when the signal aborts', async () => {
+  await using dir = await tempStateDir();
+  const path = join(dir.path, 'big');
+  await writeFile(path, Buffer.alloc(64 * 1024 * 1024));
+  const controller = new AbortController();
+  const check = checkFile(path, sha('x'), controller.signal);
+  // The first chunk is not read until the check yields.
+  controller.abort();
+
+  expect(await check).toBeUndefined();
+});

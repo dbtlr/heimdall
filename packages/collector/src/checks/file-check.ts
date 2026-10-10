@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 
 // What the Collector found when it compared a recorded file with disk. A file
 // it could not read is not a mismatch: the Hub judges it neither way.
@@ -14,23 +14,62 @@ const failureOf = (error: unknown): FileVerdict =>
     ? 'missing'
     : 'unreadable';
 
+// Hashes the first `size` bytes of `handle`, or answers undefined when `signal`
+// aborts between chunks. A file that grew since it was opened is read only as
+// far as it was then, so a file growing faster than it is read cannot stall the
+// pass.
+const hashPrefix = async (
+  handle: Awaited<ReturnType<typeof open>>,
+  size: number,
+  signal: AbortSignal | undefined,
+) => {
+  const hash = createHash('sha256');
+  if (size > 0) {
+    // `end` is the last byte to read, inclusive.
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      end: size - 1,
+      start: 0,
+    })) {
+      if (signal?.aborted === true) {
+        return undefined;
+      }
+      hash.update(chunk);
+    }
+  }
+  return signal?.aborted === true ? undefined : hash.digest('hex');
+};
+
 // Compares the file at `path`, following symbolic links, with the SHA-256 a
 // provisioner recorded for it. The content is hashed as a stream, so a large
-// file is never held in memory. Only a regular file is read: opening a named
-// pipe without O_NONBLOCK would wait for a writer, and a directory or device
-// has no content to compare.
-export const checkFile = async (path: string, sha256: string): Promise<FileVerdict> => {
+// file is never held in memory. Only a regular file is opened: the path is
+// examined first so a device is never opened, the open does not wait for a
+// writer on a named pipe, and the opened file is examined again in case the
+// path changed in between. Answers undefined when `signal` aborts, so stopping
+// does not wait for a huge file.
+export const checkFile = async (
+  path: string,
+  sha256: string,
+  signal?: AbortSignal,
+): Promise<FileVerdict | undefined> => {
   try {
+    if (signal?.aborted === true) {
+      return undefined;
+    }
+    if (!(await stat(path)).isFile()) {
+      return 'unreadable';
+    }
     const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
-      if (!(await handle.stat()).isFile()) {
+      const opened = await handle.stat();
+      if (!opened.isFile()) {
         return 'unreadable';
       }
-      const hash = createHash('sha256');
-      for await (const chunk of handle.createReadStream({ autoClose: false })) {
-        hash.update(chunk);
+      const digest = await hashPrefix(handle, opened.size, signal);
+      if (digest === undefined) {
+        return undefined;
       }
-      return hash.digest('hex') === sha256 ? 'match' : 'drifted';
+      return digest === sha256 ? 'match' : 'drifted';
     } finally {
       await handle.close();
     }

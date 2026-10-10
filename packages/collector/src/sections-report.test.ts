@@ -3,7 +3,12 @@ import { expect, test } from 'bun:test';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ChecksSectionSchema, RecordsSectionSchema, RunsSectionSchema } from '@heimdall/schema';
+import {
+  ChecksSectionSchema,
+  filesRecordDigest,
+  RecordsSectionSchema,
+  RunsSectionSchema,
+} from '@heimdall/schema';
 import type {
   ApplicationRecord,
   ChecksSection,
@@ -1029,12 +1034,11 @@ test('a files record written by another process is hashed at once and its checks
   await checks.tick();
   await collector.push();
 
-  await elsewhere(dir.path, (other) =>
-    other.put('files', {
-      files: [{ path: file, sha256: new Bun.CryptoHasher('sha256').update('one').digest('hex') }],
-      name: 'webapp-config',
-    }),
-  );
+  const webappConfig = {
+    files: [{ path: file, sha256: new Bun.CryptoHasher('sha256').update('one').digest('hex') }],
+    name: 'webapp-config',
+  };
+  await elsewhere(dir.path, (other) => other.put('files', webappConfig));
   await checks.tick();
   const [report] = await collector.push();
   const [quiet] = await collector.push();
@@ -1042,6 +1046,7 @@ test('a files record written by another process is hashed at once and its checks
   collector.close();
 
   expect(report?.checks).toEqual({
+    fileRecords: [{ digest: await filesRecordDigest(webappConfig), record: 'webapp-config' }],
     files: [{ path: file, record: 'webapp-config', since: 1_000_000, state: 'drifted' }],
   });
   expect(report?.records).toBeDefined();
