@@ -60,8 +60,14 @@ const vitalsCells = (v: VitalsSample | undefined) =>
 
 // What the page calls each Condition when it is raised and when it is cleared.
 const CONDITION_LABELS: Record<ConditionKind, { cleared: string; raised: string }> = {
+  job_failing: { cleared: 'Job no longer failing', raised: 'Job failing' },
+  job_overdue: { cleared: 'Job no longer overdue', raised: 'Job overdue' },
   reports_rejected: { cleared: 'Reports accepted again', raised: 'Reports rejected' },
 };
+
+// A label followed by what the Condition is about, such as a job's name.
+const about = (label: string, subject: string) =>
+  subject === '' ? label : `${label} <code>${escape(subject)}</code>`;
 
 const moment = (ms: number) => `<time datetime="${new Date(ms).toISOString()}">${utc(ms)}</time>`;
 
@@ -74,7 +80,7 @@ const status = (conditions: OpenCondition[]) =>
     : conditions
         .map(
           (c) =>
-            `<strong>${CONDITION_LABELS[c.kind].raised}</strong> since ${moment(c.raisedAt)}: ${reasonText(c.reason)}`,
+            `${about(`<strong>${CONDITION_LABELS[c.kind].raised}</strong>`, c.subject)} since ${moment(c.raisedAt)}: ${reasonText(c.reason)}`,
         )
         .join('<br>');
 
@@ -103,8 +109,8 @@ const row = (system: SystemSummary, now: number) => {
 const timelineLine = (entry: TimelineEntry) => {
   const label = CONDITION_LABELS[entry.condition];
   return entry.kind === 'raised'
-    ? `<li>${moment(entry.at)} ${label.raised}: ${reasonText(entry.reason)}</li>`
-    : `<li>${moment(entry.at)} ${label.cleared}</li>`;
+    ? `<li>${moment(entry.at)} ${about(label.raised, entry.subject)}: ${reasonText(entry.reason)}</li>`
+    : `<li>${moment(entry.at)} ${about(label.cleared, entry.subject)}</li>`;
 };
 
 const timeline = (system: SystemSummary) =>

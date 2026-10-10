@@ -33,6 +33,7 @@ export {
   RECORD_KINDS,
   RECORD_NAME,
   RECORD_SCHEMAS,
+  REPORTED_RECORD_SCHEMAS,
   REPORTED_RUN_SCHEMA,
   RunRecordSchema,
   ServiceRecordSchema,

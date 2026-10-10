@@ -268,6 +268,17 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 8,
   },
+  {
+    // When the Hub first mirrored each record, which a record set that still
+    // holds it keeps. A job's scheduled times count only from then, so a job
+    // recorded today is not overdue for a time that passed before. Records
+    // mirrored before this migration count from it.
+    sql: `
+      ALTER TABLE mirrored_records ADD COLUMN mirrored_since timestamptz NOT NULL DEFAULT now();
+      ALTER TABLE mirrored_records ALTER COLUMN mirrored_since DROP DEFAULT;
+    `,
+    version: 9,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
