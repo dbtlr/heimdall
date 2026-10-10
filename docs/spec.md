@@ -88,7 +88,7 @@ A new field reaches the dashboard only when every layer knows it, so the Hub is 
 
 ## Reading the records back
 
-The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A job's runs are not part of the set. If the Hub refuses a Report carrying the set, the Collector sends the same samples again without it, so the records never cost Vitals.
+The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set. If the Hub refuses a Report carrying the set, the Collector sends the same samples again without it, so the records never cost Vitals.
 
 The Hub replaces the System's mirror with each set, so a forgotten record leaves the mirror. It ignores a set sent earlier than the one it holds, unless the held set claims a time later than the Hub's own clock. A Report without the section leaves the mirror unchanged.
 

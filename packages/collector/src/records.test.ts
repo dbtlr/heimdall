@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { JobRecord } from '@heimdall/schema';
@@ -226,4 +227,42 @@ test('a write waits for another process holding the write lock instead of failin
   expect(forgotten).toBe(true);
   expect(read.runs).toHaveLength(1);
   expect(read.records.map(({ name }) => name)).toEqual(['backup']);
+});
+
+// The file descriptors this process holds open.
+const openFiles = async () => (await readdir('/dev/fd')).length;
+
+// Whether opening the store in `stateDir` fails.
+const openFails = async (stateDir: string) => {
+  try {
+    (await openRecords({ stateDir })).close();
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+// The daemon retries a store that fails to open on every flush, so a failed
+// open must not hold a file descriptor.
+test.each([
+  ['is not a database', async (path: string) => Bun.write(path, 'this is not a database')],
+  [
+    'has tables of another shape',
+    async (path: string) => {
+      const db = new Database(path, { create: true });
+      db.run('CREATE TABLE records (x TEXT)');
+      db.close();
+    },
+  ],
+])('a records file that %s fails to open and leaves no handle open', async (_case, make) => {
+  await using dir = await tempStateDir();
+  await make(join(dir.path, 'records.sqlite'));
+  const before = await openFiles();
+
+  for (let i = 0; i < 5; i += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- each open must fail before the next.
+    expect(await openFails(dir.path)).toBe(true);
+  }
+
+  expect(await openFiles()).toBe(before);
 });

@@ -73,20 +73,26 @@ export const openRecords = async ({
   await mkdir(stateDir, { mode: 0o700, recursive: true });
   const db = new Database(join(stateDir, 'records.sqlite'), { create: true, strict: true });
   try {
-    db.run('PRAGMA busy_timeout = 5000');
-    db.run('PRAGMA journal_mode = WAL');
-    db.run(
-      'CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (kind, name))',
-    );
-    // `startedMs` is the start as epoch milliseconds, so pruning compares times, not text.
-    db.run(
-      'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
-    );
+    return storeOver(db, now);
   } catch (error) {
-    // A file that is not a database must not leave a handle open for each retry.
+    // A file that is not a database, or whose tables have another shape, must
+    // not leave a handle open for each retry.
     db.close();
     throw error;
   }
+};
+
+// The store over an open database, creating its tables when they are missing.
+const storeOver = (db: Database, now: () => number): RecordStore => {
+  db.run('PRAGMA busy_timeout = 5000');
+  db.run('PRAGMA journal_mode = WAL');
+  db.run(
+    'CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (kind, name))',
+  );
+  // `startedMs` is the start as epoch milliseconds, so pruning compares times, not text.
+  db.run(
+    'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
+  );
 
   const upsert = db.query(
     'INSERT OR REPLACE INTO records (kind, name, body) VALUES ($kind, $name, $body)',
