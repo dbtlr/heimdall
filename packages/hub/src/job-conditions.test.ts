@@ -266,6 +266,16 @@ describe('job overdue', () => {
     ]);
   });
 
+  test('a job forgotten and recorded again counts from when it was recorded again', async () => {
+    await using h = await startHub();
+    await send(h, '06:00:00', { records: set(BACKUP), runs: NO_RUNS });
+    await send(h, '07:00:00', { records: set(), samples: awake('06:00:15', '07:00:00') });
+    await send(h, '08:00:00', { records: set(BACKUP), samples: awake('07:00:00', '08:00:00') });
+    await send(h, '09:15:00', { samples: awake('08:00:00', '09:15:00') });
+
+    expect((await evaluate(h, '09:15:00')).open).toEqual([]);
+  });
+
   test("waits for the job's own grace period when its record sets one", async () => {
     await using h = await startHub();
     const patient = { ...BACKUP, graceMinutes: 180 };

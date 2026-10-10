@@ -241,7 +241,7 @@ test('agrees with brute force around clock changes in several zones', () => {
   let seed = 39;
   const random = (n: number) => {
     seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
-    return seed % n;
+    return Math.floor((seed / 2 ** 31) * n);
   };
   const transitions = [
     ['America/New_York', '2026-03-08T07:00:00Z'],
@@ -257,13 +257,16 @@ test('agrees with brute force around clock changes in several zones', () => {
   ] as const;
   for (const [timeZone, transition] of transitions) {
     for (let i = 0; i < 200; i += 1) {
-      // Hours near midnight and the small hours, where clocks change, half the time.
-      const hour = () => (random(2) === 0 ? random(24) : [22, 23, 0, 1, 2, 3][random(6)]);
+      // Half the time, an hour next to the change's local hour, where times collide.
+      const changeHour = Temporal.Instant.from(transition)
+        .subtract({ hours: 1 })
+        .toZonedDateTimeISO(timeZone).hour;
+      const hour = () => (random(2) === 0 ? random(24) : (changeHour + random(4)) % 24);
       const schedule = Array.from({ length: 1 + random(3) }, () =>
         random(4) === 0 ? { minute: random(60) } : { hour: hour(), minute: random(60) },
       );
-      const atOrBefore = at(transition) + (random(48 * 60) - 24 * 60) * 60_000;
-      const notBefore = atOrBefore - random(36 * 60) * 60_000;
+      const atOrBefore = at(transition) + (random(6 * 60) - 3 * 60) * 60_000;
+      const notBefore = atOrBefore - random(6 * 60) * 60_000;
       const input = { atOrBefore, notBefore, schedule, timeZone };
 
       expect({ input, latest: latestScheduledTime(input) }).toEqual({

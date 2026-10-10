@@ -3,6 +3,7 @@ import type { JobRecord, RunRecord } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { describeError } from './errors.ts';
 import { latestScheduledTime } from './schedule.ts';
 import type { ConditionKind } from './store.ts';
 
@@ -264,8 +265,6 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       }
     }
   });
-
-const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // Raises and clears every System's job failing and job overdue Conditions,
 // judging each at the time `clock` (epoch milliseconds) reads once it holds

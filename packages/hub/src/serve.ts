@@ -7,6 +7,7 @@ import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
 import { openDatabase } from './database.ts';
+import { describeError } from './errors.ts';
 import { createHub } from './hub.ts';
 import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate } from './migrations.ts';
@@ -17,8 +18,6 @@ const PRUNE_INTERVAL_MS = 3_600_000;
 const JOB_CONDITIONS_INTERVAL_MS = 60_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
-
-const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // `heimdall-hub serve`: brings the database to the latest schema, then accepts
 // Reports and serves the page until systemd or a terminal stops it. Its runtime
