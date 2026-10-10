@@ -3,7 +3,7 @@ import type { JobRecord, RunRecord } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
-import { describeError } from './errors.ts';
+import { clear, evaluateEach, raise } from './conditions.ts';
 import { latestScheduledTime } from './schedule.ts';
 import type { ConditionKind } from './store.ts';
 
@@ -21,7 +21,7 @@ const AWAKE_HORIZON_MS = 90 * 24 * 60 * 60_000;
 // its 5 minutes.
 const SAMPLES_PER_BUCKET = (5 * 60_000) / SAMPLE_INTERVAL_MS;
 
-const JOB_KINDS: readonly ConditionKind[] = ['job_failing', 'job_overdue'];
+const JOB_KINDS = ['job_failing', 'job_overdue'] as const satisfies readonly ConditionKind[];
 
 // What the Hub should do with one job Condition: raise it with a reason (or
 // update the reason of the open one), clear it, or leave it as it is because
@@ -176,32 +176,6 @@ const awakeCutoffOf = async (
     buckets.find((b) => Number(b.awake_samples) * SAMPLE_INTERVAL_MS >= graceMs)?.bucket.getTime();
 };
 
-const raise = (
-  tx: SQL,
-  {
-    kind,
-    now,
-    reason,
-    subject,
-    system,
-  }: Record<'kind' | 'reason' | 'subject' | 'system', string> & { now: Date },
-) => tx`
-  INSERT INTO conditions (system, kind, subject, raised_at, raised_reason, latest_at, latest_reason)
-  VALUES (${system}, ${kind}, ${subject}, ${now}, ${reason}, ${now}, ${reason})
-  ON CONFLICT (system, kind, subject) WHERE cleared_at IS NULL DO UPDATE SET
-    latest_at = excluded.latest_at,
-    latest_reason = excluded.latest_reason
-  WHERE conditions.latest_reason <> excluded.latest_reason
-`;
-
-const clear = (
-  tx: SQL,
-  { kind, now, subject, system }: Record<'kind' | 'subject' | 'system', string> & { now: Date },
-) => tx`
-  UPDATE conditions SET cleared_at = GREATEST(raised_at, ${now})
-  WHERE system = ${system} AND kind = ${kind} AND subject = ${subject} AND cleared_at IS NULL
-`;
-
 // Raises and clears one System's job Conditions under the System's row lock,
 // so they order with its Reports (ADR-0005), at the time `clock` reads once
 // the lock is held.
@@ -226,7 +200,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     `;
     const open: { kind: ConditionKind; subject: string }[] = await tx`
       SELECT kind, subject FROM conditions
-      WHERE system = ${system} AND kind IN ${tx(JOB_KINDS)} AND cleared_at IS NULL
+      WHERE system = ${system} AND kind IN ${tx([...JOB_KINDS])} AND cleared_at IS NULL
     `;
     if (jobs.length === 0 && open.length === 0) {
       return;
@@ -278,7 +252,8 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
 
     const at = new Date(now);
     for (const [subject, byKind] of verdicts) {
-      for (const [kind, verdict] of Object.entries(byKind)) {
+      for (const kind of JOB_KINDS) {
+        const verdict = byKind[kind];
         if (verdict === 'clear') {
           // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
           await clear(tx, { kind, now: at, subject, system });
@@ -296,19 +271,8 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
 // judged does not stop the rest; one error then names each such System and why.
 export const evaluateJobConditions = async (sql: SQL, clock: () => number): Promise<void> => {
   const systems: { system: string }[] = await sql`SELECT system FROM record_sets ORDER BY system`;
-  const failures: { error: unknown; system: string }[] = [];
-  for (const { system } of systems) {
-    try {
-      // oxlint-disable-next-line no-await-in-loop -- one System at a time keeps the load even.
-      await evaluateSystem(sql, system, clock);
-    } catch (error) {
-      failures.push({ error, system });
-    }
-  }
-  if (failures.length > 0) {
-    throw new AggregateError(
-      failures.map((f) => f.error),
-      failures.map((f) => `${f.system}: ${describeError(f.error)}`).join('; '),
-    );
-  }
+  await evaluateEach(
+    systems.map((row) => row.system),
+    (system) => evaluateSystem(sql, system, clock),
+  );
 };

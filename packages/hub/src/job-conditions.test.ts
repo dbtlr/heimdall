@@ -528,7 +528,12 @@ test('migration 9 counts records mirrored before it from when it applied', async
   `;
   const before = Date.now();
 
-  expect(await migrate(db.sql)).toEqual([9]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 9),
+    ),
+  ).toEqual([9]);
 
   const [row]: { first_mirrored_at: Date; kind: string; name: string }[] = await db.sql`
     SELECT kind, name, first_mirrored_at FROM records_first_mirrored

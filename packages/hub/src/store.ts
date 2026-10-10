@@ -39,11 +39,11 @@ export const storeReport = (
     const seenAt = new Date(receivedAt);
     await tx`
       INSERT INTO systems (
-        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone
+        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps
       )
       VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
               ${report.collector.platform}, ${storable(report.collector.arch)},
-              ${report.timeZone ?? null})
+              ${report.timeZone ?? null}, ${report.sleeps ?? null})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
         collector_version = excluded.collector_version,
@@ -51,7 +51,9 @@ export const storeReport = (
         collector_arch = excluded.collector_arch,
         -- A Report without a zone leaves the one the System has. The last Report to
         -- arrive wins, which is fine with one Collector per System.
-        time_zone = COALESCE(excluded.time_zone, systems.time_zone)
+        time_zone = COALESCE(excluded.time_zone, systems.time_zone),
+        -- Likewise a Report without sleeps, from a Collector that predates it.
+        sleeps = COALESCE(excluded.sleeps, systems.sleeps)
     `;
     // The samples travel as one JSON parameter, so a Report of any size is one
     // statement. The samples the insert stored, and only those, roll up into
@@ -293,10 +295,15 @@ const storeRuns = async (
   `;
 };
 
-// The kinds of Condition the Hub derives. M4 adds Service, Drift, and
-// stale-System Conditions to the same Timeline. A job Condition's subject is
-// the job's name.
-export type ConditionKind = 'job_failing' | 'job_overdue' | 'reports_rejected';
+// The kinds of Condition the Hub derives. M4 adds Service and Drift
+// Conditions to the same Timeline. A job Condition's subject is the job's name,
+// a low disk Condition's the mount, and a stale System Condition's is empty.
+export type ConditionKind =
+  | 'job_failing'
+  | 'job_overdue'
+  | 'low_disk'
+  | 'reports_rejected'
+  | 'system_stale';
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';
 

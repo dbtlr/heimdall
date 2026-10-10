@@ -289,6 +289,14 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 9,
   },
+  {
+    // Whether a System sleeps, as its Collector says in every Report. Null until
+    // a Report says, which counts as always on.
+    sql: `
+      ALTER TABLE systems ADD COLUMN sleeps boolean;
+    `,
+    version: 10,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
