@@ -8,6 +8,7 @@ import type { ActionHandler } from '@loomcli/core';
 
 import packageJson from '../package.json' with { type: 'json' };
 import type { run } from './application.ts';
+import { startChecks } from './checks/loop.ts';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import type { ReportIdentity } from './delivery.ts';
@@ -160,14 +161,6 @@ export const runAction: ActionHandler<typeof run> = async ({
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
     };
-    // The daemon only reads the store; `record` and `forget` write it. The
-    // reporter opens it on first use, so a store that will not open costs only
-    // the records and runs.
-    const sections = createSectionsReporter({
-      log: runtime,
-      now: Date.now,
-      open: () => openRecords({ stateDir }),
-    });
     const capture = createCapture({
       hub: transcriptHub({ hub: options.hub, signal, token }),
       log: runtime,
@@ -178,6 +171,22 @@ export const runAction: ActionHandler<typeof run> = async ({
     });
     const identity = reportIdentity({ platform, sleeps: options.sleeps, system });
     const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
+    // The daemon only reads the store; `record` and `forget` write it. The
+    // checks and the reporter each open it on first use, through a connection
+    // of their own, so a store that will not open costs only the checks, the
+    // records, and the runs.
+    const checks = startChecks({
+      log: runtime,
+      now: Date.now,
+      open: () => openRecords({ stateDir }),
+      signal,
+    });
+    const sections = createSectionsReporter({
+      checks,
+      log: runtime,
+      now: Date.now,
+      open: () => openRecords({ stateDir }),
+    });
     try {
       await log.info(
         clean(
@@ -199,6 +208,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       });
     } finally {
       await stopCapture();
+      await checks.stop();
       spool.close();
       sections.close();
       queue.close();

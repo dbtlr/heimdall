@@ -3,16 +3,24 @@ import { expect, test } from 'bun:test';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { RecordsSectionSchema, RunsSectionSchema } from '@heimdall/schema';
-import type { ApplicationRecord, JobRecord, Report, RunRecord } from '@heimdall/schema';
+import { ChecksSectionSchema, RecordsSectionSchema, RunsSectionSchema } from '@heimdall/schema';
+import type {
+  ApplicationRecord,
+  ChecksSection,
+  JobRecord,
+  Report,
+  RunRecord,
+} from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
+import { createChecks } from './checks/loop.ts';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import { openRecords } from './records.ts';
 import type { RecordStore } from './records.ts';
 import { createSectionsReporter, SECTIONS_REFRESH_MS } from './sections-report.ts';
+import type { ChecksSource } from './sections-report.ts';
 import { NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
@@ -39,12 +47,16 @@ const setup = async (
   dir: { path: string },
   {
     batchSize,
+    checks,
+    maxChecksBytes,
     maxRecordsBytes,
     maxRunsBytes,
     open = () => openRecords({ stateDir: dir.path }),
     respond,
   }: {
     batchSize?: number;
+    checks?: ChecksSource;
+    maxChecksBytes?: number;
     maxRecordsBytes?: number;
     maxRunsBytes?: number;
     open?: () => Promise<RecordStore>;
@@ -56,8 +68,12 @@ const setup = async (
   let now = 1_000_000;
   const outcomes: Delivery[] = [];
   const reports: Report[] = [];
+  // The checks the loop built last, which a test sets.
+  const checked: { latest: ChecksSection | undefined } = { latest: undefined };
   const reporter = createSectionsReporter({
+    checks: checks ?? { latest: () => checked.latest },
     log: { info: () => 0, warn: (m) => warnings.push(m) },
+    ...(maxChecksBytes === undefined ? {} : { maxChecksBytes }),
     ...(maxRecordsBytes === undefined ? {} : { maxRecordsBytes }),
     ...(maxRunsBytes === undefined ? {} : { maxRunsBytes }),
     now: () => now,
@@ -89,6 +105,7 @@ const setup = async (
     advance: (ms: number) => {
       now += ms;
     },
+    checked,
     close: () => {
       queue.close();
       reporter.close();
@@ -863,4 +880,170 @@ test('a store that fails again after it recovered is warned about again', async 
 
   expect(recovered[0]?.records).toEqual({ records: [], unreadable: [] });
   expect(collector.warnings).toHaveLength(2);
+});
+
+const DRIFTED = {
+  path: '/etc/webapp/webapp.conf',
+  record: 'webapp-config',
+  since: 1_000,
+  state: 'drifted',
+};
+
+test('no checks section goes out before the checks have run', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.checks).toBeUndefined();
+});
+
+test('the first checks go out on the next Report, then only when they change', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  await collector.push();
+
+  collector.checked.latest = { files: [] };
+  const first = await collector.push();
+  collector.checked.latest = { files: [] };
+  const sameContent = await collector.push();
+  const unchanged = await collector.push();
+  collector.checked.latest = { files: [DRIFTED] };
+  const changed = await collector.push();
+  collector.close();
+
+  expect(first[0]?.checks).toEqual({ files: [] });
+  expect(sameContent[0]?.checks).toBeUndefined();
+  expect(unchanged[0]?.checks).toBeUndefined();
+  expect(changed[0]?.checks).toEqual({ files: [DRIFTED] });
+  expect(ChecksSectionSchema.safeParse(changed[0]?.checks).success).toBe(true);
+});
+
+test('an hour after the last delivered checks, they are sent again though unchanged', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  collector.checked.latest = { files: [DRIFTED] };
+  await collector.push();
+
+  collector.advance(SECTIONS_REFRESH_MS - 1);
+  const justBefore = await collector.push();
+  collector.advance(1);
+  const atTheHour = await collector.push();
+  collector.close();
+
+  expect(justBefore[0]?.checks).toBeUndefined();
+  expect(atTheHour[0]?.checks).toEqual({ files: [DRIFTED] });
+});
+
+test('a failed delivery keeps the checks pending, as they are then', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  collector.checked.latest = { files: [DRIFTED] };
+  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
+
+  const failed = await collector.push();
+  collector.checked.latest = { files: [] };
+  const retried = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  expect(failed[0]?.checks).toEqual({ files: [DRIFTED] });
+  expect(retried[0]?.checks).toEqual({ files: [] });
+  expect(after[0]?.checks).toBeUndefined();
+});
+
+test('checks over budget travel as their size alone, and are not sent again when they change without changing size', async () => {
+  await using dir = await tempStateDir();
+  const size = Buffer.byteLength(JSON.stringify({ files: [DRIFTED] }));
+  const collector = await setup(dir, { maxChecksBytes: size - 1 });
+  collector.checked.latest = { files: [DRIFTED] };
+
+  const first = await collector.push();
+  collector.checked.latest = { files: [{ ...DRIFTED, since: 2_000 }] };
+  const sameSize = await collector.push();
+  collector.close();
+
+  expect(first[0]?.checks).toEqual({ overBudget: { bytes: size } });
+  expect(sameSize[0]?.checks).toBeUndefined();
+});
+
+test('checks exactly at the budget are sent whole', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, { maxChecksBytes: Buffer.byteLength('{"files":[]}') });
+  collector.checked.latest = { files: [] };
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.checks).toEqual({ files: [] });
+});
+
+test('checks the Hub refuses never cost the samples: they are resent without them, and logged once', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    respond: (report) =>
+      report.checks === undefined
+        ? { kind: 'delivered' }
+        : { detail: 'bad checks', kind: 'rejected' },
+  });
+  collector.checked.latest = { files: [DRIFTED] };
+
+  const first = await collector.push();
+  const next = await collector.push();
+  const remaining = collector.queue.oldest(10);
+  collector.close();
+
+  expect(first.map((report) => report.checks !== undefined)).toEqual([true, false]);
+  expect(next.map((report) => report.checks)).toEqual([undefined]);
+  expect(remaining).toEqual([]);
+  expect(
+    collector.warnings.filter((m) => m.includes('carrying the checks (bad checks)')),
+  ).toHaveLength(1);
+});
+
+test('checks are sent without the records and runs, which settle on their own', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  await collector.push();
+
+  collector.checked.latest = { files: [DRIFTED] };
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report).toMatchObject({ checks: { files: [DRIFTED] } });
+  expect(report?.records).toBeUndefined();
+  expect(report?.runs).toBeUndefined();
+});
+
+test('a files record written by another process is hashed at once and its checks ride the next Report', async () => {
+  await using dir = await tempStateDir();
+  const file = join(dir.path, 'webapp.conf');
+  await writeFile(file, 'changed');
+  const checks = createChecks({
+    log: { info: () => 0, warn: () => 0 },
+    now: () => 1_000_000,
+    open: () => openRecords({ stateDir: dir.path }),
+  });
+  const collector = await setup(dir, { checks });
+  await checks.tick();
+  await collector.push();
+
+  await elsewhere(dir.path, (other) =>
+    other.put('files', {
+      files: [{ path: file, sha256: new Bun.CryptoHasher('sha256').update('one').digest('hex') }],
+      name: 'webapp-config',
+    }),
+  );
+  await checks.tick();
+  const [report] = await collector.push();
+  const [quiet] = await collector.push();
+  checks.close();
+  collector.close();
+
+  expect(report?.checks).toEqual({
+    files: [{ path: file, record: 'webapp-config', since: 1_000_000, state: 'drifted' }],
+  });
+  expect(report?.records).toBeDefined();
+  expect(quiet?.checks).toBeUndefined();
 });
