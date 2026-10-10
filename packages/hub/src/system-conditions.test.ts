@@ -1,15 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Report } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { migrate, MIGRATIONS } from './migrations.ts';
+import { unpair } from './pairing.ts';
 import { listSystems } from './store.ts';
-import { evaluateSystemConditions, SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
+import {
+  evaluateSystem,
+  evaluateSystemConditions,
+  SYSTEM_CONDITION_THRESHOLDS,
+} from './system-conditions.ts';
 import type { SystemConditionThresholds } from './system-conditions.ts';
 import { NOW, openGeneration, page, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
+import { storeToken } from './tokens.ts';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -33,15 +38,21 @@ const send = async (
   time: number,
   {
     disks = [disk('/', 50)],
+    sampleAt = time,
     sleeps,
     system = 'laptop-1',
-  }: { disks?: ReturnType<typeof disk>[]; sleeps?: boolean; system?: string } = {},
+  }: {
+    disks?: ReturnType<typeof disk>[];
+    sampleAt?: number;
+    sleeps?: boolean | string;
+    system?: string;
+  } = {},
 ) => {
   h.clock.now = time;
-  const base = report(system, [time]);
-  const body: Report = {
+  const base = report(system, [sampleAt]);
+  const body = {
     ...base,
-    samples: [{ ...sample(time), disks }],
+    samples: [{ ...sample(sampleAt), disks }],
     sentAt: time,
     ...(sleeps === undefined ? {} : { sleeps }),
   };
@@ -179,23 +190,35 @@ describe('stale System', () => {
     expect(timeline).toHaveLength(3);
   });
 
-  test('a paired System never seen counts from pairing, and shows with the Condition', async () => {
+  test('a paired System never seen counts from pairing, and is shown as never seen', async () => {
     await using h = await startHub();
 
     await evaluate(h, NOW + 10 * MINUTE);
     expect(await listSystems(h.db.sql)).toEqual([]);
 
     await evaluate(h, NOW + 10 * MINUTE + SECOND);
-    const { open } = await conditionsOf(h);
-    expect(open).toEqual([
+    const [laptop] = await listSystems(h.db.sql);
+    expect(laptop?.lastSeenAt).toBeUndefined();
+    expect(laptop?.conditions).toEqual([
       expect.objectContaining({
         kind: 'system_stale',
         reason:
           'Not heard from since it was paired at 2026-10-06 12:00 UTC, more than 10 minutes ago.',
       }),
     ]);
-    // The page shows the System, with no Vitals and no Collector build.
-    expect(await page(h.hub)).toContain('System stale');
+    const html = await page(h.hub);
+    expect(html).toContain('System stale');
+    expect(html).toContain('Never seen');
+  });
+
+  test('a System that was never seen gets its real Last seen from its first Report', async () => {
+    await using h = await startHub();
+    await evaluate(h, NOW + 11 * MINUTE);
+
+    await send(h, NOW + 12 * MINUTE);
+
+    const [laptop] = await listSystems(h.db.sql);
+    expect(laptop?.lastSeenAt).toBe(NOW + 12 * MINUTE);
   });
 
   test('a paired System that reports after being flagged never seen clears', async () => {
@@ -208,11 +231,27 @@ describe('stale System', () => {
     expect((await conditionsOf(h)).open).toEqual([]);
   });
 
-  test('a System paired again counts from the new pairing', async () => {
+  test('a System paired again stays stale until it is heard from', async () => {
     await using h = await startHub();
     await send(h, NOW);
-    await h.db
-      .sql`UPDATE paired_systems SET paired_at = ${new Date(NOW + DAY)} WHERE system = 'laptop-1'`;
+    await evaluate(h, NOW + 11 * MINUTE);
+
+    await storeToken(h.db.sql, {
+      pairedAt: NOW + 12 * MINUTE,
+      system: 'laptop-1',
+      token: 'laptop-token',
+    });
+    await evaluate(h, NOW + 13 * MINUTE);
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+
+    await send(h, NOW + 14 * MINUTE);
+    await evaluate(h, NOW + 15 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
+  });
+
+  test('a System never seen and paired again counts from the new pairing', async () => {
+    await using h = await startHub();
+    await storeToken(h.db.sql, { pairedAt: NOW + DAY, system: 'laptop-1', token: 'new-token' });
 
     await evaluate(h, NOW + DAY + 5 * MINUTE);
 
@@ -244,6 +283,16 @@ describe('stale System', () => {
     expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
   });
 
+  test('a Report whose sleeps is not a boolean is stored, and keeps what the Hub holds', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { sleeps: true });
+
+    await send(h, NOW + DAY, { sleeps: 'sometimes' });
+
+    await evaluate(h, NOW + DAY + 2 * DAY);
+    expect((await conditionsOf(h)).open).toEqual([]);
+  });
+
   test('a System that never sent sleeps is always on', async () => {
     await using h = await startHub();
     await send(h, NOW);
@@ -262,6 +311,60 @@ describe('stale System', () => {
     expect((await conditionsOf(h)).open).toEqual([]);
     await evaluate(h, NOW + 3 * DAY, patient);
     expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+  });
+});
+
+describe('a System that is no longer paired', () => {
+  test('has its stale System and low disk Conditions cleared, and is judged no more', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { disks: [disk('/', 2)] });
+    await evaluate(h, NOW + 11 * MINUTE);
+    expect(kinds((await conditionsOf(h)).open).toSorted()).toEqual(['low_disk', 'system_stale']);
+
+    await unpair(h.db.sql, 'laptop-1');
+    await evaluate(h, NOW + 12 * MINUTE);
+
+    const { open, timeline } = await conditionsOf(h);
+    expect(open).toEqual([]);
+    expect(timeline.filter((entry) => entry.kind === 'cleared')).toEqual([
+      { at: NOW + 12 * MINUTE, condition: 'low_disk', kind: 'cleared', subject: '/' },
+      { at: NOW + 12 * MINUTE, condition: 'system_stale', kind: 'cleared', subject: '' },
+    ]);
+
+    await evaluate(h, NOW + 30 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
+  });
+
+  test('keeps the Conditions other kinds raised', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await sendRejected(h, NOW + MINUTE);
+    await evaluate(h, NOW + 12 * MINUTE);
+    expect(kinds((await conditionsOf(h)).open).toSorted()).toEqual([
+      'reports_rejected',
+      'system_stale',
+    ]);
+
+    await unpair(h.db.sql, 'laptop-1');
+    await evaluate(h, NOW + 13 * MINUTE);
+
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['reports_rejected']);
+  });
+
+  // The path a System takes when it is unpaired between being listed and judged.
+  test('is cleared by judging it directly, and a name the Hub holds nothing for is left alone', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await evaluate(h, NOW + 11 * MINUTE);
+    await unpair(h.db.sql, 'laptop-1');
+
+    for (const system of ['laptop-1', 'ghost']) {
+      // oxlint-disable-next-line no-await-in-loop -- one System after the other.
+      await evaluateSystem(h.db.sql, system, () => NOW + 12 * MINUTE, SYSTEM_CONDITION_THRESHOLDS);
+    }
+
+    expect((await conditionsOf(h)).open).toEqual([]);
+    expect((await listSystems(h.db.sql)).map((s) => s.name)).not.toContain('ghost');
   });
 });
 
@@ -402,6 +505,42 @@ describe('low disk', () => {
     ]);
   });
 
+  test('judges the latest sample stamped within 5 minutes of the Hub clock, not one stamped far ahead', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { disks: [disk('/', 5)], sampleAt: NOW + DAY });
+    await send(h, NOW + MINUTE, { disks: [disk('/', 5)] });
+    await evaluate(h, NOW + 2 * MINUTE);
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
+
+    await send(h, NOW + 3 * MINUTE, { disks: [disk('/', 50)] });
+    await evaluate(h, NOW + 4 * MINUTE);
+
+    expect((await conditionsOf(h)).open).toEqual([]);
+  });
+
+  test('counts a sample stamped a little ahead of the Hub clock', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { disks: [disk('/', 5)], sampleAt: NOW + 4 * MINUTE });
+
+    await evaluate(h, NOW + MINUTE);
+
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
+  });
+
+  test.each([
+    ['the lower first', [disk('/', 5), disk('/', 50)]],
+    ['the lower last', [disk('/', 50), disk('/', 5)]],
+  ])('judges the lowest free space of a mount listed twice, %s', async (_, disks) => {
+    await using h = await startHub();
+    await send(h, NOW, { disks });
+
+    await evaluate(h, NOW + MINUTE);
+
+    expect((await conditionsOf(h)).open).toEqual([
+      expect.objectContaining({ reason: '5.0 GiB free of 100.0 GiB (5.0%).', subject: '/' }),
+    ]);
+  });
+
   test('uses the thresholds it is given', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 30)] });
@@ -434,6 +573,10 @@ test('the page and the Timeline name the Condition and the mount', async () => {
   expect(html).toContain('<strong>System stale</strong> since');
   expect(html).toContain('<strong>Low disk</strong> <code>/data</code> since');
   expect(html).toContain('Low disk <code>/data</code>:');
+
+  await send(h, NOW + 12 * MINUTE, { disks: [disk('/data', 50)] });
+  await evaluate(h, NOW + 13 * MINUTE);
+  expect(await page(h.hub)).toContain('Low disk cleared <code>/data</code>');
 });
 
 test('a System that cannot be judged does not stop the others, and the failure names it', async () => {

@@ -22,8 +22,12 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report()).sleeps).toBeUndefined();
   });
 
-  test('rejects a sleeps that is not a boolean', () => {
-    expect(ReportSchema.safeParse({ ...report(), sleeps: 'yes' }).success).toBe(false);
+  test('ignores a sleeps that is not a boolean, keeping the rest of the Report', () => {
+    const parsed = ReportSchema.safeParse({ ...report(), sleeps: 'yes' });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.sleeps).toBeUndefined();
+    expect(parsed.data?.samples).toEqual(report().samples);
   });
 
   // A newer Collector may carry sections this Hub predates (ADR-0004).

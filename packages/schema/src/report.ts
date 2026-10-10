@@ -80,8 +80,11 @@ export const ReportSchema = z.object({
   sentAt: epochMs,
   // Whether the System sleeps, as its collector.toml says. In every Report;
   // optional for Collectors that predate it, for which the Hub keeps what it
-  // holds, and a System that never sent it counts as always on.
-  sleeps: z.boolean().optional(),
+  // holds, and a System that never sent it counts as always on. A value that
+  // is not a boolean is dropped like an absent one, so it never costs a Report
+  // its Vitals (ADR-0004).
+  // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
+  sleeps: z.boolean().optional().catch(undefined),
   // The Hub rejects a Report whose System differs from its ingest token's.
   system: z.string().regex(SYSTEM_NAME),
   // The System's time zone, in which its jobs' schedules are read. In every

@@ -4,33 +4,19 @@ import { every, homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimda
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
-import type { SQL } from 'bun';
 
 import type { serve } from './application.ts';
 import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
+import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
-import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate } from './migrations.ts';
 import { pruneVitals } from './retention.ts';
-import { evaluateSystemConditions, SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
+import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
-
-// Judges the job Conditions and the System Conditions. One failing does not
-// keep the other from running; the error then carries both.
-const judgeConditions = async (sql: SQL) => {
-  const results = await Promise.allSettled([
-    evaluateJobConditions(sql, Date.now),
-    evaluateSystemConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
-  ]);
-  const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
-  if (errors.length > 0) {
-    throw new AggregateError(errors, errors.map(describeError).join('; '));
-  }
-};
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -108,7 +94,7 @@ const serveUntilStopped = async ({
         onError: (error) => {
           void log.warn(clean(`Could not judge Conditions: ${describeError(error)}`));
         },
-        task: () => judgeConditions(sql),
+        task: () => evaluateConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
       });
       if (!signal.aborted) {
         await once(signal, 'abort');
