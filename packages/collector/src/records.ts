@@ -49,6 +49,11 @@ export type RecordStore = {
   // build cannot read is listed as unreadable, so the caller can say so instead
   // of letting it vanish.
   read: () => { records: StoredRecord[]; runs: StoredRun[]; unreadable: Unreadable };
+  // A number that differs from its last value after another connection, such as
+  // a `record` process, committed a write to the database. This connection's
+  // own writes do not change it, so only a daemon that never writes can use it
+  // to spot changes cheaply.
+  version: () => number;
 };
 
 type RecordRow = { body: string; kind: string; name: string };
@@ -67,6 +72,18 @@ export const openRecords = async ({
 }): Promise<RecordStore> => {
   await mkdir(stateDir, { mode: 0o700, recursive: true });
   const db = new Database(join(stateDir, 'records.sqlite'), { create: true, strict: true });
+  try {
+    return storeOver(db, now);
+  } catch (error) {
+    // A file that is not a database, or whose tables have another shape, must
+    // not leave a handle open for each retry.
+    db.close();
+    throw error;
+  }
+};
+
+// The store over an open database, creating its tables when they are missing.
+const storeOver = (db: Database, now: () => number): RecordStore => {
   db.run('PRAGMA busy_timeout = 5000');
   db.run('PRAGMA journal_mode = WAL');
   db.run(
@@ -96,6 +113,7 @@ export const openRecords = async ({
   const selectRuns = db.query<RunRow, []>(
     'SELECT job, started, body FROM runs ORDER BY job, startedMs',
   );
+  const dataVersion = db.query<{ data_version: number }, []>('PRAGMA data_version');
   const isKept = db.query('SELECT 1 FROM runs WHERE job = $job AND started = $started');
 
   const forget = db.transaction((kind: RecordKind, name: string) => {
@@ -155,5 +173,6 @@ export const openRecords = async ({
     },
     putRun: (job, run) => putRun.immediate(job, run),
     read: () => read(),
+    version: () => dataVersion.get()?.data_version ?? 0,
   };
 };

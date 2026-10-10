@@ -13,6 +13,8 @@ import { describeError } from './errors.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
+import { createRecordsReporter } from './records-report.ts';
+import { openRecords } from './records.ts';
 import { resolveStateDir } from './state-dir.ts';
 import { createCapture } from './transcripts/capture.ts';
 import { configHome, readSessionsSection } from './transcripts/config-file.ts';
@@ -133,6 +135,13 @@ export const runAction: ActionHandler<typeof run> = async ({
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
     };
+    // The daemon only reads the store; `record` and `forget` write it. The
+    // reporter opens it on first use, so a store that will not open costs only the records.
+    const records = createRecordsReporter({
+      log: runtime,
+      now: Date.now,
+      open: () => openRecords({ stateDir }),
+    });
     const capture = createCapture({
       hub: transcriptHub({ hub: options.hub, signal, token }),
       log: runtime,
@@ -156,6 +165,7 @@ export const runAction: ActionHandler<typeof run> = async ({
         },
         log: runtime,
         queue,
+        records,
         sampler: createSampler(hostProbe(platform)),
         send: (report) => sendReport({ hub: options.hub, report, signal, token }),
         signal,
@@ -164,6 +174,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     } finally {
       await stopCapture();
       spool.close();
+      records.close();
       queue.close();
     }
   } finally {

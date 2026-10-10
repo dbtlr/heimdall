@@ -128,6 +128,17 @@ test('run captures transcripts from the sources collector.toml lists', async () 
   expect(code).toBe(130);
 });
 
+test('run starts with a records file it cannot open, since that costs the records only', async () => {
+  await using dir = await tempStateDir();
+  const { configFile, stateDir } = await configWith(dir.path, []);
+  await writeFile(join(stateDir, 'records.sqlite'), 'this is not a database');
+
+  const { code, stdout } = await startAndStop(['run', '--config', configFile]);
+
+  expect(stdout).toContain('Sampling server-1');
+  expect(code).toBe(130);
+});
+
 test('run says transcript capture is off when collector.toml lists no sources', async () => {
   await using dir = await tempStateDir();
   const { configFile } = await configWith(dir.path, []);

@@ -8,7 +8,7 @@ import { flushQueue, sendReport } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import type { SampleQueue } from './queue.ts';
-import { tempStateDir } from './testing/fixtures.ts';
+import { NO_RECORDS, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
@@ -110,7 +110,16 @@ const flush = (
   queue: SampleQueue,
   send: (sent: Report) => Promise<Delivery>,
   transcripts: () => TranscriptsSection = () => NO_TRANSCRIPTS,
-) => flushQueue({ batchSize: 2, identity, now: () => 9000, queue, send, transcripts });
+) =>
+  flushQueue({
+    batchSize: 2,
+    identity,
+    now: () => 9000,
+    queue,
+    records: NO_RECORDS,
+    send,
+    transcripts,
+  });
 
 describe('flushing the queue', () => {
   test('sends the backlog oldest first in Reports of at most the batch size', async () => {
@@ -176,6 +185,44 @@ describe('flushing the queue', () => {
       rejected: [{ detail: 'bad', samples: 2 }],
     });
     expect(queue.oldest(10)).toEqual([]);
+    queue.close();
+  });
+
+  test('resends the samples of a Report refused with a records section, without it', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    queue.append(sample(1000));
+    const hub = scriptedHub([
+      { detail: 'bad records', kind: 'rejected' },
+      { kind: 'failed', reason: 'Hub answered 503' },
+    ]);
+    const settled: string[] = [];
+    const records = {
+      pending: () =>
+        Promise.resolve({
+          section: { records: [], unreadable: [] },
+          settle: (outcome: { kind: string }) => settled.push(outcome.kind),
+        }),
+    };
+
+    const result = await flushQueue({
+      identity,
+      now: () => 9000,
+      queue,
+      records,
+      send: hub.send,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    expect(hub.reports.map((r) => r.records !== undefined)).toEqual([true, false]);
+    expect(settled).toEqual(['rejected']);
+    expect(result).toEqual({
+      delivered: 0,
+      kind: 'failed',
+      reason: 'Hub answered 503',
+      rejected: [],
+    });
+    expect(queue.oldest(10)).toEqual([sample(1000)]);
     queue.close();
   });
 

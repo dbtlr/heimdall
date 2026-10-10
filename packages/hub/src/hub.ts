@@ -16,6 +16,7 @@ import { failureCap } from './failure-cap.ts';
 import type { CapSlot } from './failure-cap.ts';
 import { renderPage } from './page.ts';
 import { readCode, redeemCode } from './pairing.ts';
+import { readRecords } from './records.ts';
 import { listSystems, recordRejection, seeSystem, storeReport } from './store.ts';
 import { systemForToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
@@ -39,9 +40,11 @@ export type HubDependencies = {
 // RFC 9110 reads the scheme name in any case.
 const BEARER = /^Bearer +(?<token>\S+)$/iu;
 
-// The largest Report body the Hub reads. The schema's 1,000 samples, each with
-// several disks, come to about 1.5 MB; a larger body is a Collector bug.
-export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
+// The largest Report body the Hub reads. It fits the 8 MiB a Collector may
+// spend on its record set plus a full batch of samples: the schema's 1,000
+// samples, each with several disks, come to about 1.5 MB. A larger body is a
+// Collector bug.
+export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
 
 // The largest Pairing request body the Hub reads; `{"code":"XXXX-XXXX"}` is 20 bytes.
 const MAX_PAIR_BYTES = 1024;
@@ -339,6 +342,9 @@ const route = async (
   }
   if (pathname === '/api/health' && request.method === 'GET') {
     return health(deps);
+  }
+  if (pathname === '/api/v1/records' && request.method === 'GET') {
+    return Response.json({ systems: await readRecords(deps.sql) });
   }
   if (pathname === '/' && request.method === 'GET') {
     const html = renderPage({ now: deps.now(), systems: await listSystems(deps.sql) });

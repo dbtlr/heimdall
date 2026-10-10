@@ -75,7 +75,7 @@ The last example is the input to `heimdall-collector record run nightly-backup`.
 
 ### What Heimdall checks and reports _(planned, M4)_
 
-The Collector reports its records to the Hub and checks those it can observe. Both arrive in later M4 work; until then the Collector only keeps the records.
+The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The checks arrive in later M4 work.
 
 | Kind | Heimdall checks and reports |
 | --- | --- |
@@ -86,9 +86,28 @@ The Collector reports its records to the Hub and checks those it can observe. Bo
 
 A new field reaches the dashboard only when every layer knows it, so the Hub is upgraded first, then the Collectors, and only then does a provisioner send the field.
 
-## Reading the records back _(planned, M4)_
+## Reading the records back
 
-Whenever a Collector's records change, it sends the whole set in a Report, and the Hub replaces that System's mirror with it. The Hub returns every System's records on request, with the same trust as the dashboard, so a provisioner can compare them with what it declares. Whether the read is a Hub command or a read-only endpoint is decided when it is built.
+The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set. If the Hub refuses a Report carrying the set, the Collector sends the same samples again without it, so the records never cost Vitals.
+
+The Hub replaces the System's mirror with each set, so a forgotten record leaves the mirror. It ignores a set sent earlier than the one it holds, unless the held set claims a time later than the Hub's own clock. A Report without the section leaves the mirror unchanged.
+
+The Hub drops a field it does not know from a mirrored record. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives. The shapes are in `packages/schema/src/records-section.ts`.
+
+`GET /api/v1/records` returns every System's records, with the same trust as the dashboard. The answer lists each System the dashboard shows, sorted by name, in one of three forms:
+
+```json
+{"systems": [
+  {"system": "web-1", "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:01.250Z",
+   "records": [{"kind": "service", "name": "webapp", "record": {"name": "webapp", "supervisor": "systemd", "unit": "webapp.service"}}],
+   "unreadable": [{"kind": "job", "name": "nightly-backup"}]},
+  {"system": "build-1", "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
+   "overBudget": {"bytes": 9437184}},
+  {"system": "laptop-1", "records": null}
+]}
+```
+
+`records` is `null` until a Report carries the System's set, which a Collector older than this section never sends. Such a System's records are unknown, not empty. Records are sorted by kind, then name, and times are UTC in ISO 8601.
 
 ## Agent Session transcripts
 
@@ -138,4 +157,4 @@ The Collector observes each Session's processes from the process table, recordin
 
 ## Trust
 
-Collectors send Reports with their System's token, but the dashboard and reads of the records have no authentication; they rely on a tailnet only its operator can reach. Its database holds every transcript, including anything an agent read. Authentication, and handling of secrets in transcripts, come before Heimdall is used anywhere else.
+Collectors send Reports with their System's token, but the dashboard and `GET /api/v1/records` have no authentication; they rely on a tailnet only its operator can reach. Its database holds every transcript, including anything an agent read. Authentication, and handling of secrets in transcripts, come before Heimdall is used anywhere else.
