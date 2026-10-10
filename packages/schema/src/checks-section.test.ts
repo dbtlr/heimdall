@@ -21,6 +21,15 @@ const DRIFTED = {
   state: 'drifted',
 } as const;
 
+// A Service's supervisor check that passes, as the Collector sends it.
+const WEB_UP = {
+  check: 'supervisor',
+  detail: 'ActiveState=active',
+  service: 'web',
+  since: 1_759_690_000_000,
+  state: 'up',
+} as const;
+
 const mirrored = (section: ChecksSection) => mirrorChecks(ChecksSectionSchema.parse(section));
 
 describe('a Report', () => {
@@ -34,8 +43,11 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report({ checks: { files: [] } })).checks).toEqual({ files: [] });
   });
 
-  test('carries a marker in place of checks over budget', () => {
-    const checks = { overBudget: { bytes: 2_000_000 } };
+  test('carries a marker in place of each part over budget, beside the parts that fit', () => {
+    const checks = {
+      overBudget: { files: { bytes: 2_000_000 } },
+      services: [WEB_UP],
+    };
 
     expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
   });
@@ -47,7 +59,7 @@ describe('a Report', () => {
   test('drops a part only a newer Collector knows, and keeps the rest', () => {
     const parsed = ReportSchema.parse(
       report({
-        checks: { files: [], services: [{ name: 'web', state: 'down' }] } as ChecksSection,
+        checks: { certificates: [{ name: 'web', state: 'expired' }], files: [] } as ChecksSection,
       }),
     );
 
@@ -65,11 +77,11 @@ describe('a Report', () => {
 
 describe('the checks a Hub mirrors', () => {
   test('are the files that do not match', () => {
-    expect(mirrored({ files: [DRIFTED] })).toEqual({ fileRecords: [], files: [DRIFTED] });
+    expect(mirrored({ files: [DRIFTED] })).toMatchObject({ fileRecords: [], files: [DRIFTED] });
   });
 
   test('count a state only a newer Collector knows as unreadable, so the file is not taken for clean', () => {
-    expect(mirrored({ files: [{ ...DRIFTED, state: 'sparkling' }] })).toEqual({
+    expect(mirrored({ files: [{ ...DRIFTED, state: 'sparkling' }] })).toMatchObject({
       fileRecords: [],
       files: [{ ...DRIFTED, state: 'unreadable' }],
     });
@@ -78,16 +90,16 @@ describe('the checks a Hub mirrors', () => {
   test('keep the last of a file sent twice under one record', () => {
     expect(
       mirrored({ files: [DRIFTED, { ...DRIFTED, since: 1_759_691_000_000, state: 'missing' }] }),
-    ).toEqual({
+    ).toMatchObject({
       fileRecords: [],
       files: [{ ...DRIFTED, since: 1_759_691_000_000, state: 'missing' }],
     });
   });
 
-  test('keep the size of checks too large to send', () => {
-    expect(mirrored({ overBudget: { bytes: 2_000_000 } })).toEqual({
-      overBudget: { bytes: 2_000_000 },
-    });
+  test('keep the size of a files part too large to send, and none of its files', () => {
+    expect(
+      mirrored({ files: [DRIFTED], overBudget: { files: { bytes: 2_000_000 } } }),
+    ).toMatchObject({ fileRecords: [], files: [], filesOverBudgetBytes: 2_000_000 });
   });
 });
 
@@ -134,7 +146,7 @@ describe('the parts of a checks section', () => {
   test('are all optional, so a section a newer Collector sends with other parts still parses', () => {
     expect(ReportSchema.parse(report({ checks: {} })).checks).toEqual({});
     expect(
-      ReportSchema.parse(report({ checks: { services: [{ name: 'web' }] } as ChecksSection }))
+      ReportSchema.parse(report({ checks: { certificates: [{ name: 'web' }] } as ChecksSection }))
         .checks,
     ).toEqual({});
   });
@@ -149,7 +161,7 @@ describe('the parts of a checks section', () => {
   });
 
   test('mirror as no files and no judged records when the section has neither', () => {
-    expect(mirrored({})).toEqual({ fileRecords: [], files: [] });
+    expect(mirrored({})).toMatchObject({ fileRecords: [], files: [] });
   });
 
   test('keep the last digest of a record sent twice', () => {
@@ -161,11 +173,11 @@ describe('the parts of a checks section', () => {
         ],
         files: [],
       }),
-    ).toEqual({ fileRecords: [{ digest: '2'.repeat(64), record: 'a' }], files: [] });
+    ).toMatchObject({ fileRecords: [{ digest: '2'.repeat(64), record: 'a' }], files: [] });
   });
 
   test('judge no record when the section lists hashed records but carries no files part', () => {
-    expect(mirrored({ fileRecords: [{ digest: '1'.repeat(64), record: 'a' }] })).toEqual({
+    expect(mirrored({ fileRecords: [{ digest: '1'.repeat(64), record: 'a' }] })).toMatchObject({
       fileRecords: [],
       files: [],
     });
@@ -178,5 +190,64 @@ describe('the parts of a checks section', () => {
     expect(ReportSchema.safeParse(report({ checks: { fileRecords: [entry] } })).success).toBe(
       false,
     );
+  });
+});
+
+describe('the services part of a checks section', () => {
+  test('lists each Service check with its state, detail, and since', () => {
+    const checks = { services: [WEB_UP, { ...WEB_UP, service: 'db', state: 'stopped' }] };
+
+    expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
+  });
+
+  test('carries an empty list when no Service is recorded', () => {
+    expect(ReportSchema.parse(report({ checks: { services: [] } })).checks).toEqual({
+      services: [],
+    });
+  });
+
+  test.each([
+    ['a service name with a slash', { ...WEB_UP, service: 'a/b' }],
+    ['an empty check', { ...WEB_UP, check: '' }],
+    ['an empty state', { ...WEB_UP, state: '' }],
+    ['a negative since', { ...WEB_UP, since: -1 }],
+    ['a detail of a thousand characters', { ...WEB_UP, detail: 'x'.repeat(1000) }],
+  ])('refuses %s', (_, entry) => {
+    expect(ReportSchema.safeParse(report({ checks: { services: [entry] } })).success).toBe(false);
+  });
+
+  test('mirror as the checks sent, and as none at all when the section has no services part', () => {
+    expect(mirrored({ services: [WEB_UP] }).services).toEqual([WEB_UP]);
+    expect(mirrored({ files: [] }).services).toBeNull();
+  });
+
+  test('count a state only a newer Collector knows as unknown, so the Service is not taken for up', () => {
+    expect(mirrored({ services: [{ ...WEB_UP, state: 'sparkling' }] }).services).toEqual([
+      { ...WEB_UP, state: 'unknown' },
+    ]);
+  });
+
+  test('drop a check only a newer Collector knows', () => {
+    expect(mirrored({ services: [{ ...WEB_UP, check: 'tls' }, WEB_UP] }).services).toEqual([
+      WEB_UP,
+    ]);
+  });
+
+  test('keep the last of a check sent twice for one Service', () => {
+    const later = { ...WEB_UP, since: 1_759_691_000_000, state: 'stopped' } as const;
+
+    expect(mirrored({ services: [WEB_UP, later] }).services).toEqual([later]);
+  });
+
+  test('keep the size of a services part too large to send, and none of its checks', () => {
+    expect(
+      mirrored({ overBudget: { services: { bytes: 2_000_000 } }, services: [WEB_UP] }),
+    ).toMatchObject({ services: null, servicesOverBudgetBytes: 2_000_000 });
+  });
+
+  test('over budget in the files part leaves the services part as sent', () => {
+    expect(
+      mirrored({ overBudget: { files: { bytes: 2_000_000 } }, services: [WEB_UP] }),
+    ).toMatchObject({ filesOverBudgetBytes: 2_000_000, services: [WEB_UP] });
   });
 });

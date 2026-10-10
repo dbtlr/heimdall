@@ -3,11 +3,11 @@ import { z } from 'zod';
 import { RECORD_NAME } from './records.ts';
 import { bytes, epochMs } from './values.ts';
 
-// The most bytes of JSON a Collector's checks section may take in a Report. A
-// file that does not match comes to about 200 bytes and a hashed record to
-// about 130, so 1 MiB holds about 5,000 mismatched files. Checks over it travel
-// as a marker.
-export const MAX_CHECKS_SECTION_BYTES = 1024 * 1024;
+// The most bytes of JSON one part of a Collector's checks section may take in a
+// Report. A file that does not match comes to about 200 bytes and a hashed
+// record to about 130, so 1 MiB holds about 5,000 mismatched files. A part over
+// it travels as a marker, and the other parts travel as they are.
+export const MAX_CHECKS_PART_BYTES = 1024 * 1024;
 
 // How a recorded file can fail to match, in the order the Hub reads them: its
 // content differs from the recorded hash, it does not exist, or the Collector
@@ -15,7 +15,20 @@ export const MAX_CHECKS_SECTION_BYTES = 1024 * 1024;
 export const FILE_CHECK_STATES = ['drifted', 'missing', 'unreadable'] as const;
 export type FileCheckState = (typeof FILE_CHECK_STATES)[number];
 
+// How a Service can be checked, and what a check can find. A supervisor check
+// asks the supervisor that runs the Service whether it is up. A Service is
+// `stopped` when its supervisor says it is not running, `unknown` when the
+// Collector could not ask or got no answer, and `unchecked` when this Collector
+// does not check that supervisor. Later checks join as further kinds, and a
+// state they add joins the states.
+export const SERVICE_CHECK_KINDS = ['supervisor'] as const;
+export type ServiceCheckKind = (typeof SERVICE_CHECK_KINDS)[number];
+
+export const SERVICE_CHECK_STATES = ['up', 'stopped', 'unknown', 'unchecked'] as const;
+export type ServiceCheckState = (typeof SERVICE_CHECK_STATES)[number];
+
 const MAX_PATH_LENGTH = 4096;
+const MAX_DETAIL_LENGTH = 200;
 
 // A file that does not match, as the Collector sends it. The state is any short
 // word, so a state only a newer Collector knows does not reject a Report
@@ -24,6 +37,19 @@ const MAX_PATH_LENGTH = 4096;
 const SentFileCheckSchema = z.object({
   path: z.string().min(1).max(MAX_PATH_LENGTH),
   record: z.string().regex(RECORD_NAME),
+  since: epochMs,
+  state: z.string().min(1).max(64),
+});
+
+// One check of a Service, as the Collector sends it. The kind and state are any
+// short word, so one only a newer Collector knows does not reject a Report
+// (ADR-0004). `detail` says in a few words what the check found, such as
+// `ActiveState=failed`. `since` is when the Collector's clock first saw the
+// check in this state.
+const SentServiceCheckSchema = z.object({
+  check: z.string().min(1).max(64),
+  detail: z.string().max(MAX_DETAIL_LENGTH),
+  service: z.string().regex(RECORD_NAME),
   since: epochMs,
   state: z.string().min(1).max(64),
 });
@@ -37,22 +63,31 @@ const SentFileRecordSchema = z.object({
   record: z.string().regex(RECORD_NAME),
 });
 
+const PartOverBudgetSchema = z.object({ bytes });
+
+// The size of each part a Collector sent as a marker because it was too large.
+const OverBudgetSchema = z
+  .object({ files: PartOverBudgetSchema.optional(), services: PartOverBudgetSchema.optional() })
+  .optional();
+
 // A Report's checks section: what the Collector observed on this System
-// against what its provisioner recorded. `fileRecords` lists the files records
-// the Collector hashed, and `files` only the recorded files in them that do not
-// match, so an empty `files` says every file in the records listed matches.
-// Every part is optional, and later checks join as further parts, so a section
-// from a newer Collector that carries only parts this Hub does not know still
-// parses; a Hub drops a part it does not know. A Collector sends the section
-// when it changes, when it starts, and hourly; the Hub replaces the System's
-// latest checks with it. Checks over budget are sent as their size alone.
-export const ChecksSectionSchema = z.union([
-  z.object({ overBudget: z.object({ bytes }) }),
-  z.object({
-    fileRecords: z.array(SentFileRecordSchema).optional(),
-    files: z.array(SentFileCheckSchema).optional(),
-  }),
-]);
+// against what its provisioner recorded, in parts. The files part is
+// `fileRecords`, which lists the files records the Collector hashed, and
+// `files`, only the recorded files in them that do not match, so an empty
+// `files` says every file in the records listed matches. The services part,
+// `services`, lists each check of each recorded Service. Every part is
+// optional, and later checks join as further parts, so a section from a newer
+// Collector that carries only parts this Hub does not know still parses; a Hub
+// drops a part it does not know. A Collector sends the section when it
+// changes, when it starts, and hourly; the Hub replaces the System's latest
+// checks with it. A part over budget is sent as its size in `overBudget`,
+// named for the part, and the other parts are sent as they are.
+export const ChecksSectionSchema = z.object({
+  fileRecords: z.array(SentFileRecordSchema).optional(),
+  files: z.array(SentFileCheckSchema).optional(),
+  overBudget: OverBudgetSchema,
+  services: z.array(SentServiceCheckSchema).optional(),
+});
 
 // The digest of a files record: SHA-256, in hexadecimal, of its files in path
 // order (by code unit) as `path`, NUL, `sha256`, and a newline each. A path has
@@ -80,6 +115,7 @@ export const filesRecordDigest = async ({
 export type ChecksSection = z.infer<typeof ChecksSectionSchema>;
 export type SentFileCheck = z.infer<typeof SentFileCheckSchema>;
 export type SentFileRecord = z.infer<typeof SentFileRecordSchema>;
+export type SentServiceCheck = z.infer<typeof SentServiceCheckSchema>;
 
 // A recorded file that does not match, as the Hub mirrors it.
 export type FileCheck = {
@@ -92,24 +128,37 @@ export type FileCheck = {
 // A files record the Collector hashed, as the Hub mirrors it.
 export type FileRecordCheck = SentFileRecord;
 
-// A System's latest checks as the Hub mirrors them, or the size of checks it
-// could not be sent. A part the section left out mirrors as empty.
-export type MirroredChecks =
-  | { fileRecords: FileRecordCheck[]; files: FileCheck[] }
-  | { overBudget: { bytes: number } };
+// A check of a Service, as the Hub mirrors it.
+export type ServiceCheck = {
+  check: ServiceCheckKind;
+  detail: string;
+  service: string;
+  since: number;
+  state: ServiceCheckState;
+};
+
+// A System's latest checks as the Hub mirrors them. A part the section left out
+// mirrors as empty, except `services`, which is null since no list of checks
+// is not the same as an empty one. A part sent as over budget mirrors as its
+// size in bytes and none of its entries.
+export type MirroredChecks = {
+  fileRecords: FileRecordCheck[];
+  files: FileCheck[];
+  filesOverBudgetBytes: number | null;
+  services: ServiceCheck[] | null;
+  servicesOverBudgetBytes: number | null;
+};
 
 const isFileCheckState = (state: string): state is FileCheckState =>
   FILE_CHECK_STATES.some((known) => known === state);
 
-// The checks a Hub mirrors from a checks section. A state this Hub does not
-// know means the file does not match in some way, so it counts as unreadable
-// rather than as a match. A file sent twice under one record keeps the last, and
-// so does a record's digest. A section with no `files` part is from a newer
-// Collector that judges differently, so it judges no record here.
-export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
-  if ('overBudget' in section) {
-    return { overBudget: section.overBudget };
-  }
+const isServiceCheckKind = (kind: string): kind is ServiceCheckKind =>
+  SERVICE_CHECK_KINDS.some((known) => known === kind);
+
+const isServiceCheckState = (state: string): state is ServiceCheckState =>
+  SERVICE_CHECK_STATES.some((known) => known === state);
+
+const mirrorFiles = (section: ChecksSection) => {
   const files = new Map<string, FileCheck>();
   for (const { path, record, since, state } of section.files ?? []) {
     files.set(JSON.stringify([record, path]), {
@@ -126,6 +175,43 @@ export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
   return { fileRecords: [...fileRecords.values()], files: [...files.values()] };
 };
 
+const mirrorServices = (sent: readonly SentServiceCheck[]) => {
+  const checks = new Map<string, ServiceCheck>();
+  for (const { check, detail, service, since, state } of sent) {
+    if (isServiceCheckKind(check)) {
+      checks.set(JSON.stringify([service, check]), {
+        check,
+        detail,
+        service,
+        since,
+        state: isServiceCheckState(state) ? state : 'unknown',
+      });
+    }
+  }
+  return [...checks.values()];
+};
+
+// The checks a Hub mirrors from a checks section. A file state this Hub does
+// not know means the file does not match in some way, so it counts as
+// unreadable rather than as a match, and a Service state it does not know
+// counts as unknown rather than up. A check of a kind it does not know is
+// dropped. A file sent twice under one record keeps the last, and so does a
+// record's digest and a Service's check. A section with no `files` part is
+// from a newer Collector that judges differently, so it judges no record here.
+export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
+  const filesOverBudgetBytes = section.overBudget?.files?.bytes ?? null;
+  const servicesOverBudgetBytes = section.overBudget?.services?.bytes ?? null;
+  return {
+    ...(filesOverBudgetBytes === null ? mirrorFiles(section) : { fileRecords: [], files: [] }),
+    filesOverBudgetBytes,
+    services:
+      servicesOverBudgetBytes === null && section.services !== undefined
+        ? mirrorServices(section.services)
+        : null,
+    servicesOverBudgetBytes,
+  };
+};
+
 // A mirrored file check as `GET /api/v1/records` returns it: `since` is UTC
 // ISO 8601 text.
 const FileCheckReadSchema = z.object({
@@ -138,17 +224,29 @@ const FileCheckReadSchema = z.object({
 // A files record the Collector hashed, with the digest it read.
 const FileRecordReadSchema = z.object({ digest: z.string(), record: z.string() });
 
-// A System's latest checks as the read returns them: the digest of each files
-// record the Collector hashed and the files that do not match, the size of
-// checks too large to send, or null until a Report carries them, which a
-// Collector older than checks never sends. Times are ISO 8601.
+// A mirrored Service check as `GET /api/v1/records` returns it: `since` is UTC
+// ISO 8601 text.
+const ServiceCheckReadSchema = z.object({
+  check: z.enum(SERVICE_CHECK_KINDS),
+  detail: z.string(),
+  service: z.string(),
+  since: z.string(),
+  state: z.enum(SERVICE_CHECK_STATES),
+});
+
+// A System's latest checks as the read returns them, or null until a Report
+// carries them, which a Collector older than checks never sends. A part
+// too large to send is named in `overBudget` with its size
+// and left out; `services` is also left out when the Collector sent no
+// services part, which is not the same as an empty list. Times are ISO 8601.
 export const ChecksReadSchema = z.union([
   z.object({
-    fileRecords: z.array(FileRecordReadSchema),
-    files: z.array(FileCheckReadSchema),
+    fileRecords: z.array(FileRecordReadSchema).optional(),
+    files: z.array(FileCheckReadSchema).optional(),
+    overBudget: OverBudgetSchema,
     receivedAt: z.string(),
     sentAt: z.string(),
+    services: z.array(ServiceCheckReadSchema).optional(),
   }),
-  z.object({ overBudget: z.object({ bytes }), receivedAt: z.string(), sentAt: z.string() }),
   z.null(),
 ]);
