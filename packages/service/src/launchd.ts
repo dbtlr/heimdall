@@ -190,6 +190,13 @@ export const launchdSupervisor = ({
       const { running, words } = activity(printedService);
       return { notes: [], running, stateKnown: true, summary: `loaded, ${words}` };
     } catch (error) {
+      // A print that failed may be launchctl saying the whole GUI domain is
+      // missing, which names the domain, not the service: then the agent is not
+      // loaded, with the note why.
+      const notes = await sessionNotes();
+      if (notes.length > 0) {
+        return { notes, running: false, stateKnown: true, summary: 'not loaded, stopped' };
+      }
       const reason = describeError(error).replace(/:.*$/su, '');
       return {
         notes: [],

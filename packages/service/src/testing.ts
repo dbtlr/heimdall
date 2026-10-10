@@ -121,6 +121,14 @@ export const launchctlNotFound = (target: string): CommandResult => ({
   stdout: '',
 });
 
+// What launchctl answers about anything in a GUI domain that does not exist,
+// as when the user has no GUI login session: it names the domain, not a service.
+export const launchctlNoDomain = (target: string): CommandResult => ({
+  code: 113,
+  stderr: `Bad request.\nCould not find domain for user gui: 501 (while printing ${target})\n`,
+  stdout: '',
+});
+
 // A launchd for one user's GUI domain that records each `launchctl` command
 // and answers as launchd would: `bootstrap` loads the agent and `bootout`
 // unloads it, `lingerPrints` prints later. `answers` scripts the next results
@@ -141,6 +149,9 @@ export const fakeLaunchd = ({
   loaded?: boolean;
 } = {}) => {
   const state = { lingering: 0, loaded };
+  // Without the GUI domain, launchctl names the domain, not the service.
+  const notLoaded = (target: string) =>
+    domain ? launchctlNotFound(target) : launchctlNoDomain(target);
   const calls: string[] = [];
   const scripted = (verb: string) => answers[verb]?.shift();
   const answer = (argv: readonly string[]): CommandResult => {
@@ -148,7 +159,7 @@ export const fakeLaunchd = ({
     if (verb === 'print' && target === 'gui/501') {
       return (
         scripted('print-domain') ??
-        (domain ? launchctlOk('gui/501 = {\n}\n') : launchctlNotFound(target))
+        (domain ? launchctlOk('gui/501 = {\n}\n') : launchctlNoDomain(target))
       );
     }
     if (verb === 'print') {
@@ -158,7 +169,7 @@ export const fakeLaunchd = ({
       }
       return (
         scripted('print') ??
-        (state.loaded ? launchctlPrint(label, 'running', 4182) : launchctlNotFound(target))
+        (state.loaded ? launchctlPrint(label, 'running', 4182) : notLoaded(target))
       );
     }
     if (verb === 'bootout') {
