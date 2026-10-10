@@ -40,3 +40,4 @@ Going quiet, including sleep, adds nothing to the Timeline until M3's stale-Syst
 
 - 2026-10-08: Clarification. Under [ADR-0011](0011-collectors-hold-what-provisioners-record.md), Backup Job overdue becomes job overdue or failing, for any job a provisioner records. The decision is unchanged.
 - 2026-10-09: Clarification. A transcript upload under a System's token also counts toward its Last seen, and a refused upload does not raise Reports rejected ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). The decision is unchanged.
+- 2026-10-10: Clarification. The dashboard's normal view lists only paired Systems; an unpaired System's status, with the Conditions still open on it, shows in the unpaired view, and its Timeline is kept. The decision is unchanged.
