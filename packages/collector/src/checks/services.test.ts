@@ -336,7 +336,7 @@ describe('a Service with a health URL', () => {
   });
 
   test('is unhealthy when the URL does not answer within the timeout, the supervisor check unaffected', async () => {
-    const health = serve(() => new Promise<Response>(() => 0));
+    const health = serve(() => Promise.withResolvers<Response>().promise);
 
     const outcomes = await checkService(
       { ...WEB, health },

@@ -78,7 +78,7 @@ describe('a health check', () => {
   });
 
   test('is unhealthy when the handler outlives the timeout', async () => {
-    const { url } = serve(() => new Promise<Response>(() => 0));
+    const { url } = serve(() => Promise.withResolvers<Response>().promise);
 
     expect(await checkHealth(`${url}/`, { timeoutMs: 100 })).toEqual({
       check: 'health',
@@ -112,7 +112,7 @@ describe('a health check', () => {
       hostname: '127.0.0.1',
       port: 0,
       socket: {
-        data: () => 0,
+        data: () => undefined,
         open: (socket) => {
           socket.terminate();
         },
@@ -125,7 +125,7 @@ describe('a health check', () => {
         state: 'unhealthy',
       });
     } finally {
-      void listener.stop(true);
+      listener.stop(true);
     }
   });
 
@@ -144,7 +144,7 @@ describe('a health check', () => {
       cancel: () => {
         cancelled = true;
       },
-      pull: () => new Promise(() => 0),
+      pull: () => Promise.withResolvers<void>().promise,
     });
 
     const outcome = await checkHealth('http://127.0.0.1:1/', {
