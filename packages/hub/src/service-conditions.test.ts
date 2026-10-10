@@ -128,6 +128,25 @@ describe('Service down', () => {
     expect(open).toEqual([]);
   });
 
+  test("counts only the System's own samples, not another System's", async () => {
+    await using h = await startHub();
+    await send(h, '08:02:15', {
+      checks: { services: [check('web', 'stopped', at('08:00:30'))] },
+      records: set(WEB),
+      samples: awake('08:00:45', '08:02:30'),
+    });
+    // server-1 took 8 samples after laptop-1's check began, while laptop-1 took 7.
+    h.clock.now = at('08:02:30');
+    const response = await push(h.hub, report('server-1', awake('08:00:45', '08:02:45')), {
+      token: 'server-token',
+    });
+    expect(response.status).toBe(200);
+
+    const { open } = await evaluate(h, '08:02:30');
+
+    expect(open).toEqual([]);
+  });
+
   test.each([
     ['ahead of the Hub', 3 * HOUR],
     ['behind the Hub', -3 * HOUR],

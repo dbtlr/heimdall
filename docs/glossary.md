@@ -81,7 +81,7 @@ A problem state the Hub derives for a System from what it receives, such as Repo
 _Avoid_: alert (delivery, not the state), finding, incident
 
 **Last seen**:
-The most recent time the Hub heard from a System under that System's token, whether it stored the Report or rejected it. A sleeping System shows its last-seen time and a gap.
+The most recent time the Hub heard from a System under that System's token, whether it stored the Report, rejected it, or took a transcript upload. A sleeping System shows its last-seen time and a gap.
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
 **Timeline**:
