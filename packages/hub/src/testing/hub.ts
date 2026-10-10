@@ -122,9 +122,9 @@ export const redeem = (hub: ReturnType<typeof createHub>, body: unknown) =>
     }),
   );
 
-// Fetches the page and checks it is HTML.
-export const page = async (hub: ReturnType<typeof createHub>) => {
-  const response = await hub.fetch(new Request('http://hub.test/'));
+// Fetches the page, or another view of it such as `/?unpaired`, and checks it is HTML.
+export const page = async (hub: ReturnType<typeof createHub>, path = '/') => {
+  const response = await hub.fetch(new Request(`http://hub.test${path}`));
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/html');
   return response.text();

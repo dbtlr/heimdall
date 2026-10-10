@@ -21,6 +21,7 @@ type SetRow = {
   check_services_over_budget_bytes: string | null;
   name: string;
   over_budget_bytes: string | null;
+  paired: boolean;
   received_at: Date | null;
   runs_over_budget_bytes: string | null;
   runs_received_at: Date | null;
@@ -133,23 +134,30 @@ const checksOf = (row: SetRow): Checks => {
   };
 };
 
-// One System's entry in the read: its records, latest checks and runs, and time zone.
+// One System's entry in the read: its records, latest checks and runs, time
+// zone, and whether it is paired.
 const entryOf = (row: SetRow, records: MirroredRecord[], jobs: JobRuns[]): Entry => ({
   ...recordsOf(row, records),
   checks: checksOf(row),
+  paired: row.paired,
   runs: runsOf(row, jobs),
   system: row.name,
   timeZone: row.time_zone,
 });
 
-// Every System the dashboard lists, by name, with the records, latest runs, and
-// latest checks its Collector last sent, and its time zone. One read-only snapshot keeps each
-// System's records and runs consistent with their sets. Systems come in the
-// order the dashboard lists them.
-export const readRecords = (sql: SQL): Promise<Entry[]> =>
+// Every paired System, by name, with the records, latest runs, and latest checks
+// its Collector last sent, and its time zone; with `includeUnpaired`, the
+// Systems that were unpaired too. One read-only snapshot keeps each System's
+// records and runs consistent with their sets. Systems come in the order the
+// dashboard lists them.
+export const readRecords = (
+  sql: SQL,
+  { includeUnpaired }: { includeUnpaired: boolean },
+): Promise<Entry[]> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
     const sets: SetRow[] = await tx`
       SELECT s.name, s.time_zone,
+             EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name) AS paired,
              r.sent_at, r.received_at, r.unreadable, r.over_budget_bytes,
              u.sent_at AS runs_sent_at, u.received_at AS runs_received_at,
              u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes,
@@ -162,6 +170,7 @@ export const readRecords = (sql: SQL): Promise<Entry[]> =>
       LEFT JOIN record_sets r ON r.system = s.name
       LEFT JOIN run_sets u ON u.system = s.name
       LEFT JOIN check_sets c ON c.system = s.name
+      WHERE ${includeUnpaired}::boolean OR EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name)
       ORDER BY s.name
     `;
     const rows: RecordRow[] = await tx`

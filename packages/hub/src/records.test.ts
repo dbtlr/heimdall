@@ -105,8 +105,8 @@ const send = async (
 };
 
 // `GET /api/v1/records`, checked against the published schema.
-const read = async (h: Hub) => {
-  const response = await h.hub.fetch(new Request('http://hub.test/api/v1/records'));
+const read = async (h: Hub, query = '') => {
+  const response = await h.hub.fetch(new Request(`http://hub.test/api/v1/records${query}`));
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('application/json');
   return RecordsReadSchema.parse(await response.json()).systems;
@@ -124,6 +124,7 @@ describe('the records a Report carries', () => {
 
     expect(await entryOf(h)).toEqual({
       checks: null,
+      paired: true,
       receivedAt: new Date(NOW + 2500).toISOString(),
       records: [service(WEBAPP)],
       runs: null,
@@ -273,6 +274,7 @@ describe('a set over budget', () => {
     expect(await entryOf(h)).toEqual({
       checks: null,
       overBudget: { bytes: 9_000_000 },
+      paired: true,
       receivedAt: new Date(NOW).toISOString(),
       runs: null,
       sentAt: new Date(NOW + 1000).toISOString(),
@@ -869,7 +871,7 @@ describe('reading the records', () => {
     await send(h, {});
 
     expect(await read(h)).toEqual([
-      { checks: null, records: null, runs: null, system: 'laptop-1', timeZone: null },
+      { checks: null, paired: true, records: null, runs: null, system: 'laptop-1', timeZone: null },
     ]);
   });
 
@@ -896,7 +898,7 @@ describe('reading the records', () => {
       ),
     );
 
-    expect((await read(h)).map((entry) => entry.system)).toEqual(
+    expect((await read(h, '?unpaired=include')).map((entry) => entry.system)).toEqual(
       (await listSystems(h.db.sql)).map((system) => system.name),
     );
   });

@@ -389,11 +389,14 @@ export type TimelineEntry =
 // One System as the page shows it: when the Hub last heard from it, undefined
 // for a paired System it never has, its open Conditions and its Timeline,
 // newest Condition first, and, once a Report from it is stored, the Collector
-// build that sent it and its newest Vitals sample.
+// build that sent it and its newest Vitals sample. A System is paired while it
+// holds a token; one that does not keeps its history and is hidden from the
+// page's normal view.
 export type SystemSummary = {
   conditions: OpenCondition[];
   lastSeenAt: number | undefined;
   name: string;
+  paired: boolean;
   reported: { collector: Report['collector']; latest: VitalsSample } | undefined;
   timeline: TimelineEntry[];
 };
@@ -416,6 +419,7 @@ type SystemRow = {
   memory_total_bytes: string;
   memory_used_bytes: string;
   name: string;
+  paired: boolean;
   // Null when no sample from the System is stored.
   t: Date | null;
   uptime_seconds: number;
@@ -486,8 +490,8 @@ const timelineOf = (row: ConditionRow): TimelineEntry[] => {
       ];
 };
 
-// Every System the Hub holds, by name: those it has heard from, and paired
-// ones it has a Condition about but never heard from. One read-only snapshot keeps
+// Every System the Hub holds, paired or not, by name: those it has heard from,
+// and paired ones it has a Condition about but never heard from. One read-only snapshot keeps
 // last seen, status, and Timeline consistent with each other.
 export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
@@ -495,7 +499,8 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
              v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
              v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
-             v.collector_cpu_percent, v.collector_rss_bytes
+             v.collector_cpu_percent, v.collector_rss_bytes,
+             EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = s.name) AS paired
       FROM systems s
       LEFT JOIN LATERAL (
         SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
@@ -530,6 +535,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
         })),
       lastSeenAt: row.last_seen_at?.getTime(),
       name: row.name,
+      paired: row.paired,
       reported: reportedOf(row),
       // Each Condition's lines stay together, the newest Condition first.
       timeline: recent.filter((c) => c.system === row.name).flatMap(timelineOf),
