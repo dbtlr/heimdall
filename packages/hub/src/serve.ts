@@ -94,7 +94,7 @@ const serveUntilStopped = async ({
         onError: (error) => {
           void log.warn(clean(`Could not judge jobs: ${describeError(error)}`));
         },
-        task: () => evaluateJobConditions(sql, Date.now()),
+        task: () => evaluateJobConditions(sql, Date.now),
       });
       if (!signal.aborted) {
         await once(signal, 'abort');

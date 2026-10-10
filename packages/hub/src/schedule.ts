@@ -2,8 +2,6 @@ import type { JobRecord } from '@heimdall/schema';
 
 type CalendarEntry = JobRecord['schedule'][number];
 
-const MINUTES_PER_DAY = 1440;
-
 // How far back the search looks before it gives up: a little over four years,
 // so an entry for 29 February still finds its last leap day.
 const MAX_DAYS_BACK = 1500;
@@ -25,33 +23,23 @@ const firesOn = (entry: CalendarEntry, date: Temporal.PlainDate) => {
   return onDay && onWeekday;
 };
 
-// The latest minute of the day, counted from midnight, at which `entry` fires
-// that is no later than `limit`, or undefined when there is none.
-const latestMinuteOfDay = (entry: CalendarEntry, limit: number): number | undefined => {
-  const limitHour = Math.floor(limit / 60);
-  const limitMinute = limit % 60;
-  if (entry.hour !== undefined) {
-    if (entry.hour > limitHour) {
-      return undefined;
-    }
-    const lastMinute = entry.hour === limitHour ? limitMinute : 59;
-    if (entry.minute === undefined) {
-      return entry.hour * 60 + lastMinute;
-    }
-    return entry.minute <= lastMinute ? entry.hour * 60 + entry.minute : undefined;
-  }
-  if (entry.minute === undefined) {
-    return limit;
-  }
-  if (entry.minute <= limitMinute) {
-    return limitHour * 60 + entry.minute;
-  }
-  return limitHour > 0 ? (limitHour - 1) * 60 + entry.minute : undefined;
-};
+const range = (from: number, to: number) =>
+  Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+const HOURS = range(0, 23);
+const MINUTES = range(0, 59);
+
+// The minutes of the day, counted from midnight, at which `entry` fires on a
+// day it fires on.
+const minutesOfDay = (entry: CalendarEntry) =>
+  (entry.hour === undefined ? HOURS : [entry.hour]).flatMap((hour) =>
+    (entry.minute === undefined ? MINUTES : [entry.minute]).map((minute) => hour * 60 + minute),
+  );
 
 // The instant (epoch milliseconds) at which a wall-clock minute of `date`
-// falls in `timeZone`. A minute a clock change skips falls an hour later, and
-// one it repeats falls the first time, as Temporal's `compatible` resolves them.
+// falls in `timeZone`, as Temporal's `compatible` resolves it: a minute a
+// clock change skips falls as much later as the clock skips, and one it
+// repeats falls the first time.
 const instantOf = (date: Temporal.PlainDate, minuteOfDay: number, timeZone: string) =>
   date
     .toPlainDateTime({ hour: Math.floor(minuteOfDay / 60), minute: minuteOfDay % 60 })
@@ -61,6 +49,11 @@ const instantOf = (date: Temporal.PlainDate, minuteOfDay: number, timeZone: stri
 // than `notBefore` (epoch milliseconds), reading its entries as wall-clock
 // times in `timeZone`, or undefined when there is none. Throws a RangeError for
 // a zone this runtime does not know.
+//
+// Each day's times are compared as instants, since a clock change can resolve
+// a minute earlier on the clock to a later instant. Every time of a day falls
+// after every time of the day before, so the search stops at the first day,
+// going back, that has a time at or before `atOrBefore`.
 export const latestScheduledTime = ({
   atOrBefore,
   notBefore,
@@ -72,36 +65,26 @@ export const latestScheduledTime = ({
   schedule: readonly CalendarEntry[];
   timeZone: string;
 }): number | undefined => {
-  const start = Temporal.Instant.fromEpochMilliseconds(atOrBefore).toZonedDateTimeISO(timeZone);
-  let date = start.toPlainDate();
-  let limit = start.hour * 60 + start.minute;
-  for (let days = 0; days <= MAX_DAYS_BACK;) {
+  let date = Temporal.Instant.fromEpochMilliseconds(atOrBefore)
+    .toZonedDateTimeISO(timeZone)
+    .toPlainDate();
+  for (let days = 0; days <= MAX_DAYS_BACK; days += 1) {
+    const minutes = new Set(schedule.filter((e) => firesOn(e, date)).flatMap(minutesOfDay));
     let latest: number | undefined;
-    for (const entry of schedule) {
-      const minute = firesOn(entry, date) ? latestMinuteOfDay(entry, limit) : undefined;
-      if (minute !== undefined && (latest === undefined || minute > latest)) {
-        latest = minute;
+    for (const minute of minutes) {
+      const instant = instantOf(date, minute, timeZone);
+      if (instant <= atOrBefore && (latest === undefined || instant > latest)) {
+        latest = instant;
       }
     }
     if (latest !== undefined) {
-      const instant = instantOf(date, latest, timeZone);
-      // A skipped minute falls an hour later, possibly after `atOrBefore`; the
-      // search then goes on from the minute before it.
-      if (instant <= atOrBefore) {
-        return instant >= notBefore ? instant : undefined;
-      }
-      limit = latest - 1;
-      if (limit >= 0) {
-        continue;
-      }
+      return latest >= notBefore ? latest : undefined;
     }
-    date = date.subtract({ days: 1 });
-    limit = MINUTES_PER_DAY - 1;
-    days += 1;
-    // Every minute of an earlier day falls before `notBefore`.
-    if (instantOf(date, limit, timeZone) < notBefore) {
+    // Every time of an earlier day falls before this day starts.
+    if (instantOf(date, 0, timeZone) <= notBefore) {
       return undefined;
     }
+    date = date.subtract({ days: 1 });
   }
   return undefined;
 };

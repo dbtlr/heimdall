@@ -96,13 +96,60 @@ describe('latestScheduledTime', () => {
   test('a time the clock skips falls an hour later', () => {
     const schedule = [{ hour: 2, minute: 30 }];
 
-    // 02:30 on 8 March does not exist in New York; it falls at 03:30 EDT.
+    // 02:30 on 8 March does not exist in New York; it falls an hour later.
     expect(latestIn('America/New_York', schedule, '2026-03-08T12:00:00Z')).toBe(
       at('2026-03-08T07:30:00Z'),
     );
     // At 03:10 EDT that time is still to come, so the latest is the day before.
     expect(latestIn('America/New_York', schedule, '2026-03-08T07:10:00Z')).toBe(
       at('2026-03-07T07:30:00Z'),
+    );
+  });
+
+  test('a skipped time that falls after a later entry is still the latest', () => {
+    // 02:30 falls at 03:30 EDT, after 03:15.
+    const schedule = [
+      { hour: 2, minute: 30 },
+      { hour: 3, minute: 15 },
+    ];
+
+    expect(latestIn('America/New_York', schedule, '2026-03-08T07:45:00Z')).toBe(
+      at('2026-03-08T07:30:00Z'),
+    );
+  });
+
+  test('a skipped time falls as much later as the clock skips', () => {
+    // Lord Howe Island skips 30 minutes: 02:15 falls at 02:45, after 02:40.
+    const schedule = [
+      { hour: 2, minute: 15 },
+      { hour: 2, minute: 40 },
+    ];
+
+    expect(latestIn('Australia/Lord_Howe', schedule, '2026-10-03T15:50:00Z')).toBe(
+      at('2026-10-03T15:45:00Z'),
+    );
+  });
+
+  test('a skipped midnight hour falls after the times that follow it', () => {
+    // Havana skips from 00:00 to 01:00 on 8 March: 00:30 falls at 01:30 CDT.
+    const schedule = [
+      { hour: 0, minute: 30 },
+      { hour: 1, minute: 10 },
+    ];
+
+    expect(latestIn('America/Havana', schedule, '2026-03-08T05:40:00Z')).toBe(
+      at('2026-03-08T05:30:00Z'),
+    );
+  });
+
+  test("during a repeated hour, the first pass of a later time is today's", () => {
+    // At 01:10 EST, the second pass, 01:45 EDT has already passed.
+    expect(latestIn('America/New_York', [{ hour: 1, minute: 45 }], '2026-11-01T06:10:00Z')).toBe(
+      at('2026-11-01T05:45:00Z'),
+    );
+    // Havana repeats its midnight hour on 1 November.
+    expect(latestIn('America/Havana', [{ hour: 0, minute: 45 }], '2026-11-01T05:10:00Z')).toBe(
+      at('2026-11-01T04:45:00Z'),
     );
   });
 

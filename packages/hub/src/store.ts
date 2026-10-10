@@ -1,5 +1,6 @@
 import { mirrorRecords, mirrorRuns } from '@heimdall/schema';
 import type {
+  RecordRef,
   RecordsSection,
   Report,
   RunsSection,
@@ -214,22 +215,43 @@ const storeRecords = async (
   if (replaced.length === 0) {
     return;
   }
-  // A record still in the set keeps the time the Hub first mirrored it, from
-  // which a job's schedule counts.
-  const sent = storableJson(records);
+  await sql`DELETE FROM mirrored_records WHERE system = ${report.system}`;
   await sql`
-    DELETE FROM mirrored_records m
-    WHERE m.system = ${report.system}
+    INSERT INTO mirrored_records (system, kind, name, record)
+    SELECT ${report.system}, r->>'kind', r->>'name', r->'record'
+    FROM jsonb_array_elements(${storableJson(records)}::text::jsonb) AS r
+  `;
+  if (overBudget === null) {
+    await trackFirstMirrored(sql, { receivedAt, records, system: report.system, unreadable });
+  }
+};
+
+// Keeps when the Hub first mirrored each record of a set that fit: a record
+// the set leaves out is forgotten, one it lists as unreadable is still on the
+// System and keeps its time, and one mirrored for the first time starts now.
+const trackFirstMirrored = async (
+  sql: SQL,
+  {
+    receivedAt,
+    records,
+    system,
+    unreadable,
+  }: { receivedAt: Date; records: RecordRef[]; system: string; unreadable: RecordRef[] },
+) => {
+  const held = storableJson([...records, ...unreadable].map(({ kind, name }) => ({ kind, name })));
+  await sql`
+    DELETE FROM records_first_mirrored f
+    WHERE f.system = ${system}
       AND NOT EXISTS (
-        SELECT FROM jsonb_array_elements(${sent}::text::jsonb) AS r
-        WHERE r->>'kind' = m.kind AND r->>'name' = m.name
+        SELECT FROM jsonb_array_elements(${held}::text::jsonb) AS r
+        WHERE r->>'kind' = f.kind AND r->>'name' = f.name
       )
   `;
   await sql`
-    INSERT INTO mirrored_records (system, kind, name, record, mirrored_since)
-    SELECT ${report.system}, r->>'kind', r->>'name', r->'record', ${receivedAt}
-    FROM jsonb_array_elements(${sent}::text::jsonb) AS r
-    ON CONFLICT (system, kind, name) DO UPDATE SET record = excluded.record
+    INSERT INTO records_first_mirrored (system, kind, name, first_mirrored_at)
+    SELECT ${system}, r->>'kind', r->>'name', ${receivedAt}
+    FROM jsonb_array_elements(${storableJson(records.map(({ kind, name }) => ({ kind, name })))}::text::jsonb) AS r
+    ON CONFLICT (system, kind, name) DO NOTHING
   `;
 };
 

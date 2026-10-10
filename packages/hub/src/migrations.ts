@@ -269,13 +269,23 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 8,
   },
   {
-    // When the Hub first mirrored each record, which a record set that still
-    // holds it keeps. A job's scheduled times count only from then, so a job
-    // recorded today is not overdue for a time that passed before. Records
-    // mirrored before this migration count from it.
+    // When the Hub first mirrored each record. A job's scheduled times count
+    // only from then, so a job recorded today is not overdue for a time that
+    // passed before. A row outlasts a set over budget or one that lists the
+    // record as unreadable, since the record is still on the System, and goes
+    // only when a set leaves the record out. Records mirrored before this
+    // migration count from it.
     sql: `
-      ALTER TABLE mirrored_records ADD COLUMN mirrored_since timestamptz NOT NULL DEFAULT now();
-      ALTER TABLE mirrored_records ALTER COLUMN mirrored_since DROP DEFAULT;
+      CREATE TABLE records_first_mirrored (
+        system text NOT NULL REFERENCES systems (name),
+        kind text NOT NULL,
+        name text NOT NULL,
+        first_mirrored_at timestamptz NOT NULL,
+        PRIMARY KEY (system, kind, name)
+      );
+
+      INSERT INTO records_first_mirrored (system, kind, name, first_mirrored_at)
+      SELECT system, kind, name, now() FROM mirrored_records;
     `,
     version: 9,
   },

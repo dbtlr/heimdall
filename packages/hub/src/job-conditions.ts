@@ -12,11 +12,13 @@ import type { ConditionKind } from './store.ts';
 export const DEFAULT_GRACE_MINUTES = 60;
 
 // How far back the Hub looks for a System's awake time. A grace period the
-// System was not awake for within it never runs out.
+// System was not awake for within it has not run out, so job overdue is
+// neither raised nor cleared.
 const AWAKE_HORIZON_MS = 90 * 24 * 60 * 60_000;
 
-// The length of a Vitals rollup bucket (ADR-0008).
-const BUCKET_MS = 5 * 60_000;
+// The most samples a Vitals rollup bucket (ADR-0008) counts as awake time:
+// its 5 minutes.
+const SAMPLES_PER_BUCKET = (5 * 60_000) / SAMPLE_INTERVAL_MS;
 
 const JOB_KINDS: readonly ConditionKind[] = ['job_failing', 'job_overdue'];
 
@@ -73,7 +75,7 @@ const overdueVerdict = ({
   }
   const cutoff = awakeCutoff((record.graceMinutes ?? DEFAULT_GRACE_MINUTES) * 60_000);
   if (cutoff === undefined) {
-    return 'clear';
+    return 'unknown';
   }
   let scheduled: number | undefined;
   try {
@@ -99,10 +101,11 @@ const overdueVerdict = ({
   };
 };
 
-type JobRow = { mirrored_since: Date; name: string; record: unknown };
+// A mirrored job, with when the Hub first mirrored it.
+type JobRow = { first_mirrored_at: Date | null; name: string; record: unknown };
 type RunRow = { job: string; latest_run: unknown; latest_success: unknown };
 type SetRow = { over_budget_bytes: string | null; unreadable: unknown };
-type BucketRow = { awake_ms: number; bucket: Date };
+type BucketRow = { awake_samples: string; bucket: Date };
 
 // The unreadable rows a record set or a runs section lists, as the Hub stored
 // them: record references, and job names.
@@ -146,17 +149,19 @@ const latestRunsOf = async (tx: SQL, system: string): Promise<(job: string) => L
 };
 
 // The System's awake time, from the samples its Collector took every
-// SAMPLE_INTERVAL_MS, counted per 5-minute bucket up to `now`.
+// SAMPLE_INTERVAL_MS, counted per 5-minute bucket up to `now`. A bucket after
+// `now` comes from a clock running ahead and is not counted.
 const awakeCutoffOf = async (tx: SQL, system: string, now: number): Promise<AwakeCutoff> => {
   const buckets: BucketRow[] = await tx`
-    SELECT bucket, sum(LEAST(samples * ${SAMPLE_INTERVAL_MS}, ${BUCKET_MS}))
-             OVER (ORDER BY bucket DESC)::double precision AS awake_ms
+    SELECT bucket, sum(LEAST(samples, ${SAMPLES_PER_BUCKET})) OVER (ORDER BY bucket DESC)
+             AS awake_samples
     FROM vitals_rollups
     WHERE system = ${system} AND bucket <= ${new Date(now)}
       AND bucket > ${new Date(now - AWAKE_HORIZON_MS)}
     ORDER BY bucket DESC
   `;
-  return (graceMs) => buckets.find((b) => b.awake_ms >= graceMs)?.bucket.getTime();
+  return (graceMs) =>
+    buckets.find((b) => Number(b.awake_samples) * SAMPLE_INTERVAL_MS >= graceMs)?.bucket.getTime();
 };
 
 const raise = (
@@ -185,13 +190,15 @@ const clear = (
   WHERE system = ${system} AND kind = ${kind} AND subject = ${subject} AND cleared_at IS NULL
 `;
 
-// Raises and clears one System's job Conditions at `now`, under the System's
-// row lock so they order with its Reports (ADR-0005).
-const evaluateSystem = (sql: SQL, system: string, now: number) =>
+// Raises and clears one System's job Conditions under the System's row lock,
+// so they order with its Reports (ADR-0005), at the time `clock` reads once
+// the lock is held.
+const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { time_zone: string | null }[] = await tx`
       SELECT time_zone FROM systems WHERE name = ${system} FOR UPDATE
     `;
+    const now = clock();
     const [recordSet]: SetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
     `;
@@ -200,8 +207,10 @@ const evaluateSystem = (sql: SQL, system: string, now: number) =>
       return;
     }
     const jobs: JobRow[] = await tx`
-      SELECT name, record, mirrored_since FROM mirrored_records
-      WHERE system = ${system} AND kind = 'job'
+      SELECT m.name, m.record, f.first_mirrored_at
+      FROM mirrored_records m
+      LEFT JOIN records_first_mirrored f USING (system, kind, name)
+      WHERE m.system = ${system} AND m.kind = 'job'
     `;
     const open: { kind: ConditionKind; subject: string }[] = await tx`
       SELECT kind, subject FROM conditions
@@ -222,7 +231,9 @@ const evaluateSystem = (sql: SQL, system: string, now: number) =>
               job_failing: failingVerdict(runs),
               job_overdue: overdueVerdict({
                 awakeCutoff,
-                mirroredSince: row.mirrored_since.getTime(),
+                // A record with no first time, which only a damaged table
+                // holds, counts from now.
+                mirroredSince: row.first_mirrored_at?.getTime() ?? now,
                 record: record.data,
                 runs,
                 timeZone: held.time_zone,
@@ -254,24 +265,27 @@ const evaluateSystem = (sql: SQL, system: string, now: number) =>
     }
   });
 
-// Raises and clears every System's job failing and job overdue Conditions at
-// `now` (epoch milliseconds). `serve` runs it every minute. A System that
-// fails to evaluate does not stop the rest; the failures are thrown together.
-export const evaluateJobConditions = async (sql: SQL, now: number): Promise<void> => {
+const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// Raises and clears every System's job failing and job overdue Conditions,
+// judging each at the time `clock` (epoch milliseconds) reads once it holds
+// that System's lock. `serve` runs it every minute. A System that cannot be
+// judged does not stop the rest; one error then names each such System and why.
+export const evaluateJobConditions = async (sql: SQL, clock: () => number): Promise<void> => {
   const systems: { system: string }[] = await sql`SELECT system FROM record_sets ORDER BY system`;
-  const errors: unknown[] = [];
+  const failures: { error: unknown; system: string }[] = [];
   for (const { system } of systems) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- one System at a time keeps the load even.
-      await evaluateSystem(sql, system, now);
+      await evaluateSystem(sql, system, clock);
     } catch (error) {
-      errors.push(error);
+      failures.push({ error, system });
     }
   }
-  if (errors.length === 1) {
-    throw errors[0];
-  }
-  if (errors.length > 1) {
-    throw new AggregateError(errors, `${String(errors.length)} Systems could not be judged`);
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((f) => f.error),
+      failures.map((f) => `${f.system}: ${describeError(f.error)}`).join('; '),
+    );
   }
 };
