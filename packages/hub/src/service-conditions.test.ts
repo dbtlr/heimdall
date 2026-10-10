@@ -80,52 +80,67 @@ const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 describe('Service down', () => {
   test('is raised for a Service whose check has failed for 2 minutes of awake time, with the Service as its subject', async () => {
     await using h = await startHub();
-    await send(h, '08:02:00', {
-      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+    await send(h, '08:02:30', {
+      checks: { services: [check('web', 'stopped', at('08:00:30'))] },
       records: set(WEB),
-      samples: awake('08:00:00', '08:02:00'),
+      samples: awake('08:00:45', '08:02:45'),
     });
 
-    const { open } = await evaluate(h, '08:02:00');
+    const { open } = await evaluate(h, '08:02:30');
 
     expect(open).toEqual([
       {
         kind: 'service_down',
-        raisedAt: at('08:02:00'),
+        raisedAt: at('08:02:30'),
         reason: 'Stopped: ActiveState=failed.',
         subject: 'web',
       },
     ]);
   });
 
-  test('is not raised until the check has failed for 2 minutes of awake time', async () => {
+  // The check began mid-bucket, at 08:00:30, so a count in whole 5-minute
+  // buckets would wait for the next one.
+  test('is raised at exactly 8 samples after the check began, and not at 7, wherever it began in a 5-minute bucket', async () => {
+    await using h = await startHub();
+    await send(h, '08:02:15', {
+      checks: { services: [check('web', 'stopped', at('08:00:30'))] },
+      records: set(WEB),
+      samples: awake('08:00:45', '08:02:30'),
+    });
+    const seven = await evaluate(h, '08:02:15');
+    await send(h, '08:02:30', { samples: [at('08:02:30')] });
+    const eight = await evaluate(h, '08:02:30');
+
+    expect(seven.open).toEqual([]);
+    expect(subjects(eight.open)).toEqual(['web']);
+  });
+
+  test('does not count a sample taken at the moment the check began', async () => {
     await using h = await startHub();
     await send(h, '08:01:45', {
       checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
-      samples: awake('08:00:00', '08:01:45'),
+      samples: awake('08:00:00', '08:02:00'),
     });
-    const justBefore = await evaluate(h, '08:01:45');
-    await send(h, '08:02:00', { samples: awake('08:01:45', '08:02:00') });
-    const atTwoMinutes = await evaluate(h, '08:02:00');
 
-    expect(justBefore.open).toEqual([]);
-    expect(subjects(atTwoMinutes.open)).toEqual(['web']);
+    const { open } = await evaluate(h, '08:01:45');
+
+    expect(open).toEqual([]);
   });
 
   test.each([
     ['ahead of the Hub', 3 * HOUR],
     ['behind the Hub', -3 * HOUR],
-  ])('counts awake time on the System clock alone, which is %s', async (_, skew) => {
+  ])('counts samples on the System clock alone, which is %s', async (_, skew) => {
     await using h = await startHub();
-    await send(h, '08:01:45', {
-      checks: { services: [check('web', 'stopped', at('08:00:00') + skew)] },
+    await send(h, '08:02:15', {
+      checks: { services: [check('web', 'stopped', at('08:00:30') + skew)] },
       records: set(WEB),
-      samples: awake('08:00:00', '08:01:45', skew),
+      samples: awake('08:00:45', '08:02:30', skew),
     });
-    const early = await evaluate(h, '08:01:45');
-    await send(h, '08:02:00', { samples: awake('08:01:45', '08:02:00', skew) });
-    const due = await evaluate(h, '08:02:00');
+    const early = await evaluate(h, '08:02:15');
+    await send(h, '08:02:30', { samples: [at('08:02:30') + skew] });
+    const due = await evaluate(h, '08:02:30');
 
     expect(early.open).toEqual([]);
     expect(subjects(due.open)).toEqual(['web']);
@@ -152,7 +167,7 @@ describe('Service down', () => {
     await send(h, '08:01:00', {
       checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
-      samples: awake('08:00:00', '08:01:00'),
+      samples: awake('08:00:15', '08:01:15'),
     });
     const wake = at('08:00:00') + 2 * DAY;
     // The first Report after waking moves Last seen by two days, which counts nothing.

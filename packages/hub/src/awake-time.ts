@@ -17,15 +17,6 @@ export type AwakeCutoff = (graceMs: number) => number | undefined;
 
 type BucketRow = { awake_samples: string; bucket: Date };
 
-// The start of the System's latest rollup bucket, or undefined when it has
-// stored no Vitals. It is on the System's own clock, like the samples in it.
-export const latestBucketOf = async (tx: SQL, system: string): Promise<number | undefined> => {
-  const [row]: { latest: Date | null }[] = await tx`
-    SELECT max(bucket) AS latest FROM vitals_rollups WHERE system = ${system}
-  `;
-  return row?.latest?.getTime();
-};
-
 // The System's awake time, from the samples its Collector took every
 // SAMPLE_INTERVAL_MS, counted per 5-minute bucket through the bucket starting
 // at `through`, for spans up to `maxGraceMs`. A bucket counts as awake for 15
@@ -51,4 +42,22 @@ export const awakeCutoffOf = async (
   `;
   return (graceMs) =>
     buckets.find((b) => Number(b.awake_samples) * SAMPLE_INTERVAL_MS >= graceMs)?.bucket.getTime();
+};
+
+// The fine-grained count for short waits: the time of the System's newest
+// sample that has `spanMs` of samples at or after it, counted from the raw
+// samples, or undefined when it has taken fewer. A span that began before it
+// was awake for `spanMs` or more, at 15 seconds a sample. There are two counts
+// because job overdue's grace can span 90 days, beyond the 14 days raw samples
+// are kept, while Service down needs sample precision. A stray future sample
+// adds at most one sample.
+export const sampleCutoffOf = async (
+  tx: SQL,
+  { spanMs, system }: { spanMs: number; system: string },
+): Promise<number | undefined> => {
+  const [row]: { t: Date }[] = await tx`
+    SELECT t FROM vitals_samples WHERE system = ${system}
+    ORDER BY t DESC OFFSET ${Math.ceil(spanMs / SAMPLE_INTERVAL_MS) - 1} LIMIT 1
+  `;
+  return row?.t.getTime();
 };

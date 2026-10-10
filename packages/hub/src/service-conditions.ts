@@ -3,7 +3,7 @@ import type { ServiceCheck } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
-import { awakeCutoffOf, latestBucketOf } from './awake-time.ts';
+import { sampleCutoffOf } from './awake-time.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
 
@@ -99,21 +99,14 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     );
     // No services part, or one the Hub cannot read, judges no Service.
     const checks = StoredServicesSchema.safeParse(checkSet.services).data ?? [];
-    // A check has failed for long enough once the System was awake for that
-    // long since its `since`, counted in whole rollup buckets from the System's
-    // Vitals through its latest sample. Both are on the System's clock, so
-    // neither the Hub's clock nor the time the System spent silent or asleep
+    // A check has failed for long enough once the System took samples for that
+    // long since its `since`, 15 seconds each. Both are on the System's clock,
+    // so neither the Hub's clock nor the time the System spent silent or asleep
     // counts. The Hub's clock bounds nothing, since a System whose clock runs
     // ahead would then never be judged.
-    const latest = await latestBucketOf(tx, system);
-    const awakeCutoff =
-      latest === undefined
-        ? undefined
-        : (await awakeCutoffOf(tx, { maxGraceMs: SERVICE_DOWN_AFTER_MS, system, through: latest }))(
-            SERVICE_DOWN_AFTER_MS,
-          );
+    const sampleCutoff = await sampleCutoffOf(tx, { spanMs: SERVICE_DOWN_AFTER_MS, system });
     const failedLongEnough = (check: ServiceCheck) =>
-      awakeCutoff !== undefined && check.since <= awakeCutoff;
+      sampleCutoff !== undefined && check.since < sampleCutoff;
 
     const verdicts = new Map<string, Verdict>();
     for (const { name } of mirrored) {
