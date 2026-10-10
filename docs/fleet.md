@@ -102,6 +102,7 @@ The template, `apps/heimdall-collector/config/collector.toml.tmpl`, holds no sec
 hub = "http://hub-host.example.ts.net:8080"
 ```
 
+- A System that sleeps, such as a laptop, also sets `sleeps = true` in its `collector.toml`, so that the Hub waits 7 days, not 10 minutes, before it raises stale System.
 - `hub` is the Hub's tailnet ingress URL: the host name of the System that hosts the Hub and the `tailnet_port` of the Hub's Service file. Fleet's native Services publish `tailnet_port` as raw TCP inside the tailnet, so the scheme is `http`.
 - `stateDir` is optional and absent here. The default is `$XDG_STATE_HOME/heimdall`, which is `~/.local/state/heimdall` on Linux, and `~/Library/Application Support/heimdall` on macOS.
 - A Collector sends its token only to the Hub it paired with, so a wrong `hub` cannot send a token elsewhere: `run` refuses when the origin (scheme, host, and port) differs from the one in `identity.json`.
