@@ -205,6 +205,14 @@ describe('a job record', () => {
     expect(accepts(JobRecordSchema, valid)).toBe(true);
     expect(accepts(JobRecordSchema, { ...valid, cron: '0 3 * * *' })).toBe(false);
   });
+
+  test('takes a grace period of 1 minute to a week, in whole minutes', () => {
+    expect(accepts(JobRecordSchema, { ...JOB, graceMinutes: 1 })).toBe(true);
+    expect(accepts(JobRecordSchema, { ...JOB, graceMinutes: 10_080 })).toBe(true);
+    expect(accepts(JobRecordSchema, { ...JOB, graceMinutes: 0 })).toBe(false);
+    expect(accepts(JobRecordSchema, { ...JOB, graceMinutes: 10_081 })).toBe(false);
+    expect(accepts(JobRecordSchema, { ...JOB, graceMinutes: 90.5 })).toBe(false);
+  });
 });
 
 describe('a Service record', () => {

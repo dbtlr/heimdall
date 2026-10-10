@@ -3,6 +3,7 @@ export {
   MAX_SAMPLES_PER_REPORT,
   REPORT_SCHEMA_VERSION,
   ReportSchema,
+  SAMPLE_INTERVAL_MS,
   SYSTEM_NAME,
   TIME_ZONE,
   VitalsSampleSchema,

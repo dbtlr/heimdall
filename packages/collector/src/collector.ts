@@ -1,5 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 
+import { SAMPLE_INTERVAL_MS } from '@heimdall/schema';
 import type { Report, TranscriptsSection } from '@heimdall/schema';
 
 import { flushQueue } from './delivery.ts';
@@ -8,7 +9,6 @@ import { describeError } from './errors.ts';
 import type { SampleQueue } from './queue.ts';
 import type { Sampler } from './vitals/sampler.ts';
 
-export const SAMPLE_INTERVAL_MS = 15_000;
 export const MAX_BACKOFF_MS = 5 * 60_000;
 
 export type Log = { info: (message: string) => unknown; warn: (message: string) => unknown };
