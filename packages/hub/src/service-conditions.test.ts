@@ -4,7 +4,7 @@ import type { ServiceRecord } from '@heimdall/schema';
 
 import { evaluateServiceConditions } from './service-conditions.ts';
 import { listSystems } from './store.ts';
-import { page, push, report, startHub } from './testing/hub.ts';
+import { openGeneration, page, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 // Times are on 10 October 2026.
@@ -54,8 +54,8 @@ const send = async (
 };
 
 // Evaluates Service down at `time`, then answers laptop-1's open Conditions and Timeline.
-const evaluate = async (h: Hub, time: string) => {
-  h.clock.now = at(time);
+const evaluate = async (h: Hub, time: string | number) => {
+  h.clock.now = typeof time === 'number' ? time : at(time);
   await evaluateServiceConditions(h.db.sql, () => h.clock.now);
   const found = (await listSystems(h.db.sql)).find((s) => s.name === 'laptop-1');
   return { open: found?.conditions ?? [], timeline: found?.timeline ?? [] };
@@ -99,7 +99,9 @@ describe('Service down', () => {
       records: set(WEB),
     });
 
+    await send(h, '08:00:59', {});
     const justBefore = await evaluate(h, '08:00:59');
+    await send(h, '08:01:00', {});
     const atTwoMinutes = await evaluate(h, '08:01:00');
 
     expect(justBefore.open).toEqual([]);
@@ -120,7 +122,9 @@ describe('Service down', () => {
         sentAt: at('08:00:00') + skew,
       });
 
+      await send(h, '08:00:29', {});
       const early = await evaluate(h, '08:00:29');
+      await send(h, '08:00:30', {});
       const due = await evaluate(h, '08:00:30');
 
       expect(early.open).toEqual([]);
@@ -134,12 +138,83 @@ describe('Service down', () => {
       checks: { services: [check('web', 'stopped', at('08:00:00'))] },
       records: set(WEB),
     });
-
+    await send(h, '08:01:00', {});
     const first = await evaluate(h, '08:01:00');
+    await send(h, '08:02:00', {});
     const later = await evaluate(h, '08:02:00');
 
     expect(first.open).toEqual([]);
     expect(subjects(later.open)).toEqual(['web']);
+  });
+
+  test('is not raised by silence after a Report that said stopped, even days later', async () => {
+    await using h = await startHub();
+    // The check had failed for 30 seconds when the Collector sent it, then the System went quiet.
+    await send(h, '08:00:00', {
+      checks: { services: [check('web', 'stopped', at('07:59:30'))] },
+      records: set(WEB),
+    });
+
+    const minutes = await evaluate(h, '08:03:00');
+    const days = await evaluate(h, at('08:00:00') + 3 * 24 * HOUR);
+
+    expect(minutes.open).toEqual([]);
+    expect(days.open).toEqual([]);
+  });
+
+  test('counts the time up to Last seen only, however much later it is judged', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+      records: set(WEB),
+    });
+    await send(h, '08:01:30', {});
+
+    const { open } = await evaluate(h, '08:30:00');
+
+    expect(open).toEqual([]);
+  });
+
+  test('is raised once Reports go on arriving for 2 minutes, which move Last seen', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+      records: set(WEB),
+    });
+    await send(h, '08:01:59', {});
+    const before = await evaluate(h, '08:01:59');
+    await send(h, '08:02:00', {});
+    const after = await evaluate(h, '08:02:00');
+
+    expect(before.open).toEqual([]);
+    expect(subjects(after.open)).toEqual(['web']);
+  });
+
+  test('is raised once uploads that are not Reports move Last seen for 2 minutes', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+      records: set(WEB),
+    });
+    h.clock.now = at('08:02:00');
+    await openGeneration(h.hub, '{', { token: 'laptop-token' });
+
+    const { open } = await evaluate(h, '08:02:00');
+
+    expect(subjects(open)).toEqual(['web']);
+  });
+
+  test('does not count time after the moment it is judged, though the System was seen later', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
+      records: set(WEB),
+    });
+    await send(h, '08:05:00', {});
+
+    const { open } = await evaluate(h, '08:01:00');
+
+    expect(open).toEqual([]);
   });
 
   test('says in its reason what the Collector found', async () => {
@@ -379,6 +454,19 @@ describe('Service down', () => {
     expect(open).toMatchObject([{ subject: 'web' }]);
   });
 
+  test('clears a Service that recovered even while another service record is unreadable, since only a forgotten Service waits', async () => {
+    await using h = await startHub();
+    await downAndEvaluated(h);
+    await send(h, '08:04:00', {
+      checks: { services: [check('web', 'up', at('08:03:30'))] },
+      records: { ...set(WEB), unreadable: [{ kind: 'service', name: 'other' }] },
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toEqual([]);
+  });
+
   test('does not clear for a forgotten Service while a service record has a shape the Hub does not know', async () => {
     await using h = await startHub();
     await downAndEvaluated(h);
@@ -419,5 +507,5 @@ test('the page and the Timeline name the Condition and the Service', async () =>
 
   await send(h, '08:04:00', { checks: { services: [check('web', 'up', at('08:03:30'))] } });
   await evaluate(h, '08:05:00');
-  expect(await page(h.hub)).toContain('Service back up <code>web</code>');
+  expect(await page(h.hub)).toContain('Service down cleared <code>web</code>');
 });

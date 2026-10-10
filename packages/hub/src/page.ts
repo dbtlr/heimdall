@@ -65,7 +65,7 @@ const CONDITION_LABELS: Record<ConditionKind, { cleared: string; raised: string 
   job_overdue: { cleared: 'Job no longer overdue', raised: 'Job overdue' },
   low_disk: { cleared: 'Low disk cleared', raised: 'Low disk' },
   reports_rejected: { cleared: 'Reports accepted again', raised: 'Reports rejected' },
-  service_down: { cleared: 'Service back up', raised: 'Service down' },
+  service_down: { cleared: 'Service down cleared', raised: 'Service down' },
   system_stale: { cleared: 'System heard from again', raised: 'System stale' },
 };
 

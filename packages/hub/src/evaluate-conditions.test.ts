@@ -13,9 +13,9 @@ const MINUTE = 60_000;
 
 const CONFIG = { files: [{ path: '/etc/app.conf', sha256: 'a'.repeat(64) }], name: 'app-config' };
 
-// laptop-1 reported a failed job run, a changed file, and a stopped Service at
-// NOW and then went quiet, so by NOW + 11 minutes it is failing a job, drifting,
-// has a Service down, and is stale.
+// laptop-1 reported a failed job run, a changed file, and a Service that had
+// been stopped for 3 minutes at NOW and then went quiet, so by NOW + 11 minutes
+// it is failing a job, drifting, has a Service down, and is stale.
 const failingAndQuiet = async (h: Hub) => {
   const response = await push(
     h.hub,
@@ -29,7 +29,7 @@ const failingAndQuiet = async (h: Hub) => {
             check: 'supervisor',
             detail: 'ActiveState=failed',
             service: 'webapp',
-            since: NOW,
+            since: NOW - 3 * MINUTE,
             state: 'stopped',
           },
         ],

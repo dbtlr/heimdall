@@ -29,6 +29,7 @@ const StoredServicesSchema = z.array(
 
 const UnreadableRecordsSchema = z.array(z.object({ kind: z.string(), name: z.string() }));
 
+type HeldRow = { last_seen_at: Date | null; name: string };
 type CheckSetRow = {
   received_at: Date;
   sent_at: Date;
@@ -41,12 +42,20 @@ const FAILING_STATES: Partial<Record<ServiceCheck['state'], string>> = { stopped
 
 // How long the check has been failing, as the Hub knows it: how long it had
 // failed when the Collector sent the checks, by the Collector's clock alone,
-// plus how long ago the Hub received them, by the Hub's clock alone. The two
-// clocks are never compared, so a System whose clock is wrong is judged right.
+// plus how long the System went on being seen after the Hub received them, by
+// the Hub's clock alone. The Hub counts no time after the System was last seen,
+// since it does not know the Service was still stopped then. The two clocks
+// are never compared, so a System whose clock is off by a steady amount is
+// judged right.
 const failingForMs = (
   check: ServiceCheck,
-  { now, receivedAt, sentAt }: { now: number; receivedAt: number; sentAt: number },
-) => Math.max(0, sentAt - check.since) + Math.max(0, now - receivedAt);
+  {
+    lastSeenAt,
+    now,
+    receivedAt,
+    sentAt,
+  }: { lastSeenAt: number; now: number; receivedAt: number; sentAt: number },
+) => Math.max(0, sentAt - check.since) + Math.max(0, Math.min(now, lastSeenAt) - receivedAt);
 
 // What one Service's checks say. It is down once any check has been failing for
 // long enough; the reason names the first such check, supervisor before the
@@ -80,8 +89,8 @@ const verdictOf = (
 // unreadable, since that record may be the Service.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
-    const [held]: { name: string }[] = await tx`
-      SELECT name FROM systems WHERE name = ${system} FOR UPDATE
+    const [held]: HeldRow[] = await tx`
+      SELECT name, last_seen_at FROM systems WHERE name = ${system} FOR UPDATE
     `;
     const now = clock();
     const [checkSet]: CheckSetRow[] = await tx`
@@ -110,10 +119,12 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     );
     // No services part, or one the Hub cannot read, judges no Service.
     const checks = StoredServicesSchema.safeParse(checkSet.services).data ?? [];
+    const receivedAt = checkSet.received_at.getTime();
     const failingFor = (check: ServiceCheck) =>
       failingForMs(check, {
+        lastSeenAt: held.last_seen_at?.getTime() ?? receivedAt,
         now,
-        receivedAt: checkSet.received_at.getTime(),
+        receivedAt,
         sentAt: checkSet.sent_at.getTime(),
       });
 
