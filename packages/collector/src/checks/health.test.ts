@@ -195,6 +195,14 @@ describe('a health check', () => {
     });
   });
 
+  test('takes control characters out of a detail', async () => {
+    const { get } = answering({ kind: 'failed', message: 'bad\0 \u001B[31mname', reason: 'error' });
+
+    expect((await checkHealth('http://127.0.0.1:8080/', { get })).detail).toBe(
+      'could not request: bad [31mname',
+    );
+  });
+
   test('cuts a long detail to what the Hub takes', async () => {
     const { get } = answering({ kind: 'failed', message: 'x'.repeat(1000), reason: 'error' });
 
