@@ -1,7 +1,12 @@
-import type { JobRuns, MirroredRecord, RecordRef, RecordsRead } from '@heimdall/schema';
+import type { FileCheck, JobRuns, MirroredRecord, RecordRef, RecordsRead } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 type SetRow = {
+  // `since` is in epoch milliseconds, as the Hub stores it.
+  check_files: FileCheck[] | null;
+  check_over_budget_bytes: string | null;
+  check_received_at: Date | null;
+  check_sent_at: Date | null;
   name: string;
   over_budget_bytes: string | null;
   received_at: Date | null;
@@ -21,6 +26,8 @@ type RunRow = { entry: JobRuns; system: string };
 type Entry = RecordsRead['systems'][number];
 
 type Runs = Entry['runs'];
+
+type Checks = Entry['checks'];
 
 // One System's records fields in the read, from its set row and its records.
 const recordsOf = (row: SetRow, records: MirroredRecord[]) => {
@@ -53,16 +60,41 @@ const runsOf = (row: SetRow, jobs: JobRuns[]): Runs => {
   return { ...times, jobs, unreadable: row.runs_unreadable ?? [] };
 };
 
-// One System's entry in the read: its records, latest runs, and time zone.
+// One System's latest checks in the read, from its checks row, or null when no
+// Report has carried checks. Files sort by record, then path.
+const checksOf = (row: SetRow): Checks => {
+  if (row.check_sent_at === null || row.check_received_at === null) {
+    return null;
+  }
+  const times = {
+    receivedAt: row.check_received_at.toISOString(),
+    sentAt: row.check_sent_at.toISOString(),
+  };
+  if (row.check_over_budget_bytes !== null) {
+    return { ...times, overBudget: { bytes: Number(row.check_over_budget_bytes) } };
+  }
+  const files = (row.check_files ?? [])
+    .map(({ path, record, since, state }) => ({
+      path,
+      record,
+      since: new Date(since).toISOString(),
+      state,
+    }))
+    .toSorted((a, b) => a.record.localeCompare(b.record) || a.path.localeCompare(b.path));
+  return { ...times, files };
+};
+
+// One System's entry in the read: its records, latest checks and runs, and time zone.
 const entryOf = (row: SetRow, records: MirroredRecord[], jobs: JobRuns[]): Entry => ({
   ...recordsOf(row, records),
+  checks: checksOf(row),
   runs: runsOf(row, jobs),
   system: row.name,
   timeZone: row.time_zone,
 });
 
-// Every System the dashboard lists, by name, with the records and latest runs
-// its Collector last sent, and its time zone. One read-only snapshot keeps each
+// Every System the dashboard lists, by name, with the records, latest runs, and
+// latest checks its Collector last sent, and its time zone. One read-only snapshot keeps each
 // System's records and runs consistent with their sets. Systems come in the
 // order the dashboard lists them.
 export const readRecords = (sql: SQL): Promise<Entry[]> =>
@@ -71,10 +103,13 @@ export const readRecords = (sql: SQL): Promise<Entry[]> =>
       SELECT s.name, s.time_zone,
              r.sent_at, r.received_at, r.unreadable, r.over_budget_bytes,
              u.sent_at AS runs_sent_at, u.received_at AS runs_received_at,
-             u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes
+             u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes,
+             c.sent_at AS check_sent_at, c.received_at AS check_received_at,
+             c.files AS check_files, c.over_budget_bytes AS check_over_budget_bytes
       FROM systems s
       LEFT JOIN record_sets r ON r.system = s.name
       LEFT JOIN run_sets u ON u.system = s.name
+      LEFT JOIN check_sets c ON c.system = s.name
       ORDER BY s.name
     `;
     const rows: RecordRow[] = await tx`

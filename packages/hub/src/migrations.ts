@@ -301,6 +301,26 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 10,
   },
+  {
+    // Each System's latest checks: what its Collector observed against its
+    // records. `check_sets` holds the latest checks a Report carried the way
+    // `record_sets` holds a set of records: when they were sent and received
+    // and, for checks too large to send, their size with no files. `files` lists
+    // the recorded files that did not match, each with its record, path, state,
+    // and the epoch milliseconds the Collector first saw that state. A System
+    // with no `check_sets` row has never sent checks. `sent_at` keeps an older
+    // Report from replacing newer checks.
+    sql: `
+      CREATE TABLE check_sets (
+        system text PRIMARY KEY REFERENCES systems (name),
+        sent_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL,
+        over_budget_bytes bigint,
+        files jsonb NOT NULL DEFAULT '[]'
+      );
+    `,
+    version: 11,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
