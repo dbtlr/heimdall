@@ -23,10 +23,11 @@ export const stateDir = {
 } as const;
 
 // Whether this System sleeps, such as a laptop, read the same way. The Hub
-// raises stale System after 7 days without a Report for a System that sleeps,
+// raises stale System after 7 days without hearing from a System that sleeps,
 // and after 10 minutes for one that does not.
 export const sleeps = {
-  description: 'This System sleeps, so the Hub waits 7 days, not 10 minutes, to call it stale.',
+  description:
+    'This System sleeps, so the Hub waits 7 days, not 10 minutes, without hearing from it before it calls it stale.',
   env: 'HEIMDALL_SLEEPS',
   extensions: [configInput({ path: 'sleeps' })],
   type: 'boolean',

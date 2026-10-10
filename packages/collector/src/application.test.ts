@@ -113,13 +113,16 @@ const configWith = async (dir: string, extra: string[]) => {
 test.each([
   {
     extra: ['sleeps = true'],
-    line: 'This System sleeps; the Hub raises stale System after 7 days.',
+    line: 'This System sleeps; the Hub raises stale System after 7 days without hearing from it.',
   },
   {
     extra: ['sleeps = false'],
-    line: 'This System is always on; the Hub raises stale System after 10 minutes.',
+    line: 'This System is always on; the Hub raises stale System after 10 minutes without hearing from it.',
   },
-  { extra: [], line: 'This System is always on; the Hub raises stale System after 10 minutes.' },
+  {
+    extra: [],
+    line: 'This System is always on; the Hub raises stale System after 10 minutes without hearing from it.',
+  },
 ])('run reads whether the System sleeps from collector.toml: $extra', async ({ extra, line }) => {
   await using dir = await tempStateDir();
   const { configFile: file } = await configWith(dir.path, [...extra]);
