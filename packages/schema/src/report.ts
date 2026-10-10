@@ -78,6 +78,10 @@ export const ReportSchema = z.object({
     .refine(isStrictlyIncreasing, { message: 'sample times must strictly increase' }),
   schemaVersion: z.literal(REPORT_SCHEMA_VERSION),
   sentAt: epochMs,
+  // Whether the System sleeps, as its collector.toml says. In every Report;
+  // optional for Collectors that predate it, for which the Hub keeps what it
+  // holds, and a System that never sent it counts as always on.
+  sleeps: z.boolean().optional(),
   // The Hub rejects a Report whose System differs from its ingest token's.
   system: z.string().regex(SYSTEM_NAME),
   // The System's time zone, in which its jobs' schedules are read. In every

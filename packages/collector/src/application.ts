@@ -8,7 +8,7 @@ import { text } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { readIdentity } from './identity.ts';
-import { hub, stateDir } from './options.ts';
+import { hub, sleeps, stateDir } from './options.ts';
 import { pairAction } from './pair.ts';
 import { countWaiting } from './queue.ts';
 import { forgetCommand, recordCommand } from './record.ts';
@@ -26,6 +26,7 @@ export const run = new Command('run', {
   description: 'Sample this System every 15 seconds and push queued Reports to the Hub.',
 })
   .option('hub', hub)
+  .option('sleeps', sleeps)
   .option('state-dir', stateDir)
   .action(runAction);
 

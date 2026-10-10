@@ -87,6 +87,12 @@ const captureLine = (sources: readonly Source[]) =>
     ? 'Transcript capture is off; collector.toml lists no sessions.sources.'
     : `Capturing transcripts from ${sources.map((s) => `${s.name} (${s.dir})`).join(', ')}.`;
 
+// The startup line about whether the Hub should expect this System always.
+const sleepsLine = (sleeps: boolean) =>
+  sleeps
+    ? 'This System sleeps; the Hub raises stale System after 7 days.'
+    : 'This System is always on; the Hub raises stale System after 10 minutes.';
+
 // `heimdall-collector run`: samples this System and pushes Reports to the Hub,
 // as the System `pair` stored, until launchd, systemd, or a terminal stops it.
 // Beside the samples it uploads the transcripts of the sources collector.toml
@@ -160,10 +166,12 @@ export const runAction: ActionHandler<typeof run> = async ({
           `Sampling ${system} every ${String(SAMPLE_INTERVAL_MS / 1000)} seconds for ${options.hub.href}; queue in ${stateDir}.`,
         ),
       );
+      await log.info(sleepsLine(options.sleeps ?? false));
       await log.info(clean(captureLine(sources)));
       await runCollector({
         identity: {
           collector: { arch: arch(), platform, version: packageJson.version },
+          sleeps: options.sleeps ?? false,
           system,
         },
         log: runtime,

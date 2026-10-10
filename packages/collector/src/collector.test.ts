@@ -13,6 +13,7 @@ const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
 
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },
+  sleeps: false,
   system: 'server-1',
 } as const;
 

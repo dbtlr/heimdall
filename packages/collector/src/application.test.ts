@@ -110,6 +110,37 @@ const configWith = async (dir: string, extra: string[]) => {
   return { configFile, stateDir };
 };
 
+test.each([
+  {
+    extra: ['sleeps = true'],
+    line: 'This System sleeps; the Hub raises stale System after 7 days.',
+  },
+  {
+    extra: ['sleeps = false'],
+    line: 'This System is always on; the Hub raises stale System after 10 minutes.',
+  },
+  { extra: [], line: 'This System is always on; the Hub raises stale System after 10 minutes.' },
+])('run reads whether the System sleeps from collector.toml: $extra', async ({ extra, line }) => {
+  await using dir = await tempStateDir();
+  const { configFile: file } = await configWith(dir.path, [...extra]);
+
+  const { code, stdout } = await startAndStop(['run', '--config', file]);
+
+  expect(stdout).toContain(line);
+  expect(code).toBe(130);
+});
+
+test('run refuses a sleeps setting that is not a boolean', async () => {
+  await using dir = await tempStateDir();
+  const { configFile: file } = await configWith(dir.path, ['sleeps = "sometimes"']);
+
+  const { code, stderr, stdout } = await startAndStop(['run', '--config', file]);
+
+  expect(stdout).not.toContain('Sampling');
+  expect(stderr).toContain('sleeps');
+  expect(code).toBe(2);
+});
+
 test('run captures transcripts from the sources collector.toml lists', async () => {
   await using dir = await tempStateDir();
   const claude = join(dir.path, 'claude');

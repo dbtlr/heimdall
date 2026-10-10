@@ -17,6 +17,7 @@ import { NO_SECTIONS, NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
+  sleeps: false,
   system: 'laptop-1',
 } as const;
 
@@ -372,6 +373,30 @@ describe('flushing the queue', () => {
 
     expect(hub.reports.map((r) => r.records)).toEqual([undefined]);
     expect(settled).toEqual([]);
+    queue.close();
+  });
+
+  test.each([true, false])('every Report carries sleeps: %p', async (sleeps) => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    for (const t of [1000, 2000, 3000]) {
+      queue.append(sample(t));
+    }
+    const hub = scriptedHub([]);
+
+    await flushQueue({
+      batchSize: 2,
+      identity: { ...identity, sleeps },
+      now: () => 9000,
+      queue,
+      sections: NO_SECTIONS,
+      send: hub.send,
+      timeZone: NO_TIME_ZONE,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    expect(hub.reports.map((r) => r.sleeps)).toEqual([sleeps, sleeps]);
+    expect(hub.reports.every((r) => ReportSchema.safeParse(r).success)).toBe(true);
     queue.close();
   });
 
