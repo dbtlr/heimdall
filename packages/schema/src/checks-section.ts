@@ -104,7 +104,8 @@ const isFileCheckState = (state: string): state is FileCheckState =>
 // The checks a Hub mirrors from a checks section. A state this Hub does not
 // know means the file does not match in some way, so it counts as unreadable
 // rather than as a match. A file sent twice under one record keeps the last, and
-// so does a record's digest.
+// so does a record's digest. A section with no `files` part is from a newer
+// Collector that judges differently, so it judges no record here.
 export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
   if ('overBudget' in section) {
     return { overBudget: section.overBudget };
@@ -119,7 +120,7 @@ export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
     });
   }
   const fileRecords = new Map<string, FileRecordCheck>();
-  for (const entry of section.fileRecords ?? []) {
+  for (const entry of section.files === undefined ? [] : (section.fileRecords ?? [])) {
     fileRecords.set(entry.record, entry);
   }
   return { fileRecords: [...fileRecords.values()], files: [...files.values()] };

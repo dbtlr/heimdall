@@ -159,8 +159,16 @@ describe('the parts of a checks section', () => {
           { digest: '1'.repeat(64), record: 'a' },
           { digest: '2'.repeat(64), record: 'a' },
         ],
+        files: [],
       }),
     ).toEqual({ fileRecords: [{ digest: '2'.repeat(64), record: 'a' }], files: [] });
+  });
+
+  test('judge no record when the section lists hashed records but carries no files part', () => {
+    expect(mirrored({ fileRecords: [{ digest: '1'.repeat(64), record: 'a' }] })).toEqual({
+      fileRecords: [],
+      files: [],
+    });
   });
 
   test.each([

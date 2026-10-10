@@ -328,6 +328,16 @@ describe('Drift', () => {
     expect(open).toMatchObject([{ subject: CONF }]);
   });
 
+  test('stays as it is when a section lists a hashed record but carries no files part', async () => {
+    await using h = await startHub();
+    await driftedAndEvaluated(h);
+    await send(h, '09:05:00', { checks: { fileRecords: (await checks([WEBAPP])).fileRecords } });
+
+    const { open } = await evaluate(h, '09:10:00');
+
+    expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
+  });
+
   test('clears for a file whose record is forgotten, though the held checks still list it', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
