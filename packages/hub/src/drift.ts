@@ -114,7 +114,7 @@ const strongest = (held: Verdict | undefined, next: Verdict): Verdict => {
 // The mirrored files records this Hub can read, and whether any files record is
 // unreadable: one the Collector listed as unreadable, or one whose mirrored
 // shape this Hub does not know. Paths of an unreadable record are not known, so
-// Drift for a path no readable record names stays as it is.
+// no path's Drift is cleared while one exists.
 const readRecords = async (recordSet: RecordSetRow, mirrored: readonly MirroredRow[]) => {
   const records: ReadableRecord[] = [];
   let unreadable = (UnreadableRecordsSchema.safeParse(recordSet.unreadable).data ?? []).some(
@@ -139,9 +139,10 @@ const readRecords = async (recordSet: RecordSetRow, mirrored: readonly MirroredR
 // Raises and clears one System's Drift under the System's row lock, so it
 // orders with its Reports (ADR-0005), at the time `clock` reads once the lock
 // is held. Drift is one Condition per path. It is left as it is while the
-// System's checks or records are absent or over budget, since neither says what
-// the files are now, and for the paths of a record the checks did not judge as
-// the Hub mirrors it.
+// System's checks are absent or over budget, or its records are, since neither
+// says what the files are now, for the paths of a record the checks did not
+// judge as the Hub mirrors it, and while any files record is unreadable. Checks
+// over budget judge no record, so only a path no record names is cleared.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -157,7 +158,6 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     if (
       held === undefined ||
       checkSet === undefined ||
-      checkSet.over_budget_bytes !== null ||
       recordSet === undefined ||
       recordSet.over_budget_bytes !== null
     ) {
@@ -168,6 +168,8 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     if (!files.success || !fileRecords.success) {
       return;
     }
+    // Checks over budget list no files and judge no record.
+    const judgedBy = checkSet.over_budget_bytes === null ? fileRecords.data : [];
     const mirrored: MirroredRow[] = await tx`
       SELECT name, record FROM mirrored_records WHERE system = ${system} AND kind = 'files'
     `;
@@ -178,20 +180,24 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     const { records, unreadable } = await readRecords(recordSet, mirrored);
     const verdicts = verdictsOf({
       files: files.data,
-      judged: new Map(fileRecords.data.map((entry) => [entry.record, entry.digest])),
+      judged: new Map(judgedBy.map((entry) => [entry.record, entry.digest])),
       records,
     });
     // Drift for a path no files record names any more is cleared, which is how
-    // a forgotten record clears its Drift, unless some record is unreadable and
-    // might still name the path.
+    // a forgotten record clears its Drift.
     for (const { subject } of open) {
       if (!verdicts.has(subject)) {
-        verdicts.set(subject, unreadable ? 'unknown' : 'clear');
+        verdicts.set(subject, 'clear');
       }
     }
 
     const at = new Date(now);
     for (const [subject, verdict] of verdicts) {
+      // An unreadable record may name any path, so nothing is cleared while one
+      // exists; a path can still be raised.
+      if (verdict === 'clear' && unreadable) {
+        continue;
+      }
       if (verdict === 'clear') {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await clear(tx, { kind: DRIFT, now: at, subject, system });
