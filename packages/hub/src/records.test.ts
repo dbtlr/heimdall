@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { RecordsReadSchema } from '@heimdall/schema';
+import { MAX_REPORT_BYTES, RecordsReadSchema } from '@heimdall/schema';
 import type {
   JobRecord,
   JobRuns,
@@ -9,7 +9,6 @@ import type {
   ServiceRecord,
 } from '@heimdall/schema';
 
-import { MAX_REPORT_BYTES } from './hub.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { listSystems, storeReport } from './store.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
@@ -518,6 +517,15 @@ describe('the time zone a Report carries', () => {
     await send(h, { timeZone: 'Europe/Berlin' });
 
     expect(await entryOf(h)).toMatchObject({ timeZone: 'Europe/Berlin' });
+  });
+
+  test('that the Hub cannot read costs no Report, and the Hub keeps the zone it holds', async () => {
+    await using h = await startHub();
+    await send(h, { timeZone: 'America/New_York' });
+
+    await send(h, { sentAt: NOW + 60_000, timeZone: 'America/New York' });
+
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
   });
 });
 

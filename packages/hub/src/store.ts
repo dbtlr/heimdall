@@ -48,7 +48,8 @@ export const storeReport = (
         collector_version = excluded.collector_version,
         collector_platform = excluded.collector_platform,
         collector_arch = excluded.collector_arch,
-        -- A Report without a zone leaves the one the System has.
+        -- A Report without a zone leaves the one the System has. The last Report to
+        -- arrive wins, which is fine with one Collector per System.
         time_zone = COALESCE(excluded.time_zone, systems.time_zone)
     `;
     // The samples travel as one JSON parameter, so a Report of any size is one

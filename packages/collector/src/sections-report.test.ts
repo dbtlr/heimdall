@@ -10,9 +10,9 @@ import { sample } from '@heimdall/schema/testing';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
-import { createSectionsReporter, RECORDS_REFRESH_MS } from './records-report.ts';
 import { openRecords } from './records.ts';
 import type { RecordStore } from './records.ts';
+import { createSectionsReporter, SECTIONS_REFRESH_MS } from './sections-report.ts';
 import { NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
@@ -225,7 +225,7 @@ test('an hour after the last delivered set, the set is sent again though unchang
   const collector = await setup(dir);
   await collector.push();
 
-  collector.advance(RECORDS_REFRESH_MS - 1);
+  collector.advance(SECTIONS_REFRESH_MS - 1);
   const justBefore = await collector.push();
   collector.advance(1);
   const atTheHour = await collector.push();
@@ -264,7 +264,7 @@ test('a rejected Report counts both sections as sent and logs each once, and the
 
   const rejected = await collector.push();
   const next = await collector.push();
-  collector.advance(RECORDS_REFRESH_MS);
+  collector.advance(SECTIONS_REFRESH_MS);
   const hourly = await collector.push();
   collector.close();
 
@@ -592,7 +592,7 @@ test('an hour after the last delivered runs, they are sent again though unchange
   const collector = await setup(dir);
   await collector.push();
 
-  collector.advance(RECORDS_REFRESH_MS - 1);
+  collector.advance(SECTIONS_REFRESH_MS - 1);
   const justBefore = await collector.push();
   collector.advance(1);
   const atTheHour = await collector.push();
@@ -740,4 +740,126 @@ test('runs that cannot be queried cost the sections only, and the Vitals still g
   expect(report?.runs).toBeUndefined();
   expect(collector.warnings).toHaveLength(1);
   expect(collector.warnings[0]).toContain('index gone');
+});
+
+test('a change detected after a delivery stays pending when its delivery fails, and is offered again', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  await collector.push();
+  await elsewhere(dir.path, (other) => other.put('application', webapp));
+  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
+
+  const failed = await collector.push();
+  const retried = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  const changed = { records: [{ kind: 'application', name: 'webapp', record: webapp }] };
+  expect(failed[0]?.records).toMatchObject(changed);
+  expect(retried[0]?.records).toMatchObject(changed);
+  expect(after[0]?.records).toBeUndefined();
+});
+
+test('a store that has not changed is not read again', async () => {
+  await using dir = await tempStateDir();
+  const reads = { latestRuns: 0, readRecords: 0 };
+  const collector = await setup(dir, {
+    open: async () => {
+      const store = await openRecords({ stateDir: dir.path });
+      return {
+        ...store,
+        latestRuns: () => {
+          reads.latestRuns += 1;
+          return store.latestRuns();
+        },
+        readRecords: () => {
+          reads.readRecords += 1;
+          return store.readRecords();
+        },
+      };
+    },
+  });
+
+  await collector.push();
+  await collector.push();
+  await collector.push();
+  collector.close();
+
+  expect(reads).toEqual({ latestRuns: 1, readRecords: 1 });
+});
+
+test('a store that was closed and opened again is read again, whatever its version', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    open: async () => ({ ...(await openRecords({ stateDir: dir.path })), version: () => 1 }),
+  });
+  await collector.push();
+  collector.reporter.close();
+  await elsewhere(dir.path, (other) => other.put('application', webapp));
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.records).toMatchObject({ records: [{ name: 'webapp' }] });
+});
+
+test('a job whose name the section cannot carry is left out of the unreadable jobs too', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  const ran = minutesAgo(10);
+  seed.put('job', cron);
+  seed.putRun('backup', ran);
+  seed.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  db.query(
+    'INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES ($job, $started, $startedMs, 0, $body)',
+  ).run({
+    $body: '{not json',
+    $job: 'has space',
+    $started: ran.started,
+    $startedMs: Date.parse(ran.started),
+  });
+  db.close();
+  const collector = await setup(dir);
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(RunsSectionSchema.safeParse(report?.runs).success).toBe(true);
+  expect(report?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
+    unreadable: [],
+  });
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('has space');
+});
+
+test('a store that fails again after it recovered is warned about again', async () => {
+  await using dir = await tempStateDir();
+  let broken = true;
+  const collector = await setup(dir, {
+    open: async () => {
+      const store = await openRecords({ stateDir: dir.path });
+      return {
+        ...store,
+        version: () => {
+          if (broken) {
+            throw new Error('disk gone');
+          }
+          return store.version();
+        },
+      };
+    },
+  });
+
+  await collector.push();
+  await collector.push();
+  broken = false;
+  const recovered = await collector.push();
+  broken = true;
+  await collector.push();
+  collector.close();
+
+  expect(recovered[0]?.records).toEqual({ records: [], unreadable: [] });
+  expect(collector.warnings).toHaveLength(2);
 });

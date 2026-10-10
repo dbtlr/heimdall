@@ -53,9 +53,12 @@ describe('a Report', () => {
   );
 
   test.each(['', 'America/New York', 'Europe/Paris\n', 'x'.repeat(65)])(
-    'refuses %j as a time zone',
+    'drops %j as a time zone, and the Report still parses',
     (timeZone) => {
-      expect(ReportSchema.safeParse(report({ timeZone })).success).toBe(false);
+      const parsed = ReportSchema.safeParse(report({ timeZone }));
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.timeZone).toBeUndefined();
     },
   );
 

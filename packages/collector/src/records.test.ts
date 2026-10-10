@@ -226,6 +226,27 @@ test('latestRuns names a job whose latest run or latest success it cannot read, 
   });
 });
 
+test('latestRuns names a job whose latest success it cannot read, though its latest run reads', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(1));
+  store.putRun('backup', run(2, 1));
+  store.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  db.query('UPDATE runs SET body = $body WHERE started = $started').run({
+    $body: '{not json',
+    $started: run(1).started,
+  });
+  db.close();
+
+  const reopened = await openRecords({ stateDir: dir.path });
+  const latest = reopened.latestRuns();
+  reopened.close();
+
+  expect(latest).toEqual({ jobs: [], unreadable: ['backup'] });
+});
+
 test('latestRuns and readRecords read no run beyond the latest ones', async () => {
   await using dir = await tempStateDir();
   const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });

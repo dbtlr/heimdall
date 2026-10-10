@@ -2,6 +2,7 @@ import { promisify } from 'node:util';
 import { gunzip as gunzipCallback } from 'node:zlib';
 
 import {
+  MAX_REPORT_BYTES,
   MAX_TRANSCRIPT_CHUNK_BYTES,
   MAX_TRANSCRIPT_REQUEST_BYTES,
   OpenGenerationSchema,
@@ -39,12 +40,6 @@ export type HubDependencies = {
 
 // RFC 9110 reads the scheme name in any case.
 const BEARER = /^Bearer +(?<token>\S+)$/iu;
-
-// The largest Report body the Hub reads. It fits the 8 MiB a Collector may
-// spend on its record set plus a full batch of samples: the schema's 1,000
-// samples, each with several disks, come to about 1.5 MB. A larger body is a
-// Collector bug.
-export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
 
 // The largest Pairing request body the Hub reads; `{"code":"XXXX-XXXX"}` is 20 bytes.
 const MAX_PAIR_BYTES = 1024;

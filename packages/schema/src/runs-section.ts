@@ -4,10 +4,10 @@ import { RECORD_NAME, REPORTED_RUN_SCHEMA } from './records.ts';
 import type { RunRecord } from './records.ts';
 import { bytes } from './values.ts';
 
-// The most bytes of JSON a Collector's runs section may take in a Report. With
-// the record set's 8 MiB and a full batch of samples, a Report stays under the
-// Hub's 12 MiB cap. Runs over it travel as a marker.
-export const MAX_RUNS_SECTION_BYTES = 2 * 1024 * 1024;
+// The most bytes of JSON a Collector's runs section may take in a Report. Two
+// runs per job come to about 300 bytes, so 1 MiB holds the runs of thousands of
+// jobs. Runs over it travel as a marker.
+export const MAX_RUNS_SECTION_BYTES = 1024 * 1024;
 
 const jobName = z.string().regex(RECORD_NAME);
 

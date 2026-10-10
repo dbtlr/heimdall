@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 
-import { MAX_SAMPLES_PER_REPORT } from '@heimdall/schema';
+import { MAX_REPORT_BYTES, MAX_SAMPLES_PER_REPORT } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 import { SQL } from 'bun';
 
 import packageJson from '../package.json' with { type: 'json' };
-import { MAX_REPORT_BYTES, createHub } from './hub.ts';
+import { createHub } from './hub.ts';
 import { listSystems } from './store.ts';
 import { NOW, page, push, report, silentServer, startHub } from './testing/hub.ts';
 

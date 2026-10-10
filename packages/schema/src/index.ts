@@ -1,4 +1,5 @@
 export {
+  MAX_REPORT_BYTES,
   MAX_SAMPLES_PER_REPORT,
   REPORT_SCHEMA_VERSION,
   ReportSchema,

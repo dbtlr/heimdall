@@ -10,7 +10,7 @@ import type { RecordStore } from './records.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
 // restored from backup gets the System's records and runs back (ADR-0011).
-export const RECORDS_REFRESH_MS = 60 * 60_000;
+export const SECTIONS_REFRESH_MS = 60 * 60_000;
 
 const MAX_KIND_LENGTH = 64;
 const MAX_LISTED_ROWS = 5;
@@ -154,8 +154,9 @@ const createSectionState = <Section>({
 //
 // The store is opened on the first call that needs it, and again on each call
 // until it opens, so a database that cannot be opened costs the sections, never
-// the daemon. The connection is one this reporter alone keeps open and never
-// writes through, so its `version` moves only when another process commits. A
+// the daemon. The connection is one this reporter alone keeps open, and the
+// only write it makes is opening the store, which may create the run indexes
+// once, so its `version` moves only when another process commits. A
 // version change costs one read of the records and one query for the latest
 // runs, never a parse of every run, and a section is sent only when its digest
 // differs from the last one settled, so recording the same content again sends
@@ -166,7 +167,7 @@ export const createSectionsReporter = ({
   maxRunsBytes = MAX_RUNS_SECTION_BYTES,
   now,
   open,
-  refreshMs = RECORDS_REFRESH_MS,
+  refreshMs = SECTIONS_REFRESH_MS,
 }: {
   log: Log;
   maxRecordsBytes?: number;
@@ -212,6 +213,8 @@ export const createSectionsReporter = ({
     close: () => {
       store?.close();
       store = undefined;
+      // A store opened again may carry a version this one never saw.
+      seenVersion = undefined;
     },
     // A store that cannot be opened or read costs the sections, never the
     // Vitals, and is warned about once until it works again.
@@ -222,7 +225,7 @@ export const createSectionsReporter = ({
         return next;
       } catch (error) {
         if (!failing) {
-          log.warn(`Could not read the records to report: ${describeError(error)}`);
+          log.warn(`Could not read the records and runs to report: ${describeError(error)}`);
         }
         failing = true;
         return {};

@@ -1,6 +1,11 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 
-import { ReportSchema } from '@heimdall/schema';
+import {
+  MAX_RECORDS_SECTION_BYTES,
+  MAX_REPORT_BYTES,
+  MAX_RUNS_SECTION_BYTES,
+  ReportSchema,
+} from '@heimdall/schema';
 import type { Report, TranscriptsSection } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
@@ -102,6 +107,12 @@ const scriptedHub = (outcomes: Delivery[]) => {
     return Promise.resolve<Delivery>(outcomes.shift() ?? { kind: 'delivered' });
   };
   return { reports, send };
+};
+
+// Rows of about 1 KiB of JSON each, enough of them to fill a section to `bytes`.
+const refs = (bytes: number) => {
+  const name = 'n'.repeat(1000);
+  return Array.from({ length: Math.floor(bytes / 1100) }, () => ({ kind: 'service', name }));
 };
 
 const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
@@ -270,6 +281,97 @@ describe('flushing the queue', () => {
       [false, false],
     ]);
     expect(settled).toEqual(['delivered']);
+    queue.close();
+  });
+
+  // 1,000 samples of 60 disks each, with the largest sections a Collector may
+  // send, come to more than the Hub reads.
+  test('a Report that would exceed the Hub cap goes without its sections, which stay pending for a smaller one', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 2000, stateDir: dir.path });
+    const disks = Array.from({ length: 60 }, (_, i) => ({
+      mount: `/mnt/disk-${String(i)}`,
+      totalBytes: 994_662_584_320,
+      usedBytes: 412_316_860_416,
+    }));
+    for (let t = 1; t <= 1001; t += 1) {
+      queue.append({ ...sample(t), disks });
+    }
+    const hub = scriptedHub([]);
+    const settled: string[] = [];
+    let asked = 0;
+    const sections = {
+      pending: () => {
+        asked += 1;
+        return Promise.resolve({
+          records: {
+            section: { records: [], unreadable: refs(MAX_RECORDS_SECTION_BYTES) },
+            settle: () => settled.push('records'),
+          },
+          runs: {
+            section: { jobs: [], unreadable: refs(MAX_RUNS_SECTION_BYTES).map(({ name }) => name) },
+            settle: () => settled.push('runs'),
+          },
+        });
+      },
+    };
+
+    await flushQueue({
+      identity,
+      now: () => 9000,
+      queue,
+      sections,
+      send: hub.send,
+      timeZone: NO_TIME_ZONE,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    const sizes = hub.reports.map((r) => Buffer.byteLength(JSON.stringify(r)));
+    expect(hub.reports.map((r) => r.samples.length)).toEqual([1000, 1]);
+    expect(hub.reports.map((r) => [r.records !== undefined, r.runs !== undefined])).toEqual([
+      [false, false],
+      [true, true],
+    ]);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(MAX_REPORT_BYTES);
+    expect(asked).toBe(1);
+    expect(settled).toEqual(['records', 'runs']);
+    queue.close();
+  });
+
+  test('a section a Report is too large to carry is not settled', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    queue.append(sample(1000));
+    const hub = scriptedHub([]);
+    const settled: string[] = [];
+    const sections = {
+      pending: () =>
+        Promise.resolve({
+          records: {
+            section: {
+              records: [],
+              unreadable: Array.from({ length: 14_000 }, () => ({
+                kind: 'service',
+                name: 'n'.repeat(1000),
+              })),
+            },
+            settle: () => settled.push('records'),
+          },
+        }),
+    };
+
+    await flushQueue({
+      identity,
+      now: () => 9000,
+      queue,
+      sections,
+      send: hub.send,
+      timeZone: NO_TIME_ZONE,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    expect(hub.reports.map((r) => r.records)).toEqual([undefined]);
+    expect(settled).toEqual([]);
     queue.close();
   });
 

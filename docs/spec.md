@@ -90,13 +90,15 @@ A new field reaches the dashboard only when every layer knows it, so the Hub is 
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.
 
-The Collector sends its jobs' latest runs in a Report's `runs` section when it starts, when a `record run` or `forget` changes them, and an hour after the Hub last answered a Report carrying them, so recording a run does not resend the record set. For each job that has reported a run, the section carries its latest run and its latest successful run, which may be the same run, or `null` when none of the runs the Collector keeps succeeded. A job whose latest run or latest success the Collector cannot read is listed by name as unreadable. Runs whose JSON is larger than 2 MiB are sent as their size alone. Every Report also carries the System's IANA time zone, such as `America/New_York`, in which its jobs' schedules are read.
+The Collector sends its jobs' latest runs in a Report's `runs` section when it starts, when a `record run` or `forget` changes them, and an hour after the Hub last answered a Report carrying them, so recording a run does not resend the record set. For each job that has reported a run, the section carries its latest run and its latest successful run, which may be the same run, or `null` when none of the runs the Collector keeps succeeded. A job whose latest run or latest success the Collector cannot read is listed by name as unreadable. Runs whose JSON is larger than 1 MiB are sent as their size alone.
 
-If the Hub refuses a Report carrying the set or the runs, the Collector sends the same samples again without them, so neither ever costs Vitals.
+Every Report also carries the System's IANA time zone, such as `America/New_York`, in which its jobs' schedules are read. The Collector reads it on each Report from the zone `/etc/localtime` names, which is where systemd and macOS record the zone their schedulers follow, so a change of zone shows in the next Report. A Report carries no zone when `/etc/localtime` names none.
+
+If the Hub refuses a Report carrying the set or the runs, the Collector sends the same samples again without them, so neither ever costs Vitals, and offers both again an hour later. A Report that would be too large for the Hub with them is sent without them, and they ride a later, smaller Report.
 
 The Hub replaces the System's mirror with each set, so a forgotten record leaves the mirror, and replaces the System's latest runs with each runs section in the same way. It ignores a section sent earlier than the one it holds, unless the held one claims a time later than the Hub's own clock. A Report without a section leaves what the Hub holds for it unchanged, and one without a time zone keeps the zone the Hub holds.
 
-The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives. The shapes are in `packages/schema/src/records-section.ts` and `packages/schema/src/runs-section.ts`.
+The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives; runs over budget likewise leave it no jobs. The Hub ignores a time zone it does not accept and keeps the one it holds. The shapes are in `packages/schema/src/records-section.ts` and `packages/schema/src/runs-section.ts`.
 
 `GET /api/v1/records` returns every System's records, with the same trust as the dashboard. The answer lists each System the dashboard shows, sorted by name, in one of three forms:
 
@@ -115,12 +117,12 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
   {"system": "build-1", "timeZone": "UTC",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
    "overBudget": {"bytes": 9437184},
-   "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 2621440}}},
+   "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
   {"system": "laptop-1", "timeZone": null, "records": null, "runs": null}
 ]}
 ```
 
-`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records or runs are unknown, not empty. Records are sorted by kind, then name, and jobs' runs by job. Times are UTC in ISO 8601.
+`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records or runs are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` carries its own. Records are sorted by kind, then name, and jobs' runs by job. Times are UTC in ISO 8601.
 
 ## Agent Session transcripts
 
