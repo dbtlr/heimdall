@@ -4,6 +4,8 @@ import type { ServiceRecord } from '@heimdall/schema';
 import type { HttpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
+import { checkContainer, dockerEndpoint } from './docker.ts';
+import type { DockerTools } from './docker.ts';
 import { checkHealth } from './health.ts';
 import { launchdOutcome } from './launchd.ts';
 import { supervisorOutcome } from './outcome.ts';
@@ -13,9 +15,11 @@ export type { ServiceOutcome } from './outcome.ts';
 
 // What a check needs from the System: a way to run a command and the absolute
 // path of systemctl, or undefined when this System has none, the id of the
-// account the Collector runs as, which names its launchd gui domain, and a way
-// to GET over HTTP.
+// account the Collector runs as, which names its launchd gui domain, a way to
+// GET over HTTP, and optionally where the Docker Engine is, which is the
+// account's own Engine when not given.
 export type ServiceTools = {
+  docker?: DockerTools;
   httpGet: HttpGet;
   run: (cmd: readonly string[]) => Promise<CommandResult>;
   systemctl: string | undefined;
@@ -139,8 +143,16 @@ const systemdOutcome = async (
     : unreachable(result.stderr, result.exitCode);
 };
 
-// The supervisor check of a Service, by the supervisor that runs it. Checks for
-// docker join here as they are built.
+// Asks the Docker Engine whether a container is running.
+const dockerOutcome = async (container: string, { docker }: ServiceTools) => {
+  const { detail, state } = await checkContainer(
+    container,
+    docker ?? { endpoint: dockerEndpoint() },
+  );
+  return supervisorOutcome(state, detail);
+};
+
+// The supervisor check of a Service, by the supervisor that runs it.
 const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<ServiceOutcome> => {
   switch (record.supervisor) {
     case 'systemd': {
@@ -152,7 +164,9 @@ const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<Se
     case 'launchd': {
       return launchdOutcome(tools, record.label);
     }
-    case 'docker':
+    case 'docker': {
+      return dockerOutcome(record.container, tools);
+    }
     case 'none': {
       return Promise.resolve(supervisorOutcome('unchecked', `${record.supervisor} is not checked`));
     }

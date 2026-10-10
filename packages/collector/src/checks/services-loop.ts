@@ -8,6 +8,7 @@ import type { RecordStore } from '../records.ts';
 import { describeRows } from '../sections-report.ts';
 import { runCommand } from '../subprocess.ts';
 import type { CheckParts } from './parts.ts';
+import { dockerEndpoint } from './docker.ts';
 import { checkService, findSystemctl } from './services.ts';
 import type { ServiceTools } from './services.ts';
 
@@ -84,6 +85,7 @@ const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
 // answers the part, or undefined before the first tick finishes and while the
 // last tick failed. `tick` never throws.
 export const createServiceChecks = ({
+  docker,
   findSystemctl: locateSystemctl = findSystemctl,
   httpGet = defaultHttpGet,
   log,
@@ -91,6 +93,7 @@ export const createServiceChecks = ({
   open,
   run = runCommand,
 }: {
+  docker?: ServiceTools['docker'];
   findSystemctl?: () => Promise<string | undefined>;
   httpGet?: ServiceTools['httpGet'];
   log: Log;
@@ -113,7 +116,13 @@ export const createServiceChecks = ({
       );
     }
     warnedAbout = warning;
-    const tools = { httpGet, run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
+    const tools: ServiceTools = {
+      ...(docker === undefined ? {} : { docker }),
+      httpGet,
+      run,
+      systemctl: await locateSystemctl(),
+      uid: process.getuid?.(),
+    };
     const checkedAt = now();
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.

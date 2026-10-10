@@ -43,6 +43,7 @@ const setup = async (
   const states = new Map<string, string>();
   let now = START;
   const checks = createServiceChecks({
+    docker: { endpoint: { host: 'tcp://127.0.0.1:1', kind: 'unsupported' } },
     findSystemctl: () => Promise.resolve('/usr/bin/systemctl'),
     ...(httpGet === undefined ? {} : { httpGet }),
     log: { info: () => 0, warn: (m) => warnings.push(m) },
@@ -295,6 +296,21 @@ test('a service whose supervisor is not checked yet is unchecked', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
   await c.elsewhere((store) =>
+    store.put('service', { label: 'com.example.web', name: 'web', supervisor: 'launchd' }),
+  );
+
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(c.checks.latest()).toEqual({
+    services: [sent('web', 'unchecked', 'launchd is not checked', START)],
+  });
+});
+
+test('a docker service is checked through the Docker endpoint', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.elsewhere((store) =>
     store.put('service', { container: 'web', name: 'web', supervisor: 'docker' }),
   );
 
@@ -302,7 +318,7 @@ test('a service whose supervisor is not checked yet is unchecked', async () => {
   c.checks.close();
 
   expect(c.checks.latest()).toEqual({
-    services: [sent('web', 'unchecked', 'docker is not checked', START)],
+    services: [sent('web', 'unknown', 'DOCKER_HOST is not a unix socket', START)],
   });
 });
 

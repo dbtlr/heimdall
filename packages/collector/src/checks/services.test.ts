@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
 
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceRecord } from '@heimdall/schema';
@@ -6,9 +7,13 @@ import { httpGet } from '@heimdall/service';
 import type { HttpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
+import { tempStateDir } from '../testing/fixtures.ts';
 import { checkService, findSystemctl } from './services.ts';
 
 const SYSTEMCTL = '/usr/bin/systemctl';
+
+// A Docker endpoint these tests never reach: a Docker Service is tested apart.
+const UNREACHABLE_DOCKER = { host: 'tcp://127.0.0.1:1', kind: 'unsupported' } as const;
 
 const WEB: ServiceRecord = { name: 'web', supervisor: 'systemd', unit: 'web.service' };
 const WEB_USER: ServiceRecord = { name: 'web', supervisor: 'systemd-user', unit: 'web.service' };
@@ -46,6 +51,7 @@ const check = async (
       ran.push([...cmd]);
       return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
     },
+    docker: { endpoint: UNREACHABLE_DOCKER },
     systemctl: 'systemctl' in options ? options.systemctl : SYSTEMCTL,
   });
   return { outcomes, ran };
@@ -254,7 +260,6 @@ describe('a systemd-user Service', () => {
 
 describe('a Service whose supervisor this Collector does not check yet', () => {
   test.each([
-    ['docker', { container: 'web', name: 'web', supervisor: 'docker' }],
     ['none', { name: 'web', supervisor: 'none' }],
   ] as const)('is unchecked under %s, not down, and nothing is run', async (supervisor, record) => {
     const { outcomes, ran } = await check(record, shown({ active: 'failed' }));
@@ -263,6 +268,46 @@ describe('a Service whose supervisor this Collector does not check yet', () => {
       { check: 'supervisor', detail: `${supervisor} is not checked`, state: 'unchecked' },
     ]);
     expect(ran).toEqual([]);
+  });
+});
+
+describe('a docker Service', () => {
+  const WEB_CONTAINER: ServiceRecord = { container: 'web', name: 'web', supervisor: 'docker' };
+
+  test('is checked through the Docker endpoint, and runs no command', async () => {
+    const ran: string[][] = [];
+    const outcomes = await checkService(WEB_CONTAINER, {
+      docker: { endpoint: UNREACHABLE_DOCKER },
+      run: (cmd) => {
+        ran.push([...cmd]);
+        return Promise.reject(new Error('no command expected'));
+      },
+      systemctl: SYSTEMCTL,
+    });
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'DOCKER_HOST is not a unix socket', state: 'unknown' },
+    ]);
+    expect(ran).toEqual([]);
+  });
+
+  test('is stopped when the container is gone, as a supervisor check', async () => {
+    await using dir = await tempStateDir();
+    const unix = join(dir.path, 'docker.sock');
+    const server = Bun.serve({ fetch: () => new Response('{}', { status: 404 }), unix });
+    try {
+      const outcomes = await checkService(WEB_CONTAINER, {
+        docker: { endpoint: { kind: 'unix', path: unix } },
+        run: () => Promise.reject(new Error('no command expected')),
+        systemctl: undefined,
+      });
+
+      expect(outcomes).toEqual([
+        { check: 'supervisor', detail: 'no such container', state: 'stopped' },
+      ]);
+    } finally {
+      await server.stop(true);
+    }
   });
 });
 
