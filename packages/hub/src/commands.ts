@@ -2,9 +2,8 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { SQL } from 'bun';
 
 import { openDatabase } from './database.ts';
+import { describeError } from './errors.ts';
 import { migrate } from './migrations.ts';
-
-const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // The parts of a Loom action context the commands use.
 type Context = {

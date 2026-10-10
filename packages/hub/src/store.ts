@@ -1,5 +1,6 @@
 import { mirrorRecords, mirrorRuns } from '@heimdall/schema';
 import type {
+  RecordRef,
   RecordsSection,
   Report,
   RunsSection,
@@ -220,6 +221,38 @@ const storeRecords = async (
     SELECT ${report.system}, r->>'kind', r->>'name', r->'record'
     FROM jsonb_array_elements(${storableJson(records)}::text::jsonb) AS r
   `;
+  if (overBudget === null) {
+    await trackFirstMirrored(sql, { receivedAt, records, system: report.system, unreadable });
+  }
+};
+
+// Keeps when the Hub first mirrored each record of a set that fit: a record
+// the set leaves out is forgotten, one it lists as unreadable is still on the
+// System and keeps its time, and one mirrored for the first time starts now.
+const trackFirstMirrored = async (
+  sql: SQL,
+  {
+    receivedAt,
+    records,
+    system,
+    unreadable,
+  }: { receivedAt: Date; records: RecordRef[]; system: string; unreadable: RecordRef[] },
+) => {
+  const held = storableJson([...records, ...unreadable].map(({ kind, name }) => ({ kind, name })));
+  await sql`
+    DELETE FROM records_first_mirrored f
+    WHERE f.system = ${system}
+      AND NOT EXISTS (
+        SELECT FROM jsonb_array_elements(${held}::text::jsonb) AS r
+        WHERE r->>'kind' = f.kind AND r->>'name' = f.name
+      )
+  `;
+  await sql`
+    INSERT INTO records_first_mirrored (system, kind, name, first_mirrored_at)
+    SELECT ${system}, r->>'kind', r->>'name', ${receivedAt}
+    FROM jsonb_array_elements(${storableJson(records.map(({ kind, name }) => ({ kind, name })))}::text::jsonb) AS r
+    ON CONFLICT (system, kind, name) DO NOTHING
+  `;
 };
 
 // Replaces the System's latest runs with a Report's, unless the Hub holds runs
@@ -260,9 +293,10 @@ const storeRuns = async (
   `;
 };
 
-// The kinds of Condition the Hub derives. M4 adds Service, job, Drift, and
-// stale-System Conditions to the same Timeline.
-export type ConditionKind = 'reports_rejected';
+// The kinds of Condition the Hub derives. M4 adds Service, Drift, and
+// stale-System Conditions to the same Timeline. A job Condition's subject is
+// the job's name.
+export type ConditionKind = 'job_failing' | 'job_overdue' | 'reports_rejected';
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';
 
@@ -287,14 +321,20 @@ export const recordRejection = (
     `;
   });
 
-// A Condition that is raised now, with when it was raised and its latest reason.
-export type OpenCondition = { kind: ConditionKind; raisedAt: number; reason: string };
+// A Condition that is raised now, with what it is about, when it was raised,
+// and its latest reason. The subject is empty for a Condition about the System.
+export type OpenCondition = {
+  kind: ConditionKind;
+  raisedAt: number;
+  reason: string;
+  subject: string;
+};
 
 // One line of a System's Timeline: a Condition raised, with the reason it was
 // raised for, or cleared.
 export type TimelineEntry =
-  | { at: number; condition: ConditionKind; kind: 'raised'; reason: string }
-  | { at: number; condition: ConditionKind; kind: 'cleared' };
+  | { at: number; condition: ConditionKind; kind: 'raised'; reason: string; subject: string }
+  | { at: number; condition: ConditionKind; kind: 'cleared'; subject: string };
 
 // One System as the page shows it: when the Hub last heard from it, its open
 // Conditions and its Timeline, newest Condition first, and, once a Report from it is
@@ -335,10 +375,17 @@ type ConditionRow = {
   kind: ConditionKind;
   raised_at: Date;
   raised_reason: string;
+  subject: string;
   system: string;
 };
 
-type OpenRow = { kind: ConditionKind; latest_reason: string; raised_at: Date; system: string };
+type OpenRow = {
+  kind: ConditionKind;
+  latest_reason: string;
+  raised_at: Date;
+  subject: string;
+  system: string;
+};
 
 // The Collector build and newest sample of a System with a stored Report.
 const reportedOf = (row: SystemRow): SystemSummary['reported'] => {
@@ -373,10 +420,19 @@ const timelineOf = (row: ConditionRow): TimelineEntry[] => {
     condition: row.kind,
     kind: 'raised',
     reason: row.raised_reason,
+    subject: row.subject,
   };
   return row.cleared_at === null
     ? [raised]
-    : [{ at: row.cleared_at.getTime(), condition: row.kind, kind: 'cleared' }, raised];
+    : [
+        {
+          at: row.cleared_at.getTime(),
+          condition: row.kind,
+          kind: 'cleared',
+          subject: row.subject,
+        },
+        raised,
+      ];
 };
 
 // Every System the Hub has heard from, by name. One read-only snapshot keeps
@@ -396,14 +452,14 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
     `;
     // Status reads every open Condition, however far back the Timeline's cap reaches.
     const open: OpenRow[] = await tx`
-      SELECT system, kind, raised_at, latest_reason FROM conditions
+      SELECT system, kind, subject, raised_at, latest_reason FROM conditions
       WHERE cleared_at IS NULL
       ORDER BY raised_at, id
     `;
     // Latest by arrival: ids are assigned under the System's row lock, so
     // they order Conditions even when the Hub clock steps back.
     const recent: ConditionRow[] = await tx`
-      SELECT system, kind, raised_at, raised_reason, cleared_at
+      SELECT system, kind, subject, raised_at, raised_reason, cleared_at
       FROM (
         SELECT *, row_number() OVER (PARTITION BY system ORDER BY id DESC) AS n
         FROM conditions
@@ -414,7 +470,12 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
     return systems.map((row) => ({
       conditions: open
         .filter((c) => c.system === row.name)
-        .map((c) => ({ kind: c.kind, raisedAt: c.raised_at.getTime(), reason: c.latest_reason })),
+        .map((c) => ({
+          kind: c.kind,
+          raisedAt: c.raised_at.getTime(),
+          reason: c.latest_reason,
+          subject: c.subject,
+        })),
       lastSeenAt: row.last_seen_at.getTime(),
       name: row.name,
       reported: reportedOf(row),

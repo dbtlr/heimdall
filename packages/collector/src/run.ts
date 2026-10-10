@@ -1,5 +1,6 @@
 import { arch } from 'node:os';
 
+import { SAMPLE_INTERVAL_MS } from '@heimdall/schema';
 import { homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
@@ -7,7 +8,7 @@ import type { ActionHandler } from '@loomcli/core';
 
 import packageJson from '../package.json' with { type: 'json' };
 import type { run } from './application.ts';
-import { runCollector, SAMPLE_INTERVAL_MS } from './collector.ts';
+import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { readIdentity } from './identity.ts';

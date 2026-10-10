@@ -33,7 +33,7 @@ A long-running program a provisioner recorded, with its supervisor, its unit, la
 _Avoid_: daemon, process
 
 **job**:
-A scheduled program a provisioner recorded, with its scheduler and schedule, such as a backup. It reports each run to the Collector, and the Hub judges whether it is failing or overdue.
+A scheduled program a provisioner recorded, with its scheduler and schedule, such as a backup. It reports each run to the Collector, and the Hub judges whether it is failing, because its latest run failed, or overdue, because its System was awake for the job's grace period after a scheduled time with no successful run since.
 _Avoid_: cron, task, Backup Job (a backup is a job whose runs report an output file)
 
 **Drift**:

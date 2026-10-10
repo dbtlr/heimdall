@@ -59,6 +59,9 @@ const entryKey = ({ day, hour, minute, month, weekday }: CalendarEntry) =>
 
 const MAX_SCHEDULE_ENTRIES = 100;
 
+// The longest grace period a job may take: a week of its System's awake time.
+const MAX_GRACE_MINUTES = 7 * 24 * 60;
+
 const MAX_PATH_BYTES = 4096;
 const MAX_FILES = 10_000;
 
@@ -113,6 +116,9 @@ const recordSchemas = (
   });
 
   const job = {
+    // The awake time the Hub waits after a scheduled time for a successful run
+    // before it raises job overdue; it waits an hour when this is left out.
+    graceMinutes: z.int().min(1).max(MAX_GRACE_MINUTES).optional(),
     name,
     provenance,
     schedule: z

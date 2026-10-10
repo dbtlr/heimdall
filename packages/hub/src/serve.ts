@@ -7,16 +7,17 @@ import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
 import { openDatabase } from './database.ts';
+import { describeError } from './errors.ts';
 import { createHub } from './hub.ts';
+import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate } from './migrations.ts';
 import { pruneVitals } from './retention.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
+const JOB_CONDITIONS_INTERVAL_MS = 60_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
-
-const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // `heimdall-hub serve`: brings the database to the latest schema, then accepts
 // Reports and serves the page until systemd or a terminal stops it. Its runtime
@@ -73,8 +74,10 @@ const serveUntilStopped = async ({
       sql,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
-    // Pruning is routine, so only a failure is logged, and the next hour tries again.
+    // Pruning and judging jobs are routine, so only a failure is logged, and
+    // the next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
+    let stopJudgingJobs: (() => Promise<void>) | undefined;
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
@@ -85,12 +88,20 @@ const serveUntilStopped = async ({
         },
         task: () => pruneVitals(sql, Date.now()),
       });
+      stopJudgingJobs = every({
+        intervalMs: JOB_CONDITIONS_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(clean(`Could not judge jobs: ${describeError(error)}`));
+        },
+        task: () => evaluateJobConditions(sql, Date.now),
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A prune still running must finish before the database closes.
+      // A prune or judgment still running must finish before the database closes.
       await stopPruning?.();
+      await stopJudgingJobs?.();
       await server.stop();
     }
   } finally {

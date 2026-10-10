@@ -679,7 +679,12 @@ test('migration 8 applies on top of version 7 and leaves a System with no time z
   );
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
 
-  expect(await migrate(db.sql)).toEqual([8]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 8),
+    ),
+  ).toEqual([8]);
 
   const rows = await db.sql`
     SELECT s.name, s.time_zone, r.system AS runs_system

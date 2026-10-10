@@ -13,6 +13,10 @@ export const REPORT_SCHEMA_VERSION = 1;
 // Fleet's System name: a DNS label, matching Fleet's own validation.
 export const SYSTEM_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
+// How often a Collector takes a Vitals sample while its System is awake. The
+// Hub counts a System's awake time from the samples it stored.
+export const SAMPLE_INTERVAL_MS = 15_000;
+
 // About four hours of 15-second samples. The Collector splits a longer
 // backlog into several Reports.
 export const MAX_SAMPLES_PER_REPORT = 1000;
