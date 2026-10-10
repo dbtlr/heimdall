@@ -60,9 +60,15 @@ const targetOf = (record: ServiceRecord) => {
 
 // Names one check of one Service as recorded: a Service recorded again under
 // another supervisor or target is a different Service to check, so it starts
-// a `since` of its own.
+// a `since` of its own, and so is a health check of another URL.
 const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
-  JSON.stringify([record.name, record.supervisor, targetOf(record), check]);
+  JSON.stringify([
+    record.name,
+    record.supervisor,
+    targetOf(record),
+    check,
+    check === 'health' ? (record.health ?? null) : null,
+  ]);
 
 // The checks of every Service the Collector's provisioner recorded, run on a
 // cadence of their own so a Service that stops is seen within a minute, however

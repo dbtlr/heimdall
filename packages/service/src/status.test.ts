@@ -192,3 +192,13 @@ test('spool words warn when content has waited more than a day for the Hub', () 
     '2.0 KiB waiting, oldest spooled 1 d ago; the Hub has not acknowledged it for over a day',
   );
 });
+
+const notReached = () => Promise.reject(new Error('not reached'));
+
+test.each([
+  'http://[fe80::1%eth0]:8080/api/health',
+  'http://bad host:8080/api/health',
+  'http://[::1:8080/api/health',
+])('a URL that cannot be requested, %s, is no answer rather than a thrown error', async (url) => {
+  expect(await probeHealth({ get: notReached, url })).toEqual({ kind: 'no answer' });
+});

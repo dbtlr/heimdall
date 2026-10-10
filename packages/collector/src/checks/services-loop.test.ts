@@ -434,3 +434,25 @@ test('the loop gives a health URL 5 seconds, reading no body', async () => {
     ],
   });
 });
+
+test('a service recorded again with another health URL starts a fresh since time for its health check only', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir, {
+    httpGet: () => Promise.resolve({ body: '', kind: 'response', status: 503, truncated: true }),
+  });
+  c.states.set('web.service', 'active');
+  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:8080/h' }));
+  await c.checks.tick();
+
+  c.advance(60_000);
+  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:9090/h' }));
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(c.checks.latest()).toEqual({
+    services: [
+      sent('web', 'up', 'ActiveState=active', START),
+      { ...sent('web', 'unhealthy', 'HTTP 503', START + 60_000), check: 'health' },
+    ],
+  });
+});

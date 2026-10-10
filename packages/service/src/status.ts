@@ -35,11 +35,13 @@ export const probeHealth = async ({
   timeoutMs?: number;
   url: string;
 }): Promise<HealthAnswer> => {
-  const result = await get(tcpTargetOf(url), { maxBodyBytes: MAX_HEALTH_BODY_BYTES, timeoutMs });
-  if (result.kind !== 'response' || (result.status !== 200 && result.status !== 503)) {
-    return { kind: 'no answer' };
-  }
   try {
+    // A configured host that makes no URL is no answer, like any other
+    // address that cannot be asked.
+    const result = await get(tcpTargetOf(url), { maxBodyBytes: MAX_HEALTH_BODY_BYTES, timeoutMs });
+    if (result.kind !== 'response' || (result.status !== 200 && result.status !== 503)) {
+      return { kind: 'no answer' };
+    }
     const body: unknown = JSON.parse(result.body);
     return isHealthBody(body)
       ? { database: body.database, kind: 'answered', version: body.version }
