@@ -163,8 +163,10 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     ) {
       return;
     }
-    const files = StoredFilesSchema.safeParse(checkSet.files);
-    const fileRecords = StoredFileRecordsSchema.safeParse(checkSet.file_records);
+    // A section with no files part, or a files part over budget, stores none,
+    // which lists no file and judges no record.
+    const files = StoredFilesSchema.safeParse(checkSet.files ?? []);
+    const fileRecords = StoredFileRecordsSchema.safeParse(checkSet.file_records ?? []);
     if (!files.success || !fileRecords.success) {
       return;
     }

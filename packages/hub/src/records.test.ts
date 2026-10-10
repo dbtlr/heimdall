@@ -782,6 +782,21 @@ describe('the checks a Report carries', () => {
     });
   });
 
+  test('read without files or hashed records when the section carries no files part, and with them empty when it carries an empty one', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { fileRecords: [{ digest: 'a'.repeat(64), record: 'a' }] } });
+    const absent = (await entryOf(h))?.checks;
+
+    await send(h, { checks: { files: [] }, sentAt: NOW + 1000 });
+    const empty = (await entryOf(h))?.checks;
+
+    expect(absent).toEqual({
+      receivedAt: new Date(NOW).toISOString(),
+      sentAt: new Date(NOW).toISOString(),
+    });
+    expect(empty).toMatchObject({ fileRecords: [], files: [] });
+  });
+
   test('read with each Service check, sorted by service, and without services when none were sent', async () => {
     await using h = await startHub();
     await send(h, { checks: { files: [] } });
@@ -986,7 +1001,12 @@ test('migration 12 keeps the size of checks that were over budget as that of the
     VALUES ('laptop-1', now(), now(), 2000000)
   `;
 
-  expect(await migrate(db.sql)).toEqual([12]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 12),
+    ),
+  ).toEqual([12]);
 
   const rows = await db.sql`
     SELECT files_over_budget_bytes, services, services_over_budget_bytes FROM check_sets
@@ -994,4 +1014,23 @@ test('migration 12 keeps the size of checks that were over budget as that of the
   expect(rows).toEqual([
     { files_over_budget_bytes: '2000000', services: null, services_over_budget_bytes: null },
   ]);
+});
+
+test('migration 13 lets checks hold no files part, and keeps the files already stored', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 12),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await db.sql`
+    INSERT INTO check_sets (system, sent_at, received_at, files)
+    VALUES ('laptop-1', now(), now(), '[{"path":"/a"}]')
+  `;
+
+  expect(await migrate(db.sql)).toEqual([13]);
+  await db.sql`UPDATE check_sets SET file_records = NULL`;
+
+  const rows = await db.sql`SELECT files, file_records FROM check_sets`;
+  expect(rows).toEqual([{ file_records: null, files: [{ path: '/a' }] }]);
 });

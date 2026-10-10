@@ -99,7 +99,7 @@ describe('the checks a Hub mirrors', () => {
   test('keep the size of a files part too large to send, and none of its files', () => {
     expect(
       mirrored({ files: [DRIFTED], overBudget: { files: { bytes: 2_000_000 } } }),
-    ).toMatchObject({ fileRecords: [], files: [], filesOverBudgetBytes: 2_000_000 });
+    ).toMatchObject({ fileRecords: null, files: null, filesOverBudgetBytes: 2_000_000 });
   });
 });
 
@@ -160,8 +160,9 @@ describe('the parts of a checks section', () => {
     expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
   });
 
-  test('mirror as no files and no judged records when the section has neither', () => {
-    expect(mirrored({})).toMatchObject({ fileRecords: [], files: [] });
+  test('mirror as an absent files part, not an empty one, when the section has none', () => {
+    expect(mirrored({})).toMatchObject({ fileRecords: null, files: null });
+    expect(mirrored({ files: [] })).toMatchObject({ fileRecords: [], files: [] });
   });
 
   test('keep the last digest of a record sent twice', () => {
@@ -178,8 +179,8 @@ describe('the parts of a checks section', () => {
 
   test('judge no record when the section lists hashed records but carries no files part', () => {
     expect(mirrored({ fileRecords: [{ digest: '1'.repeat(64), record: 'a' }] })).toMatchObject({
-      fileRecords: [],
-      files: [],
+      fileRecords: null,
+      files: null,
     });
   });
 

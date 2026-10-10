@@ -340,6 +340,20 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 12,
   },
+  {
+    // A section with no files part says the Collector has not finished a file
+    // pass yet, which is not the same as a files part that lists nothing, so
+    // `files` and `file_records` are null when the section carried none or the
+    // files part was too large to send. Checks stored before this keep their
+    // lists, which are empty when the section carried no files part.
+    sql: `
+      ALTER TABLE check_sets ALTER COLUMN files DROP NOT NULL;
+      ALTER TABLE check_sets ALTER COLUMN files DROP DEFAULT;
+      ALTER TABLE check_sets ALTER COLUMN file_records DROP NOT NULL;
+      ALTER TABLE check_sets ALTER COLUMN file_records DROP DEFAULT;
+    `,
+    version: 13,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -309,6 +309,8 @@ const storeChecks = async (
   { receivedAt, report, section }: { receivedAt: Date; report: Report; section: ChecksSection },
 ) => {
   const mirrored = mirrorChecks(section);
+  const files = mirrored.files === null ? null : storableJson(mirrored.files);
+  const fileRecords = mirrored.fileRecords === null ? null : storableJson(mirrored.fileRecords);
   const services = mirrored.services === null ? null : storableJson(mirrored.services);
   await sql`
     INSERT INTO check_sets (
@@ -317,8 +319,8 @@ const storeChecks = async (
     )
     VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt},
             ${mirrored.filesOverBudgetBytes},
-            ${storableJson(mirrored.files)}::text::jsonb,
-            ${storableJson(mirrored.fileRecords)}::text::jsonb,
+            ${files}::text::jsonb,
+            ${fileRecords}::text::jsonb,
             ${mirrored.servicesOverBudgetBytes}, ${services}::text::jsonb)
     ON CONFLICT (system) DO UPDATE SET
       sent_at = excluded.sent_at,

@@ -338,6 +338,16 @@ describe('Drift', () => {
     expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
   });
 
+  test('clears for a file whose record is forgotten while the section carries no files part, which judges no record', async () => {
+    await using h = await startHub();
+    await driftedAndEvaluated(h);
+    await send(h, '09:05:00', { checks: {}, records: set(filesRecord('other-config', ENV)) });
+
+    const { open } = await evaluate(h, '09:10:00');
+
+    expect(open).toEqual([]);
+  });
+
   test('clears for a file whose record is forgotten, though the held checks still list it', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);

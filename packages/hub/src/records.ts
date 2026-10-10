@@ -99,16 +99,16 @@ const checksOf = (row: SetRow): Checks => {
     receivedAt: row.check_received_at.toISOString(),
     sentAt: row.check_sent_at.toISOString(),
   };
-  const files = (row.check_files ?? [])
-    .map(({ path, record, since, state }) => ({
+  const files = row.check_files
+    ?.map(({ path, record, since, state }) => ({
       path,
       record,
       since: new Date(since).toISOString(),
       state,
     }))
     .toSorted((a, b) => compareCodeUnits(a.record, b.record) || compareCodeUnits(a.path, b.path));
-  const fileRecords = (row.check_file_records ?? [])
-    .map(({ digest, record }) => ({ digest, record }))
+  const fileRecords = row.check_file_records
+    ?.map(({ digest, record }) => ({ digest, record }))
     .toSorted((a, b) => compareCodeUnits(a.record, b.record));
   const services = (row.check_services ?? [])
     .map(({ check, detail, service, since, state }) => ({
@@ -124,7 +124,11 @@ const checksOf = (row: SetRow): Checks => {
   return {
     ...times,
     ...overBudgetOf(row),
-    ...(row.check_files_over_budget_bytes === null ? { fileRecords, files } : {}),
+    ...(row.check_files_over_budget_bytes !== null ||
+    files === undefined ||
+    fileRecords === undefined
+      ? {}
+      : { fileRecords, files }),
     ...(row.check_services === null ? {} : { services }),
   };
 };

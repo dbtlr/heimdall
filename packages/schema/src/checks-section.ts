@@ -139,12 +139,13 @@ export type ServiceCheck = {
 };
 
 // A System's latest checks as the Hub mirrors them. A part the section left out
-// mirrors as empty, except `services`, which is null since no list of checks
-// is not the same as an empty one. A part sent as over budget mirrors as its
-// size in bytes and none of its entries.
+// mirrors as null, since no list of checks is not the same as an empty one: the
+// files part says every file in the records it lists matches only when it is
+// there. A part sent as over budget mirrors as its size in bytes and none of
+// its entries.
 export type MirroredChecks = {
-  fileRecords: FileRecordCheck[];
-  files: FileCheck[];
+  fileRecords: FileRecordCheck[] | null;
+  files: FileCheck[] | null;
   filesOverBudgetBytes: number | null;
   services: ServiceCheck[] | null;
   servicesOverBudgetBytes: number | null;
@@ -159,9 +160,9 @@ const isServiceCheckKind = (kind: string): kind is ServiceCheckKind =>
 const isServiceCheckState = (state: string): state is ServiceCheckState =>
   SERVICE_CHECK_STATES.some((known) => known === state);
 
-const mirrorFiles = (section: ChecksSection) => {
+const mirrorFiles = (section: ChecksSection, sent: readonly SentFileCheck[]) => {
   const files = new Map<string, FileCheck>();
-  for (const { path, record, since, state } of section.files ?? []) {
+  for (const { path, record, since, state } of sent) {
     files.set(JSON.stringify([record, path]), {
       path,
       record,
@@ -170,7 +171,7 @@ const mirrorFiles = (section: ChecksSection) => {
     });
   }
   const fileRecords = new Map<string, FileRecordCheck>();
-  for (const entry of section.files === undefined ? [] : (section.fileRecords ?? [])) {
+  for (const entry of section.fileRecords ?? []) {
     fileRecords.set(entry.record, entry);
   }
   return { fileRecords: [...fileRecords.values()], files: [...files.values()] };
@@ -197,13 +198,16 @@ const mirrorServices = (sent: readonly SentServiceCheck[]) => {
 // unreadable rather than as a match, and a Service state it does not know
 // counts as unknown rather than up. A check of a kind it does not know is
 // dropped. A file sent twice under one record keeps the last, and so does a
-// record's digest and a Service's check. A section with no `files` part is
-// from a newer Collector that judges differently, so it judges no record here.
+// record's digest and a Service's check. A section with no `files` part has
+// not finished a file pass yet, or is from a newer Collector that judges
+// differently, so it judges no record here and mirrors no files.
 export const mirrorChecks = (section: ChecksSection): MirroredChecks => {
   const filesOverBudgetBytes = section.overBudget?.files?.bytes ?? null;
   const servicesOverBudgetBytes = section.overBudget?.services?.bytes ?? null;
   return {
-    ...(filesOverBudgetBytes === null ? mirrorFiles(section) : { fileRecords: [], files: [] }),
+    ...(filesOverBudgetBytes === null && section.files !== undefined
+      ? mirrorFiles(section, section.files)
+      : { fileRecords: null, files: null }),
     filesOverBudgetBytes,
     services:
       servicesOverBudgetBytes === null && section.services !== undefined
