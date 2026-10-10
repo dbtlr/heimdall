@@ -43,6 +43,14 @@ const launchdLabel = text().refine((label) => !label.includes('/'), {
   message: 'must name one label: no /',
 });
 
+// The name or ID of one Docker container, in the characters Docker allows a
+// name. The Collector puts it in the path of an Engine API request, so a
+// `/`, `?`, `#`, `%`, or a name of only dots could ask for another endpoint.
+const dockerContainer = z
+  .string()
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u);
+
 const MAX_PORT = 65_535;
 
 const port = z.int().min(1).max(MAX_PORT);
@@ -173,7 +181,7 @@ const recordSchemas = (
       object({ ...service, supervisor: z.literal('systemd'), unit: systemdUnit }),
       object({ ...service, supervisor: z.literal('systemd-user'), unit: systemdUnit }),
       object({ ...service, label: launchdLabel, supervisor: z.literal('launchd') }),
-      object({ ...service, container: text(), supervisor: z.literal('docker') }),
+      object({ ...service, container: dockerContainer, supervisor: z.literal('docker') }),
       object({ ...service, supervisor: z.literal('none') }),
     ]),
   };

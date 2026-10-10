@@ -333,14 +333,31 @@ describe('a text field', () => {
     },
   );
 
-  test('a launchd label and a container are not read as patterns', () => {
+  test('a launchd label is not read as a pattern', () => {
     expect(
       accepts(ServiceRecordSchema, { label: 'com.example.*', name: 's', supervisor: 'launchd' }),
     ).toBe(true);
-    expect(
-      accepts(ServiceRecordSchema, { container: '123', name: 's', supervisor: 'docker' }),
-    ).toBe(true);
   });
+
+  test.each(['web', 'web_1', 'my-app.v2', '123', 'abc123def456', 'A', 'a'.repeat(256)])(
+    'a docker container of %s is accepted',
+    (container) => {
+      expect(accepts(ServiceRecordSchema, { container, name: 's', supervisor: 'docker' })).toBe(
+        true,
+      );
+    },
+  );
+
+  // Docker names a container [a-zA-Z0-9][a-zA-Z0-9_.-]*; anything else could
+  // change the Engine API path the Collector asks.
+  test.each(['', '.', '..', '-web', '_web', 'a/b', 'a?b', 'a#b', 'a%2Fb', 'a b', 'web\n', 'wéb', '/web', 'a'.repeat(257)])(
+    'a docker container of %j is refused',
+    (container) => {
+      expect(accepts(ServiceRecordSchema, { container, name: 's', supervisor: 'docker' })).toBe(
+        false,
+      );
+    },
+  );
 
   test('a Service unit, a launchd label, and a container are text too', () => {
     expect(
