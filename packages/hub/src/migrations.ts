@@ -237,6 +237,37 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 7,
   },
+  {
+    // Each System's time zone and the latest runs of its jobs. `time_zone` is
+    // the IANA name its Collector last reported, null until one does. `run_sets`
+    // holds the latest runs a Report carried the way `record_sets` holds a set
+    // of records: when they were sent and received, the jobs the Collector or
+    // the Hub could not read, and, for runs too large to send, their size with
+    // no jobs. `mirrored_runs` holds each readable job's latest run and its
+    // latest success, null for a job that has not succeeded. A System with no
+    // `run_sets` row has never sent runs. `sent_at` keeps an older Report from
+    // replacing newer runs.
+    sql: `
+      ALTER TABLE systems ADD COLUMN time_zone text;
+
+      CREATE TABLE run_sets (
+        system text PRIMARY KEY REFERENCES systems (name),
+        sent_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL,
+        unreadable jsonb NOT NULL DEFAULT '[]',
+        over_budget_bytes bigint
+      );
+
+      CREATE TABLE mirrored_runs (
+        system text NOT NULL REFERENCES systems (name),
+        job text NOT NULL,
+        latest_run jsonb NOT NULL,
+        latest_success jsonb,
+        PRIMARY KEY (system, job)
+      );
+    `,
+    version: 8,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

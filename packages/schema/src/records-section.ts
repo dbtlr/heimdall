@@ -124,29 +124,32 @@ const MirroredRecordSchema = z.discriminatedUnion('kind', [
 // System's time must not make the read fail for the rest.
 const isoTime = z.string();
 
-// What every System's entry carries beside its records: its time zone, null
-// until a Report names one, and its jobs' latest runs, null until a Report
-// carries them, which a Collector older than the runs section never sends.
-const systemFields = {
-  runs: z.union([
-    z.object({
-      jobs: z.array(
-        z.object({
-          job: z.string(),
-          latestRun: REPORTED_RUN_SCHEMA,
-          latestSuccess: REPORTED_RUN_SCHEMA.nullable(),
-        }),
-      ),
-      receivedAt: isoTime,
-      sentAt: isoTime,
-      unreadable: z.array(z.string()),
-    }),
-    z.object({ overBudget: z.object({ bytes }), receivedAt: isoTime, sentAt: isoTime }),
-    z.null(),
-  ]),
-  system: z.string(),
-  timeZone: z.string().nullable(),
-};
+// One job's latest runs, as the read returns them.
+const JobRunsReadSchema = z.object({
+  job: z.string(),
+  latestRun: REPORTED_RUN_SCHEMA,
+  latestSuccess: REPORTED_RUN_SCHEMA.nullable(),
+});
+
+const jobNames = z.array(z.string());
+
+// A System's latest runs as the read returns them: the jobs, the size of runs
+// too large to send, or null until a Report carries them, which a Collector
+// older than the runs section never sends.
+const RunsReadSchema = z.union([
+  z.object({
+    jobs: z.array(JobRunsReadSchema),
+    receivedAt: isoTime,
+    sentAt: isoTime,
+    unreadable: jobNames,
+  }),
+  z.object({ overBudget: z.object({ bytes }), receivedAt: isoTime, sentAt: isoTime }),
+  z.null(),
+]);
+
+// What every System's entry carries beside its records: its latest runs, and
+// its time zone, null until a Report names one.
+const systemFields = { runs: RunsReadSchema, system: z.string(), timeZone: z.string().nullable() };
 
 const SetReadSchema = z.object({
   ...systemFields,

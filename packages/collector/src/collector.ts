@@ -3,7 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { Report, TranscriptsSection } from '@heimdall/schema';
 
 import { flushQueue } from './delivery.ts';
-import type { Delivery, FlushResult, RecordsSource, ReportIdentity } from './delivery.ts';
+import type { Delivery, FlushResult, ReportIdentity, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
 import type { SampleQueue } from './queue.ts';
 import type { Sampler } from './vitals/sampler.ts';
@@ -35,10 +35,11 @@ export const runCollector = async ({
   log,
   maxBackoffMs = MAX_BACKOFF_MS,
   queue,
-  records,
   sampler,
+  sections,
   send,
   signal,
+  timeZone,
   transcripts,
 }: {
   identity: ReportIdentity;
@@ -46,10 +47,11 @@ export const runCollector = async ({
   log: Log;
   maxBackoffMs?: number;
   queue: SampleQueue;
-  records: RecordsSource;
   sampler: Sampler;
+  sections: SectionsSource;
   send: (report: Report) => Promise<Delivery>;
   signal: AbortSignal;
+  timeZone: () => string | undefined;
   transcripts: () => TranscriptsSection;
 }): Promise<void> => {
   let nextSampleAt = performance.now() + intervalMs;
@@ -82,8 +84,9 @@ export const runCollector = async ({
       identity,
       now: Date.now,
       queue,
-      records,
+      sections,
       send,
+      timeZone,
       transcripts,
     }).catch((error: unknown): FlushResult => ({
       delivered: 0,

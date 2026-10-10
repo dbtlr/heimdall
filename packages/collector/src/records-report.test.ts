@@ -3,17 +3,17 @@ import { expect, test } from 'bun:test';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { RecordsSectionSchema } from '@heimdall/schema';
-import type { ApplicationRecord, JobRecord, Report } from '@heimdall/schema';
+import { RecordsSectionSchema, RunsSectionSchema } from '@heimdall/schema';
+import type { ApplicationRecord, JobRecord, Report, RunRecord } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
-import { createRecordsReporter, RECORDS_REFRESH_MS } from './records-report.ts';
+import { createSectionsReporter, RECORDS_REFRESH_MS } from './records-report.ts';
 import { openRecords } from './records.ts';
 import type { RecordStore } from './records.ts';
-import { tempStateDir } from './testing/fixtures.ts';
+import { NO_TIME_ZONE, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'x64', platform: 'linux', version: '0.0.0' },
@@ -38,12 +38,14 @@ const setup = async (
   dir: { path: string },
   {
     batchSize,
-    maxBytes,
+    maxRecordsBytes,
+    maxRunsBytes,
     open = () => openRecords({ stateDir: dir.path }),
     respond,
   }: {
     batchSize?: number;
-    maxBytes?: number;
+    maxRecordsBytes?: number;
+    maxRunsBytes?: number;
     open?: () => Promise<RecordStore>;
     respond?: (report: Report) => Delivery;
   } = {},
@@ -53,9 +55,10 @@ const setup = async (
   let now = 1_000_000;
   const outcomes: Delivery[] = [];
   const reports: Report[] = [];
-  const reporter = createRecordsReporter({
+  const reporter = createSectionsReporter({
     log: { info: () => 0, warn: (m) => warnings.push(m) },
-    ...(maxBytes === undefined ? {} : { maxBytes }),
+    ...(maxRecordsBytes === undefined ? {} : { maxRecordsBytes }),
+    ...(maxRunsBytes === undefined ? {} : { maxRunsBytes }),
     now: () => now,
     open,
   });
@@ -71,11 +74,12 @@ const setup = async (
       identity,
       now: () => now,
       queue,
-      records: reporter,
+      sections: reporter,
       send: (report) => {
         reports.push(report);
         return Promise.resolve(respond?.(report) ?? outcomes.shift() ?? { kind: 'delivered' });
       },
+      timeZone: NO_TIME_ZONE,
       transcripts: () => NO_TRANSCRIPTS,
     });
     return reports.slice(before);
@@ -94,6 +98,14 @@ const setup = async (
     reporter,
     warnings,
   };
+};
+
+const isoSecond = (ms: number) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
+
+// A run that started `minutes` ago, as the Collector keeps it.
+const minutesAgo = (minutes: number, exitStatus = 0): RunRecord => {
+  const started = Date.now() - minutes * 60_000;
+  return { exitStatus, finished: isoSecond(started + 5000), started: isoSecond(started) };
 };
 
 // Applies `change` through a connection of its own, as `record` and `forget` do.
@@ -166,25 +178,23 @@ test('a record written by another process makes the next Report carry the whole 
   });
 });
 
-test('recording only a run, or recording identical content again, sends nothing new', async () => {
+test('recording identical content again sends nothing new', async () => {
   await using dir = await tempStateDir();
   const seed = await openRecords({ stateDir: dir.path });
+  const ran = minutesAgo(10);
   seed.put('job', cron);
+  seed.putRun('backup', ran);
   seed.close();
   const collector = await setup(dir);
   await collector.push();
 
-  const started = new Date(Date.now() - 60_000).toISOString().replace(/\.\d+Z$/, 'Z');
-  await elsewhere(dir.path, (other) =>
-    other.putRun('backup', { exitStatus: 0, finished: started, started }),
-  );
-  const afterRun = await collector.push();
   await elsewhere(dir.path, (other) => other.put('job', cron));
+  await elsewhere(dir.path, (other) => other.putRun('backup', ran));
   const afterSame = await collector.push();
   collector.close();
 
-  expect(afterRun[0]?.records).toBeUndefined();
   expect(afterSame[0]?.records).toBeUndefined();
+  expect(afterSame[0]?.runs).toBeUndefined();
 });
 
 test('rows this build cannot read travel as unreadable, beside the records it can', async () => {
@@ -247,7 +257,7 @@ test('a failed delivery keeps the set pending for the next Report', async () => 
   expect(after[0]?.records).toBeUndefined();
 });
 
-test('a rejected Report counts the set as sent and logs it once, and the hourly refresh retries it', async () => {
+test('a rejected Report counts both sections as sent and logs each once, and the hourly refresh retries them', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir);
   collector.outcomes.push({ detail: 'bad records', kind: 'rejected' });
@@ -258,11 +268,13 @@ test('a rejected Report counts the set as sent and logs it once, and the hourly 
   const hourly = await collector.push();
   collector.close();
 
-  expect(rejected[0]?.records).toBeDefined();
+  expect(rejected[0]).toMatchObject({ records: expect.anything(), runs: expect.anything() });
   expect(next[0]?.records).toBeUndefined();
-  expect(hourly[0]?.records).toBeDefined();
-  expect(collector.warnings).toHaveLength(1);
-  expect(collector.warnings[0]).toContain('bad records');
+  expect(next[0]?.runs).toBeUndefined();
+  expect(hourly[0]).toMatchObject({ records: expect.anything(), runs: expect.anything() });
+  expect(collector.warnings).toHaveLength(2);
+  expect(collector.warnings[0]).toContain('carrying the records (bad records)');
+  expect(collector.warnings[1]).toContain('carrying the runs (bad records)');
 });
 
 test('a multi-batch flush carries the set on its first Report only', async () => {
@@ -287,7 +299,7 @@ test('a set over budget travels as its size alone', async () => {
       unreadable: [],
     }),
   );
-  const collector = await setup(dir, { maxBytes: expected - 1 });
+  const collector = await setup(dir, { maxRecordsBytes: expected - 1 });
 
   const [report] = await collector.push();
   collector.close();
@@ -298,7 +310,7 @@ test('a set over budget travels as its size alone', async () => {
 test('a set exactly at the budget is sent whole', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir, {
-    maxBytes: Buffer.byteLength('{"records":[],"unreadable":[]}'),
+    maxRecordsBytes: Buffer.byteLength('{"records":[],"unreadable":[]}'),
   });
 
   const [report] = await collector.push();
@@ -307,11 +319,11 @@ test('a set exactly at the budget is sent whole', async () => {
   expect(report?.records).toEqual({ records: [], unreadable: [] });
 });
 
-test('a set the Hub refuses never costs the samples: they are resent without it, and the set is settled', async () => {
+test('sections the Hub refuses never cost the samples: they are resent without them, and the sections are settled', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir, {
     respond: (report) =>
-      report.records === undefined
+      report.records === undefined && report.runs === undefined
         ? { kind: 'delivered' }
         : { detail: 'bad records', kind: 'rejected' },
   });
@@ -321,11 +333,14 @@ test('a set the Hub refuses never costs the samples: they are resent without it,
   const remaining = collector.queue.oldest(10);
   collector.close();
 
-  expect(first.map((report) => report.records !== undefined)).toEqual([true, false]);
+  expect(first.map((report) => [report.records !== undefined, report.runs !== undefined])).toEqual([
+    [true, true],
+    [false, false],
+  ]);
   expect(first[1]?.samples).toEqual(first[0]?.samples);
-  expect(next.map((report) => report.records)).toEqual([undefined]);
+  expect(next.map((report) => [report.records, report.runs])).toEqual([[undefined, undefined]]);
   expect(remaining).toEqual([]);
-  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings).toHaveLength(2);
   expect(collector.warnings[0]).toContain('bad records');
 });
 
@@ -364,7 +379,7 @@ test('a set over budget is not sent again when it changes without changing size'
   const seed = await openRecords({ stateDir: dir.path });
   seed.put('application', webapp);
   seed.close();
-  const collector = await setup(dir, { maxBytes: 10 });
+  const collector = await setup(dir, { maxRecordsBytes: 10 });
 
   const first = await collector.push();
   await elsewhere(dir.path, (other) => other.put('application', { ...webapp, version: '1.4.3' }));
@@ -400,12 +415,12 @@ test('a records file that cannot be opened costs the records only, and is tried 
   });
 });
 
-test('a store that cannot be read costs the records only, and is warned about once', async () => {
+test('a store that cannot be read costs the records and runs only, and is warned about once', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir, {
     open: async () => ({
       ...(await openRecords({ stateDir: dir.path })),
-      read: () => {
+      readRecords: () => {
         throw new Error('disk gone');
       },
     }),
@@ -419,6 +434,7 @@ test('a store that cannot be read costs the records only, and is warned about on
   expect(second[0]?.samples).toHaveLength(1);
   expect(first[0]?.records).toBeUndefined();
   expect(second[0]?.records).toBeUndefined();
+  expect(first[0]?.runs).toBeUndefined();
   expect(collector.warnings).toHaveLength(1);
   expect(collector.warnings[0]).toContain('disk gone');
 });
@@ -434,8 +450,8 @@ test('a write landing between the version read and the set read is not missed', 
         ...store,
         // The other process commits just after the first read, which is the
         // moment a version read taken after the set would swallow the write.
-        read: () => {
-          const read = store.read();
+        readRecords: () => {
+          const read = store.readRecords();
           if (!landed) {
             landed = true;
             other.put('application', webapp);
@@ -456,4 +472,272 @@ test('a write landing between the version read and the set read is not missed', 
     records: [{ kind: 'application', name: 'webapp', record: webapp }],
     unreadable: [],
   });
+});
+
+test("the first Report after start carries each job's latest runs, and the next does not while they are unchanged", async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  const succeeded = minutesAgo(20);
+  const failed = minutesAgo(10, 1);
+  seed.put('job', cron);
+  seed.put('job', { ...cron, name: 'idle' });
+  seed.putRun('backup', succeeded);
+  seed.putRun('backup', failed);
+  seed.close();
+  const collector = await setup(dir);
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  // `idle` has no runs, so it is not in the section.
+  expect(first[0]?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: failed, latestSuccess: succeeded }],
+    unreadable: [],
+  });
+  expect(RunsSectionSchema.safeParse(first[0]?.runs).success).toBe(true);
+  expect(second[0]?.runs).toBeUndefined();
+});
+
+test('a store with no runs sends an empty runs section once', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.runs).toEqual({ jobs: [], unreadable: [] });
+  expect(second[0]?.runs).toBeUndefined();
+});
+
+test('recording a run sends the runs section and not the record set', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  seed.close();
+  const collector = await setup(dir);
+  await collector.push();
+
+  const first = minutesAgo(30);
+  const second = minutesAgo(5, 1);
+  await elsewhere(dir.path, (other) => other.putRun('backup', first));
+  const afterFirst = await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', second));
+  const afterSecond = await collector.push();
+  collector.close();
+
+  expect(afterFirst[0]?.records).toBeUndefined();
+  expect(afterFirst[0]?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: first, latestSuccess: first }],
+    unreadable: [],
+  });
+  expect(afterSecond[0]?.records).toBeUndefined();
+  expect(afterSecond[0]?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: second, latestSuccess: first }],
+    unreadable: [],
+  });
+});
+
+test('recording a record sends the set and not the runs, unless the change moved the runs', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  seed.putRun('backup', minutesAgo(10));
+  seed.close();
+  const collector = await setup(dir);
+  await collector.push();
+
+  await elsewhere(dir.path, (other) => other.put('application', webapp));
+  const afterRecord = await collector.push();
+  await elsewhere(dir.path, (other) => other.forget('job', 'backup'));
+  const afterForget = await collector.push();
+  collector.close();
+
+  expect(afterRecord[0]?.records).toEqual({
+    records: [
+      { kind: 'application', name: 'webapp', record: webapp },
+      { kind: 'job', name: 'backup', record: cron },
+    ],
+    unreadable: [],
+  });
+  expect(afterRecord[0]?.runs).toBeUndefined();
+  // Forgetting a job takes its runs with it, so both sections changed.
+  expect(afterForget[0]?.records).toEqual({
+    records: [{ kind: 'application', name: 'webapp', record: webapp }],
+    unreadable: [],
+  });
+  expect(afterForget[0]?.runs).toEqual({ jobs: [], unreadable: [] });
+});
+
+test('a job whose latest run cannot be read travels as unreadable', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  seed.putRun('backup', minutesAgo(10));
+  seed.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  db.run('UPDATE runs SET body = \'{"surprise":true}\'');
+  db.close();
+  const collector = await setup(dir);
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.runs).toEqual({ jobs: [], unreadable: ['backup'] });
+});
+
+test('an hour after the last delivered runs, they are sent again though unchanged', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  await collector.push();
+
+  collector.advance(RECORDS_REFRESH_MS - 1);
+  const justBefore = await collector.push();
+  collector.advance(1);
+  const atTheHour = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  expect(justBefore[0]?.runs).toBeUndefined();
+  expect(atTheHour[0]?.runs).toEqual({ jobs: [], unreadable: [] });
+  expect(after[0]?.runs).toBeUndefined();
+});
+
+test('a failed delivery keeps the runs pending for the next Report, as they are then', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  seed.close();
+  const collector = await setup(dir);
+  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
+
+  const failed = await collector.push();
+  const ran = minutesAgo(5);
+  await elsewhere(dir.path, (other) => other.putRun('backup', ran));
+  const retried = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  expect(failed[0]?.runs).toEqual({ jobs: [], unreadable: [] });
+  expect(retried[0]?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
+    unreadable: [],
+  });
+  expect(after[0]?.runs).toBeUndefined();
+});
+
+test('runs over budget travel as their size alone, and are not sent again when they change without changing size', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  const ran = minutesAgo(10);
+  seed.put('job', cron);
+  seed.putRun('backup', ran);
+  seed.close();
+  const expected = Buffer.byteLength(
+    JSON.stringify({
+      jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
+      unreadable: [],
+    }),
+  );
+  const collector = await setup(dir, { maxRunsBytes: expected - 1 });
+
+  const first = await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', minutesAgo(5)));
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.runs).toEqual({ overBudget: { bytes: expected } });
+  expect(second[0]?.runs).toBeUndefined();
+});
+
+test('runs exactly at the budget are sent whole', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    maxRunsBytes: Buffer.byteLength('{"jobs":[],"unreadable":[]}'),
+  });
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.runs).toEqual({ jobs: [], unreadable: [] });
+});
+
+test('a job whose name the section cannot carry is left out of the runs and warned about', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  const ran = minutesAgo(10);
+  seed.put('job', cron);
+  seed.putRun('backup', ran);
+  seed.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const insert = db.query(
+    'INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES ($job, $started, $startedMs, 0, $body)',
+  );
+  const bindings = {
+    $body: JSON.stringify(ran),
+    $started: ran.started,
+    $startedMs: Date.parse(ran.started),
+  };
+  insert.run({ ...bindings, $job: '../escape' });
+  insert.run({ ...bindings, $job: 'has space' });
+  db.close();
+  const collector = await setup(dir);
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(RunsSectionSchema.safeParse(report?.runs).success).toBe(true);
+  expect(report?.runs).toEqual({
+    jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
+    unreadable: [],
+  });
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('../escape');
+  expect(collector.warnings[0]).toContain('has space');
+});
+
+test('the reporter never reads every run, only the records and the latest runs', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  seed.putRun('backup', minutesAgo(10));
+  seed.close();
+  const collector = await setup(dir, {
+    open: async () => ({
+      ...(await openRecords({ stateDir: dir.path })),
+      read: () => {
+        throw new Error('every run was read');
+      },
+    }),
+  });
+
+  const first = await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', minutesAgo(5)));
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.runs).toHaveProperty('jobs');
+  expect(second[0]?.runs).toHaveProperty('jobs');
+  expect(collector.warnings).toEqual([]);
+});
+
+test('runs that cannot be queried cost the sections only, and the Vitals still go', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    open: async () => ({
+      ...(await openRecords({ stateDir: dir.path })),
+      latestRuns: () => {
+        throw new Error('index gone');
+      },
+    }),
+  });
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.samples).toHaveLength(1);
+  expect(report?.runs).toBeUndefined();
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('index gone');
 });

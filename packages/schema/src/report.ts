@@ -57,6 +57,9 @@ export const ReportSchema = z.object({
   // Only when the Collector's record set changed, it started, or an hour
   // passed; the Hub keeps the System's mirror until another arrives (ADR-0011).
   records: RecordsSectionSchema.optional(),
+  // Only when the latest runs of the Collector's jobs changed, it started, or
+  // an hour passed; the Hub keeps the System's latest runs until another arrives.
+  runs: RunsSectionSchema.optional(),
   samples: z
     .array(VitalsSampleSchema)
     .min(1)
@@ -64,9 +67,6 @@ export const ReportSchema = z.object({
     .refine(isStrictlyIncreasing, { message: 'sample times must strictly increase' }),
   schemaVersion: z.literal(REPORT_SCHEMA_VERSION),
   sentAt: epochMs,
-  // Only when the latest runs of the Collector's jobs changed, it started, or
-  // an hour passed; the Hub keeps the System's latest runs until another arrives.
-  runs: RunsSectionSchema.optional(),
   // The Hub rejects a Report whose System differs from its ingest token's.
   system: z.string().regex(SYSTEM_NAME),
   // The System's time zone, in which its jobs' schedules are read. In every

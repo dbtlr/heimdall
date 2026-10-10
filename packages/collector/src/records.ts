@@ -17,6 +17,10 @@ export type StoredRecord = { kind: RecordKind; name: string; record: RecordOf<Re
 
 export type StoredRun = { job: string; run: RunRecord };
 
+// One job's latest run, and its latest successful run, which may be the same
+// run, or null when the job has none among the runs the Collector keeps.
+export type LatestRuns = { job: string; latestRun: RunRecord; latestSuccess: RunRecord | null };
+
 // What `putRun` did with a run.
 export type RunOutcome =
   // The run is kept.
@@ -45,10 +49,17 @@ export type RecordStore = {
   // Keeps a run of a recorded job, replacing the one with the same start, then
   // prunes the job's runs.
   putRun: (job: string, run: RunRecord) => RunOutcome;
+  // Each job's latest runs, for the jobs that have any, by job name. The
+  // database picks them, so a job holding 90 days of runs costs two rows, not
+  // all of them. A job whose latest run or latest success this build cannot
+  // read is listed as unreadable, so the caller can say so.
+  latestRuns: () => { jobs: LatestRuns[]; unreadable: string[] };
   // Every record and run, read in one transaction so they agree. A row this
   // build cannot read is listed as unreadable, so the caller can say so instead
   // of letting it vanish.
   read: () => { records: StoredRecord[]; runs: StoredRun[]; unreadable: Unreadable };
+  // The records alone, read as `read` reads them, without parsing any run.
+  readRecords: () => { records: StoredRecord[]; unreadable: Unreadable['records'] };
   // A number that differs from its last value after another connection, such as
   // a `record` process, committed a write to the database. This connection's
   // own writes do not change it, so only a daemon that never writes can use it
@@ -58,6 +69,7 @@ export type RecordStore = {
 
 type RecordRow = { body: string; kind: string; name: string };
 type RunRow = { body: string; job: string; started: string };
+type LatestRunsRow = { job: string; latest: string; success: string | null };
 
 // Opens the store in `stateDir`, creating the directory private to its owner and
 // the database when they are missing. `heimdall-collector run` may hold the
@@ -94,6 +106,13 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
   );
 
+  // The two lookups of `latestRuns`: the latest run of a job, and its latest
+  // success, which the partial index serves.
+  db.run('CREATE INDEX IF NOT EXISTS runs_latest ON runs (job, startedMs)');
+  db.run(
+    'CREATE INDEX IF NOT EXISTS runs_latest_success ON runs (job, startedMs) WHERE exitStatus = 0',
+  );
+
   const upsert = db.query(
     'INSERT OR REPLACE INTO records (kind, name, body) VALUES ($kind, $name, $body)',
   );
@@ -112,6 +131,13 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
   );
   const selectRuns = db.query<RunRow, []>(
     'SELECT job, started, body FROM runs ORDER BY job, startedMs',
+  );
+  const selectLatestRuns = db.query<LatestRunsRow, []>(
+    `SELECT job,
+      (SELECT body FROM runs WHERE job = jobs.job ORDER BY startedMs DESC LIMIT 1) AS latest,
+      (SELECT body FROM runs WHERE job = jobs.job AND exitStatus = 0 ORDER BY startedMs DESC LIMIT 1) AS success
+    FROM (SELECT DISTINCT job FROM runs) AS jobs
+    ORDER BY job`,
   );
   const dataVersion = db.query<{ data_version: number }, []>('PRAGMA data_version');
   const isKept = db.query('SELECT 1 FROM runs WHERE job = $job AND started = $started');
@@ -137,19 +163,23 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     prune.run({ cutoff: now() - RUN_RETENTION_DAYS * DAY_MS, job });
     return isKept.get({ job, started: run.started }) === null ? 'expired' : 'kept';
   });
-  const read = db.transaction(() => {
+  const readRecords = () => {
     const records: StoredRecord[] = [];
-    const unreadableRecords: Unreadable['records'] = [];
+    const unreadable: Unreadable['records'] = [];
     for (const row of selectRecords.all()) {
       const kind = RECORD_KINDS.find((known) => known === row.kind);
       const parsed =
         kind === undefined ? undefined : RECORD_SCHEMAS[kind].safeParse(parseJson(row.body));
       if (kind === undefined || parsed?.success !== true) {
-        unreadableRecords.push({ kind: row.kind, name: row.name });
+        unreadable.push({ kind: row.kind, name: row.name });
       } else {
         records.push({ kind, name: row.name, record: parsed.data });
       }
     }
+    return { records, unreadable };
+  };
+  const read = db.transaction(() => {
+    const { records, unreadable: unreadableRecords } = readRecords();
     const runs: StoredRun[] = [];
     const unreadableRuns: Unreadable['runs'] = [];
     for (const row of selectRuns.all()) {
@@ -162,17 +192,34 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     }
     return { records, runs, unreadable: { records: unreadableRecords, runs: unreadableRuns } };
   });
+  const latestRuns = () => {
+    const jobs: LatestRuns[] = [];
+    const unreadable: string[] = [];
+    for (const row of selectLatestRuns.all()) {
+      const latest = RunRecordSchema.safeParse(parseJson(row.latest));
+      const success =
+        row.success === null ? undefined : RunRecordSchema.safeParse(parseJson(row.success));
+      if (!latest.success || success?.success === false) {
+        unreadable.push(row.job);
+      } else {
+        jobs.push({ job: row.job, latestRun: latest.data, latestSuccess: success?.data ?? null });
+      }
+    }
+    return { jobs, unreadable };
+  };
 
   return {
     close: () => db.close(),
     // Immediate transactions take the write lock at once, so two processes wait
     // for each other instead of failing on a lock upgrade.
     forget: (kind, name) => forget.immediate(kind, name),
+    latestRuns,
     put: (kind, record) => {
       upsert.run({ body: JSON.stringify(record), kind, name: record.name });
     },
     putRun: (job, run) => putRun.immediate(job, run),
     read: () => read(),
+    readRecords,
     version: () => dataVersion.get()?.data_version ?? 0,
   };
 };
