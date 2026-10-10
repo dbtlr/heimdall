@@ -5,6 +5,7 @@ import { compareCodeUnits } from './compare.ts';
 
 type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
+  check_file_records: { digest: string; record: string }[] | null;
   check_files: FileCheck[] | null;
   check_over_budget_bytes: string | null;
   check_received_at: Date | null;
@@ -63,7 +64,8 @@ const runsOf = (row: SetRow, jobs: JobRuns[]): Runs => {
 };
 
 // One System's latest checks in the read, from its checks row, or null when no
-// Report has carried checks. Files sort by record, then path, by code unit like records and runs.
+// Report has carried checks. Digests sort by record, and files by record, then
+// path, by code unit like records and runs.
 const checksOf = (row: SetRow): Checks => {
   if (row.check_sent_at === null || row.check_received_at === null) {
     return null;
@@ -83,7 +85,10 @@ const checksOf = (row: SetRow): Checks => {
       state,
     }))
     .toSorted((a, b) => compareCodeUnits(a.record, b.record) || compareCodeUnits(a.path, b.path));
-  return { ...times, files };
+  const fileRecords = (row.check_file_records ?? [])
+    .map(({ digest, record }) => ({ digest, record }))
+    .toSorted((a, b) => compareCodeUnits(a.record, b.record));
+  return { ...times, fileRecords, files };
 };
 
 // One System's entry in the read: its records, latest checks and runs, and time zone.
@@ -107,7 +112,7 @@ export const readRecords = (sql: SQL): Promise<Entry[]> =>
              u.sent_at AS runs_sent_at, u.received_at AS runs_received_at,
              u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes,
              c.sent_at AS check_sent_at, c.received_at AS check_received_at,
-             c.files AS check_files, c.over_budget_bytes AS check_over_budget_bytes
+             c.files AS check_files, c.file_records AS check_file_records, c.over_budget_bytes AS check_over_budget_bytes
       FROM systems s
       LEFT JOIN record_sets r ON r.system = s.name
       LEFT JOIN run_sets u ON u.system = s.name

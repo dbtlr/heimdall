@@ -134,11 +134,20 @@ const FileCheckReadSchema = z.object({
   state: z.enum(FILE_CHECK_STATES),
 });
 
-// A System's latest checks as the read returns them: the files that do not
-// match, the size of checks too large to send, or null until a Report carries
-// them, which a Collector older than checks never sends. Times are ISO 8601.
+// A files record the Collector hashed, with the digest it read.
+const FileRecordReadSchema = z.object({ digest: z.string(), record: z.string() });
+
+// A System's latest checks as the read returns them: the digest of each files
+// record the Collector hashed and the files that do not match, the size of
+// checks too large to send, or null until a Report carries them, which a
+// Collector older than checks never sends. Times are ISO 8601.
 export const ChecksReadSchema = z.union([
-  z.object({ files: z.array(FileCheckReadSchema), receivedAt: z.string(), sentAt: z.string() }),
+  z.object({
+    fileRecords: z.array(FileRecordReadSchema),
+    files: z.array(FileCheckReadSchema),
+    receivedAt: z.string(),
+    sentAt: z.string(),
+  }),
   z.object({ overBudget: z.object({ bytes }), receivedAt: z.string(), sentAt: z.string() }),
   z.null(),
 ]);

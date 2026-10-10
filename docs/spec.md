@@ -157,6 +157,7 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
    "records": [{"kind": "job", "name": "nightly-backup", "record": {"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}}],
    "unreadable": [{"kind": "service", "name": "webapp"}],
    "checks": {"sentAt": "2026-10-10T07:43:00.000Z", "receivedAt": "2026-10-10T07:43:00.410Z",
+              "fileRecords": [{"record": "webapp-config", "digest": "9f2b5c0e4a7d13d86b0c5e2f71a4d98c3e6b1f07a2d5c8e94b3f6a1d0c7e5b82"}],
               "files": [{"record": "webapp-config", "path": "/etc/webapp", "state": "unreadable", "since": "2026-10-10T07:41:12.000Z"},
                         {"record": "webapp-config", "path": "/etc/webapp/webapp.conf", "state": "drifted", "since": "2026-10-10T06:12:40.000Z"}]},
    "runs": {"sentAt": "2026-10-10T07:43:00.000Z", "receivedAt": "2026-10-10T07:43:00.410Z",
@@ -174,7 +175,7 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
 ]}
 ```
 
-`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, `checks` until a Report carries its checks, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records, runs, or checks are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` and `checks` carry their own. `checks` holds the files that are not matching, with no digests, so a file the Collector could not read shows there with the state `unreadable`, though it raises no Drift, and an empty `files` says every file in the records the Collector hashed matches. Records are sorted by kind, then name, jobs' runs by job, and checked files by record, then path, each by code unit. Times are UTC in ISO 8601, including each file's `since`.
+`records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, `checks` until a Report carries its checks, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records, runs, or checks are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` and `checks` carry their own. `checks` holds the files that are not matching, so a file the Collector could not read shows there with the state `unreadable`, though it raises no Drift, and an empty `files` says every file in the records the Collector hashed matches. Its `fileRecords` lists each `files` record the Collector hashed with the [digest](#drift) it read, so a provisioner can tell checks that judged an older version of a record from the record the Hub mirrors now; a record missing from it, or listed with another digest, was not judged as mirrored. Checks over budget carry neither. Records are sorted by kind, then name, jobs' runs by job, checked records by record, and checked files by record, then path, each by code unit. Times are UTC in ISO 8601, including each file's `since`.
 
 ## Agent Session transcripts
 

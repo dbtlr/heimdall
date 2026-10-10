@@ -604,6 +604,7 @@ describe('the checks a Report carries', () => {
     });
 
     expect((await entryOf(h))?.checks).toEqual({
+      fileRecords: [],
       files: [
         { ...CONF, record: 'a', since: new Date(NOW - 60_000).toISOString() },
         { ...DIR, since: new Date(NOW - 60_000).toISOString() },
@@ -611,6 +612,29 @@ describe('the checks a Report carries', () => {
       ],
       receivedAt: new Date(NOW + 2500).toISOString(),
       sentAt: new Date(NOW + 1000).toISOString(),
+    });
+  });
+
+  test('are read back with the digest of each files record they judged, sorted by record', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: {
+        fileRecords: [
+          { digest: 'b'.repeat(64), record: 'b' },
+          { digest: 'c'.repeat(64), record: 'B' },
+          { digest: 'a'.repeat(64), record: 'a' },
+        ],
+        files: [],
+      },
+    });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      fileRecords: [
+        { digest: 'c'.repeat(64), record: 'B' },
+        { digest: 'a'.repeat(64), record: 'a' },
+        { digest: 'b'.repeat(64), record: 'b' },
+      ],
     });
   });
 
