@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
 import type { ServiceCheckState } from '@heimdall/schema';
+import { httpGet } from '@heimdall/service';
+import type { HttpGet, HttpGetResult } from '@heimdall/service';
+import { runWithProxy } from '@heimdall/service/testing';
 
 import { tempStateDir } from '../testing/fixtures.ts';
 import { checkContainer, dockerEndpoint } from './docker.ts';
@@ -54,7 +57,7 @@ const fakeEngine = async (answers: Record<string, Answer>) => {
   return { requested, socket: unix };
 };
 
-const engineAt = (path: string) => ({ endpoint: { kind: 'unix', path } as const });
+const engineAt = (path: string) => ({ endpoint: { kind: 'unix', path } as const, get: httpGet });
 
 // What the Engine answers for `docker inspect` of a container in the given state.
 const inspected = (state: Record<string, unknown>, name = 'web') => ({
@@ -234,6 +237,7 @@ describe('a container the Engine cannot say anything sure about is unknown', () 
     expect(
       await checkContainer('web', {
         endpoint: { host: 'tcp://10.0.0.1:2375', kind: 'unsupported' },
+        get: httpGet,
       }),
     ).toEqual({ detail: 'DOCKER_HOST is not a unix socket', state: 'unknown' });
   });
@@ -468,7 +472,7 @@ describe('an answer about another container than the one asked for', () => {
 describe('the size of an answer', () => {
   const MIB = 1024 * 1024;
 
-  test('a Content-Length over 1 MiB is unknown without reading it', async () => {
+  test('a Content-Length over 1 MiB is unknown', async () => {
     const { socket } = await fakeEngine({
       '/containers/web/json': {
         respond: () => Response.json({ ...inspected({ Running: true }), Pad: 'x'.repeat(2 * MIB) }),
@@ -574,19 +578,51 @@ describe('what the state says', () => {
   });
 });
 
-describe('the time the Engine has', () => {
-  test('is 5 seconds by default', async () => {
-    const { socket } = await fakeEngine({
-      '/containers/web/json': { body: inspected({ Running: true, Status: 'running' }) },
-    });
-    const timeout = spyOn(AbortSignal, 'timeout');
-    try {
-      await checkContainer('web', engineAt(socket));
+const asked = async (result: HttpGetResult) => {
+  const calls: Parameters<HttpGet>[] = [];
+  const get: HttpGet = (target, options) => {
+    calls.push([target, options]);
+    return Promise.resolve(result);
+  };
+  const outcome = await checkContainer('web', {
+    endpoint: { kind: 'unix', path: '/run/user/1/docker.sock' },
+    get,
+  });
+  return { calls, outcome };
+};
 
-      expect(timeout).toHaveBeenCalledWith(5000);
-    } finally {
-      timeout.mockRestore();
-    }
+// What the check asks of its transport, and how it reads each way the
+// transport can fail, with a fake in its place.
+describe('the request the check makes', () => {
+  test('is a GET of the encoded container path on the socket, with 5 seconds and a 1 MiB cap', async () => {
+    const { calls } = await asked({
+      body: JSON.stringify(inspected({ Running: true, Status: 'running' })),
+      kind: 'response',
+      status: 200,
+      truncated: false,
+    });
+
+    expect(calls).toEqual([
+      [
+        { path: '/containers/web/json', socketPath: '/run/user/1/docker.sock' },
+        { maxBodyBytes: 1024 * 1024 + 1, timeoutMs: 5000 },
+      ],
+    ]);
+  });
+
+  test.each<[HttpGetResult, string]>([
+    [{ kind: 'failed', message: 'x', reason: 'timeout' }, 'Docker timed out'],
+    [{ kind: 'failed', message: 'x', reason: 'refused' }, 'Docker socket unreachable'],
+    [{ kind: 'failed', message: 'x', reason: 'reset' }, 'Docker connection reset'],
+    [{ kind: 'failed', message: 'x', reason: 'invalid response' }, 'unexpected Docker answer'],
+    [
+      { kind: 'failed', message: 'EACCES: permission denied', reason: 'error' },
+      'could not request Docker: EACCES: permission denied',
+    ],
+  ])('%j is unknown, saying %s', async (result, detail) => {
+    const { outcome } = await asked(result);
+
+    expect(outcome).toEqual({ detail, state: 'unknown' });
   });
 });
 
@@ -625,36 +661,39 @@ describe('the Engine socket, read from the real environment', () => {
   });
 });
 
-// Bun does not send a request over a unix socket through the proxy HTTP_PROXY
-// names, which the check relies on: a proxy has no way to reach the socket.
-test('a request over the socket does not go through a proxy the environment names', async () => {
-  let proxied = 0;
-  const proxy = Bun.serve({
-    fetch: () => {
-      proxied += 1;
-      return new Response('proxy');
-    },
-    port: 0,
-  });
-  try {
-    const { socket } = await fakeEngine({
-      '/containers/web/json': { body: inspected({ Running: true, Status: 'running' }) },
+// The transport uses no proxy: a proxy has no way to reach the socket, and
+// would see the request if it were sent there.
+test.each(['HTTP_PROXY', 'http_proxy'] as const)(
+  'a request over the socket does not go through a proxy the environment names (%s)',
+  async (variable) => {
+    let proxied = 0;
+    const proxy = Bun.serve({
+      fetch: () => {
+        proxied += 1;
+        return new Response('from the proxy');
+      },
+      port: 0,
     });
-    const script = `
-      import { checkContainer } from ${JSON.stringify(join(import.meta.dir, 'docker.ts'))};
-      console.log(JSON.stringify(await checkContainer('web', { endpoint: { kind: 'unix', path: process.argv[1] } })));
-    `;
-    const proxyUrl = `http://127.0.0.1:${String(proxy.port)}`;
-    const child = Bun.spawn([process.execPath, '-e', script, socket], {
-      env: { ...process.env, ALL_PROXY: proxyUrl, HTTP_PROXY: proxyUrl, http_proxy: proxyUrl },
-      stderr: 'inherit',
-      stdout: 'pipe',
-    });
-    const out = await new Response(child.stdout).text();
+    try {
+      const { socket } = await fakeEngine({
+        '/containers/web/json': { body: inspected({ Running: true, Status: 'running' }) },
+      });
 
-    expect(JSON.parse(out)).toMatchObject({ state: 'up' });
-    expect(proxied).toBe(0);
-  } finally {
-    await proxy.stop(true);
-  }
-});
+      const printed = await runWithProxy({
+        proxy: `http://127.0.0.1:${String(proxy.port)}`,
+        script: `
+          const { checkContainer } = await import(${JSON.stringify(join(import.meta.dir, 'docker.ts'))});
+          const { httpGet } = await import(${JSON.stringify(import.meta.resolve('@heimdall/service'))});
+          const endpoint = { kind: 'unix', path: ${JSON.stringify(socket)} };
+          console.log(JSON.stringify(await checkContainer('web', { endpoint, get: httpGet })));
+        `,
+        variable,
+      });
+
+      expect(JSON.parse(printed)).toMatchObject({ state: 'up' });
+      expect(proxied).toBe(0);
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);

@@ -259,16 +259,17 @@ describe('a systemd-user Service', () => {
 });
 
 describe('a Service whose supervisor this Collector does not check yet', () => {
-  test.each([
-    ['none', { name: 'web', supervisor: 'none' }],
-  ] as const)('is unchecked under %s, not down, and nothing is run', async (supervisor, record) => {
-    const { outcomes, ran } = await check(record, shown({ active: 'failed' }));
+  test.each([['none', { name: 'web', supervisor: 'none' }]] as const)(
+    'is unchecked under %s, not down, and nothing is run',
+    async (supervisor, record) => {
+      const { outcomes, ran } = await check(record, shown({ active: 'failed' }));
 
-    expect(outcomes).toEqual([
-      { check: 'supervisor', detail: `${supervisor} is not checked`, state: 'unchecked' },
-    ]);
-    expect(ran).toEqual([]);
-  });
+      expect(outcomes).toEqual([
+        { check: 'supervisor', detail: `${supervisor} is not checked`, state: 'unchecked' },
+      ]);
+      expect(ran).toEqual([]);
+    },
+  );
 });
 
 describe('a docker Service', () => {
@@ -278,6 +279,7 @@ describe('a docker Service', () => {
     const ran: string[][] = [];
     const outcomes = await checkService(WEB_CONTAINER, {
       docker: { endpoint: UNREACHABLE_DOCKER },
+      httpGet,
       run: (cmd) => {
         ran.push([...cmd]);
         return Promise.reject(new Error('no command expected'));
@@ -301,6 +303,7 @@ describe('a docker Service', () => {
     try {
       const outcomes = await checkService(WEB_CONTAINER, {
         docker: { endpoint: { kind: 'unix', path: unix } },
+        httpGet,
         run: () => Promise.reject(new Error('no command expected')),
         systemctl: undefined,
       });
@@ -410,7 +413,7 @@ describe('a Service with a health URL', () => {
     ]);
   });
 
-  test('under a supervisor not checked yet is checked by its URL, its supervisor reported unchecked', async () => {
+  test('under docker has its URL checked beside the container, each check on its own', async () => {
     const health = serve(() => new Response('ok'));
 
     const { outcomes } = await check(
@@ -419,7 +422,7 @@ describe('a Service with a health URL', () => {
     );
 
     expect(outcomes).toEqual([
-      { check: 'supervisor', detail: 'docker is not checked', state: 'unchecked' },
+      { check: 'supervisor', detail: 'DOCKER_HOST is not a unix socket', state: 'unknown' },
       { check: 'health', detail: 'HTTP 200', state: 'up' },
     ]);
   });

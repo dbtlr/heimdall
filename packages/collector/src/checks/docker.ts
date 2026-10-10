@@ -1,4 +1,5 @@
 import type { ServiceCheckState } from '@heimdall/schema';
+import type { HttpGet, HttpGetResult } from '@heimdall/service';
 
 // What one container check found, before the supervisor check clamps the detail.
 export type ContainerOutcome = { detail: string; state: ServiceCheckState };
@@ -50,37 +51,6 @@ const HEX_ID = /^[0-9a-f]{12,64}$/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
-
-// The answer's text, or undefined when it is larger than the cap. A larger
-// Content-Length is refused unread, and a stream is read only up to the cap,
-// so an endless body costs a bounded read.
-const readCapped = async (response: Response): Promise<string | undefined> => {
-  const declared = Number(response.headers.get('content-length'));
-  if (declared > MAX_ANSWER_BYTES) {
-    await response.body?.cancel();
-    return undefined;
-  }
-  const reader = response.body?.getReader();
-  if (reader === undefined) {
-    return '';
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- each chunk follows the last.
-    const { done, value } = await reader.read();
-    if (done) {
-      return new TextDecoder().decode(Buffer.concat(chunks));
-    }
-    total += value.byteLength;
-    if (total > MAX_ANSWER_BYTES) {
-      break;
-    }
-    chunks.push(value);
-  }
-  await reader.cancel();
-  return undefined;
-};
 
 const parseJson = (text: string): unknown => {
   try {
@@ -145,15 +115,46 @@ const containerOutcome = (body: unknown, container: string): ContainerOutcome =>
   return { detail: `status ${status ?? 'not running'}${code}`, state: 'stopped' };
 };
 
+// What a GET that got no answer says. A refused or missing socket, a reset,
+// and a timeout leave the container unknown, as does a failure on the
+// Collector's own side.
+const failureOutcome = ({
+  message,
+  reason,
+}: Extract<HttpGetResult, { kind: 'failed' }>): ContainerOutcome => {
+  switch (reason) {
+    case 'timeout': {
+      return unknown('Docker timed out');
+    }
+    case 'refused': {
+      return unknown('Docker socket unreachable');
+    }
+    case 'reset': {
+      return unknown('Docker connection reset');
+    }
+    case 'invalid response': {
+      return unknown('unexpected Docker answer');
+    }
+    case 'error': {
+      return unknown(`could not request Docker: ${message}`);
+    }
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+};
+
 // Asks the Engine, over its unix socket and with no docker CLI, whether a
-// container is running. Only an answer that says no such container is
+// container is running. `get` uses no proxy and follows no redirect, and reads
+// at most a cap of the answer. Only an answer that says no such container is
 // stopped, and only the 200 for the container asked for is read as its state.
 // Anything that keeps the Engine from answering for the container, such as a
 // missing or refused socket, a timeout, a redirect or other status, an answer
 // over the size cap, or a body that is not an inspect result, is unknown.
 export const checkContainer = async (
   container: string,
-  { endpoint, timeoutMs = DOCKER_TIMEOUT_MS }: DockerTools,
+  { endpoint, get, timeoutMs = DOCKER_TIMEOUT_MS }: DockerTools & { get: HttpGet },
 ): Promise<ContainerOutcome> => {
   if (endpoint.kind === 'unsupported') {
     return unknown('DOCKER_HOST is not a unix socket');
@@ -164,32 +165,27 @@ export const checkContainer = async (
   if (/^\.{1,2}$/u.test(container)) {
     return unknown('not a container name');
   }
-  const signal = AbortSignal.timeout(timeoutMs);
-  try {
-    // A redirect is never followed: the Engine does not send one, and the
-    // Location of another listener is not the Engine.
-    const response = await fetch(
-      `http://localhost/containers/${encodeURIComponent(container)}/json`,
-      { method: 'GET', redirect: 'manual', signal, unix: endpoint.path },
-    );
-    if (response.status !== 200 && response.status !== 404) {
-      await response.body?.cancel();
-      return unknown(`Docker answered ${String(response.status)}`);
-    }
-    const text = await readCapped(response);
-    if (text === undefined) {
-      return unknown('Docker answer too large');
-    }
-    if (response.status === 404) {
-      return saysNoSuchContainer(text)
-        ? { detail: 'no such container', state: 'stopped' }
-        : unknown('Docker answered 404');
-    }
-    const body = parseJson(text);
-    return body === undefined
-      ? unknown('unexpected Docker answer')
-      : containerOutcome(body, container);
-  } catch {
-    return unknown(signal.aborted ? 'Docker timed out' : 'Docker socket unreachable');
+  // One byte past the cap tells a body that fits from one that was cut off.
+  const result = await get(
+    { path: `/containers/${encodeURIComponent(container)}/json`, socketPath: endpoint.path },
+    { maxBodyBytes: MAX_ANSWER_BYTES + 1, timeoutMs },
+  );
+  if (result.kind === 'failed') {
+    return failureOutcome(result);
   }
+  if (result.status !== 200 && result.status !== 404) {
+    return unknown(`Docker answered ${String(result.status)}`);
+  }
+  if (result.truncated) {
+    return unknown('Docker answer too large');
+  }
+  if (result.status === 404) {
+    return saysNoSuchContainer(result.body)
+      ? { detail: 'no such container', state: 'stopped' }
+      : unknown('Docker answered 404');
+  }
+  const body = parseJson(result.body);
+  return body === undefined
+    ? unknown('unexpected Docker answer')
+    : containerOutcome(body, container);
 };

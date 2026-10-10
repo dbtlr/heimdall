@@ -144,11 +144,11 @@ const systemdOutcome = async (
 };
 
 // Asks the Docker Engine whether a container is running.
-const dockerOutcome = async (container: string, { docker }: ServiceTools) => {
-  const { detail, state } = await checkContainer(
-    container,
-    docker ?? { endpoint: dockerEndpoint() },
-  );
+const dockerOutcome = async (container: string, { docker, httpGet }: ServiceTools) => {
+  const { detail, state } = await checkContainer(container, {
+    ...(docker ?? { endpoint: dockerEndpoint() }),
+    get: httpGet,
+  });
   return supervisorOutcome(state, detail);
 };
 

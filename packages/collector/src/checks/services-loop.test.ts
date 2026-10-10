@@ -29,19 +29,17 @@ const shown = (active: string): CommandResult => ({
 // own, as `record` and `forget` do.
 const setup = async (
   dir: { path: string },
-<<<<<<< HEAD
   {
+    docker,
     httpGet,
     open,
     run,
   }: {
+    docker?: 'real';
     httpGet?: HttpGet;
     open?: () => Promise<RecordStore>;
     run?: (cmd: readonly string[]) => Promise<CommandResult>;
   } = {},
-=======
-  { docker, open }: { docker?: 'real'; open?: () => Promise<RecordStore> } = {},
->>>>>>> b14ffd9 (fix(collector): the docker check follows no redirect, trusts only a 404 that says no such container and an answer for the container asked, and reads at most 1 MiB (HMD-60))
 ) => {
   const warnings: string[] = [];
   const states = new Map<string, string>();
@@ -302,15 +300,13 @@ test('a forgotten service leaves the part', async () => {
 test('a service whose supervisor is not checked yet is unchecked', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
-  await c.elsewhere((store) =>
-    store.put('service', { label: 'com.example.web', name: 'web', supervisor: 'launchd' }),
-  );
+  await c.elsewhere((store) => store.put('service', { name: 'web', supervisor: 'none' }));
 
   await c.checks.tick();
   c.checks.close();
 
   expect(c.checks.latest()).toEqual({
-    services: [sent('web', 'unchecked', 'launchd is not checked', START)],
+    services: [sent('web', 'unchecked', 'none is not checked', START)],
   });
 });
 
