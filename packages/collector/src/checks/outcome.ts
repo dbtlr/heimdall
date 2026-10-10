@@ -8,6 +8,9 @@ export type ServiceOutcome = {
   state: ServiceCheckState;
 };
 
+// The UTF-16 code units 0xD800 to 0xDBFF, which begin a surrogate pair.
+const HIGH_SURROGATES = { first: 55_296, last: 56_319 };
+
 // A detail the Hub takes whatever a supervisor printed into it: control
 // characters, which could rewrite a terminal or break a line, are taken out, a
 // lone surrogate is replaced, and the text is cut to the length the Hub takes
@@ -20,7 +23,7 @@ export const clampDetail = (detail: string) => {
     .slice(0, MAX_CHECK_DETAIL_LENGTH);
   const last = cut.charCodeAt(cut.length - 1);
   // A high surrogate at the end is the first half of a pair the cut split.
-  return last >= 0xd8_00 && last <= 0xdb_ff ? cut.slice(0, -1) : cut;
+  return last >= HIGH_SURROGATES.first && last <= HIGH_SURROGATES.last ? cut.slice(0, -1) : cut;
 };
 
 // The outcome of a Service's supervisor check.
