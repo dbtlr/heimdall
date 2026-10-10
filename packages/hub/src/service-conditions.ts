@@ -33,12 +33,15 @@ const UnreadableRecordsSchema = z.array(z.object({ kind: z.string(), name: z.str
 type CheckSetRow = { services: unknown };
 type RecordSetRow = { over_budget_bytes: string | null; unreadable: unknown };
 
-// How the reason names a failing state. A health check will join as unhealthy.
-const FAILING_STATES: Partial<Record<ServiceCheck['state'], string>> = { stopped: 'Stopped' };
+// How the reason names a failing state.
+const FAILING_STATES: Partial<Record<ServiceCheck['state'], string>> = {
+  stopped: 'Stopped',
+  unhealthy: 'Unhealthy',
+};
 
 // What one Service's checks say. It is down once any check has been failing for
 // long enough, in the System's awake time; the reason names the first such
-// check, supervisor before the rest. It is up, and its Condition clears, when
+// check in the order of the check kinds, supervisor before health. It is up, and its Condition clears, when
 // every check that was made passes. Anything else, including a check that is
 // unknown or failed only recently, or a Service with no check made, leaves the
 // Condition as it is.

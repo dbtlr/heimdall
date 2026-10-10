@@ -827,6 +827,26 @@ describe('the checks a Report carries', () => {
     });
   });
 
+  test('read with a health check beside the supervisor check of the same Service', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: {
+        services: [
+          sentService({ check: 'health', detail: 'HTTP 503', service: 'web', state: 'unhealthy' }),
+          sentService(WEB),
+        ],
+      },
+    });
+
+    expect((await entryOf(h))?.checks).toMatchObject({
+      services: [
+        { check: 'health', detail: 'HTTP 503', service: 'web', state: 'unhealthy' },
+        { check: 'supervisor', service: 'web', state: 'up' },
+      ],
+    });
+  });
+
   test('read as an empty list when the Collector has no Service to check', async () => {
     await using h = await startHub();
 
