@@ -1,18 +1,20 @@
 import { expect, test } from 'bun:test';
-import { once } from 'node:events';
 
+import type { HttpGetResult } from './http-get.ts';
 import { healthWords, probeHealth, queueWords, renderStatus, spoolWords } from './status.ts';
+import { runWithProxy } from './testing.ts';
 
 const URL_8080 = 'http://127.0.0.1:8080/api/health';
 
-const answering = (status: number, body: unknown) => () =>
-  Promise.resolve(Response.json(body, { status }));
-const refused = () => Promise.reject(new Error('Unable to connect'));
-// A Hub that never answers: the request ends only when the probe gives up.
-const slow = async (_: string, init: { signal: AbortSignal }): Promise<Response> => {
-  await once(init.signal, 'abort');
-  throw init.signal.reason;
-};
+const answering = (status: number, body: unknown, raw?: string) => (): Promise<HttpGetResult> =>
+  Promise.resolve({
+    body: raw ?? JSON.stringify(body),
+    kind: 'response',
+    status,
+    truncated: false,
+  });
+const failing = (reason: 'refused' | 'timeout') => (): Promise<HttpGetResult> =>
+  Promise.resolve({ kind: 'failed', message: reason, reason });
 
 test('a status lists the unit state, details, paths, and notes with home as ~', () => {
   const text = renderStatus({
@@ -54,7 +56,7 @@ test('a status with no unit path leaves the unit line out', () => {
 test('a Hub that answers 200 is healthy at the version it reports', async () => {
   expect(
     await probeHealth({
-      fetch: answering(200, { database: 'ok', version: '0.2.0' }),
+      get: answering(200, { database: 'ok', version: '0.2.0' }),
       url: URL_8080,
     }),
   ).toEqual({
@@ -67,23 +69,67 @@ test('a Hub that answers 200 is healthy at the version it reports', async () => 
 test('a Hub that answers 503 has a database that is not answering', async () => {
   expect(
     await probeHealth({
-      fetch: answering(503, { database: 'not answering', version: '0.2.0' }),
+      get: answering(503, { database: 'not answering', version: '0.2.0' }),
       url: URL_8080,
     }),
   ).toEqual({ database: 'not answering', kind: 'answered', version: '0.2.0' });
 });
 
 test('a Hub that refuses the connection, times out, or answers something else gave no answer', async () => {
-  expect(await probeHealth({ fetch: refused, url: URL_8080 })).toEqual({ kind: 'no answer' });
-  expect(await probeHealth({ fetch: slow, timeoutMs: 10, url: URL_8080 })).toEqual({
+  expect(await probeHealth({ get: failing('refused'), url: URL_8080 })).toEqual({
     kind: 'no answer',
   });
-  expect(await probeHealth({ fetch: answering(404, { error: 'nope' }), url: URL_8080 })).toEqual({
+  expect(await probeHealth({ get: failing('timeout'), url: URL_8080 })).toEqual({
     kind: 'no answer',
   });
-  expect(await probeHealth({ fetch: answering(200, { database: 'ok' }), url: URL_8080 })).toEqual({
+  expect(await probeHealth({ get: answering(404, { error: 'nope' }), url: URL_8080 })).toEqual({
     kind: 'no answer',
   });
+  expect(await probeHealth({ get: answering(200, { database: 'ok' }), url: URL_8080 })).toEqual({
+    kind: 'no answer',
+  });
+  expect(
+    await probeHealth({ get: answering(200, null, '{"database": "ok"'), url: URL_8080 }),
+  ).toEqual({
+    kind: 'no answer',
+  });
+});
+
+test('the probe asks the address it was given, and no proxy in the environment', async () => {
+  const proxied: string[] = [];
+  const proxy = Bun.serve({
+    fetch: (request) => {
+      proxied.push(request.url);
+      return Response.json({ database: 'ok', version: 'from the proxy' });
+    },
+    hostname: '127.0.0.1',
+    port: 0,
+  });
+  const hub = Bun.serve({
+    fetch: () => Response.json({ database: 'ok', version: '0.2.0' }),
+    hostname: '127.0.0.1',
+    port: 0,
+  });
+  try {
+    const printed = await runWithProxy({
+      proxy: `http://127.0.0.1:${String(proxy.port)}`,
+      script: `
+        const { probeHealth } = await import(${JSON.stringify(`${import.meta.dir}/status.ts`)});
+        const { httpGet } = await import(${JSON.stringify(`${import.meta.dir}/http-get.ts`)});
+        console.log(JSON.stringify(await probeHealth({
+          get: httpGet,
+          url: 'http://127.0.0.1:${String(hub.port)}/api/health',
+        })));
+      `,
+      variable: 'HTTP_PROXY',
+    });
+
+    expect(JSON.parse(printed)).toEqual({ database: 'ok', kind: 'answered', version: '0.2.0' });
+    expect(proxied).toEqual([]);
+  } finally {
+    await proxy.stop(true);
+    await hub.stop(true);
+  }
 });
 
 test('health words name the state and the running version', () => {
@@ -145,4 +191,14 @@ test('spool words warn when content has waited more than a day for the Hub', () 
   expect(spoolWords({ now: NOW, summary: { bytes: 2048, oldestAt: NOW - 25 * HOUR } })).toBe(
     '2.0 KiB waiting, oldest spooled 1 d ago; the Hub has not acknowledged it for over a day',
   );
+});
+
+const notReached = () => Promise.reject(new Error('not reached'));
+
+test.each([
+  'http://[fe80::1%eth0]:8080/api/health',
+  'http://bad host:8080/api/health',
+  'http://[::1:8080/api/health',
+])('a URL that cannot be requested, %s, is no answer rather than a thrown error', async (url) => {
+  expect(await probeHealth({ get: notReached, url })).toEqual({ kind: 'no answer' });
 });

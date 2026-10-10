@@ -9,6 +9,7 @@ import { config } from '@loomcli/plugins/config';
 
 import { serviceCommand } from './command.ts';
 import type { ServiceEnvironment, ServiceSpec } from './command.ts';
+import type { HttpTarget } from './http-get.ts';
 import { platformSupervisor } from './platform.ts';
 import { fakeLaunchd, fakeSupervisor, tempHome } from './testing.ts';
 
@@ -64,7 +65,8 @@ const invoke = async (
     serviceCommand(spec, {
       compiled: () => true,
       executable: EXECUTABLE,
-      fetch: () => Promise.reject(new Error('no Hub in this test')),
+      httpGet: () =>
+        Promise.resolve({ kind: 'failed', message: 'no Hub in this test', reason: 'refused' }),
       now: () => SPOOL_NOW,
       platform: 'linux',
       supervisor: () => fake.supervisor,
@@ -88,10 +90,19 @@ const invoke = async (
   return { calls: fake.calls, code, stderr: await text(stderr), stdout: await text(stdout) };
 };
 
+// A Hub that answers its health at `version`, noting each URL asked in `seen`.
 const healthy = (version: string, seen: string[] = []) => ({
-  fetch: (url: string) => {
-    seen.push(url);
-    return Promise.resolve(Response.json({ database: 'ok', version }));
+  httpGet: (target: HttpTarget) => {
+    if ('host' in target) {
+      const host = target.host.includes(':') ? `[${target.host}]` : target.host;
+      seen.push(`http://${host}:${String(target.port)}${target.path}`);
+    }
+    return Promise.resolve({
+      body: JSON.stringify({ database: 'ok', version }),
+      kind: 'response',
+      status: 200,
+      truncated: false,
+    } as const);
   },
 });
 
@@ -337,10 +348,13 @@ test('status of a Hub whose database is not answering says so, and exits 0', asy
 
   const result = await invoke(HUB, ['service', 'status'], {
     environment: {
-      fetch: () =>
-        Promise.resolve(
-          Response.json({ database: 'not answering', version: '0.2.0' }, { status: 503 }),
-        ),
+      httpGet: () =>
+        Promise.resolve({
+          body: JSON.stringify({ database: 'not answering', version: '0.2.0' }),
+          kind: 'response',
+          status: 503,
+          truncated: false,
+        }),
     },
     fake: fakeSupervisor({ installed: true }),
     home: home.path,

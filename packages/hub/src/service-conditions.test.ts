@@ -512,6 +512,246 @@ describe('Service down', () => {
   });
 });
 
+// A health check of a Service as a Collector sends it.
+const health = (service: string, state: string, since: number, detail = 'HTTP 503') => ({
+  check: 'health',
+  detail,
+  service,
+  since,
+  state,
+});
+
+describe('Service down for a health check', () => {
+  test('is raised when the supervisor is up but the health URL has failed for 2 minutes', async () => {
+    await using h = await startHub();
+    await send(h, '08:02:30', {
+      checks: {
+        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('08:00:30'))],
+      },
+      records: set(WEB),
+      samples: awake('08:00:45', '08:02:45'),
+    });
+
+    const { open } = await evaluate(h, '08:02:30');
+
+    expect(open).toEqual([
+      {
+        kind: 'service_down',
+        raisedAt: at('08:02:30'),
+        reason: 'Unhealthy: HTTP 503.',
+        subject: 'web',
+      },
+    ]);
+  });
+
+  test('is not raised at 7 samples, and is raised at 8, as for a stopped Service', async () => {
+    await using h = await startHub();
+    await send(h, '08:02:15', {
+      checks: {
+        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('08:00:30'))],
+      },
+      records: set(WEB),
+      samples: awake('08:00:45', '08:02:30'),
+    });
+    const seven = await evaluate(h, '08:02:15');
+    await send(h, '08:02:30', { samples: [at('08:02:30')] });
+    const eight = await evaluate(h, '08:02:30');
+
+    expect(seven.open).toEqual([]);
+    expect(subjects(eight.open)).toEqual(['web']);
+  });
+
+  test('is raised for a Service with only a health check, as under supervisor none', async () => {
+    await using h = await startHub();
+    const bare: ServiceRecord = { name: 'web', supervisor: 'none' };
+    await send(h, '08:00:00', {
+      checks: { services: [health('web', 'unhealthy', at('07:55:00'), 'connection refused')] },
+      records: set(bare),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: connection refused.', subject: 'web' }]);
+  });
+
+  test('names the supervisor check when both checks have failed long enough', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          // Listed health first: the reason follows the kind order, not the list.
+          health('web', 'unhealthy', at('07:55:00')),
+          check('web', 'stopped', at('07:56:00'), 'ActiveState=failed'),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toMatchObject([{ reason: 'Stopped: ActiveState=failed.', subject: 'web' }]);
+    expect(open).toHaveLength(1);
+  });
+
+  test('names the health check when the supervisor check has failed for less than 2 minutes', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          check('web', 'stopped', at('07:59:30')),
+          health('web', 'unhealthy', at('07:55:00')),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:00:00');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+  });
+
+  test('stays as it is while the supervisor is up and the health check has failed less than 2 minutes', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('07:59:30'))],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:00:00');
+
+    expect(open).toEqual([]);
+  });
+
+  test('is raised while the supervisor check is unknown, since the failing health URL is direct evidence', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
+          health('web', 'unhealthy', at('07:55:00')),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+  });
+
+  test('stays open while the supervisor is up and the health check has failed less than 2 minutes', async () => {
+    await using h = await startHub();
+    await downAndEvaluated(h);
+    await send(h, '08:04:00', {
+      checks: {
+        services: [check('web', 'up', at('08:03:30')), health('web', 'unhealthy', at('08:03:50'))],
+      },
+    });
+
+    const { open, timeline } = await evaluate(h, '08:04:30');
+
+    expect(open).toMatchObject([{ raisedAt: at('08:03:00'), subject: 'web' }]);
+    expect(timeline).toHaveLength(1);
+  });
+
+  test('clears for a Service whose supervisor is unchecked once its health check passes', async () => {
+    await using h = await startHub();
+    const launchd: ServiceRecord = { label: 'com.example.web', name: 'web', supervisor: 'launchd' };
+    const unchecked = check('web', 'unchecked', at('07:00:00'), 'launchd is not checked');
+    await send(h, '08:00:00', {
+      checks: { services: [unchecked, health('web', 'unhealthy', at('07:55:00'))] },
+      records: set(launchd),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+    const raised = await evaluate(h, '08:03:00');
+    await send(h, '08:04:00', {
+      checks: { services: [unchecked, health('web', 'up', at('08:03:30'), 'HTTP 200')] },
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(subjects(raised.open)).toEqual(['web']);
+    expect(open).toEqual([]);
+  });
+
+  test('does not clear while either check still fails', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          check('web', 'stopped', at('07:55:00')),
+          health('web', 'unhealthy', at('07:55:00')),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+    await evaluate(h, '08:03:00');
+    await send(h, '08:04:00', {
+      checks: {
+        services: [check('web', 'up', at('08:03:30')), health('web', 'unhealthy', at('07:55:00'))],
+      },
+    });
+
+    const { open } = await evaluate(h, '08:05:00');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+  });
+
+  test('clears when every check passes', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('07:55:00'))],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+    await evaluate(h, '08:03:00');
+    await send(h, '08:04:00', {
+      checks: {
+        services: [
+          check('web', 'up', at('07:00:00')),
+          health('web', 'up', at('08:03:30'), 'HTTP 200'),
+        ],
+      },
+    });
+
+    const { open, timeline } = await evaluate(h, '08:05:00');
+
+    expect(open).toEqual([]);
+    expect(timeline).toMatchObject([
+      { condition: 'service_down', kind: 'cleared', subject: 'web' },
+      { condition: 'service_down', kind: 'raised', subject: 'web' },
+    ]);
+  });
+
+  test('is not raised while the supervisor check is unknown and the health check passes', async () => {
+    await using h = await startHub();
+    await send(h, '08:00:00', {
+      checks: {
+        services: [
+          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
+          health('web', 'up', at('07:55:00'), 'HTTP 200'),
+        ],
+      },
+      records: set(WEB),
+      samples: awake('07:55:00', '08:00:00'),
+    });
+
+    const { open } = await evaluate(h, '09:00:00');
+
+    expect(open).toEqual([]);
+  });
+});
+
 test('the page and the Timeline name the Condition and the Service', async () => {
   await using h = await startHub();
   await downAndEvaluated(h);

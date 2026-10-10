@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { join } from 'node:path';
 
 import type { ServiceRecord } from '@heimdall/schema';
+import type { HttpGet } from '@heimdall/service';
 
 import { openRecords } from '../records.ts';
 import type { RecordStore } from '../records.ts';
@@ -29,9 +30,11 @@ const shown = (active: string): CommandResult => ({
 const setup = async (
   dir: { path: string },
   {
+    httpGet,
     open,
     run,
   }: {
+    httpGet?: HttpGet;
     open?: () => Promise<RecordStore>;
     run?: (cmd: readonly string[]) => Promise<CommandResult>;
   } = {},
@@ -41,6 +44,7 @@ const setup = async (
   let now = START;
   const checks = createServiceChecks({
     findSystemctl: () => Promise.resolve('/usr/bin/systemctl'),
+    ...(httpGet === undefined ? {} : { httpGet }),
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     now: () => now,
     open: open ?? (() => openRecords({ stateDir: join(dir.path, 'state') })),
@@ -369,4 +373,86 @@ test('started, it checks again each interval until stopped', async () => {
   expect(count).toBeGreaterThan(1);
   expect(ticks).toBe(count);
   expect(checks.latest()).toEqual({ services: [] });
+});
+
+test('a health check keeps its own since time beside the supervisor check', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  let status = 200;
+  const server = Bun.serve({
+    fetch: () => new Response('', { status }),
+    hostname: '127.0.0.1',
+    port: 0,
+  });
+  try {
+    const health = `http://127.0.0.1:${String(server.port)}/healthz`;
+    c.states.set('web.service', 'active');
+    await c.elsewhere((store) => store.put('service', { ...WEB, health }));
+    await c.checks.tick();
+
+    c.advance(60_000);
+    status = 503;
+    await c.checks.tick();
+    c.checks.close();
+
+    expect(c.checks.latest()).toEqual({
+      services: [
+        sent('web', 'up', 'ActiveState=active', START),
+        { ...sent('web', 'unhealthy', 'HTTP 503', START + 60_000), check: 'health' },
+      ],
+    });
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test('the loop gives a health URL 5 seconds, reading no body', async () => {
+  await using dir = await tempStateDir();
+  const asked: Parameters<HttpGet>[] = [];
+  const c = await setup(dir, {
+    httpGet: (target, options) => {
+      asked.push([target, options]);
+      return Promise.resolve({ kind: 'failed', message: 'no answer', reason: 'timeout' });
+    },
+  });
+  c.states.set('web.service', 'active');
+  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:8080/h' }));
+
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(asked).toEqual([
+    [
+      { host: '127.0.0.1', path: '/h', port: 8080 },
+      { maxBodyBytes: 0, timeoutMs: 5000 },
+    ],
+  ]);
+  expect(c.checks.latest()).toMatchObject({
+    services: [
+      { check: 'supervisor', state: 'up' },
+      { check: 'health', detail: 'timed out after 5 s', state: 'unhealthy' },
+    ],
+  });
+});
+
+test('a service recorded again with another health URL starts a fresh since time for its health check only', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir, {
+    httpGet: () => Promise.resolve({ body: '', kind: 'response', status: 503, truncated: true }),
+  });
+  c.states.set('web.service', 'active');
+  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:8080/h' }));
+  await c.checks.tick();
+
+  c.advance(60_000);
+  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:9090/h' }));
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(c.checks.latest()).toEqual({
+    services: [
+      sent('web', 'up', 'ActiveState=active', START),
+      { ...sent('web', 'unhealthy', 'HTTP 503', START + 60_000), check: 'health' },
+    ],
+  });
 });

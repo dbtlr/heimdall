@@ -19,12 +19,14 @@ export type FileCheckState = (typeof FILE_CHECK_STATES)[number];
 // asks the supervisor that runs the Service whether it is up. A Service is
 // `stopped` when its supervisor says it is not running, `unknown` when the
 // Collector could not ask or got no answer, and `unchecked` when this Collector
-// does not check that supervisor. Later checks join as further kinds, and a
-// state they add joins the states.
-export const SERVICE_CHECK_KINDS = ['supervisor'] as const;
+// does not check that supervisor. A health check requests the Service's
+// loopback health URL, and finds it `unhealthy` when it does not answer with a
+// 2xx or 3xx status. Later checks join as further kinds, and a state they add
+// joins the states.
+export const SERVICE_CHECK_KINDS = ['supervisor', 'health'] as const;
 export type ServiceCheckKind = (typeof SERVICE_CHECK_KINDS)[number];
 
-export const SERVICE_CHECK_STATES = ['up', 'stopped', 'unknown', 'unchecked'] as const;
+export const SERVICE_CHECK_STATES = ['up', 'stopped', 'unhealthy', 'unknown', 'unchecked'] as const;
 export type ServiceCheckState = (typeof SERVICE_CHECK_STATES)[number];
 
 const MAX_PATH_LENGTH = 4096;

@@ -1,15 +1,18 @@
+import { tcpTargetOf } from './http-get.ts';
+import type { HttpGet } from './http-get.ts';
 import { displayPath } from './names.ts';
 
 // How long `service status` waits for the Hub's health answer.
 const HEALTH_TIMEOUT_MS = 2000;
+
+// The Hub's health answer is a few dozen bytes; anything past this is not it.
+const MAX_HEALTH_BODY_BYTES = 4096;
 
 // What `GET /api/health` told `service status`. Any answer but a 200 or 503
 // with the Hub's JSON body is no answer.
 export type HealthAnswer =
   | { database: 'not answering' | 'ok'; kind: 'answered'; version: string }
   | { kind: 'no answer' };
-
-export type HealthFetch = (url: string, init: { signal: AbortSignal }) => Promise<Response>;
 
 const isHealthBody = (
   body: unknown,
@@ -21,21 +24,25 @@ const isHealthBody = (
   'version' in body &&
   typeof body.version === 'string';
 
+// Asks the Hub for its health with `get`, which ignores any proxy in the
+// environment, so the request goes to the address the Hub listens on.
 export const probeHealth = async ({
-  fetch,
+  get,
   timeoutMs = HEALTH_TIMEOUT_MS,
   url,
 }: {
-  fetch: HealthFetch;
+  get: HttpGet;
   timeoutMs?: number;
   url: string;
 }): Promise<HealthAnswer> => {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200 && response.status !== 503) {
+    // A configured host that makes no URL is no answer, like any other
+    // address that cannot be asked.
+    const result = await get(tcpTargetOf(url), { maxBodyBytes: MAX_HEALTH_BODY_BYTES, timeoutMs });
+    if (result.kind !== 'response' || (result.status !== 200 && result.status !== 503)) {
       return { kind: 'no answer' };
     }
-    const body: unknown = await response.json();
+    const body: unknown = JSON.parse(result.body);
     return isHealthBody(body)
       ? { database: body.database, kind: 'answered', version: body.version }
       : { kind: 'no answer' };

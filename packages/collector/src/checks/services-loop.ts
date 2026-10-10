@@ -1,6 +1,6 @@
 import { RECORD_NAME } from '@heimdall/schema';
 import type { SentServiceCheck, ServiceRecord } from '@heimdall/schema';
-import { every } from '@heimdall/service';
+import { every, httpGet as defaultHttpGet } from '@heimdall/service';
 
 import type { Log } from '../collector.ts';
 import { describeError } from '../errors.ts';
@@ -60,9 +60,15 @@ const targetOf = (record: ServiceRecord) => {
 
 // Names one check of one Service as recorded: a Service recorded again under
 // another supervisor or target is a different Service to check, so it starts
-// a `since` of its own.
+// a `since` of its own, and so is a health check of another URL.
 const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
-  JSON.stringify([record.name, record.supervisor, targetOf(record), check]);
+  JSON.stringify([
+    record.name,
+    record.supervisor,
+    targetOf(record),
+    check,
+    check === 'health' ? (record.health ?? null) : null,
+  ]);
 
 // The checks of every Service the Collector's provisioner recorded, run on a
 // cadence of their own so a Service that stops is seen within a minute, however
@@ -79,12 +85,14 @@ const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
 // last tick failed. `tick` never throws.
 export const createServiceChecks = ({
   findSystemctl: locateSystemctl = findSystemctl,
+  httpGet = defaultHttpGet,
   log,
   now,
   open,
   run = runCommand,
 }: {
   findSystemctl?: () => Promise<string | undefined>;
+  httpGet?: ServiceTools['httpGet'];
   log: Log;
   now: () => number;
   open: () => Promise<RecordStore>;
@@ -105,7 +113,7 @@ export const createServiceChecks = ({
       );
     }
     warnedAbout = warning;
-    const tools = { run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
+    const tools = { httpGet, run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
     const checkedAt = now();
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.
