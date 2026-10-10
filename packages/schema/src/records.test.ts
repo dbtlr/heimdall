@@ -297,6 +297,44 @@ describe('a text field', () => {
     expect(accepts(ApplicationRecordSchema, record('a\u{1f600}b'))).toBe(true);
   });
 
+  test.each(['web*', 'web?.service', 'web[12].service', '*', '12345', '0'])(
+    'a systemd unit of %s is refused, since systemctl reads it as a pattern or a job id',
+    (unit) => {
+      expect(accepts(ServiceRecordSchema, { name: 's', supervisor: 'systemd', unit })).toBe(false);
+      expect(accepts(ServiceRecordSchema, { name: 's', supervisor: 'systemd-user', unit })).toBe(
+        false,
+      );
+    },
+  );
+
+  test('says why a systemd unit is refused', () => {
+    const refused = ServiceRecordSchema.safeParse({
+      name: 's',
+      supervisor: 'systemd',
+      unit: 'web*',
+    });
+
+    expect(JSON.stringify(refused.error?.issues)).toContain(
+      'must name one unit: no *, ? or [ and not only digits',
+    );
+  });
+
+  test.each(['web.service', 'web@1.service', 'web-2.service', 'app.slice', 'v2'])(
+    'a systemd unit of %s is accepted',
+    (unit) => {
+      expect(accepts(ServiceRecordSchema, { name: 's', supervisor: 'systemd', unit })).toBe(true);
+    },
+  );
+
+  test('a launchd label and a container are not read as patterns', () => {
+    expect(
+      accepts(ServiceRecordSchema, { label: 'com.example.*', name: 's', supervisor: 'launchd' }),
+    ).toBe(true);
+    expect(
+      accepts(ServiceRecordSchema, { container: '123', name: 's', supervisor: 'docker' }),
+    ).toBe(true);
+  });
+
   test('a Service unit, a launchd label, and a container are text too', () => {
     expect(
       accepts(ServiceRecordSchema, { name: 's', supervisor: 'systemd', unit: 'a\ud800' }),

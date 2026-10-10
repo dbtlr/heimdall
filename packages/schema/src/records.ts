@@ -29,6 +29,13 @@ const text = (maxLength = 256) =>
     .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' })
     .refine((value) => value.isWellFormed(), { message: 'must be well-formed Unicode' });
 
+// The name of one systemd unit. systemctl reads a name with `*`, `?` or `[` as
+// a pattern that can match several units or none, and a name of only digits as
+// a job id, so neither can name the unit a Service runs as.
+const systemdUnit = text().refine((unit) => !/[*?[]/u.test(unit) && !/^\d+$/u.test(unit), {
+  message: 'must name one unit: no *, ? or [ and not only digits',
+});
+
 const MAX_PORT = 65_535;
 
 const port = z.int().min(1).max(MAX_PORT);
@@ -156,8 +163,8 @@ const recordSchemas = (
     ]),
     // The shape depends on the supervisor, which decides what names the Service to it.
     service: z.discriminatedUnion('supervisor', [
-      object({ ...service, supervisor: z.literal('systemd'), unit: text() }),
-      object({ ...service, supervisor: z.literal('systemd-user'), unit: text() }),
+      object({ ...service, supervisor: z.literal('systemd'), unit: systemdUnit }),
+      object({ ...service, supervisor: z.literal('systemd-user'), unit: systemdUnit }),
       object({ ...service, label: text(), supervisor: z.literal('launchd') }),
       object({ ...service, container: text(), supervisor: z.literal('docker') }),
       object({ ...service, supervisor: z.literal('none') }),
