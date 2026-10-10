@@ -155,6 +155,71 @@ test('a check keeps the since time of its latest state across ticks, after a cha
   });
 });
 
+test.each([
+  ['unit', { name: 'web', supervisor: 'systemd', unit: 'b.service' }],
+  ['supervisor', { name: 'web', supervisor: 'systemd-user', unit: 'web.service' }],
+] as const)(
+  'a service recorded again with another %s starts a fresh since time',
+  async (_, again) => {
+    await using dir = await tempStateDir();
+    const c = await setup(dir);
+    await c.elsewhere((store) => store.put('service', WEB));
+    await c.checks.tick();
+    c.advance(60_000);
+    await c.checks.tick();
+    const before = c.checks.latest();
+
+    c.advance(60_000);
+    await c.elsewhere((store) => store.put('service', again));
+    await c.checks.tick();
+    c.checks.close();
+
+    expect(before).toEqual({
+      services: [sent('web', 'stopped', 'ActiveState=inactive', START)],
+    });
+    expect(c.checks.latest()).toEqual({
+      services: [sent('web', 'stopped', 'ActiveState=inactive', START + 120_000)],
+    });
+  },
+);
+
+test('a pass that fails leaves no services part, and the next pass that works starts every since time afresh', async () => {
+  await using dir = await tempStateDir();
+  let failing = false;
+  const c = await setup(dir, {
+    open: async () => {
+      const store = await openRecords({ stateDir: join(dir.path, 'state') });
+      return {
+        ...store,
+        readRecords: () => {
+          if (failing) {
+            throw new Error('database is locked');
+          }
+          return store.readRecords();
+        },
+      };
+    },
+  });
+  await c.elsewhere((store) => store.put('service', WEB));
+  await c.checks.tick();
+  const before = c.checks.latest();
+
+  c.advance(60_000);
+  failing = true;
+  await c.checks.tick();
+  const during = c.checks.latest();
+  c.advance(60_000);
+  failing = false;
+  await c.checks.tick();
+  c.checks.close();
+
+  expect(before).toEqual({ services: [sent('web', 'stopped', 'ActiveState=inactive', START)] });
+  expect(during).toBeUndefined();
+  expect(c.checks.latest()).toEqual({
+    services: [sent('web', 'stopped', 'ActiveState=inactive', START + 120_000)],
+  });
+});
+
 test('answers the same object while nothing about the checks changed, so nothing is sent again', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);

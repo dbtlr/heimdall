@@ -34,8 +34,35 @@ const serviceRecordsOf = (stored: ReturnType<RecordStore['readRecords']>['record
   return { records, refused };
 };
 
-const keyOf = ({ check, service }: Pick<SentServiceCheck, 'check' | 'service'>) =>
-  JSON.stringify([service, check]);
+// What the supervisor knows a Service by: the unit, label or container, or
+// nothing for a Service that has no supervisor.
+const targetOf = (record: ServiceRecord) => {
+  switch (record.supervisor) {
+    case 'systemd':
+    case 'systemd-user': {
+      return record.unit;
+    }
+    case 'launchd': {
+      return record.label;
+    }
+    case 'docker': {
+      return record.container;
+    }
+    case 'none': {
+      return null;
+    }
+    default: {
+      const _exhaustive: never = record;
+      return _exhaustive;
+    }
+  }
+};
+
+// Names one check of one Service as recorded: a Service recorded again under
+// another supervisor or target is a different Service to check, so it starts
+// a `since` of its own.
+const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
+  JSON.stringify([record.name, record.supervisor, targetOf(record), check]);
 
 // The checks of every Service the Collector's provisioner recorded, run on a
 // cadence of their own so a Service that stops is seen within a minute, however
@@ -48,8 +75,8 @@ const keyOf = ({ check, service }: Pick<SentServiceCheck, 'check' | 'service'>) 
 // state, kept while the Collector runs. It holds a connection to the store of
 // its own, opened on the first tick and again on each tick until it opens, so a
 // database that cannot be opened costs the checks, never the daemon. `latest`
-// answers the part, or undefined before the first tick finishes. `tick` never
-// throws.
+// answers the part, or undefined before the first tick finishes and while the
+// last tick failed. `tick` never throws.
 export const createServiceChecks = ({
   findSystemctl: locateSystemctl = findSystemctl,
   log,
@@ -86,21 +113,26 @@ export const createServiceChecks = ({
       await Promise.all(
         records.map(async (record) =>
           (await checkService(record, tools)).map(({ check, detail, state }) => {
-            const before = previous.get(keyOf({ check, service: record.name }));
+            const key = keyOf(record, check);
+            const before = previous.get(key);
             return {
-              check,
-              detail,
-              service: record.name,
-              since: before?.state === state ? before.since : checkedAt,
-              state,
+              key,
+              sent: {
+                check,
+                detail,
+                service: record.name,
+                since: before?.state === state ? before.since : checkedAt,
+                state,
+              },
             };
           }),
         ),
       )
     ).flat();
-    previous = new Map(found.map((entry) => [keyOf(entry), entry]));
-    if (JSON.stringify(found) !== JSON.stringify(latest?.services)) {
-      latest = { services: found };
+    previous = new Map(found.map(({ key, sent }) => [key, sent]));
+    const sent = found.map((entry) => entry.sent);
+    if (JSON.stringify(sent) !== JSON.stringify(latest?.services)) {
+      latest = { services: sent };
     }
   };
 
@@ -120,6 +152,11 @@ export const createServiceChecks = ({
           log.warn(`Could not read the records to check their Services: ${describeError(error)}`);
         }
         failing = true;
+        // Results the Collector can no longer make are not reported, so the
+        // Hub holds what it has instead of counting a stale state, and every
+        // `since` starts afresh once the checks work again.
+        previous = new Map();
+        latest = undefined;
       }
     },
   };
