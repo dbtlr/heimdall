@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ChecksSectionSchema } from './checks-section.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
 import { TranscriptsSectionSchema } from './transcripts.ts';
@@ -22,10 +23,11 @@ export const SAMPLE_INTERVAL_MS = 15_000;
 export const MAX_SAMPLES_PER_REPORT = 1000;
 
 // The largest Report body the Hub reads; a larger one is rejected, Vitals with
-// it. The records section may take 8 MiB and the runs section 1 MiB, leaving
-// 3 MiB for the samples and transcripts: 1,000 samples of 24 disks each come to
-// about 2.2 MB. Disks per sample are not bounded, so a Collector sends a Report
-// that would exceed this without its sections.
+// it. The records section may take 8 MiB, the runs section 1 MiB, and the
+// checks section 1 MiB, leaving 2 MiB for the samples and transcripts: 1,000
+// samples of 24 disks each come to about 2.2 MB. Disks per sample are not
+// bounded, so a Collector sends a Report that would exceed this without its
+// sections.
 export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
 
 // An IANA time zone name such as `America/New_York`, `UTC`, or `Etc/GMT+5`.
@@ -60,6 +62,10 @@ const isStrictlyIncreasing = (samples: { t: number }[]) =>
 // invalid Report with 422, the one answer on which the Collector drops it
 // (ADR-0004).
 export const ReportSchema = z.object({
+  // Only when what the Collector observed against its records changed, it
+  // started, or an hour passed; the Hub keeps the System's latest checks until
+  // another arrives.
+  checks: ChecksSectionSchema.optional(),
   collector: z.object({
     arch: z.string().min(1),
     platform: z.enum(['darwin', 'linux']),
