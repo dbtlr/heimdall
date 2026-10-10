@@ -36,6 +36,9 @@ type LatestRuns = { latestRun: RunRecord; latestSuccess: RunRecord | null } | nu
 // at least `graceMs` up to now, or undefined when it has not been.
 type AwakeCutoff = (graceMs: number) => number | undefined;
 
+// How long, in awake time, the Hub waits for a successful run of `record`.
+const graceMsOf = (record: JobRecord) => (record.graceMinutes ?? DEFAULT_GRACE_MINUTES) * 60_000;
+
 const failingVerdict = (runs: LatestRuns): Verdict => {
   if (runs === 'unknown') {
     return 'unknown';
@@ -74,7 +77,7 @@ const overdueVerdict = ({
   if (runs === 'unknown' || timeZone === null) {
     return 'unknown';
   }
-  const cutoff = awakeCutoff((record.graceMinutes ?? DEFAULT_GRACE_MINUTES) * 60_000);
+  const cutoff = awakeCutoff(graceMsOf(record));
   if (cutoff === undefined) {
     return 'unknown';
   }
@@ -150,15 +153,23 @@ const latestRunsOf = async (tx: SQL, system: string): Promise<(job: string) => L
 };
 
 // The System's awake time, from the samples its Collector took every
-// SAMPLE_INTERVAL_MS, counted per 5-minute bucket up to `now`. A bucket after
-// `now` comes from a clock running ahead and is not counted.
-const awakeCutoffOf = async (tx: SQL, system: string, now: number): Promise<AwakeCutoff> => {
+// SAMPLE_INTERVAL_MS, counted per 5-minute bucket up to `now`, for grace
+// periods up to `maxGraceMs`. A bucket after `now` comes from a clock running
+// ahead and is not counted. Only the buckets up to the one that completes the
+// longest grace period are read, since no older one is ever a cutoff.
+const awakeCutoffOf = async (
+  tx: SQL,
+  { maxGraceMs, now, system }: { maxGraceMs: number; now: number; system: string },
+): Promise<AwakeCutoff> => {
   const buckets: BucketRow[] = await tx`
-    SELECT bucket, sum(LEAST(samples, ${SAMPLES_PER_BUCKET})) OVER (ORDER BY bucket DESC)
-             AS awake_samples
-    FROM vitals_rollups
-    WHERE system = ${system} AND bucket <= ${new Date(now)}
-      AND bucket > ${new Date(now - AWAKE_HORIZON_MS)}
+    SELECT bucket, awake_samples FROM (
+      SELECT bucket, LEAST(samples, ${SAMPLES_PER_BUCKET}) AS counted,
+             sum(LEAST(samples, ${SAMPLES_PER_BUCKET})) OVER (ORDER BY bucket DESC) AS awake_samples
+      FROM vitals_rollups
+      WHERE system = ${system} AND bucket <= ${new Date(now)}
+        AND bucket > ${new Date(now - AWAKE_HORIZON_MS)}
+    ) b
+    WHERE awake_samples - counted < ${Math.ceil(maxGraceMs / SAMPLE_INTERVAL_MS)}
     ORDER BY bucket DESC
   `;
   return (graceMs) =>
@@ -217,13 +228,26 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       SELECT kind, subject FROM conditions
       WHERE system = ${system} AND kind IN ${tx(JOB_KINDS)} AND cleared_at IS NULL
     `;
+    if (jobs.length === 0 && open.length === 0) {
+      return;
+    }
+    const records = jobs.map((row) => ({
+      parsed: REPORTED_RECORD_SCHEMAS.job.safeParse(row.record),
+      row,
+    }));
     const unreadable = unreadableJobRecords(recordSet.unreadable);
     const runsOf = await latestRunsOf(tx, system);
-    const awakeCutoff = await awakeCutoffOf(tx, system, now);
+    const awakeCutoff = await awakeCutoffOf(tx, {
+      maxGraceMs: Math.max(
+        0,
+        ...records.map(({ parsed }) => (parsed.success ? graceMsOf(parsed.data) : 0)),
+      ),
+      now,
+      system,
+    });
 
     const verdicts = new Map<string, Record<'job_failing' | 'job_overdue', Verdict>>();
-    for (const row of jobs) {
-      const record = REPORTED_RECORD_SCHEMAS.job.safeParse(row.record);
+    for (const { parsed: record, row } of records) {
       const runs = runsOf(row.name);
       verdicts.set(
         row.name,

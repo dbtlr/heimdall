@@ -378,6 +378,24 @@ describe('job overdue', () => {
     ]);
   });
 
+  test('judges each job on one System by its own grace period', async () => {
+    await using h = await startHub();
+    const patient = { ...BACKUP, graceMinutes: 180, name: 'archive' };
+    await send(h, '06:00:00', { records: set(BACKUP, patient), runs: NO_RUNS });
+    await send(h, '08:45:00', { samples: awake('06:00:15', '08:45:00') });
+
+    expect((await evaluate(h, '08:45:00')).open).toEqual([
+      expect.objectContaining({ kind: 'job_overdue', subject: 'backup' }),
+    ]);
+
+    await send(h, '10:45:00', { samples: awake('08:45:00', '10:45:00') });
+
+    expect((await evaluate(h, '10:45:00')).open.map((c) => c.subject).toSorted()).toEqual([
+      'archive',
+      'backup',
+    ]);
+  });
+
   test('is left unknown, and not raised, while the System has reported no time zone', async () => {
     await using h = await startHub();
     await send(h, '06:00:00', {
