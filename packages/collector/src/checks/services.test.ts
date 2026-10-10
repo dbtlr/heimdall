@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceRecord } from '@heimdall/schema';
@@ -272,5 +272,118 @@ describe('finding systemctl', () => {
 
   test('is undefined when none exists', async () => {
     expect(await findSystemctl(() => Promise.resolve(false))).toBeUndefined();
+  });
+});
+
+describe('a Service with a health URL', () => {
+  const servers: { stop: (force: boolean) => unknown }[] = [];
+
+  afterEach(() => {
+    for (const server of servers.splice(0)) {
+      void server.stop(true);
+    }
+  });
+
+  const serve = (handler: () => Response | Promise<Response>) => {
+    const server = Bun.serve({ fetch: handler, hostname: '127.0.0.1', port: 0 });
+    servers.push(server);
+    return `http://127.0.0.1:${String(server.port)}/healthz`;
+  };
+
+  test('is checked beside its supervisor, which can pass while the health check fails', async () => {
+    const health = serve(() => new Response('down', { status: 503 }));
+
+    const { outcomes } = await check({ ...WEB, health }, shown({ active: 'active' }));
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'ActiveState=active', state: 'up' },
+      { check: 'health', detail: 'HTTP 503', state: 'unhealthy' },
+    ]);
+  });
+
+  test('reports both checks failing, supervisor first', async () => {
+    const health = serve(() => new Response('down', { status: 500 }));
+
+    const { outcomes } = await check({ ...WEB, health }, shown({ active: 'failed' }));
+
+    expect(outcomes.map(({ check: kind, state }) => [kind, state])).toEqual([
+      ['supervisor', 'stopped'],
+      ['health', 'unhealthy'],
+    ]);
+  });
+
+  test('is checked while the supervisor check runs, not after it', async () => {
+    const requested = Promise.withResolvers<void>();
+    const asked = Promise.withResolvers<void>();
+    const health = serve(async () => {
+      requested.resolve();
+      await asked.promise;
+      return new Response('ok');
+    });
+    const outcomes = await checkService(
+      { ...WEB, health },
+      {
+        run: async () => {
+          asked.resolve();
+          await requested.promise;
+          return shown({ active: 'active' });
+        },
+        systemctl: SYSTEMCTL,
+      },
+    );
+
+    expect(outcomes.map(({ state }) => state)).toEqual(['up', 'up']);
+  });
+
+  test('is unhealthy when the URL does not answer within the timeout, the supervisor check unaffected', async () => {
+    const health = serve(() => new Promise<Response>(() => 0));
+
+    const outcomes = await checkService(
+      { ...WEB, health },
+      { run: () => Promise.resolve(shown({ active: 'active' })), systemctl: SYSTEMCTL },
+      { healthTimeoutMs: 100 },
+    );
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'ActiveState=active', state: 'up' },
+      { check: 'health', detail: 'timed out after 0.1 s', state: 'unhealthy' },
+    ]);
+  });
+
+  test('under launchd is checked by its URL while its supervisor is reported unchecked', async () => {
+    const health = serve(() => new Response('ok'));
+
+    const { outcomes } = await check(
+      { health, label: 'com.example.web', name: 'web', supervisor: 'launchd' },
+      shown({ active: 'failed' }),
+    );
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'launchd is not checked', state: 'unchecked' },
+      { check: 'health', detail: 'HTTP 200', state: 'up' },
+    ]);
+  });
+
+  test('under none has the URL as its only check, with no supervisor check', async () => {
+    const health = serve(() => new Response('ok'));
+
+    const { outcomes, ran } = await check(
+      { health, name: 'web', supervisor: 'none' },
+      shown({ active: 'failed' }),
+    );
+
+    expect(outcomes).toEqual([{ check: 'health', detail: 'HTTP 200', state: 'up' }]);
+    expect(ran).toEqual([]);
+  });
+
+  test('under none fails as unhealthy when the URL does not answer', async () => {
+    const health = serve(() => new Response('', { status: 502 }));
+
+    const { outcomes } = await check(
+      { health, name: 'web', supervisor: 'none' },
+      shown({ active: 'active' }),
+    );
+
+    expect(outcomes).toEqual([{ check: 'health', detail: 'HTTP 502', state: 'unhealthy' }]);
   });
 });

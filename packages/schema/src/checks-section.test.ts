@@ -228,6 +228,12 @@ describe('the services part of a checks section', () => {
     ]);
   });
 
+  test('mirror a health check and its unhealthy state as sent, beside the supervisor check', () => {
+    const health = { ...WEB_UP, check: 'health', detail: 'HTTP 503', state: 'unhealthy' } as const;
+
+    expect(mirrored({ services: [WEB_UP, health] }).services).toEqual([WEB_UP, health]);
+  });
+
   test('drop a check only a newer Collector knows', () => {
     expect(mirrored({ services: [{ ...WEB_UP, check: 'tls' }, WEB_UP] }).services).toEqual([
       WEB_UP,

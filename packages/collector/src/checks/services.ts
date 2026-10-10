@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import type { ServiceRecord } from '@heimdall/schema';
 
 import type { CommandResult } from '../subprocess.ts';
+import { checkHealth } from './health.ts';
 import { launchdOutcome } from './launchd.ts';
 import { supervisorOutcome } from './outcome.ts';
 import type { ServiceOutcome } from './outcome.ts';
@@ -159,9 +160,22 @@ const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<Se
   }
 };
 
-// Every check of one Service. A Service has the supervisor check now; a health
-// URL check joins beside it, so one Service can fail two ways.
+// Every check of one Service: the supervisor check, and the health URL check
+// beside it when the record has a health URL, run together. A `none` Service
+// has no supervisor to ask, so its health URL is its only check; with no health
+// URL it is reported unchecked.
 export const checkService = async (
   record: ServiceRecord,
   tools: ServiceTools,
-): Promise<ServiceOutcome[]> => [await supervisorCheck(record, tools)];
+  { healthTimeoutMs }: { healthTimeoutMs?: number | undefined } = {},
+): Promise<ServiceOutcome[]> => {
+  const health =
+    record.health === undefined
+      ? undefined
+      : checkHealth(record.health, { timeoutMs: healthTimeoutMs });
+  if (health !== undefined && record.supervisor === 'none') {
+    return [await health];
+  }
+  const [supervisor, healthOutcome] = await Promise.all([supervisorCheck(record, tools), health]);
+  return healthOutcome === undefined ? [supervisor] : [supervisor, healthOutcome];
+};

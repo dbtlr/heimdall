@@ -370,3 +370,34 @@ test('started, it checks again each interval until stopped', async () => {
   expect(ticks).toBe(count);
   expect(checks.latest()).toEqual({ services: [] });
 });
+
+test('a health check keeps its own since time beside the supervisor check', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  let status = 200;
+  const server = Bun.serve({
+    fetch: () => new Response('', { status }),
+    hostname: '127.0.0.1',
+    port: 0,
+  });
+  try {
+    const health = `http://127.0.0.1:${String(server.port)}/healthz`;
+    c.states.set('web.service', 'active');
+    await c.elsewhere((store) => store.put('service', { ...WEB, health }));
+    await c.checks.tick();
+
+    c.advance(60_000);
+    status = 503;
+    await c.checks.tick();
+    c.checks.close();
+
+    expect(c.checks.latest()).toEqual({
+      services: [
+        sent('web', 'up', 'ActiveState=active', START),
+        { ...sent('web', 'unhealthy', 'HTTP 503', START + 60_000), check: 'health' },
+      ],
+    });
+  } finally {
+    await server.stop(true);
+  }
+});
