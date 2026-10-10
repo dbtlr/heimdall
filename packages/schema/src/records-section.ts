@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { RECORD_NAME, REPORTED_RECORD_SCHEMAS } from './records.ts';
+import { RECORD_NAME, REPORTED_RECORD_SCHEMAS, REPORTED_RUN_SCHEMA } from './records.ts';
 import type { RecordKind, RecordOf } from './records.ts';
 import { bytes } from './values.ts';
 
@@ -124,27 +124,52 @@ const MirroredRecordSchema = z.discriminatedUnion('kind', [
 // System's time must not make the read fail for the rest.
 const isoTime = z.string();
 
+// What every System's entry carries beside its records: its time zone, null
+// until a Report names one, and its jobs' latest runs, null until a Report
+// carries them, which a Collector older than the runs section never sends.
+const systemFields = {
+  runs: z.union([
+    z.object({
+      jobs: z.array(
+        z.object({
+          job: z.string(),
+          latestRun: REPORTED_RUN_SCHEMA,
+          latestSuccess: REPORTED_RUN_SCHEMA.nullable(),
+        }),
+      ),
+      receivedAt: isoTime,
+      sentAt: isoTime,
+      unreadable: z.array(z.string()),
+    }),
+    z.object({ overBudget: z.object({ bytes }), receivedAt: isoTime, sentAt: isoTime }),
+    z.null(),
+  ]),
+  system: z.string(),
+  timeZone: z.string().nullable(),
+};
+
 const SetReadSchema = z.object({
+  ...systemFields,
   receivedAt: isoTime,
   records: z.array(MirroredRecordSchema),
   sentAt: isoTime,
-  system: z.string(),
   unreadable: z.array(RecordRefSchema),
 });
 
 const OverBudgetReadSchema = z.object({
+  ...systemFields,
   overBudget: z.object({ bytes }),
   receivedAt: isoTime,
   sentAt: isoTime,
-  system: z.string(),
 });
 
-const NoSetReadSchema = z.object({ records: z.null(), system: z.string() });
+const NoSetReadSchema = z.object({ ...systemFields, records: z.null() });
 
 // The answer of `GET /api/v1/records`: one entry per System, sorted by name.
 // An entry holds the set the System last sent, the size of a set too large to
 // send, or `null` records while no Report has carried a set, which is not the
-// same as holding none. Records sort by kind, then name.
+// same as holding none. Records sort by kind, then name, and jobs' latest runs
+// by job. Every entry also carries the System's time zone and latest runs.
 export const RecordsReadSchema = z.object({
   systems: z.array(z.union([SetReadSchema, OverBudgetReadSchema, NoSetReadSchema])),
 });

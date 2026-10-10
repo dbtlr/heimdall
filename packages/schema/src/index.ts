@@ -3,6 +3,7 @@ export {
   REPORT_SCHEMA_VERSION,
   ReportSchema,
   SYSTEM_NAME,
+  TIME_ZONE,
   VitalsSampleSchema,
 } from './report.ts';
 export type { Report, VitalsSample } from './report.ts';
@@ -30,6 +31,7 @@ export {
   RECORD_KINDS,
   RECORD_NAME,
   RECORD_SCHEMAS,
+  REPORTED_RUN_SCHEMA,
   RunRecordSchema,
   ServiceRecordSchema,
 } from './records.ts';
@@ -56,3 +58,5 @@ export type {
   RecordsSection,
   SentRecord,
 } from './records-section.ts';
+export { MAX_RUNS_SECTION_BYTES, mirrorRuns, RunsSectionSchema } from './runs-section.ts';
+export type { JobRuns, MirroredRuns, RunsSection, SentJobRuns } from './runs-section.ts';

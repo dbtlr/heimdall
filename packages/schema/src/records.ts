@@ -177,33 +177,39 @@ export type FilesRecord = z.infer<typeof FilesRecordSchema>;
 // The record of kind `K`.
 export type RecordOf<K extends RecordKind> = z.infer<(typeof RECORD_SCHEMAS)[K]>;
 
-// A run's output file, by its name in the job's own output directory:
-// printable ASCII without a slash, and neither `.` nor `..`, so it cannot name
-// a path outside that directory.
-const OutputSchema = z.strictObject({
-  file: z
-    .string()
-    .max(255)
-    .regex(/^(?!\.\.?$)[ -.0-~]+$/u),
-  sizeBytes: bytes,
-});
-
 // Whole seconds in UTC, so the times compare exactly.
 const second = z.iso.datetime({ precision: 0 });
 
-// One run of a job, successful or not; exit status 0 is success.
-export const RunRecordSchema = z
-  .strictObject({
+// Builds the run schema with `object` making its objects, strict or stripping,
+// as `recordSchemas` does.
+const runSchema = (
+  object: <Shape extends z.core.$ZodShape>(shape: Shape) => z.ZodObject<Shape, z.core.$strict>,
+) =>
+  object({
     exitStatus: z.int().min(0).max(255),
     finished: second,
-    output: OutputSchema.optional(),
+    // A run's output file, by its name in the job's own output directory:
+    // printable ASCII without a slash, and neither `.` nor `..`, so it cannot
+    // name a path outside that directory.
+    output: object({
+      file: z
+        .string()
+        .max(255)
+        .regex(/^(?!\.\.?$)[ -.0-~]+$/u),
+      sizeBytes: bytes,
+    }).optional(),
     started: second,
-  })
-  .refine(({ finished, started }) => Date.parse(finished) >= Date.parse(started), {
+  }).refine(({ finished, started }) => Date.parse(finished) >= Date.parse(started), {
     message: 'a run finished before it started',
     path: ['finished'],
     // Only valid times can be compared.
     when: ({ issues }) => issues.length === 0,
   });
+
+// One run of a job, successful or not, as a job records it; exit status 0 is success.
+export const RunRecordSchema = runSchema((shape) => z.strictObject(shape));
+
+// One run as the Hub reads it from a Report.
+export const REPORTED_RUN_SCHEMA = runSchema((shape) => z.strictObject(shape).strip());
 
 export type RunRecord = z.infer<typeof RunRecordSchema>;
