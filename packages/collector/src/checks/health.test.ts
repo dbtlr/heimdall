@@ -1,19 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
+import { httpGet } from '@heimdall/service';
+import type { HttpGet, HttpGetResult } from '@heimdall/service';
 
 import { checkHealth } from './health.ts';
 
-const servers: { stop: (force: boolean) => unknown }[] = [];
+const stoppers: (() => unknown)[] = [];
 
 afterEach(() => {
-  for (const server of servers.splice(0)) {
-    void server.stop(true);
+  for (const stop of stoppers.splice(0)) {
+    void stop();
   }
 });
 
 // A loopback server that answers every request with `handler`, and the URL it
-// listens on. Requests the handler saw are listed in `seen`.
+// listens on. Paths the handler saw are listed in `seen`.
 const serve = (handler: (request: Request) => Response | Promise<Response>) => {
   const seen: string[] = [];
   const server = Bun.serve({
@@ -24,27 +26,60 @@ const serve = (handler: (request: Request) => Response | Promise<Response>) => {
     hostname: '127.0.0.1',
     port: 0,
   });
-  servers.push(server);
+  stoppers.push(() => server.stop(true));
   return { seen, url: `http://127.0.0.1:${String(server.port)}` };
 };
+
+// A `get` that answers `result`, noting what it was asked.
+const answering = (result: HttpGetResult) => {
+  const asked: Parameters<HttpGet>[] = [];
+  const get: HttpGet = (target, options) => {
+    asked.push([target, options]);
+    return Promise.resolve(result);
+  };
+  return { asked, get };
+};
+
+const response = (status: number): HttpGetResult => ({
+  body: '',
+  kind: 'response',
+  status,
+  truncated: true,
+});
 
 describe('a health check', () => {
   test('is up on a 200', async () => {
     const { url } = serve(() => new Response('ok'));
 
-    expect(await checkHealth(`${url}/healthz`)).toEqual({
+    expect(await checkHealth(`${url}/healthz`, { get: httpGet })).toEqual({
       check: 'health',
       detail: 'HTTP 200',
       state: 'up',
     });
   });
 
-  test('requests the path the record names', async () => {
+  test('requests the path and query the record names, from the address it names', async () => {
     const { seen, url } = serve(() => new Response('ok'));
 
-    await checkHealth(`${url}/healthz?deep=1`);
+    await checkHealth(`${url}/healthz?deep=1`, { get: httpGet });
 
     expect(seen).toEqual(['/healthz']);
+  });
+
+  test('requests an IPv6 loopback URL by its address', async () => {
+    const { asked, get } = answering(response(200));
+
+    await checkHealth('http://[::1]:8080/healthz?x=1', { get });
+
+    expect(asked[0]?.[0]).toEqual({ host: '::1', path: '/healthz?x=1', port: 8080 });
+  });
+
+  test('reads no body, and gives the request 5 seconds', async () => {
+    const { asked, get } = answering(response(200));
+
+    await checkHealth('http://127.0.0.1:8080/', { get });
+
+    expect(asked[0]?.[1]).toEqual({ maxBodyBytes: 0, timeoutMs: 5000 });
   });
 
   test('is up on a 302, which it does not follow', async () => {
@@ -53,7 +88,7 @@ describe('a health check', () => {
       () => new Response(null, { headers: { location: `${elsewhere.url}/away` }, status: 302 }),
     );
 
-    expect(await checkHealth(`${url}/healthz`)).toEqual({
+    expect(await checkHealth(`${url}/healthz`, { get: httpGet })).toEqual({
       check: 'health',
       detail: 'HTTP 302',
       state: 'up',
@@ -64,43 +99,45 @@ describe('a health check', () => {
   test('is unhealthy on a 503', async () => {
     const { url } = serve(() => new Response('down', { status: 503 }));
 
-    expect(await checkHealth(`${url}/`)).toEqual({
+    expect(await checkHealth(`${url}/`, { get: httpGet })).toEqual({
       check: 'health',
       detail: 'HTTP 503',
       state: 'unhealthy',
     });
   });
 
-  test('is unhealthy on a 404', async () => {
-    const { url } = serve(() => new Response('no', { status: 404 }));
+  test.each<[number, 'unhealthy' | 'up']>([
+    [199, 'unhealthy'],
+    [200, 'up'],
+    [399, 'up'],
+    [400, 'unhealthy'],
+    [404, 'unhealthy'],
+  ])('a status of %i is %s', async (status, state) => {
+    const { get } = answering(response(status));
 
-    expect((await checkHealth(`${url}/`)).state).toBe('unhealthy');
+    expect(await checkHealth('http://127.0.0.1:8080/', { get })).toEqual({
+      check: 'health',
+      detail: `HTTP ${String(status)}`,
+      state,
+    });
   });
 
   test('is unhealthy when the handler outlives the timeout', async () => {
     const { url } = serve(() => Promise.withResolvers<Response>().promise);
 
-    expect(await checkHealth(`${url}/`, { timeoutMs: 100 })).toEqual({
+    expect(await checkHealth(`${url}/`, { get: httpGet, timeoutMs: 100 })).toEqual({
       check: 'health',
       detail: 'timed out after 0.1 s',
       state: 'unhealthy',
     });
   });
 
-  test('says the 5 s default in whole seconds', async () => {
-    const outcome = await checkHealth('http://127.0.0.1:1/', {
-      request: () => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')),
-    });
-
-    expect(outcome.detail).toBe('timed out after 5 s');
-  });
-
   test('is unhealthy when nothing listens on the port', async () => {
     const server = Bun.serve({ fetch: () => new Response(''), hostname: '127.0.0.1', port: 0 });
-    const { port } = server;
+    const port = server.port ?? 0;
     await server.stop(true);
 
-    expect(await checkHealth(`http://127.0.0.1:${String(port)}/`)).toEqual({
+    expect(await checkHealth(`http://127.0.0.1:${String(port)}/`, { get: httpGet })).toEqual({
       check: 'health',
       detail: 'connection refused',
       state: 'unhealthy',
@@ -118,40 +155,79 @@ describe('a health check', () => {
         },
       },
     });
-    try {
-      expect(await checkHealth(`http://127.0.0.1:${String(listener.port)}/`)).toEqual({
-        check: 'health',
-        detail: 'connection reset',
-        state: 'unhealthy',
-      });
-    } finally {
-      listener.stop(true);
-    }
+    stoppers.push(() => listener.stop(true));
+
+    expect(
+      await checkHealth(`http://127.0.0.1:${String(listener.port)}/`, { get: httpGet }),
+    ).toEqual({ check: 'health', detail: 'connection reset', state: 'unhealthy' });
   });
 
-  test('cuts a long failure to what the Hub takes', async () => {
-    const outcome = await checkHealth('http://127.0.0.1:1/', {
-      request: () => Promise.reject(new Error('x'.repeat(1000))),
-    });
-
-    expect(outcome.state).toBe('unhealthy');
-    expect(outcome.detail.length).toBeLessThanOrEqual(MAX_CHECK_DETAIL_LENGTH);
-  });
-
-  test('does not read the body of the answer', async () => {
-    let cancelled = false;
-    const body = new ReadableStream({
-      cancel: () => {
-        cancelled = true;
+  test('is unhealthy when the answer is not HTTP', async () => {
+    const listener = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        data: () => undefined,
+        open: (socket) => {
+          socket.end('not http\r\n\r\n');
+        },
       },
-      pull: () => Promise.withResolvers<void>().promise,
+    });
+    stoppers.push(() => listener.stop(true));
+
+    expect(
+      await checkHealth(`http://127.0.0.1:${String(listener.port)}/`, { get: httpGet }),
+    ).toEqual({ check: 'health', detail: 'invalid response', state: 'unhealthy' });
+  });
+
+  test('is unknown, not unhealthy, when the Collector itself cannot make the request', async () => {
+    const { get } = answering({
+      kind: 'failed',
+      message: 'EMFILE: too many open files',
+      reason: 'error',
     });
 
-    const outcome = await checkHealth('http://127.0.0.1:1/', {
-      request: () => Promise.resolve(new Response(body, { status: 200 })),
+    expect(await checkHealth('http://127.0.0.1:8080/', { get })).toEqual({
+      check: 'health',
+      detail: 'could not request: EMFILE: too many open files',
+      state: 'unknown',
+    });
+  });
+
+  test('cuts a long detail to what the Hub takes', async () => {
+    const { get } = answering({ kind: 'failed', message: 'x'.repeat(1000), reason: 'error' });
+
+    const outcome = await checkHealth('http://127.0.0.1:8080/', { get });
+
+    expect(outcome.detail).toHaveLength(MAX_CHECK_DETAIL_LENGTH);
+  });
+
+  describe('with a proxy in the environment', () => {
+    const saved = { HTTP_PROXY: process.env.HTTP_PROXY, http_proxy: process.env.http_proxy };
+
+    afterEach(() => {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
     });
 
-    expect(outcome.state).toBe('up');
-    expect(cancelled).toBe(true);
+    test.each(['HTTP_PROXY', 'http_proxy'])(
+      'reaches the target directly and sends nothing to the proxy (%s)',
+      async (name) => {
+        const proxy = serve(() => new Response('from the proxy'));
+        const target = serve(() => new Response('ok'));
+        process.env[name] = proxy.url.replace('http://', 'http://user:secret@');
+
+        const outcome = await checkHealth(`${target.url}/healthz`, { get: httpGet });
+
+        expect(outcome.state).toBe('up');
+        expect(target.seen).toEqual(['/healthz']);
+        expect(proxy.seen).toEqual([]);
+      },
+    );
   });
 });

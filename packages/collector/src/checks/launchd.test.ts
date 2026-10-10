@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { ServiceRecord } from '@heimdall/schema';
+import { httpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
 import { checkService } from './services.ts';
@@ -144,6 +145,7 @@ const check = async (
 ) => {
   const ran: string[][] = [];
   const outcomes = await checkService(options.record ?? WEB, {
+    httpGet,
     run: (cmd) => {
       ran.push([...cmd]);
       const answer = answers[cmd.at(-1) ?? ''] ?? notFoundIn('gui');

@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 
 import type { ServiceRecord } from '@heimdall/schema';
+import type { HttpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
 import { checkHealth } from './health.ts';
@@ -11,9 +12,11 @@ import type { ServiceOutcome } from './outcome.ts';
 export type { ServiceOutcome } from './outcome.ts';
 
 // What a check needs from the System: a way to run a command and the absolute
-// path of systemctl, or undefined when this System has none, and the id of the
-// account the Collector runs as, which names its launchd gui domain.
+// path of systemctl, or undefined when this System has none, the id of the
+// account the Collector runs as, which names its launchd gui domain, and a way
+// to GET over HTTP.
 export type ServiceTools = {
+  httpGet: HttpGet;
   run: (cmd: readonly string[]) => Promise<CommandResult>;
   systemctl: string | undefined;
   uid?: number | undefined;
@@ -167,12 +170,9 @@ const supervisorCheck = (record: ServiceRecord, tools: ServiceTools): Promise<Se
 export const checkService = async (
   record: ServiceRecord,
   tools: ServiceTools,
-  { healthTimeoutMs }: { healthTimeoutMs?: number | undefined } = {},
 ): Promise<ServiceOutcome[]> => {
   const health =
-    record.health === undefined
-      ? undefined
-      : checkHealth(record.health, { timeoutMs: healthTimeoutMs });
+    record.health === undefined ? undefined : checkHealth(record.health, { get: tools.httpGet });
   if (health !== undefined && record.supervisor === 'none') {
     return [await health];
   }

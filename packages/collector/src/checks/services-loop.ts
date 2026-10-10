@@ -1,6 +1,6 @@
 import { RECORD_NAME } from '@heimdall/schema';
 import type { SentServiceCheck, ServiceRecord } from '@heimdall/schema';
-import { every } from '@heimdall/service';
+import { every, httpGet as defaultHttpGet } from '@heimdall/service';
 
 import type { Log } from '../collector.ts';
 import { describeError } from '../errors.ts';
@@ -79,12 +79,14 @@ const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
 // last tick failed. `tick` never throws.
 export const createServiceChecks = ({
   findSystemctl: locateSystemctl = findSystemctl,
+  httpGet = defaultHttpGet,
   log,
   now,
   open,
   run = runCommand,
 }: {
   findSystemctl?: () => Promise<string | undefined>;
+  httpGet?: ServiceTools['httpGet'];
   log: Log;
   now: () => number;
   open: () => Promise<RecordStore>;
@@ -105,7 +107,7 @@ export const createServiceChecks = ({
       );
     }
     warnedAbout = warning;
-    const tools = { run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
+    const tools = { httpGet, run, systemctl: await locateSystemctl(), uid: process.getuid?.() };
     const checkedAt = now();
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.

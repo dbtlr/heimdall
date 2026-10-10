@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceRecord } from '@heimdall/schema';
+import { httpGet } from '@heimdall/service';
+import type { HttpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
 import { checkService, findSystemctl } from './services.ts';
@@ -39,6 +41,7 @@ const check = async (
 ) => {
   const ran: string[][] = [];
   const outcomes = await checkService(record, {
+    httpGet,
     run: (cmd) => {
       ran.push([...cmd]);
       return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
@@ -323,6 +326,7 @@ describe('a Service with a health URL', () => {
     const outcomes = await checkService(
       { ...WEB, health },
       {
+        httpGet,
         run: async () => {
           asked.resolve();
           await requested.promise;
@@ -335,31 +339,39 @@ describe('a Service with a health URL', () => {
     expect(outcomes.map(({ state }) => state)).toEqual(['up', 'up']);
   });
 
-  test('is unhealthy when the URL does not answer within the timeout, the supervisor check unaffected', async () => {
-    const health = serve(() => Promise.withResolvers<Response>().promise);
+  test('is unhealthy when the URL does not answer in 5 seconds, the supervisor check unaffected', async () => {
+    const asked: Parameters<HttpGet>[1][] = [];
+    const timesOut: HttpGet = (_, options) => {
+      asked.push(options);
+      return Promise.resolve({ kind: 'failed', message: 'no answer', reason: 'timeout' });
+    };
 
     const outcomes = await checkService(
-      { ...WEB, health },
-      { run: () => Promise.resolve(shown({ active: 'active' })), systemctl: SYSTEMCTL },
-      { healthTimeoutMs: 100 },
+      { ...WEB, health: 'http://127.0.0.1:8080/healthz' },
+      {
+        httpGet: timesOut,
+        run: () => Promise.resolve(shown({ active: 'active' })),
+        systemctl: SYSTEMCTL,
+      },
     );
 
+    expect(asked).toEqual([{ maxBodyBytes: 0, timeoutMs: 5000 }]);
     expect(outcomes).toEqual([
       { check: 'supervisor', detail: 'ActiveState=active', state: 'up' },
-      { check: 'health', detail: 'timed out after 0.1 s', state: 'unhealthy' },
+      { check: 'health', detail: 'timed out after 5 s', state: 'unhealthy' },
     ]);
   });
 
-  test('under launchd is checked by its URL while its supervisor is reported unchecked', async () => {
+  test('under a supervisor not checked yet is checked by its URL, its supervisor reported unchecked', async () => {
     const health = serve(() => new Response('ok'));
 
     const { outcomes } = await check(
-      { health, label: 'com.example.web', name: 'web', supervisor: 'launchd' },
+      { container: 'web', health, name: 'web', supervisor: 'docker' },
       shown({ active: 'failed' }),
     );
 
     expect(outcomes).toEqual([
-      { check: 'supervisor', detail: 'launchd is not checked', state: 'unchecked' },
+      { check: 'supervisor', detail: 'docker is not checked', state: 'unchecked' },
       { check: 'health', detail: 'HTTP 200', state: 'up' },
     ]);
   });
