@@ -324,6 +324,20 @@ describe('a launchd Service', () => {
     expect(outcomes).toMatchObject([{ state: 'stopped' }]);
   });
 
+  test('does not count a pid that only starts with digits', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 3', '\truns = 3\n\tpid = 12abc')),
+    });
+
+    expect(outcomes).toMatchObject([{ state: 'stopped' }]);
+  });
+
+  test('is up when its state is running even if launchctl prints no pid', async () => {
+    const { outcomes } = await check({ [GUI]: printed(RUNNING.replace('\tpid = 12345\n', '')) });
+
+    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
+  });
+
   test('takes root as an account like any other, asking gui/0', async () => {
     const { ran } = await check({}, { uid: 0 });
 

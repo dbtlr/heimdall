@@ -40,6 +40,13 @@ describe('a printed service', () => {
     });
   });
 
+  test('is running when its state says running, with no pid printed', () => {
+    const service = readPrintedService(printed(['\tstate = running']));
+
+    expect(service.running).toBe(true);
+    expect(service.pid).toBeUndefined();
+  });
+
   test('is running when a pid is printed, whatever its state says', () => {
     expect(readPrintedService(printed(['\tstate = xpc proxy', '\tpid = 4182']))).toMatchObject({
       pid: 4182,
@@ -53,6 +60,12 @@ describe('a printed service', () => {
 
     expect(service).toMatchObject({ running: false, state: 'not running' });
     expect(service.pid).toBeUndefined();
+  });
+
+  test('does not count a pid that only starts with digits', () => {
+    expect(readPrintedService(printed(['\tstate = not running', '\tpid = 12abc'])).running).toBe(
+      false,
+    );
   });
 
   test('reads the exit code and terminating signal of the service, not of a block in it', () => {
