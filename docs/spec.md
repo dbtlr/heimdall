@@ -73,9 +73,9 @@ A job reports each run with `heimdall-collector record run <job>`, which reads o
 
 The last example is the input to `heimdall-collector record run nightly-backup`.
 
-### What Heimdall checks and reports _(planned, M4)_
+### What Heimdall checks and reports
 
-The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The Hub raises the job Conditions described in [Job Conditions](#job-conditions); the other checks arrive in later M4 work.
+The Collector reports its records to the Hub, as [Reading the records back](#reading-the-records-back) describes, and checks those it can observe. The Hub raises the job Conditions described in [Job Conditions](#job-conditions); the Service and file checks are planned for later M4 work.
 
 | Kind | Heimdall checks and reports |
 | --- | --- |
@@ -93,9 +93,9 @@ The Hub judges every System's recorded jobs once a minute, from the records and 
 - **Job failing** is raised when the job's latest run exited with a status other than 0, and its reason names the run's start and exit status. A later failing run replaces the reason. It clears when the latest run succeeds.
 - **Job overdue** is raised when one of the job's scheduled times passed, the System was then awake for the job's grace period, and no successful run started at or after that scheduled time. Its reason names the scheduled time in the System's local time, and it clears once such a run is reported. A job can be failing and overdue at once.
 
-Awake time is counted from the Vitals samples the Hub stored, which a Collector takes every 15 seconds while its System is awake. The Hub counts each 5-minute rollup bucket as awake for 15 seconds per sample, up to the whole bucket, and looks back at most 90 days. A System asleep through a scheduled time therefore gets its whole grace period after it wakes, as does one whose Collector stopped. Samples and runs both carry the System's own clock.
+Awake time is counted from the Vitals samples the Hub stored, which a Collector takes every 15 seconds while its System is awake. The Hub counts each 5-minute rollup bucket as awake for 15 seconds per sample, up to the whole bucket, and counts no bucket later than its own clock. A System asleep through a scheduled time therefore gets its whole grace period after it wakes, as does one whose Collector stopped. The Hub looks back at most 90 days; a System not awake for the grace period within them leaves job overdue as it is. Samples and runs both carry the System's own clock.
 
-The Hub reads a schedule's entries as wall-clock times in the System's time zone. As in cron, an entry that names both `day` and `weekday` fires on either, and `month` always applies. launchd also fires on either, but ignores `month` for a weekday, so the Hub never expects a run launchd would skip. A time that a clock change skips falls an hour later, and one it repeats falls the first time. Scheduled times count only from when the Hub first mirrored the job, so a job recorded today is not overdue for a time that passed before; recording a job again keeps that time.
+The Hub reads a schedule's entries as wall-clock times in the System's time zone. As in cron, an entry that names both `day` and `weekday` fires on either, and `month` always applies. launchd also fires on either, but ignores `month` for a weekday, so the Hub never expects a run launchd would skip. A time that a clock change skips falls as much later as the clock skips, and one it repeats falls the first time. Scheduled times count only from when the Hub first mirrored the job, so a job recorded today is not overdue for a time that passed before. Recording a job again keeps that time, and so does a record set over budget or one that lists the job as unreadable; only a set that leaves the job out forgets it.
 
 A job Condition stays as it is while what decides it is unknown: while the System's record set or runs are over budget, while the Collector or the Hub cannot read the job's record or runs, while the System has never sent runs, and, for job overdue, while the Hub has no time zone for the System or does not know its zone. A job whose record is forgotten clears both.
 

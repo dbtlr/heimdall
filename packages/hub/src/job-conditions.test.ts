@@ -528,9 +528,12 @@ test('a System that cannot be judged does not stop the others, and the failure n
   `);
   h.clock.now = at('07:41:00');
 
-  await expect(evaluateJobConditions(h.db.sql, () => h.clock.now)).rejects.toThrow(
-    'laptop-1: refused',
+  const failure = await evaluateJobConditions(h.db.sql, () => h.clock.now).then(
+    () => undefined,
+    (error: unknown) => error,
   );
+
+  expect(failure).toMatchObject({ message: expect.stringContaining('laptop-1: refused') });
   expect((await conditionsOf(h, 'server-1')).open).toEqual([
     expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
   ]);
