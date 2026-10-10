@@ -12,4 +12,4 @@ export const tempStateDir = async () => {
 };
 
 // A records source with nothing to send, for tests that are not about records.
-export const NO_RECORDS = { pending: () => undefined };
+export const NO_RECORDS = { pending: () => Promise.resolve(undefined) };

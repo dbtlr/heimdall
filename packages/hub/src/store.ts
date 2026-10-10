@@ -126,7 +126,11 @@ export const storeReport = (
       SELECT t FROM stored
     `;
     if (report.transcripts !== undefined) {
-      await storeTranscriptSources(tx, { ...report, transcripts: report.transcripts });
+      await storeTranscriptSources(tx, {
+        receivedAt: seenAt,
+        report,
+        transcripts: report.transcripts,
+      });
     }
     if (report.records !== undefined) {
       await storeRecords(tx, { receivedAt: seenAt, report, section: report.records });
@@ -140,10 +144,16 @@ export const storeReport = (
   });
 
 // Replaces the System's set of transcript sources and its spool with a
-// Report's, unless the Hub holds a set from a Report sent later (ADR-0013).
+// Report's, unless the Hub holds a set from a Report sent later (ADR-0013). A
+// held set that claims a time after `receivedAt` comes from a bad clock, and
+// gives way, so it cannot outlast every correct set.
 const storeTranscriptSources = async (
   sql: SQL,
-  { sentAt, system, transcripts }: Report & { transcripts: TranscriptsSection },
+  {
+    receivedAt,
+    report: { sentAt, system },
+    transcripts,
+  }: { receivedAt: Date; report: Report; transcripts: TranscriptsSection },
 ) => {
   const { sources, spool } = transcripts;
   await sql`
@@ -156,13 +166,15 @@ const storeTranscriptSources = async (
       spool_oldest_at = excluded.spool_oldest_at,
       sent_at = excluded.sent_at
     WHERE transcript_sources.sent_at <= excluded.sent_at
+       OR transcript_sources.sent_at > ${receivedAt}
   `;
 };
 
 // Replaces the System's mirror of its records with a Report's set, unless the
-// Hub holds a set from a Report sent later (ADR-0011). A set over budget
-// leaves no records, so none that may have changed is served. The set's row
-// is locked until the transaction ends, so concurrent Reports apply in order.
+// Hub holds a set from a Report sent later (ADR-0011). A held set that claims
+// a time after `receivedAt` comes from a bad clock, and gives way. A set over
+// budget leaves no records, so none that may have changed is served. The set's
+// row is locked until the transaction ends, so concurrent Reports apply in order.
 const storeRecords = async (
   sql: SQL,
   { receivedAt, report, section }: { receivedAt: Date; report: Report; section: RecordsSection },
@@ -181,6 +193,7 @@ const storeRecords = async (
       unreadable = excluded.unreadable,
       over_budget_bytes = excluded.over_budget_bytes
     WHERE record_sets.sent_at <= excluded.sent_at
+       OR record_sets.sent_at > ${receivedAt}
     RETURNING system
   `;
   if (replaced.length === 0) {

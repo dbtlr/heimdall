@@ -1,7 +1,9 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { RecordsSectionSchema } from '@heimdall/schema';
 import type { ApplicationRecord, JobRecord, Report } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
@@ -10,6 +12,7 @@ import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import { createRecordsReporter, RECORDS_REFRESH_MS } from './records-report.ts';
 import { openRecords } from './records.ts';
+import type { RecordStore } from './records.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
@@ -28,13 +31,23 @@ const cron: JobRecord = {
 };
 
 // A Collector's records and queue in a fresh state directory, with a Hub that
-// answers each Report with the next scripted outcome. `push` queues a sample
-// and flushes, as one interval of the daemon does, and returns the Reports sent.
+// answers each Report with `respond`, or else with the next scripted outcome.
+// `open` is how the reporter gets its store. `push` queues a sample and
+// flushes, as one interval of the daemon does, and returns the Reports sent.
 const setup = async (
   dir: { path: string },
-  { maxBytes, batchSize }: { batchSize?: number; maxBytes?: number } = {},
+  {
+    batchSize,
+    maxBytes,
+    open = () => openRecords({ stateDir: dir.path }),
+    respond,
+  }: {
+    batchSize?: number;
+    maxBytes?: number;
+    open?: () => Promise<RecordStore>;
+    respond?: (report: Report) => Delivery;
+  } = {},
 ) => {
-  const store = await openRecords({ stateDir: dir.path });
   const queue = await openQueue({ capacity: 100, stateDir: dir.path });
   const warnings: string[] = [];
   let now = 1_000_000;
@@ -44,7 +57,7 @@ const setup = async (
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     ...(maxBytes === undefined ? {} : { maxBytes }),
     now: () => now,
-    store,
+    open,
   });
   let t = 0;
   const push = async (samples = 1) => {
@@ -61,7 +74,7 @@ const setup = async (
       records: reporter,
       send: (report) => {
         reports.push(report);
-        return Promise.resolve(outcomes.shift() ?? { kind: 'delivered' });
+        return Promise.resolve(respond?.(report) ?? outcomes.shift() ?? { kind: 'delivered' });
       },
       transcripts: () => NO_TRANSCRIPTS,
     });
@@ -73,10 +86,12 @@ const setup = async (
     },
     close: () => {
       queue.close();
-      store.close();
+      reporter.close();
     },
     outcomes,
     push,
+    queue,
+    reporter,
     warnings,
   };
 };
@@ -290,4 +305,155 @@ test('a set exactly at the budget is sent whole', async () => {
   collector.close();
 
   expect(report?.records).toEqual({ records: [], unreadable: [] });
+});
+
+test('a set the Hub refuses never costs the samples: they are resent without it, and the set is settled', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    respond: (report) =>
+      report.records === undefined
+        ? { kind: 'delivered' }
+        : { detail: 'bad records', kind: 'rejected' },
+  });
+
+  const first = await collector.push(2);
+  const next = await collector.push();
+  const remaining = collector.queue.oldest(10);
+  collector.close();
+
+  expect(first.map((report) => report.records !== undefined)).toEqual([true, false]);
+  expect(first[1]?.samples).toEqual(first[0]?.samples);
+  expect(next.map((report) => report.records)).toEqual([undefined]);
+  expect(remaining).toEqual([]);
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('bad records');
+});
+
+test('rows the section cannot carry are left out and warned about, and the section stays valid', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('application', webapp);
+  seed.close();
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const insert = db.query('INSERT INTO records (kind, name, body) VALUES ($kind, $name, $body)');
+  const body = JSON.stringify(webapp);
+  insert.run({ $body: body, $kind: 'application', $name: '../escape' });
+  insert.run({ $body: body, $kind: 'application', $name: 'alias' });
+  insert.run({ $body: '{}', $kind: 'job', $name: 'x'.repeat(129) });
+  insert.run({ $body: '{}', $kind: '', $name: 'empty-kind' });
+  insert.run({ $body: '{}', $kind: 'k'.repeat(65), $name: 'long-kind' });
+  insert.run({ $body: '{}', $kind: 'gadget', $name: 'has space' });
+  db.close();
+  const collector = await setup(dir);
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(RecordsSectionSchema.safeParse(report?.records).success).toBe(true);
+  expect(report?.records).toEqual({
+    records: [{ kind: 'application', name: 'webapp', record: webapp }],
+    unreadable: [{ kind: 'application', name: 'alias' }],
+  });
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('../escape');
+  expect(collector.warnings[0]).toContain('has space');
+});
+
+test('a set over budget is not sent again when it changes without changing size', async () => {
+  await using dir = await tempStateDir();
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('application', webapp);
+  seed.close();
+  const collector = await setup(dir, { maxBytes: 10 });
+
+  const first = await collector.push();
+  await elsewhere(dir.path, (other) => other.put('application', { ...webapp, version: '1.4.3' }));
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.records).toHaveProperty('overBudget');
+  expect(second[0]?.records).toBeUndefined();
+});
+
+test('a records file that cannot be opened costs the records only, and is tried again later', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
+  const collector = await setup(dir);
+
+  const first = await collector.push();
+  const second = await collector.push();
+  await rm(join(dir.path, 'records.sqlite'), { force: true });
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('application', webapp);
+  seed.close();
+  const third = await collector.push();
+  collector.close();
+
+  expect(first).toHaveLength(1);
+  expect(first[0]?.samples).toHaveLength(1);
+  expect(first[0]?.records).toBeUndefined();
+  expect(second[0]?.records).toBeUndefined();
+  expect(collector.warnings).toHaveLength(1);
+  expect(third[0]?.records).toEqual({
+    records: [{ kind: 'application', name: 'webapp', record: webapp }],
+    unreadable: [],
+  });
+});
+
+test('a store that cannot be read costs the records only, and is warned about once', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir, {
+    open: async () => ({
+      ...(await openRecords({ stateDir: dir.path })),
+      read: () => {
+        throw new Error('disk gone');
+      },
+    }),
+  });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.samples).toHaveLength(1);
+  expect(second[0]?.samples).toHaveLength(1);
+  expect(first[0]?.records).toBeUndefined();
+  expect(second[0]?.records).toBeUndefined();
+  expect(collector.warnings).toHaveLength(1);
+  expect(collector.warnings[0]).toContain('disk gone');
+});
+
+test('a write landing between the version read and the set read is not missed', async () => {
+  await using dir = await tempStateDir();
+  const other = await openRecords({ stateDir: dir.path });
+  const collector = await setup(dir, {
+    open: async () => {
+      const store = await openRecords({ stateDir: dir.path });
+      let landed = false;
+      return {
+        ...store,
+        // The other process commits just after the first read, which is the
+        // moment a version read taken after the set would swallow the write.
+        read: () => {
+          const read = store.read();
+          if (!landed) {
+            landed = true;
+            other.put('application', webapp);
+          }
+          return read;
+        },
+      };
+    },
+  });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+  other.close();
+
+  expect(first[0]?.records).toEqual({ records: [], unreadable: [] });
+  expect(second[0]?.records).toEqual({
+    records: [{ kind: 'application', name: 'webapp', record: webapp }],
+    unreadable: [],
+  });
 });

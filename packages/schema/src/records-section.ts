@@ -85,7 +85,8 @@ const mirrorRecord = ({ kind, name, record }: SentRecord): MirroredRecord | unde
 // The records a Hub mirrors from a records section. A record whose kind or
 // shape this Hub does not know, or whose name differs from the one it was sent
 // under, is still on the System, so it counts as unreadable rather than
-// missing. A record sent twice under one kind and name keeps the last.
+// missing. A record sent twice under one kind and name keeps the last, and one
+// that is mirrored is not also listed as unreadable.
 export const mirrorRecords = (section: RecordsSection): MirroredRecords => {
   if ('overBudget' in section) {
     return { overBudget: section.overBudget };
@@ -100,7 +101,10 @@ export const mirrorRecords = (section: RecordsSection): MirroredRecords => {
       records.set(JSON.stringify([entry.kind, entry.name]), mirrored);
     }
   }
-  return { records: [...records.values()], unreadable };
+  return {
+    records: [...records.values()],
+    unreadable: unreadable.filter((ref) => !records.has(JSON.stringify([ref.kind, ref.name]))),
+  };
 };
 
 // A mirrored record of kind `kind`, as `GET /api/v1/records` returns it.

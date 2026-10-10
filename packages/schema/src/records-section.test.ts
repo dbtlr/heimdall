@@ -124,6 +124,23 @@ describe('the records a Hub mirrors', () => {
     ).toEqual({ records: [{ kind: 'service', name: 'webapp', record: moved }], unreadable: [] });
   });
 
+  test('never list a record as unreadable that they also hold', () => {
+    expect(
+      mirrored(
+        held(
+          [{ kind: 'service', name: 'webapp', record: WEBAPP }],
+          [
+            { kind: 'service', name: 'webapp' },
+            { kind: 'job', name: 'backup' },
+          ],
+        ),
+      ),
+    ).toEqual({
+      records: [{ kind: 'service', name: 'webapp', record: WEBAPP }],
+      unreadable: [{ kind: 'job', name: 'backup' }],
+    });
+  });
+
   test('are unavailable when the set was over budget', () => {
     expect(mirrored({ overBudget: { bytes: 9_000_000 } })).toEqual({
       overBudget: { bytes: 9_000_000 },

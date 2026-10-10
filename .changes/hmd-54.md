@@ -6,3 +6,7 @@
 ### Changed
 
 - **The Hub accepts Reports of up to 12 MiB**, up from 4 MiB, to fit a record set beside a full batch of samples. Upgrade the Hub before its Collectors.
+
+### Fixed
+
+- **A System's clock running ahead no longer freezes its transcripts section on the Hub** (HMD-54). The Hub replaces a held section that claims a time later than its own clock, so the next correct Report updates it.

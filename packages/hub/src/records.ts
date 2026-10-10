@@ -31,14 +31,14 @@ const entryOf = (row: SetRow, records: MirroredRecord[]): Entry => {
 
 // Every System the dashboard lists, by name, with the records its Collector
 // last sent. One read-only snapshot keeps each System's records consistent
-// with its set. The "C" collation keeps the order the same on every server.
+// with its set. Systems come in the order the dashboard lists them.
 export const readRecords = (sql: SQL): Promise<Entry[]> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
     const sets: SetRow[] = await tx`
       SELECT s.name, r.sent_at, r.received_at, r.unreadable, r.over_budget_bytes
       FROM systems s
       LEFT JOIN record_sets r ON r.system = s.name
-      ORDER BY s.name COLLATE "C"
+      ORDER BY s.name
     `;
     const rows: RecordRow[] = await tx`
       SELECT system, jsonb_build_object('kind', kind, 'name', name, 'record', record) AS entry

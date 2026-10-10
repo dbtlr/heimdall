@@ -188,6 +188,44 @@ describe('flushing the queue', () => {
     queue.close();
   });
 
+  test('resends the samples of a Report refused with a records section, without it', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    queue.append(sample(1000));
+    const hub = scriptedHub([
+      { detail: 'bad records', kind: 'rejected' },
+      { kind: 'failed', reason: 'Hub answered 503' },
+    ]);
+    const settled: string[] = [];
+    const records = {
+      pending: () =>
+        Promise.resolve({
+          section: { records: [], unreadable: [] },
+          settle: (outcome: { kind: string }) => settled.push(outcome.kind),
+        }),
+    };
+
+    const result = await flushQueue({
+      identity,
+      now: () => 9000,
+      queue,
+      records,
+      send: hub.send,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    expect(hub.reports.map((r) => r.records !== undefined)).toEqual([true, false]);
+    expect(settled).toEqual(['rejected']);
+    expect(result).toEqual({
+      delivered: 0,
+      kind: 'failed',
+      reason: 'Hub answered 503',
+      rejected: [],
+    });
+    expect(queue.oldest(10)).toEqual([sample(1000)]);
+    queue.close();
+  });
+
   test('stops at a failure and keeps the undelivered samples queued', async () => {
     await using dir = await tempStateDir();
     const queue = await openQueue({ capacity: 10, stateDir: dir.path });

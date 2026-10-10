@@ -72,15 +72,21 @@ export const openRecords = async ({
 }): Promise<RecordStore> => {
   await mkdir(stateDir, { mode: 0o700, recursive: true });
   const db = new Database(join(stateDir, 'records.sqlite'), { create: true, strict: true });
-  db.run('PRAGMA busy_timeout = 5000');
-  db.run('PRAGMA journal_mode = WAL');
-  db.run(
-    'CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (kind, name))',
-  );
-  // `startedMs` is the start as epoch milliseconds, so pruning compares times, not text.
-  db.run(
-    'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
-  );
+  try {
+    db.run('PRAGMA busy_timeout = 5000');
+    db.run('PRAGMA journal_mode = WAL');
+    db.run(
+      'CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (kind, name))',
+    );
+    // `startedMs` is the start as epoch milliseconds, so pruning compares times, not text.
+    db.run(
+      'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
+    );
+  } catch (error) {
+    // A file that is not a database must not leave a handle open for each retry.
+    db.close();
+    throw error;
+  }
 
   const upsert = db.query(
     'INSERT OR REPLACE INTO records (kind, name, body) VALUES ($kind, $name, $body)',

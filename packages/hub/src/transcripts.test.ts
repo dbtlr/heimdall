@@ -690,13 +690,39 @@ describe("a Report's transcripts section", () => {
     await using h = await startHub();
     const later = { ...report('laptop-1', [NOW + 15_000]), sentAt: NOW + 15_000 };
     await storeReport(h.db.sql, {
-      receivedAt: NOW,
+      receivedAt: NOW + 15_000,
       report: { ...later, transcripts: section('absent', 0) },
     });
 
     await storeReport(h.db.sql, {
-      receivedAt: NOW + 15_000,
+      receivedAt: NOW + 20_000,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
+    });
+
+    expect(await stored(h.db.sql)).toEqual([
+      expect.objectContaining({ sources: section('absent', 0).sources }),
+    ]);
+  });
+
+  test('from a Report sent later than the Hub clock reads is replaced by the next one received', async () => {
+    await using h = await startHub();
+    const farFuture = NOW + 10 * 365 * 24 * 60 * 60 * 1000;
+    await storeReport(h.db.sql, {
+      receivedAt: NOW,
+      report: {
+        ...report('laptop-1', [NOW]),
+        sentAt: farFuture,
+        transcripts: section('capturing', 4096),
+      },
+    });
+
+    await storeReport(h.db.sql, {
+      receivedAt: NOW + 15_000,
+      report: {
+        ...report('laptop-1', [NOW + 15_000]),
+        sentAt: NOW + 15_000,
+        transcripts: section('absent', 0),
+      },
     });
 
     expect(await stored(h.db.sql)).toEqual([

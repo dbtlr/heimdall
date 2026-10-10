@@ -5,9 +5,12 @@ import type { JobRecord, MirroredRecord, ServiceRecord } from '@heimdall/schema'
 
 import { MAX_REPORT_BYTES } from './hub.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
+import { listSystems, storeReport } from './store.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
+
+const YEAR = 365 * 24 * 60 * 60 * 1000;
 
 const WEBAPP: ServiceRecord = { name: 'webapp', supervisor: 'systemd', unit: 'webapp.service' };
 const DB: ServiceRecord = { name: 'db', supervisor: 'none' };
@@ -122,11 +125,25 @@ describe('the records a Report carries', () => {
 
   test('are ignored when the Hub holds a set sent later', async () => {
     await using h = await startHub();
+    h.clock.now = NOW + 2000;
     await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
 
     await send(h, { records: set([service(DB)]), sentAt: NOW });
 
     expect(await entryOf(h)).toMatchObject({ records: [service(WEBAPP)] });
+  });
+
+  test('replace a set that claims a time in the Hub future, so a bad clock cannot freeze them', async () => {
+    await using h = await startHub();
+    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 10 * YEAR });
+    h.clock.now = NOW + 60_000;
+
+    await send(h, { records: set([service(DB)]), sentAt: NOW + 60_000 });
+
+    expect(await entryOf(h)).toMatchObject({
+      records: [service(DB)],
+      sentAt: new Date(NOW + 60_000).toISOString(),
+    });
   });
 
   test('replace a set sent at the same moment', async () => {
@@ -219,6 +236,7 @@ describe('a set over budget', () => {
 
   test('does not replace a set sent later', async () => {
     await using h = await startHub();
+    h.clock.now = NOW + 2000;
     await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
 
     await send(h, { records: { overBudget: { bytes: 9_000_000 } }, sentAt: NOW });
@@ -241,6 +259,19 @@ describe('reading the records', () => {
     await send(h, { system: 'server-1' });
 
     expect((await read(h)).map((entry) => entry.system)).toEqual(['laptop-1', 'server-1']);
+  });
+
+  test('lists Systems in the order the dashboard does, whatever the collation', async () => {
+    await using h = await startHub();
+    await Promise.all(
+      ['a-c', 'ab', 'a-b', 'B', 'a_b'].map((system) =>
+        storeReport(h.db.sql, { receivedAt: NOW, report: report(system, [NOW]) }),
+      ),
+    );
+
+    expect((await read(h)).map((entry) => entry.system)).toEqual(
+      (await listSystems(h.db.sql)).map((system) => system.name),
+    );
   });
 
   test('answers an empty list when no System has reported', async () => {

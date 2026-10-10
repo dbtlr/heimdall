@@ -131,12 +131,17 @@ export const runAction: ActionHandler<typeof run> = async ({
     const { system, token } = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
     const queue = await openQueue({ capacity: QUEUE_CAPACITY, stateDir });
     const spool = await openSpool({ stateDir });
-    // The daemon only reads the store; `record` and `forget` write it.
-    const store = await openRecords({ stateDir });
     const runtime = {
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
     };
+    // The daemon only reads the store; `record` and `forget` write it. The
+    // reporter opens it on first use, so a store that will not open costs only the records.
+    const records = createRecordsReporter({
+      log: runtime,
+      now: Date.now,
+      open: () => openRecords({ stateDir }),
+    });
     const capture = createCapture({
       hub: transcriptHub({ hub: options.hub, signal, token }),
       log: runtime,
@@ -160,7 +165,7 @@ export const runAction: ActionHandler<typeof run> = async ({
         },
         log: runtime,
         queue,
-        records: createRecordsReporter({ log: runtime, now: Date.now, store }),
+        records,
         sampler: createSampler(hostProbe(platform)),
         send: (report) => sendReport({ hub: options.hub, report, signal, token }),
         signal,
@@ -169,7 +174,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     } finally {
       await stopCapture();
       spool.close();
-      store.close();
+      records.close();
       queue.close();
     }
   } finally {
