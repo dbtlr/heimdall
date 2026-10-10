@@ -397,6 +397,37 @@ test('status names any other launchd state as launchd does', async () => {
   expect(status).toMatchObject({ running: false, summary: 'loaded, spawn scheduled' });
 });
 
+test('status reads an agent with a pid as running, whatever state launchd names', async () => {
+  await using home = await tempHome();
+  await withPlist(home.path);
+  const launchd = fakeLaunchd({
+    answers: { print: [launchctlPrint(LABEL, 'xpc proxy', 4182)] },
+  });
+
+  const status = await supervisorIn(home.path, launchd).status();
+
+  expect(status).toMatchObject({ running: true, summary: 'loaded, running (pid 4182)' });
+});
+
+test.each([
+  [
+    'exit 113 for something other than a service',
+    failed(113, 'Could not find domain for user gui: 501'),
+  ],
+  ['exit 3, which only bootout gives', failed(3, 'Could not find service "x" in domain')],
+])(
+  'status of an agent whose print gives %s is state unknown, not not loaded',
+  async (_name, answer) => {
+    await using home = await tempHome();
+    await withPlist(home.path);
+    const launchd = fakeLaunchd({ answers: { print: [answer] } });
+
+    const status = await supervisorIn(home.path, launchd).status();
+
+    expect(status).toMatchObject({ running: false, stateKnown: false });
+  },
+);
+
 test('status of an installed agent that is not loaded, such as after stop, reads not loaded, stopped', async () => {
   await using home = await tempHome();
   await withPlist(home.path);
