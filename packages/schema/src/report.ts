@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { RecordsSectionSchema } from './records-section.ts';
 import { TranscriptsSectionSchema } from './transcripts.ts';
 import { bytes, epochMs } from './values.ts';
 
@@ -47,6 +48,9 @@ export const ReportSchema = z.object({
     platform: z.enum(['darwin', 'linux']),
     version: z.string().min(1),
   }),
+  // Only when the Collector's record set changed, it started, or an hour
+  // passed; the Hub keeps the System's mirror until another arrives (ADR-0011).
+  records: RecordsSectionSchema.optional(),
   samples: z
     .array(VitalsSampleSchema)
     .min(1)
