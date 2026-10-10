@@ -4,6 +4,7 @@ import type { SQL } from 'bun';
 
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
+import { pairedSystems, whenPaired } from './tokens.ts';
 
 // What decides the Conditions about a System as a whole. The evaluator takes
 // them as a parameter, so Hub configuration can supply them later.
@@ -193,19 +194,16 @@ export const evaluateSystem = (
   thresholds: SystemConditionThresholds,
 ) =>
   sql.begin(async (tx) => {
-    const [paired]: { paired_at: Date }[] = await tx`
-      SELECT paired_at FROM paired_systems WHERE system = ${system}
-    `;
-    if (paired === undefined) {
+    const pairedAtMs = await whenPaired(tx, system);
+    if (pairedAtMs === undefined) {
       await withdraw(tx, { now: new Date(clock()), system });
       return;
     }
-    const pairedAt = paired.paired_at.getTime();
     // Without the lock the clock is read early, only to decide whether a row is due.
     const held = await lockSystem(tx, {
       limitMs: thresholds.staleAfterMs,
       now: clock(),
-      pairedAt,
+      pairedAt: pairedAtMs,
       system,
     });
     if (held === undefined) {
@@ -232,7 +230,7 @@ export const evaluateSystem = (
         lastSeenAt: held.last_seen_at?.getTime(),
         limitMs: held.sleeps === true ? thresholds.sleepingStaleAfterMs : thresholds.staleAfterMs,
         now,
-        pairedAt,
+        pairedAt: pairedAtMs,
       }),
     );
 
@@ -272,15 +270,12 @@ export const evaluateSystemConditions = async (
   clock: () => number,
   thresholds: SystemConditionThresholds,
 ): Promise<void> => {
-  const systems: { system: string }[] = await sql`
-    SELECT system FROM paired_systems
-    UNION
+  const withConditions: { system: string }[] = await sql`
     SELECT system FROM conditions
     WHERE kind IN ${sql([...SYSTEM_KINDS])} AND cleared_at IS NULL
-    ORDER BY system
   `;
-  await evaluateEach(
-    systems.map((row) => row.system),
-    (system) => evaluateSystem(sql, system, clock, thresholds),
+  const systems = new Set([...(await pairedSystems(sql)), ...withConditions.map((r) => r.system)]);
+  await evaluateEach([...systems].toSorted(), (system) =>
+    evaluateSystem(sql, system, clock, thresholds),
   );
 };

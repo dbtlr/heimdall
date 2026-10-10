@@ -1,6 +1,6 @@
 import type { SQL } from 'bun';
 
-import { digest, newToken, storeToken } from './tokens.ts';
+import { digest, newToken, storeToken, whenPaired } from './tokens.ts';
 
 // Crockford's base32 alphabet: no I, L, O, or U, which read as other characters.
 export const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -66,8 +66,7 @@ export const issueCode = (
         code_hash = excluded.code_hash,
         expires_at = excluded.expires_at
     `;
-    const paired: unknown[] = await tx`SELECT 1 FROM paired_systems WHERE system = ${system}`;
-    return { code, expiresAt, paired: paired.length > 0 };
+    return { code, expiresAt, paired: (await whenPaired(tx, system)) !== undefined };
   });
 
 // Redeems `code`, as `readCode` returns it, at `now`: a live code is spent and

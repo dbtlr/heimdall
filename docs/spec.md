@@ -106,7 +106,7 @@ Once a minute, in the same pass as the job Conditions and one after the other, t
 - **Stale System** is raised when the Hub last heard from the System more than 10 minutes ago, or more than 7 days ago when the System sleeps. Any Report counts as hearing from it, including one the Hub rejects, and so does any transcript upload. A paired System the Hub has never heard from counts from when it was paired, so a Collector that never starts is stale too. The Hub then holds a row for that System with no last seen, and the page shows it as never seen. A System with a last seen counts from that time even if it was paired again since, so pairing it again does not clear the Condition. The Condition has no subject, its reason names the time the System was last heard from (or paired, if never), and it clears at the next judgment after the System is heard from again.
 - **Low disk** is raised for a mount whose free space in the System's latest Vitals sample is below 10% of its size, and clears when it is above 15%. Between the two an open Condition stays open and a mount that is not low stays unraised, so a mount near the limit does not flap. The subject is the mount, and the reason gives its free space and its percentage, such as `9.9 GiB free of 100.0 GiB (9.9%).`; a Condition that stays open takes the newer reason when it changes. A mount that leaves the latest sample clears its Condition. A mount with a size of 0 is left as it is. A mount listed more than once in a sample is judged by its entry with the least free space. A System with no readable sample is not judged for disk.
 - **The latest sample** is the newest one stamped no later than 5 minutes after the Hub's clock, since the Hub does not store when it received a sample, and a System whose clock runs ahead would otherwise keep its newest, wrongly stamped sample as the latest for as long as the clock is wrong.
-- **A System that is no longer paired** is not judged, and the next judgment clears its open stale System and low disk Conditions. Its other Conditions and its history stay.
+- **A System that is no longer paired** is no longer judged for stale System or low disk, and the next judgment clears those Conditions. Its other Conditions and its history stay. Its job, Drift, and Service down Conditions stay open, since no new Report arrives to change what they are judged on, and they show in the status of the dashboard's unpaired view. They change again only once new Reports arrive after it is paired again.
 
 The limits are named constants that the Hub passes to the evaluation as parameters, so that Hub configuration can supply them later.
 
@@ -183,11 +183,11 @@ The Hub replaces the System's mirror with each set, so a forgotten record leaves
 
 The Hub drops a field it does not know from a mirrored record or run. It counts a record of a kind or shape it does not know as unreadable, since the record still exists on the System, and likewise a job whose latest runs it cannot read. A set whose JSON is larger than 8 MiB is sent as its size alone, and the Hub then holds no records for that System until a smaller set arrives; runs over budget likewise leave it no jobs, a files part over budget no files, and a services part over budget no Service checks. The Hub counts a file state it does not know as unreadable and a Service state it does not know as unknown, and drops a Service check of a kind it does not know. It ignores a time zone it does not accept and keeps the one it holds. The shapes are in `packages/schema/src/records-section.ts`, `packages/schema/src/runs-section.ts`, and `packages/schema/src/checks-section.ts`.
 
-`GET /api/v1/records` returns every System's records, with the same trust as the dashboard. The answer lists each System the dashboard shows, sorted by name, in one of three forms:
+`GET /api/v1/records` returns every paired System's records, with the same trust as the dashboard. The answer lists each System the dashboard's normal view shows, sorted by name, in one of three forms:
 
 ```json
 {"systems": [
-  {"system": "web-1", "timeZone": "America/New_York",
+  {"system": "web-1", "paired": true, "timeZone": "America/New_York",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:01.250Z",
    "records": [{"kind": "job", "name": "nightly-backup", "record": {"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}}],
    "unreadable": [{"kind": "service", "name": "webapp"}],
@@ -202,15 +202,17 @@ The Hub drops a field it does not know from a mirrored record or run. It counts 
                       "latestSuccess": {"started": "2026-10-09T07:30:00Z", "finished": "2026-10-09T07:42:17Z", "exitStatus": 0,
                                         "output": {"file": "backup-2026-10-09.tar.gz", "sizeBytes": 73400320}}}],
             "unreadable": []}},
-  {"system": "build-1", "timeZone": "UTC",
+  {"system": "build-1", "paired": true, "timeZone": "UTC",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
    "overBudget": {"bytes": 9437184},
    "checks": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"files": {"bytes": 1310720}},
               "services": [{"service": "builder", "check": "supervisor", "state": "up", "detail": "ActiveState=active", "since": "2026-10-09T21:00:00.000Z"}]},
    "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
-  {"system": "laptop-1", "timeZone": null, "records": null, "checks": null, "runs": null}
+  {"system": "laptop-1", "paired": true, "timeZone": null, "records": null, "checks": null, "runs": null}
 ]}
 ```
+
+Every entry carries `paired`. The read leaves out a System that was unpaired, since a provisioner checks the paired fleet; `GET /api/v1/records?unpaired=include` lists those too, each with `"paired": false` and its records, runs, and checks as the Hub last held them. `include` is the only value the parameter takes, and any other answers 400. Pairing the System again lists it without the parameter once the new code is redeemed; until then it stays unpaired. The dashboard's normal view likewise lists only paired Systems, and `/?unpaired` lists the unpaired ones with an Unpaired status followed by their open Conditions, their Vitals, last seen, and Timeline. The two differ in what they accept: the page shows the unpaired view whenever `unpaired` is present, whatever its value, while the records read answers 400 unless every `unpaired` parameter has the value `include` exactly (repeating `?unpaired=include` is fine; `INCLUDE`, an empty value, or any other value is refused).
 
 `records` is `null` until a Report carries the System's set, `runs` until a Report carries its runs, `checks` until a Report carries its checks, and `timeZone` until a Report names one, which a Collector older than each never sends. Such a System's records, runs, or checks are unknown, not empty. An entry's own `sentAt` and `receivedAt` are those of its record set, and `runs` and `checks` carry their own. `checks` holds the files that are not matching, so a file the Collector could not read shows there with the state `unreadable`, though it raises no Drift, and an empty `files` says every file in the records the Collector hashed matches. A checks entry with no `files` and no `fileRecords` says no file pass has reached the Hub yet, or that the part was sent over budget, which is not the same as an empty `files`: nothing has been judged. Its `fileRecords` lists each `files` record the Collector hashed with the [digest](#drift) it read, so a provisioner can tell checks that judged an older version of a record from the record the Hub mirrors now; a record missing from it, or listed with another digest, was not judged as mirrored. Its `services` lists each check of each Service with its state, detail, and `since`, so a provisioner can see which Services the Collector found stopped, unknown, or unchecked. A part sent over budget is left out and named in `overBudget` with its size, and `services`, `files`, and `fileRecords` are also left out when the Collector sent no such part, which is not the same as an empty list. Records are sorted by kind, then name, jobs' runs by job, checked records by record, checked files by record, then path, and Service checks by service, then check, each by code unit. Times are UTC in ISO 8601, including each file's and each Service check's `since`.
 

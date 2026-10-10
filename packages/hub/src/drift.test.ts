@@ -4,6 +4,7 @@ import { filesRecordDigest } from '@heimdall/schema';
 import type { FilesRecord } from '@heimdall/schema';
 
 import { evaluateDrift } from './drift.ts';
+import { unpair } from './pairing.ts';
 import { listSystems } from './store.ts';
 import { page, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
@@ -90,6 +91,20 @@ const driftedAndEvaluated = async (h: Hub) => {
 const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 
 describe('Drift', () => {
+  test('stays open on an unpaired System and shows in the unpaired view', async () => {
+    await using h = await startHub();
+    await driftedAndEvaluated(h);
+
+    await unpair(h.db.sql, 'laptop-1');
+    const { open } = await evaluate(h, '09:10:00');
+
+    expect(subjects(open)).toEqual([CONF]);
+    expect(await page(h.hub)).not.toContain('laptop-1');
+    const html = await page(h.hub, '/?unpaired');
+    expect(html).toContain('<strong>Unpaired</strong>');
+    expect(html).toContain('<strong>Drift</strong>');
+  });
+
   test('is raised for a file whose content no longer matches, with the path as its subject', async () => {
     await using h = await startHub();
     await send(h, '08:05:00', {

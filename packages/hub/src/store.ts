@@ -10,6 +10,8 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { pairedSystems } from './tokens.ts';
+
 export type StoreResult = { skipped: number; stored: number };
 
 // Text PostgreSQL can store: NUL and lone surrogates, which the Report schema
@@ -389,11 +391,14 @@ export type TimelineEntry =
 // One System as the page shows it: when the Hub last heard from it, undefined
 // for a paired System it never has, its open Conditions and its Timeline,
 // newest Condition first, and, once a Report from it is stored, the Collector
-// build that sent it and its newest Vitals sample.
+// build that sent it and its newest Vitals sample. A System is paired while it
+// holds a token; one that does not keeps its history and is hidden from the
+// page's normal view.
 export type SystemSummary = {
   conditions: OpenCondition[];
   lastSeenAt: number | undefined;
   name: string;
+  paired: boolean;
   reported: { collector: Report['collector']; latest: VitalsSample } | undefined;
   timeline: TimelineEntry[];
 };
@@ -486,8 +491,8 @@ const timelineOf = (row: ConditionRow): TimelineEntry[] => {
       ];
 };
 
-// Every System the Hub holds, by name: those it has heard from, and paired
-// ones it has a Condition about but never heard from. One read-only snapshot keeps
+// Every System the Hub holds, paired or not, by name: those it has heard from,
+// and paired ones it has a Condition about but never heard from. One read-only snapshot keeps
 // last seen, status, and Timeline consistent with each other.
 export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
@@ -502,6 +507,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       ) v ON true
       ORDER BY s.name
     `;
+    const paired = await pairedSystems(tx);
     // Status reads every open Condition, however far back the Timeline's cap reaches.
     const open: OpenRow[] = await tx`
       SELECT system, kind, subject, raised_at, latest_reason FROM conditions
@@ -530,6 +536,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
         })),
       lastSeenAt: row.last_seen_at?.getTime(),
       name: row.name,
+      paired: paired.has(row.name),
       reported: reportedOf(row),
       // Each Condition's lines stay together, the newest Condition first.
       timeline: recent.filter((c) => c.system === row.name).flatMap(timelineOf),

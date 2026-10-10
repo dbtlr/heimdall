@@ -321,7 +321,7 @@ const route = async (
   deps: HubDependencies,
   pairFailures: ReturnType<typeof failureCap>,
 ) => {
-  const { pathname } = new URL(request.url);
+  const { pathname, searchParams } = new URL(request.url);
   if (pathname === '/api/v1/reports' && request.method === 'POST') {
     return ingest(request, deps);
   }
@@ -339,10 +339,20 @@ const route = async (
     return health(deps);
   }
   if (pathname === '/api/v1/records' && request.method === 'GET') {
-    return Response.json({ systems: await readRecords(deps.sql) });
+    const unpaired = searchParams.getAll('unpaired');
+    if (unpaired.some((value) => value !== 'include')) {
+      return answer(400, 'The only value for unpaired is include: ?unpaired=include.');
+    }
+    return Response.json({
+      systems: await readRecords(deps.sql, { includeUnpaired: unpaired.length > 0 }),
+    });
   }
   if (pathname === '/' && request.method === 'GET') {
-    const html = renderPage({ now: deps.now(), systems: await listSystems(deps.sql) });
+    const html = renderPage({
+      now: deps.now(),
+      systems: await listSystems(deps.sql),
+      view: searchParams.has('unpaired') ? 'unpaired' : 'paired',
+    });
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
   return answer(404, 'Not found.');

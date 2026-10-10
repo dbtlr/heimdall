@@ -4,7 +4,7 @@ title: ADR-0009 - Collectors pair with the Hub, and tokens live in the Hub's dat
 description: "An operator pairs each System once: the Hub issues a short single-use Pairing code bound to the System's name, and the Collector redeems it for its System name and token, which it keeps in its state directory. The Hub keeps only token hashes in its database, so no per-System secret is rendered by Fleet."
 status: accepted
 created: 2026-10-07
-modified: 2026-10-09
+modified: 2026-10-10
 ---
 
 # Collectors pair with the Hub, and tokens live in the Hub's database
@@ -50,3 +50,4 @@ Code hashes are unsalted SHA-256 over 40 bits, so anyone who can read the Hub's 
 - 2026-10-08: Clarification. Read access to the Hub's database, which this decision treats as trusted, now also exposes Session transcripts ([ADR-0012](0012-hub-archives-agent-session-transcripts.md)). The decision is unchanged.
 - 2026-10-08: Clarification. `collector.toml` is the same on every System only until a System turns off Session transcript capture, a per-System setting in that file ([ADR-0012](0012-hub-archives-agent-session-transcripts.md)). The decision is unchanged.
 - 2026-10-09: Clarification. Transcript capture is off until a System's configuration lists a source, and a source absent on a System is skipped, so one rendered `collector.toml` can still serve every System; it differs only where Systems capture different sources ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). This replaces the 2026-10-08 clarification. The decision is unchanged.
+- 2026-10-10: Clarification. Unpairing also hides the System from the dashboard's normal view and from the default records read, which an unpaired view and `?unpaired=include` still show; its history is kept. The decision is unchanged.

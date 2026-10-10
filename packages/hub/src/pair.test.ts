@@ -269,7 +269,7 @@ test('pairing again rotates the token: the old one works until the new code is r
   expect((await push(h.hub, report('laptop-1', [NOW + 15_000]), { token })).status).toBe(200);
 });
 
-test("unpairing revokes the System's token and keeps its history", async () => {
+test("unpairing revokes the System's token and keeps its history in the unpaired view", async () => {
   await using h = await startHub();
   await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
@@ -278,7 +278,8 @@ test("unpairing revokes the System's token and keeps its history", async () => {
   expect((await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' })).status).toBe(
     403,
   );
-  const html = await page(h.hub);
+  expect(await page(h.hub)).not.toContain('laptop-1');
+  const html = await page(h.hub, '/?unpaired');
   expect(html).toContain('laptop-1');
   expect(html).toContain('0.1.0 darwin/arm64');
   expect((await push(h.hub, report('server-1', [NOW]), { token: 'server-token' })).status).toBe(

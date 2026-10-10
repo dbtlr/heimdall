@@ -9,6 +9,7 @@ import type {
 import type { SQL } from 'bun';
 
 import { compareCodeUnits } from './compare.ts';
+import { pairedSystems } from './tokens.ts';
 
 type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
@@ -133,20 +134,29 @@ const checksOf = (row: SetRow): Checks => {
   };
 };
 
-// One System's entry in the read: its records, latest checks and runs, and time zone.
-const entryOf = (row: SetRow, records: MirroredRecord[], jobs: JobRuns[]): Entry => ({
+// One System's entry in the read: its records, latest checks and runs, time
+// zone, and whether it is paired.
+const entryOf = (
+  row: SetRow,
+  { jobs, paired, records }: { jobs: JobRuns[]; paired: boolean; records: MirroredRecord[] },
+): Entry => ({
   ...recordsOf(row, records),
   checks: checksOf(row),
+  paired,
   runs: runsOf(row, jobs),
   system: row.name,
   timeZone: row.time_zone,
 });
 
-// Every System the dashboard lists, by name, with the records, latest runs, and
-// latest checks its Collector last sent, and its time zone. One read-only snapshot keeps each
-// System's records and runs consistent with their sets. Systems come in the
-// order the dashboard lists them.
-export const readRecords = (sql: SQL): Promise<Entry[]> =>
+// Every paired System, by name, with the records, latest runs, and latest checks
+// its Collector last sent, and its time zone; with `includeUnpaired`, the
+// Systems that were unpaired too. One read-only snapshot keeps each System's
+// records and runs consistent with their sets. Systems come in the order the
+// dashboard lists them.
+export const readRecords = (
+  sql: SQL,
+  { includeUnpaired }: { includeUnpaired: boolean },
+): Promise<Entry[]> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
     const sets: SetRow[] = await tx`
       SELECT s.name, s.time_zone,
@@ -178,11 +188,14 @@ export const readRecords = (sql: SQL): Promise<Entry[]> =>
     `;
     const recordsBySystem = Map.groupBy(rows, (row) => row.system);
     const runsBySystem = Map.groupBy(runRows, (row) => row.system);
-    return sets.map((row) =>
-      entryOf(
-        row,
-        (recordsBySystem.get(row.name) ?? []).map((r) => r.entry),
-        (runsBySystem.get(row.name) ?? []).map((r) => r.entry),
-      ),
-    );
+    const paired = await pairedSystems(tx);
+    return sets
+      .filter((row) => includeUnpaired || paired.has(row.name))
+      .map((row) =>
+        entryOf(row, {
+          jobs: (runsBySystem.get(row.name) ?? []).map((r) => r.entry),
+          paired: paired.has(row.name),
+          records: (recordsBySystem.get(row.name) ?? []).map((r) => r.entry),
+        }),
+      );
   });

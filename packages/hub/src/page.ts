@@ -91,6 +91,13 @@ const status = (conditions: OpenCondition[]) =>
 // Shown in place of Vitals for a System with no stored Report yet.
 const UNKNOWN = '—';
 
+// An unpaired System's status: that it is unpaired, then the Conditions still
+// open, which no new Report will change.
+const unpairedStatus = (conditions: OpenCondition[]) =>
+  conditions.length === 0
+    ? '<strong>Unpaired</strong>'
+    : `<strong>Unpaired</strong><br>${status(conditions)}`;
+
 const row = (system: SystemSummary, now: number) => {
   const reported =
     system.reported === undefined
@@ -106,7 +113,7 @@ const row = (system: SystemSummary, now: number) => {
     system.lastSeenAt === undefined
       ? 'Never seen'
       : `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
-    status(system.conditions),
+    system.paired ? status(system.conditions) : unpairedStatus(system.conditions),
     ...reported,
   ];
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
@@ -138,13 +145,14 @@ const HEADINGS = [
   'Collector',
 ];
 
-// The plain page that lists every System with its last-seen time, status, and
-// newest Vitals, then each System's Timeline. M5's dashboard replaces it.
-export const renderPage = ({ now, systems }: { now: number; systems: SystemSummary[] }) => {
-  const body =
-    systems.length === 0
-      ? '<p>No System has reported yet.</p>'
-      : `<table>
+// Which of the Systems the page lists: the paired ones, or the unpaired ones
+// the normal view hides.
+export type View = 'paired' | 'unpaired';
+
+const unpairedLink = (count: number) =>
+  `<p><a href="/?unpaired">Show ${String(count)} unpaired System${count === 1 ? '' : 's'}</a></p>`;
+
+const tables = (systems: SystemSummary[], now: number) => `<table>
 <thead><tr>${HEADINGS.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>
 ${systems.map((s) => row(s, now)).join('\n')}
@@ -153,6 +161,34 @@ ${systems.map((s) => row(s, now)).join('\n')}
 <h2>Timeline</h2>
 <p>Each System's latest ${String(TIMELINE_CONDITIONS)} Conditions, newest first.</p>
 ${systems.map(timeline).join('\n')}`;
+
+const bodyOf = ({ now, systems, view }: { now: number; systems: SystemSummary[]; view: View }) => {
+  const shown = systems.filter((s) => s.paired === (view === 'paired'));
+  if (view === 'unpaired') {
+    return `<p><a href="/">Back to Systems</a></p>
+<h2>Unpaired Systems</h2>
+${shown.length === 0 ? '<p>No System is unpaired.</p>' : tables(shown, now)}`;
+  }
+  const hidden = systems.length - shown.length;
+  const none = hidden === 0 ? 'No System has reported yet.' : 'No System is paired.';
+  return `${shown.length === 0 ? `<p>${none}</p>` : tables(shown, now)}
+${hidden === 0 ? '' : unpairedLink(hidden)}`;
+};
+
+// The plain page that lists every paired System with its last-seen time,
+// status, and newest Vitals, then each System's Timeline. A System that was
+// unpaired keeps its history but shows only in the unpaired view, which the
+// normal view links to. M5's dashboard replaces it.
+export const renderPage = ({
+  now,
+  systems,
+  view = 'paired',
+}: {
+  now: number;
+  systems: SystemSummary[];
+  view?: View;
+}) => {
+  const body = bodyOf({ now, systems, view });
   return `<!doctype html>
 <html lang="en">
 <head>

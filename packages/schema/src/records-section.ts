@@ -149,9 +149,10 @@ const RunsReadSchema = z.union([
 ]);
 
 // What every System's entry carries beside its records: its latest checks and
-// runs, and its time zone, null until a Report names one.
+// runs, its time zone, null until a Report names one, and whether it is paired.
 const systemFields = {
   checks: ChecksReadSchema,
+  paired: z.boolean(),
   runs: RunsReadSchema,
   system: z.string(),
   timeZone: z.string().nullable(),
@@ -174,12 +175,13 @@ const OverBudgetReadSchema = z.object({
 
 const NoSetReadSchema = z.object({ ...systemFields, records: z.null() });
 
-// The answer of `GET /api/v1/records`: one entry per System, sorted by name.
+// The answer of `GET /api/v1/records`: one entry per paired System, sorted by
+// name, and per unpaired System too when the read asks for them.
 // An entry holds the set the System last sent, the size of a set too large to
 // send, or `null` records while no Report has carried a set, which is not the
 // same as holding none. Records sort by kind, then name, and jobs' latest runs
-// by job. Every entry also carries the System's time zone, latest runs, and
-// latest checks.
+// by job. Every entry also carries the System's time zone, latest runs, latest
+// checks, and `paired`, which is false only for an unpaired System.
 export const RecordsReadSchema = z.object({
   systems: z.array(z.union([SetReadSchema, OverBudgetReadSchema, NoSetReadSchema])),
 });
