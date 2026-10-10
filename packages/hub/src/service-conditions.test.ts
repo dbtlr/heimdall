@@ -524,3 +524,33 @@ test('the page and the Timeline name the Condition and the Service', async () =>
   await evaluate(h, '08:05:00');
   expect(await page(h.hub)).toContain('Service down cleared <code>web</code>');
 });
+
+describe('Service down for a launchd Service', () => {
+  const AGENT: ServiceRecord = { label: 'com.example.agent', name: 'agent', supervisor: 'launchd' };
+
+  test('is raised once its agent has been stopped for 2 minutes of awake time, and cleared when it runs', async () => {
+    await using h = await startHub();
+    const detail = 'state = not running, last exit code = 78';
+    await send(h, '08:02:30', {
+      checks: { services: [check('agent', 'stopped', at('08:00:30'), detail)] },
+      records: set(AGENT),
+      samples: awake('08:00:45', '08:02:45'),
+    });
+    const down = await evaluate(h, '08:02:30');
+    await send(h, '08:03:00', {
+      checks: { services: [check('agent', 'up', at('08:02:50'), 'state = running')] },
+      samples: [at('08:03:00')],
+    });
+    const recovered = await evaluate(h, '08:03:00');
+
+    expect(down.open).toEqual([
+      {
+        kind: 'service_down',
+        raisedAt: at('08:02:30'),
+        reason: `Stopped: ${detail}.`,
+        subject: 'agent',
+      },
+    ]);
+    expect(recovered.open).toEqual([]);
+  });
+});
