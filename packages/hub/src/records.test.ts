@@ -593,6 +593,19 @@ const sentCheck = (
   since = NOW - 60_000,
 ) => ({ ...file, since });
 
+const WEB = {
+  check: 'supervisor',
+  detail: 'ActiveState=active',
+  service: 'web',
+  state: 'up',
+} as const;
+
+// A Service check as a Collector sends it, since `since` (epoch milliseconds).
+const sentService = (
+  check: { check: string; detail: string; service: string; state: string },
+  since = NOW - 60_000,
+) => ({ ...check, since });
+
 describe('the checks a Report carries', () => {
   test('are read back with the time each file was first seen, sorted by record and path', async () => {
     await using h = await startHub();
@@ -652,7 +665,7 @@ describe('the checks a Report carries', () => {
     });
 
     const checks = (await entryOf(h))?.checks;
-    expect(checks && 'files' in checks ? checks.files.map((f) => [f.record, f.path]) : []).toEqual([
+    expect(checks?.files?.map((f) => [f.record, f.path])).toEqual([
       ['B', '/a'],
       ['B', '/b'],
       ['b', '/a'],
@@ -720,17 +733,91 @@ describe('the checks a Report carries', () => {
     expect((await entryOf(h))?.checks).toMatchObject({ files: [{ path: CONF.path }] });
   });
 
-  test('read as their size alone when too large to send, and drop the earlier files', async () => {
+  test('read as the size of a files part too large to send, and drop the earlier files', async () => {
     await using h = await startHub();
     await send(h, { checks: { files: [sentCheck(CONF)] } });
 
-    await send(h, { checks: { overBudget: { bytes: 2_000_000 } }, sentAt: NOW + 1000 });
+    await send(h, {
+      checks: { overBudget: { files: { bytes: 2_000_000 } } },
+      sentAt: NOW + 1000,
+    });
 
     expect((await entryOf(h))?.checks).toEqual({
-      overBudget: { bytes: 2_000_000 },
+      overBudget: { files: { bytes: 2_000_000 } },
       receivedAt: new Date(NOW).toISOString(),
       sentAt: new Date(NOW + 1000).toISOString(),
     });
+  });
+
+  test('read with the services beside a files part too large to send', async () => {
+    await using h = await startHub();
+
+    await send(h, {
+      checks: { overBudget: { files: { bytes: 2_000_000 } }, services: [sentService(WEB)] },
+    });
+
+    expect((await entryOf(h))?.checks).toEqual({
+      overBudget: { files: { bytes: 2_000_000 } },
+      receivedAt: new Date(NOW).toISOString(),
+      sentAt: new Date(NOW).toISOString(),
+      services: [{ ...WEB, since: new Date(NOW - 60_000).toISOString() }],
+    });
+  });
+
+  test('read with the size of a services part too large to send, and no services', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { services: [sentService(WEB)] } });
+
+    await send(h, {
+      checks: { files: [], overBudget: { services: { bytes: 2_000_000 } } },
+      sentAt: NOW + 1000,
+    });
+
+    expect((await entryOf(h))?.checks).toEqual({
+      fileRecords: [],
+      files: [],
+      overBudget: { services: { bytes: 2_000_000 } },
+      receivedAt: new Date(NOW).toISOString(),
+      sentAt: new Date(NOW + 1000).toISOString(),
+    });
+  });
+
+  test('read with each Service check, sorted by service, and without services when none were sent', async () => {
+    await using h = await startHub();
+    await send(h, { checks: { files: [] } });
+    const without = (await entryOf(h))?.checks;
+
+    await send(h, {
+      checks: {
+        services: [
+          sentService({ ...WEB, service: 'web' }),
+          sentService({ ...WEB, detail: 'ActiveState=failed', service: 'Db', state: 'stopped' }),
+        ],
+      },
+      sentAt: NOW + 1000,
+    });
+
+    expect(without).not.toHaveProperty('services');
+    expect((await entryOf(h))?.checks).toMatchObject({
+      services: [
+        {
+          check: 'supervisor',
+          detail: 'ActiveState=failed',
+          service: 'Db',
+          since: new Date(NOW - 60_000).toISOString(),
+          state: 'stopped',
+        },
+        { service: 'web', state: 'up' },
+      ],
+    });
+  });
+
+  test('read as an empty list when the Collector has no Service to check', async () => {
+    await using h = await startHub();
+
+    await send(h, { checks: { services: [] } });
+
+    expect((await entryOf(h))?.checks).toMatchObject({ services: [] });
   });
 
   test('read as null for a System whose Collector never sent them', async () => {
@@ -885,4 +972,26 @@ test('migration 11 applies on top of the earlier versions and leaves a System wi
     FROM systems s LEFT JOIN check_sets c ON c.system = s.name
   `;
   expect(rows).toEqual([{ checks_system: null, name: 'laptop-1' }]);
+});
+
+test('migration 12 keeps the size of checks that were over budget as that of the files part, and has no services', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 11),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await db.sql`
+    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes)
+    VALUES ('laptop-1', now(), now(), 2000000)
+  `;
+
+  expect(await migrate(db.sql)).toEqual([12]);
+
+  const rows = await db.sql`
+    SELECT files_over_budget_bytes, services, services_over_budget_bytes FROM check_sets
+  `;
+  expect(rows).toEqual([
+    { files_over_budget_bytes: '2000000', services: null, services_over_budget_bytes: null },
+  ]);
 });

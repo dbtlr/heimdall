@@ -9,16 +9,11 @@ import {
   RecordsSectionSchema,
   RunsSectionSchema,
 } from '@heimdall/schema';
-import type {
-  ApplicationRecord,
-  ChecksSection,
-  JobRecord,
-  Report,
-  RunRecord,
-} from '@heimdall/schema';
+import type { ApplicationRecord, JobRecord, Report, RunRecord } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { createChecks } from './checks/loop.ts';
+import type { CheckParts } from './checks/parts.ts';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
@@ -74,7 +69,7 @@ const setup = async (
   const outcomes: Delivery[] = [];
   const reports: Report[] = [];
   // The checks the loop built last, which a test sets.
-  const checked: { latest: ChecksSection | undefined } = { latest: undefined };
+  const checked: { latest: CheckParts | undefined } = { latest: undefined };
   const reporter = createSectionsReporter({
     checks: checks ?? { latest: () => checked.latest },
     log: { info: () => 0, warn: (m) => warnings.push(m) },
@@ -894,6 +889,14 @@ const DRIFTED = {
   state: 'drifted',
 };
 
+const WEB = {
+  check: 'supervisor',
+  detail: 'ActiveState=active',
+  service: 'web',
+  since: 1_000,
+  state: 'up',
+};
+
 test('no checks section goes out before the checks have run', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir);
@@ -958,7 +961,7 @@ test('a failed delivery keeps the checks pending, as they are then', async () =>
   expect(after[0]?.checks).toBeUndefined();
 });
 
-test('checks over budget travel as their size alone, and are not sent again when they change without changing size', async () => {
+test('a files part over budget travels as its size alone, and is not sent again when it changes without changing size', async () => {
   await using dir = await tempStateDir();
   const size = Buffer.byteLength(JSON.stringify({ files: [DRIFTED] }));
   const collector = await setup(dir, { maxChecksBytes: size - 1 });
@@ -969,8 +972,55 @@ test('checks over budget travel as their size alone, and are not sent again when
   const sameSize = await collector.push();
   collector.close();
 
-  expect(first[0]?.checks).toEqual({ overBudget: { bytes: size } });
+  expect(first[0]?.checks).toEqual({ overBudget: { files: { bytes: size } } });
   expect(sameSize[0]?.checks).toBeUndefined();
+});
+
+test('a files part over budget does not stop the services part from being sent', async () => {
+  await using dir = await tempStateDir();
+  const files = [DRIFTED, { ...DRIFTED, path: '/etc/b' }];
+  const collector = await setup(dir, {
+    maxChecksBytes: Buffer.byteLength(JSON.stringify({ services: [WEB] })),
+  });
+  collector.checked.latest = { files, services: [WEB] };
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.checks).toEqual({
+    overBudget: { files: { bytes: Buffer.byteLength(JSON.stringify({ files })) } },
+    services: [WEB],
+  });
+  expect(ChecksSectionSchema.safeParse(report?.checks).success).toBe(true);
+});
+
+test('a services part over budget travels as its size alone, and the files part is sent as it is', async () => {
+  await using dir = await tempStateDir();
+  const size = Buffer.byteLength(JSON.stringify({ services: [WEB] }));
+  const collector = await setup(dir, { maxChecksBytes: size - 1 });
+  collector.checked.latest = { files: [], services: [WEB] };
+
+  const [report] = await collector.push();
+  collector.close();
+
+  expect(report?.checks).toEqual({ files: [], overBudget: { services: { bytes: size } } });
+});
+
+test('a Service that changes state sends the checks again, and one that holds does not', async () => {
+  await using dir = await tempStateDir();
+  const collector = await setup(dir);
+  collector.checked.latest = { services: [WEB] };
+  const first = await collector.push();
+
+  collector.checked.latest = { services: [WEB] };
+  const same = await collector.push();
+  collector.checked.latest = { services: [{ ...WEB, since: 2_000, state: 'stopped' }] };
+  const changed = await collector.push();
+  collector.close();
+
+  expect(first[0]?.checks).toEqual({ services: [WEB] });
+  expect(same[0]?.checks).toBeUndefined();
+  expect(changed[0]?.checks).toEqual({ services: [{ ...WEB, since: 2_000, state: 'stopped' }] });
 });
 
 test('checks exactly at the budget are sent whole', async () => {

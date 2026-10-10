@@ -245,10 +245,10 @@ describe('Drift', () => {
     expect(subjects(second.open)).toEqual([CONF]);
   });
 
-  test('stays as it is while the checks are over budget, and while the System has sent none', async () => {
+  test('stays as it is while the files part is over budget, and while the System has sent none', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
-    await send(h, '09:05:00', { checks: { overBudget: { bytes: 2_000_000 } } });
+    await send(h, '09:05:00', { checks: { overBudget: { files: { bytes: 2_000_000 } } } });
     const overBudget = await evaluate(h, '09:10:00');
     await using none = await startHub();
     await send(none, '08:05:00', { records: set(WEBAPP) });
@@ -259,11 +259,11 @@ describe('Drift', () => {
     expect(noChecks).toEqual({ open: [], timeline: [] });
   });
 
-  test('clears for a forgotten record while the checks are over budget, since no record names the path', async () => {
+  test('clears for a forgotten record while the files part is over budget, since no record names the path', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
     await send(h, '09:05:00', {
-      checks: { overBudget: { bytes: 2_000_000 } },
+      checks: { overBudget: { files: { bytes: 2_000_000 } } },
       records: set(filesRecord('other-config', ENV)),
     });
 
@@ -273,11 +273,11 @@ describe('Drift', () => {
     expect(timeline).toMatchObject([{ condition: 'drift', kind: 'cleared', subject: CONF }, {}]);
   });
 
-  test('stays as it is while the checks are over budget and a record the Hub cannot read might name the path', async () => {
+  test('stays as it is while the files part is over budget and a record the Hub cannot read might name the path', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
     await send(h, '09:05:00', {
-      checks: { overBudget: { bytes: 2_000_000 } },
+      checks: { overBudget: { files: { bytes: 2_000_000 } } },
       records: { records: [], unreadable: [{ kind: 'files', name: 'webapp-config' }] },
     });
 

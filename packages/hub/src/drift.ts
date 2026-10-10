@@ -33,7 +33,7 @@ type FileCheck = z.infer<typeof StoredFilesSchema>[number];
 type CheckSetRow = {
   file_records: unknown;
   files: unknown;
-  over_budget_bytes: string | null;
+  files_over_budget_bytes: string | null;
 };
 type RecordSetRow = { over_budget_bytes: string | null; unreadable: unknown };
 type MirroredRow = { name: string; record: unknown };
@@ -139,10 +139,10 @@ const readRecords = async (recordSet: RecordSetRow, mirrored: readonly MirroredR
 // Raises and clears one System's Drift under the System's row lock, so it
 // orders with its Reports (ADR-0005), at the time `clock` reads once the lock
 // is held. Drift is one Condition per path. It is left as it is while the
-// System's checks are absent or over budget, or its records are, since neither
+// System's checks are absent or their files part is over budget, or its records are, since neither
 // says what the files are now, for the paths of a record the checks did not
-// judge as the Hub mirrors it, and while any files record is unreadable. Checks
-// over budget judge no record, so only a path no record names is cleared.
+// judge as the Hub mirrors it, and while any files record is unreadable. A
+// files part over budget judges no record, so only a path no record names is cleared.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -150,7 +150,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     `;
     const now = clock();
     const [checkSet]: CheckSetRow[] = await tx`
-      SELECT over_budget_bytes, files, file_records FROM check_sets WHERE system = ${system}
+      SELECT files_over_budget_bytes, files, file_records FROM check_sets WHERE system = ${system}
     `;
     const [recordSet]: RecordSetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
@@ -168,8 +168,8 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     if (!files.success || !fileRecords.success) {
       return;
     }
-    // Checks over budget list no files and judge no record.
-    const judgedBy = checkSet.over_budget_bytes === null ? fileRecords.data : [];
+    // A files part over budget lists no files and judges no record.
+    const judgedBy = checkSet.files_over_budget_bytes === null ? fileRecords.data : [];
     const mirrored: MirroredRow[] = await tx`
       SELECT name, record FROM mirrored_records WHERE system = ${system} AND kind = 'files'
     `;

@@ -1,5 +1,4 @@
 import { filesRecordDigest, RECORD_NAME } from '@heimdall/schema';
-import type { ChecksSection } from '@heimdall/schema';
 import { every } from '@heimdall/service';
 
 import type { Log } from '../collector.ts';
@@ -8,6 +7,7 @@ import type { RecordStore, StoredRecord } from '../records.ts';
 import { describeRows } from '../sections-report.ts';
 import { checkFiles } from './files.ts';
 import type { FileMismatch, FilesRecordToCheck } from './files.ts';
+import type { CheckParts } from './parts.ts';
 
 // How often the loop looks for a change to the records.
 export const CHECK_INTERVAL_MS = 5000;
@@ -42,20 +42,20 @@ const filesRecordsOf = async (stored: readonly StoredRecord[]) => {
 };
 
 // What the Collector observes against what its provisioner recorded: a pass
-// hashes the files of every `files` record and builds the whole checks section.
+// hashes the files of every `files` record and builds the files part of the
+// checks section.
 // A pass runs at start, when the `files` records change, and an hour after the
 // last pass. Another process committing to the store moves its version, which
 // is only the cheap sign that the records may have changed: a pass runs only
 // when the digests of the `files` records differ, so recording a run or the same
-// record again hashes nothing before the hour. Checks that need their own
-// cadence, such as a Service's state each minute, must not wait behind this
-// loop's hashing, so they run in a loop of their own and add a part to the
-// section.
+// record again hashes nothing before the hour. The Services'
+// state each minute must not wait behind this loop's hashing, so it is checked
+// in a loop of its own (`services-loop.ts`), which builds the services part.
 //
 // It holds a connection to the store of its own, opened on the first tick and
 // again on each tick until it opens, so a database that cannot be opened costs
 // the checks, never the daemon. The connection only reads, so its `version`
-// moves only when another process commits. `latest` answers the section the
+// moves only when another process commits. `latest` answers the parts the
 // last pass built, the same object until the next pass, or undefined before the
 // first. `tick` never throws; `signal` cuts a pass short, and a cut pass
 // replaces nothing. A file's `since` is kept while the Collector runs and starts
@@ -78,7 +78,7 @@ export const createChecks = ({
   let passedAt: number | undefined;
   let passedDigests: string | undefined;
   let mismatches: FileMismatch[] = [];
-  let latest: ChecksSection | undefined;
+  let latest: CheckParts | undefined;
   let warnedAbout = '';
   let failing = false;
 

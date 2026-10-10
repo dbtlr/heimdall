@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 
 import {
-  MAX_CHECKS_SECTION_BYTES,
+  MAX_CHECKS_PART_BYTES,
   MAX_RECORDS_SECTION_BYTES,
   MAX_RUNS_SECTION_BYTES,
   RECORD_NAME,
 } from '@heimdall/schema';
 import type { ChecksSection, RecordsSection, RunsSection } from '@heimdall/schema';
 
+import type { CheckParts, CheckPartsSource } from './checks/parts.ts';
 import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
@@ -31,19 +32,57 @@ export const describeRows = (rows: string[]) => {
   return more > 0 ? `${listed.join(', ')} and ${String(more)} more` : listed.join(', ');
 };
 
-// A section as sent, with the digest that says whether it differs from the last
-// one settled. A section over `maxBytes` of JSON becomes its size alone, so its
-// digest covers that size, and a change that keeps the size is not sent.
+// The digest that says whether a section as sent differs from the last one settled.
+const digestOf = (section: object) =>
+  createHash('sha256').update(JSON.stringify(section)).digest('hex');
+
+// A section as sent, with its digest. A section over `maxBytes` of JSON becomes
+// its size alone, so its digest covers that size, and a change that keeps the
+// size is not sent.
 const digested = <Section extends object>(
   carried: Section,
   maxBytes: number,
 ): { digest: string; section: Section | { overBudget: { bytes: number } } } => {
   const bytes = Buffer.byteLength(JSON.stringify(carried));
   const section = bytes > maxBytes ? { overBudget: { bytes } } : carried;
-  return {
-    digest: createHash('sha256').update(JSON.stringify(section)).digest('hex'),
-    section,
+  return { digest: digestOf(section), section };
+};
+
+// The size of a checks part that is over `maxBytes` of JSON, or undefined when
+// it is within the budget or the loops built none.
+const overBudgetOf = (part: object, maxBytes: number) => {
+  if (Object.keys(part).length === 0) {
+    return undefined;
+  }
+  const bytes = Buffer.byteLength(JSON.stringify(part));
+  return bytes > maxBytes ? { bytes } : undefined;
+};
+
+// The checks section for the parts the loops built, and its digest. Each part
+// has its own budget of `maxBytes` of JSON, and one over it becomes its size
+// alone under `overBudget`, so a part that is too large never stops the others
+// from being sent. The files part is `fileRecords` with `files`.
+const buildChecks = (parts: CheckParts, maxBytes: number) => {
+  const filesPart = {
+    ...(parts.fileRecords === undefined ? {} : { fileRecords: parts.fileRecords }),
+    ...(parts.files === undefined ? {} : { files: parts.files }),
   };
+  const servicesPart = parts.services === undefined ? {} : { services: parts.services };
+  const files = overBudgetOf(filesPart, maxBytes);
+  const services = overBudgetOf(servicesPart, maxBytes);
+  const section: ChecksSection = {
+    ...(files === undefined ? filesPart : {}),
+    ...(services === undefined ? servicesPart : {}),
+    ...(files === undefined && services === undefined
+      ? {}
+      : {
+          overBudget: {
+            ...(files === undefined ? {} : { files }),
+            ...(services === undefined ? {} : { services }),
+          },
+        }),
+  };
+  return { digest: digestOf(section), section };
 };
 
 // The records section for what the store holds now, and the digest of the
@@ -150,9 +189,9 @@ const createSectionState = <Section>({
   };
 };
 
-// What the checks section is built from: the checks the Collector's loop built
-// last, or undefined while it has not finished a pass.
-export type ChecksSource = { latest: () => ChecksSection | undefined };
+// What the checks section is built from: the parts the Collector's loops built
+// last, or undefined while none has finished a pass.
+export type ChecksSource = CheckPartsSource;
 
 // Decides which Report carries the Collector's record set (ADR-0011), its
 // jobs' latest runs, and its checks. Each section is due at start, when its
@@ -176,7 +215,7 @@ export type ChecksSource = { latest: () => ChecksSection | undefined };
 export const createSectionsReporter = ({
   checks,
   log,
-  maxChecksBytes = MAX_CHECKS_SECTION_BYTES,
+  maxChecksBytes = MAX_CHECKS_PART_BYTES,
   maxRecordsBytes = MAX_RECORDS_SECTION_BYTES,
   maxRunsBytes = MAX_RUNS_SECTION_BYTES,
   now,
@@ -194,7 +233,7 @@ export const createSectionsReporter = ({
 }): SectionsSource & { close: () => void } => {
   let store: RecordStore | undefined;
   let seenVersion: number | undefined;
-  let seenChecks: ChecksSection | undefined;
+  let seenChecks: CheckParts | undefined;
   let failing = false;
 
   const records = createSectionState<RecordsSection>({
@@ -214,7 +253,7 @@ export const createSectionsReporter = ({
 
   const checked = createSectionState<ChecksSection>({
     // Asked for only once the checks have a section.
-    build: () => digested<ChecksSection>(checks.latest() ?? {}, maxChecksBytes),
+    build: () => buildChecks(checks.latest() ?? {}, maxChecksBytes),
     label: 'checks',
     log,
     now,

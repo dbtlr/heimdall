@@ -301,42 +301,49 @@ const storeRuns = async (
 
 // Replaces the System's latest checks with a Report's, unless the Hub holds
 // checks from a Report sent later. Held checks that claim a time after
-// `receivedAt` come from a bad clock, and give way. Checks over budget leave no
-// files, so none that may have changed is served. The checks' row is locked
-// until the transaction ends, so concurrent Reports apply in order.
+// `receivedAt` come from a bad clock, and give way. A part over budget leaves
+// none of its entries, so none that may have changed is served. The checks' row
+// is locked until the transaction ends, so concurrent Reports apply in order.
 const storeChecks = async (
   sql: SQL,
   { receivedAt, report, section }: { receivedAt: Date; report: Report; section: ChecksSection },
 ) => {
   const mirrored = mirrorChecks(section);
-  const overBudget = 'overBudget' in mirrored ? mirrored.overBudget.bytes : null;
-  const files = 'files' in mirrored ? mirrored.files : [];
-  const fileRecords = 'fileRecords' in mirrored ? mirrored.fileRecords : [];
+  const services = mirrored.services === null ? null : storableJson(mirrored.services);
   await sql`
-    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes, files, file_records)
-    VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt}, ${overBudget},
-            ${storableJson(files)}::text::jsonb, ${storableJson(fileRecords)}::text::jsonb)
+    INSERT INTO check_sets (
+      system, sent_at, received_at, files_over_budget_bytes, files, file_records,
+      services_over_budget_bytes, services
+    )
+    VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt},
+            ${mirrored.filesOverBudgetBytes},
+            ${storableJson(mirrored.files)}::text::jsonb,
+            ${storableJson(mirrored.fileRecords)}::text::jsonb,
+            ${mirrored.servicesOverBudgetBytes}, ${services}::text::jsonb)
     ON CONFLICT (system) DO UPDATE SET
       sent_at = excluded.sent_at,
       received_at = excluded.received_at,
-      over_budget_bytes = excluded.over_budget_bytes,
+      files_over_budget_bytes = excluded.files_over_budget_bytes,
       files = excluded.files,
-      file_records = excluded.file_records
+      file_records = excluded.file_records,
+      services_over_budget_bytes = excluded.services_over_budget_bytes,
+      services = excluded.services
     WHERE check_sets.sent_at <= excluded.sent_at
        OR check_sets.sent_at > ${receivedAt}
   `;
 };
 
-// The kinds of Condition the Hub derives. M4 adds Service Conditions to the
-// same Timeline. A job Condition's subject is the job's name, a low disk
-// Condition's the mount, a stale System Condition's is empty, and a Drift
-// Condition's the file's path.
+// The kinds of Condition the Hub derives. A job Condition's subject is the
+// job's name, a low disk Condition's the mount, a stale System Condition's is
+// empty, a Drift Condition's the file's path, and a Service down Condition's
+// the Service's name.
 export type ConditionKind =
   | 'drift'
   | 'job_failing'
   | 'job_overdue'
   | 'low_disk'
   | 'reports_rejected'
+  | 'service_down'
   | 'system_stale';
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';

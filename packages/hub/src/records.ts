@@ -1,4 +1,11 @@
-import type { FileCheck, JobRuns, MirroredRecord, RecordRef, RecordsRead } from '@heimdall/schema';
+import type {
+  FileCheck,
+  JobRuns,
+  MirroredRecord,
+  RecordRef,
+  RecordsRead,
+  ServiceCheck,
+} from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { compareCodeUnits } from './compare.ts';
@@ -7,9 +14,11 @@ type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
   check_file_records: { digest: string; record: string }[] | null;
   check_files: FileCheck[] | null;
-  check_over_budget_bytes: string | null;
+  check_files_over_budget_bytes: string | null;
   check_received_at: Date | null;
   check_sent_at: Date | null;
+  check_services: ServiceCheck[] | null;
+  check_services_over_budget_bytes: string | null;
   name: string;
   over_budget_bytes: string | null;
   received_at: Date | null;
@@ -63,9 +72,25 @@ const runsOf = (row: SetRow, jobs: JobRuns[]): Runs => {
   return { ...times, jobs, unreadable: row.runs_unreadable ?? [] };
 };
 
+// The part of a System's checks that was too large to send, by part, with its size.
+const overBudgetOf = (row: SetRow) => {
+  const files = row.check_files_over_budget_bytes;
+  const services = row.check_services_over_budget_bytes;
+  return files === null && services === null
+    ? {}
+    : {
+        overBudget: {
+          ...(files === null ? {} : { files: { bytes: Number(files) } }),
+          ...(services === null ? {} : { services: { bytes: Number(services) } }),
+        },
+      };
+};
+
 // One System's latest checks in the read, from its checks row, or null when no
-// Report has carried checks. Digests sort by record, and files by record, then
-// path, by code unit like records and runs.
+// Report has carried checks. A part over budget is left out and named in
+// `overBudget`, and so is `services` when the Report carried no services part.
+// Digests sort by record, files by record, then path, and Service checks by
+// service, then check, by code unit like records and runs.
 const checksOf = (row: SetRow): Checks => {
   if (row.check_sent_at === null || row.check_received_at === null) {
     return null;
@@ -74,9 +99,6 @@ const checksOf = (row: SetRow): Checks => {
     receivedAt: row.check_received_at.toISOString(),
     sentAt: row.check_sent_at.toISOString(),
   };
-  if (row.check_over_budget_bytes !== null) {
-    return { ...times, overBudget: { bytes: Number(row.check_over_budget_bytes) } };
-  }
   const files = (row.check_files ?? [])
     .map(({ path, record, since, state }) => ({
       path,
@@ -88,7 +110,21 @@ const checksOf = (row: SetRow): Checks => {
   const fileRecords = (row.check_file_records ?? [])
     .map(({ digest, record }) => ({ digest, record }))
     .toSorted((a, b) => compareCodeUnits(a.record, b.record));
-  return { ...times, fileRecords, files };
+  const services = (row.check_services ?? [])
+    .map(({ check, detail, service, since, state }) => ({
+      check,
+      detail,
+      service,
+      since: new Date(since).toISOString(),
+      state,
+    }))
+    .toSorted((a, b) => compareCodeUnits(a.service, b.service) || compareCodeUnits(a.check, b.check));
+  return {
+    ...times,
+    ...overBudgetOf(row),
+    ...(row.check_files_over_budget_bytes === null ? { fileRecords, files } : {}),
+    ...(row.check_services === null ? {} : { services }),
+  };
 };
 
 // One System's entry in the read: its records, latest checks and runs, and time zone.
@@ -112,7 +148,10 @@ export const readRecords = (sql: SQL): Promise<Entry[]> =>
              u.sent_at AS runs_sent_at, u.received_at AS runs_received_at,
              u.unreadable AS runs_unreadable, u.over_budget_bytes AS runs_over_budget_bytes,
              c.sent_at AS check_sent_at, c.received_at AS check_received_at,
-             c.files AS check_files, c.file_records AS check_file_records, c.over_budget_bytes AS check_over_budget_bytes
+             c.files AS check_files, c.file_records AS check_file_records,
+             c.files_over_budget_bytes AS check_files_over_budget_bytes,
+             c.services AS check_services,
+             c.services_over_budget_bytes AS check_services_over_budget_bytes
       FROM systems s
       LEFT JOIN record_sets r ON r.system = s.name
       LEFT JOIN run_sets u ON u.system = s.name
