@@ -1,9 +1,19 @@
 import { expect, test } from 'bun:test';
-import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  open,
+  stat,
+  symlink,
+  truncate,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
 import { checkFile } from './file-check.ts';
+import type { FileSystem } from './file-check.ts';
 
 // The SHA-256 of "hello\n", from sha256sum.
 const HELLO = '5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03';
@@ -121,4 +131,72 @@ test('a check of a large file stops between chunks when the signal aborts', asyn
   controller.abort();
 
   expect(await check).toBeUndefined();
+});
+
+test('a check of a huge file stops soon after the signal aborts, not when the file ends', async () => {
+  await using dir = await tempStateDir();
+  const path = join(dir.path, 'sparse');
+  // Four GiB of zeros that take no disk, and seconds to read.
+  await writeFile(path, '');
+  await truncate(path, 4 * 1024 * 1024 * 1024);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 20);
+  const started = performance.now();
+
+  const verdict = await checkFile(path, sha('x'), controller.signal);
+
+  expect(verdict).toBeUndefined();
+  expect(performance.now() - started).toBeLessThan(1000);
+});
+
+test('a file that grows after it is opened is hashed only as far as it was then', async () => {
+  await using dir = await tempStateDir();
+  const path = join(dir.path, 'growing');
+  const content = 'hello\n'.repeat(1000);
+  await writeFile(path, content);
+  // The file grows by 1 MiB right after the check examines the opened file.
+  const growing: FileSystem = {
+    open: async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args);
+      const examine = handle.stat.bind(handle);
+      handle.stat = (async (...options: never[]) => {
+        const size = await examine(...options);
+        await appendFile(path, Buffer.alloc(1024 * 1024, 1));
+        return size;
+      }) as typeof handle.stat;
+      return handle;
+    },
+    stat,
+  };
+
+  expect(await checkFile(path, sha(content), undefined, growing)).toBe('match');
+});
+
+// A file system that records the paths opened.
+const watchOpens = () => {
+  const opened: string[] = [];
+  const watching: FileSystem = {
+    open: (...args: Parameters<typeof open>) => {
+      opened.push(String(args[0]));
+      return open(...args);
+    },
+    stat,
+  };
+  return { opened, watching };
+};
+
+test.each(['/dev/zero', '/dev/null'])('%s is unreadable and is never opened', async (device) => {
+  const { opened, watching } = watchOpens();
+
+  expect(await checkFile(device, sha('x'), undefined, watching)).toBe('unreadable');
+  expect(opened).toEqual([]);
+});
+
+test('a symbolic link to a device is unreadable and the device is never opened', async () => {
+  await using dir = await tempStateDir();
+  await symlink('/dev/zero', join(dir.path, 'zero'));
+  const { opened, watching } = watchOpens();
+
+  expect(await checkFile(join(dir.path, 'zero'), sha('x'), undefined, watching)).toBe('unreadable');
+  expect(opened).toEqual([]);
 });

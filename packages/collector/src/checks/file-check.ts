@@ -14,6 +14,12 @@ const failureOf = (error: unknown): FileVerdict =>
     ? 'missing'
     : 'unreadable';
 
+// The file system calls a check makes, which a test replaces to watch them or
+// to change a file between them.
+export type FileSystem = { open: typeof open; stat: typeof stat };
+
+const REAL_FILE_SYSTEM: FileSystem = { open, stat };
+
 // Hashes the first `size` bytes of `handle`, or answers undefined when `signal`
 // aborts between chunks. A file that grew since it was opened is read only as
 // far as it was then, so a file growing faster than it is read cannot stall the
@@ -51,15 +57,16 @@ export const checkFile = async (
   path: string,
   sha256: string,
   signal?: AbortSignal,
+  fs: FileSystem = REAL_FILE_SYSTEM,
 ): Promise<FileVerdict | undefined> => {
   try {
     if (signal?.aborted === true) {
       return undefined;
     }
-    if (!(await stat(path)).isFile()) {
+    if (!(await fs.stat(path)).isFile()) {
       return 'unreadable';
     }
-    const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const handle = await fs.open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
       const opened = await handle.stat();
       if (!opened.isFile()) {
