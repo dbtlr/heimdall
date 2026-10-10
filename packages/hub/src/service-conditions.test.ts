@@ -225,6 +225,31 @@ describe('Service down', () => {
     expect(open).toEqual([]);
   });
 
+  // A docker Service's record names a container, not a unit; the check the
+  // Collector makes of it has the same shape, so the Hub judges it the same way.
+  test('is raised for a docker Service whose container has been stopped for 2 minutes of awake time, and says why', async () => {
+    const container: ServiceRecord = { container: 'web', name: 'web', supervisor: 'docker' };
+    await using h = await startHub();
+    await send(h, '08:02:30', {
+      checks: {
+        services: [check('web', 'stopped', at('08:00:30'), 'status exited, exit code 137')],
+      },
+      records: set(container),
+      samples: awake('08:00:45', '08:02:45'),
+    });
+
+    const { open } = await evaluate(h, '08:02:30');
+
+    expect(open).toEqual([
+      {
+        kind: 'service_down',
+        raisedAt: at('08:02:30'),
+        reason: 'Stopped: status exited, exit code 137.',
+        subject: 'web',
+      },
+    ]);
+  });
+
   test('says in its reason what the Collector found', async () => {
     await using h = await startHub();
     await send(h, '08:00:00', {
