@@ -8,7 +8,7 @@ import { flushQueue, sendReport } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import { openQueue } from './queue.ts';
 import type { SampleQueue } from './queue.ts';
-import { tempStateDir } from './testing/fixtures.ts';
+import { NO_RECORDS, tempStateDir } from './testing/fixtures.ts';
 
 const identity = {
   collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
@@ -110,7 +110,16 @@ const flush = (
   queue: SampleQueue,
   send: (sent: Report) => Promise<Delivery>,
   transcripts: () => TranscriptsSection = () => NO_TRANSCRIPTS,
-) => flushQueue({ batchSize: 2, identity, now: () => 9000, queue, send, transcripts });
+) =>
+  flushQueue({
+    batchSize: 2,
+    identity,
+    now: () => 9000,
+    queue,
+    records: NO_RECORDS,
+    send,
+    transcripts,
+  });
 
 describe('flushing the queue', () => {
   test('sends the backlog oldest first in Reports of at most the batch size', async () => {

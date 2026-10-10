@@ -102,3 +102,47 @@ export const mirrorRecords = (section: RecordsSection): MirroredRecords => {
   }
   return { records: [...records.values()], unreadable };
 };
+
+// A mirrored record of kind `kind`, as `GET /api/v1/records` returns it.
+const mirroredOf = <K extends RecordKind>(kind: K) =>
+  z.object({ kind: z.literal(kind), name: z.string(), record: REPORTED_RECORD_SCHEMAS[kind] });
+
+// A mirrored record, read by its kind.
+const MirroredRecordSchema = z.discriminatedUnion('kind', [
+  mirroredOf('application'),
+  mirroredOf('files'),
+  mirroredOf('job'),
+  mirroredOf('service'),
+]);
+
+// A time as UTC ISO 8601 text from `Date.toISOString`. Not checked as a
+// datetime, since a far-future `sentAt` prints with an expanded year, and one
+// System's time must not make the read fail for the rest.
+const isoTime = z.string();
+
+const SetReadSchema = z.object({
+  receivedAt: isoTime,
+  records: z.array(MirroredRecordSchema),
+  sentAt: isoTime,
+  system: z.string(),
+  unreadable: z.array(RecordRefSchema),
+});
+
+const OverBudgetReadSchema = z.object({
+  overBudget: z.object({ bytes }),
+  receivedAt: isoTime,
+  sentAt: isoTime,
+  system: z.string(),
+});
+
+const NoSetReadSchema = z.object({ records: z.null(), system: z.string() });
+
+// The answer of `GET /api/v1/records`: one entry per System, sorted by name.
+// An entry holds the set the System last sent, the size of a set too large to
+// send, or `null` records while no Report has carried a set, which is not the
+// same as holding none. Records sort by kind, then name.
+export const RecordsReadSchema = z.object({
+  systems: z.array(z.union([SetReadSchema, OverBudgetReadSchema, NoSetReadSchema])),
+});
+
+export type RecordsRead = z.infer<typeof RecordsReadSchema>;

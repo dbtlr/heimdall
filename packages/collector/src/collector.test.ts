@@ -6,7 +6,7 @@ import { sample } from '@heimdall/schema/testing';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import { openQueue } from './queue.ts';
-import { tempStateDir } from './testing/fixtures.ts';
+import { NO_RECORDS, tempStateDir } from './testing/fixtures.ts';
 
 const NO_TRANSCRIPTS = { sources: [], spool: { bytes: 0, oldestAt: null } };
 
@@ -65,6 +65,7 @@ test('samples taken while the Hub is down arrive once it is back, each once', as
     log: { info: (m) => logs.push(`info ${m}`), warn: (m) => logs.push(`warn ${m}`) },
     maxBackoffMs: 30,
     queue,
+    records: NO_RECORDS,
     sampler: {
       sample: () => {
         sampled.push(sampled.length + 1);
@@ -106,6 +107,7 @@ test('stops between samples when its signal aborts', async () => {
     log: { info: () => 0, warn: () => 0 },
     maxBackoffMs: 60_000,
     queue,
+    records: NO_RECORDS,
     sampler: {
       sample: () => {
         taken += 1;
@@ -137,6 +139,7 @@ test('a sample that fails is skipped with a warning and collection carries on', 
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     maxBackoffMs: 5,
     queue,
+    records: NO_RECORDS,
     sampler: {
       sample: () => {
         attempts += 1;
@@ -173,6 +176,7 @@ test('a slow push does not crowd the next sample', async () => {
     intervalMs: 40,
     log: { info: () => 0, warn: () => 0 },
     queue,
+    records: NO_RECORDS,
     sampler: {
       sample: () => {
         sampledAt.push(performance.now());
@@ -221,6 +225,7 @@ test('a queue error warns and backs off instead of stopping the Collector', asyn
         return queue.oldest(limit);
       },
     },
+    records: NO_RECORDS,
     sampler: {
       sample: () => {
         taken += 1;

@@ -1,4 +1,5 @@
-import type { Report, TranscriptsSection, VitalsSample } from '@heimdall/schema';
+import { mirrorRecords } from '@heimdall/schema';
+import type { RecordsSection, Report, TranscriptsSection, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 export type StoreResult = { skipped: number; stored: number };
@@ -127,6 +128,9 @@ export const storeReport = (
     if (report.transcripts !== undefined) {
       await storeTranscriptSources(tx, { ...report, transcripts: report.transcripts });
     }
+    if (report.records !== undefined) {
+      await storeRecords(tx, { receivedAt: seenAt, report, section: report.records });
+    }
     // A stored Report ends a run of rejections (ADR-0005).
     await tx`
       UPDATE conditions SET cleared_at = GREATEST(raised_at, ${seenAt})
@@ -152,6 +156,41 @@ const storeTranscriptSources = async (
       spool_oldest_at = excluded.spool_oldest_at,
       sent_at = excluded.sent_at
     WHERE transcript_sources.sent_at <= excluded.sent_at
+  `;
+};
+
+// Replaces the System's mirror of its records with a Report's set, unless the
+// Hub holds a set from a Report sent later (ADR-0011). A set over budget
+// leaves no records, so none that may have changed is served. The set's row
+// is locked until the transaction ends, so concurrent Reports apply in order.
+const storeRecords = async (
+  sql: SQL,
+  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: RecordsSection },
+) => {
+  const mirrored = mirrorRecords(section);
+  const overBudget = 'overBudget' in mirrored ? mirrored.overBudget.bytes : null;
+  const unreadable = 'unreadable' in mirrored ? mirrored.unreadable : [];
+  const records = 'records' in mirrored ? mirrored.records : [];
+  const replaced: unknown[] = await sql`
+    INSERT INTO record_sets (system, sent_at, received_at, unreadable, over_budget_bytes)
+    VALUES (${report.system}, ${new Date(report.sentAt)}, ${receivedAt},
+            ${storableJson(unreadable)}::text::jsonb, ${overBudget})
+    ON CONFLICT (system) DO UPDATE SET
+      sent_at = excluded.sent_at,
+      received_at = excluded.received_at,
+      unreadable = excluded.unreadable,
+      over_budget_bytes = excluded.over_budget_bytes
+    WHERE record_sets.sent_at <= excluded.sent_at
+    RETURNING system
+  `;
+  if (replaced.length === 0) {
+    return;
+  }
+  await sql`DELETE FROM mirrored_records WHERE system = ${report.system}`;
+  await sql`
+    INSERT INTO mirrored_records (system, kind, name, record)
+    SELECT ${report.system}, r->>'kind', r->>'name', r->'record'
+    FROM jsonb_array_elements(${storableJson(records)}::text::jsonb) AS r
   `;
 };
 

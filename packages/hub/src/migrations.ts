@@ -210,6 +210,33 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: 'ALTER TABLE transcript_generations ALTER COLUMN id DROP IDENTITY',
     version: 6,
   },
+  {
+    // Each System's mirror of the records its Collector holds (ADR-0011).
+    // `record_sets` holds the latest set a Report carried: when it was sent
+    // and received, the rows the Collector could not read, and, for a set too
+    // large to send, its size with no records. `mirrored_records` holds the
+    // readable records, each as the provisioner recorded it. A System with no
+    // `record_sets` row has never sent a set. `sent_at` keeps an older Report
+    // from replacing a newer set.
+    sql: `
+      CREATE TABLE record_sets (
+        system text PRIMARY KEY REFERENCES systems (name),
+        sent_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL,
+        unreadable jsonb NOT NULL DEFAULT '[]',
+        over_budget_bytes bigint
+      );
+
+      CREATE TABLE mirrored_records (
+        system text NOT NULL REFERENCES systems (name),
+        kind text NOT NULL,
+        name text NOT NULL,
+        record jsonb NOT NULL,
+        PRIMARY KEY (system, kind, name)
+      );
+    `,
+    version: 7,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

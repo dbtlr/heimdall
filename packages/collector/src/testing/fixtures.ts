@@ -10,3 +10,6 @@ export const tempStateDir = async () => {
     [Symbol.asyncDispose]: () => rm(path, { force: true, recursive: true }),
   };
 };
+
+// A records source with nothing to send, for tests that are not about records.
+export const NO_RECORDS = { pending: () => undefined };

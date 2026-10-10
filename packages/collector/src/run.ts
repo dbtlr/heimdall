@@ -13,6 +13,8 @@ import { describeError } from './errors.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
+import { createRecordsReporter } from './records-report.ts';
+import { openRecords } from './records.ts';
 import { resolveStateDir } from './state-dir.ts';
 import { createCapture } from './transcripts/capture.ts';
 import { configHome, readSessionsSection } from './transcripts/config-file.ts';
@@ -129,6 +131,8 @@ export const runAction: ActionHandler<typeof run> = async ({
     const { system, token } = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
     const queue = await openQueue({ capacity: QUEUE_CAPACITY, stateDir });
     const spool = await openSpool({ stateDir });
+    // The daemon only reads the store; `record` and `forget` write it.
+    const store = await openRecords({ stateDir });
     const runtime = {
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
@@ -156,6 +160,7 @@ export const runAction: ActionHandler<typeof run> = async ({
         },
         log: runtime,
         queue,
+        records: createRecordsReporter({ log: runtime, now: Date.now, store }),
         sampler: createSampler(hostProbe(platform)),
         send: (report) => sendReport({ hub: options.hub, report, signal, token }),
         signal,
@@ -164,6 +169,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     } finally {
       await stopCapture();
       spool.close();
+      store.close();
       queue.close();
     }
   } finally {

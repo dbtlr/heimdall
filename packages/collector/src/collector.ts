@@ -3,7 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { Report, TranscriptsSection } from '@heimdall/schema';
 
 import { flushQueue } from './delivery.ts';
-import type { Delivery, FlushResult, ReportIdentity } from './delivery.ts';
+import type { Delivery, FlushResult, RecordsSource, ReportIdentity } from './delivery.ts';
 import { describeError } from './errors.ts';
 import type { SampleQueue } from './queue.ts';
 import type { Sampler } from './vitals/sampler.ts';
@@ -35,6 +35,7 @@ export const runCollector = async ({
   log,
   maxBackoffMs = MAX_BACKOFF_MS,
   queue,
+  records,
   sampler,
   send,
   signal,
@@ -45,6 +46,7 @@ export const runCollector = async ({
   log: Log;
   maxBackoffMs?: number;
   queue: SampleQueue;
+  records: RecordsSource;
   sampler: Sampler;
   send: (report: Report) => Promise<Delivery>;
   signal: AbortSignal;
@@ -76,14 +78,19 @@ export const runCollector = async ({
     }
 
     // oxlint-disable-next-line no-await-in-loop -- one push at a time.
-    const result = await flushQueue({ identity, now: Date.now, queue, send, transcripts }).catch(
-      (error: unknown): FlushResult => ({
-        delivered: 0,
-        kind: 'failed',
-        reason: describeError(error),
-        rejected: [],
-      }),
-    );
+    const result = await flushQueue({
+      identity,
+      now: Date.now,
+      queue,
+      records,
+      send,
+      transcripts,
+    }).catch((error: unknown): FlushResult => ({
+      delivered: 0,
+      kind: 'failed',
+      reason: describeError(error),
+      rejected: [],
+    }));
     reportRejections(result, log);
     if (result.kind === 'failed') {
       if (outage === undefined) {

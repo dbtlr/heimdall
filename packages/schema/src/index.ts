@@ -45,12 +45,14 @@ export type {
 export {
   MAX_RECORDS_SECTION_BYTES,
   mirrorRecords,
+  RecordsReadSchema,
   RecordsSectionSchema,
 } from './records-section.ts';
 export type {
   MirroredRecord,
   MirroredRecords,
   RecordRef,
+  RecordsRead,
   RecordsSection,
   SentRecord,
 } from './records-section.ts';
