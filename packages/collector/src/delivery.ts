@@ -1,6 +1,7 @@
 import { MAX_REPORT_BYTES, MAX_SAMPLES_PER_REPORT, REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import type {
   ChecksSection,
+  HarnessesSection,
   RecordsSection,
   Report,
   RunsSection,
@@ -81,11 +82,12 @@ export type PendingSection<Section> = {
 // The sections that are due, each ready to ride on a Report.
 export type PendingSections = {
   checks?: PendingSection<ChecksSection>;
+  harnesses?: PendingSection<HarnessesSection>;
   records?: PendingSection<RecordsSection>;
   runs?: PendingSection<RunsSection>;
 };
 
-// Where `flushQueue` asks for the records, runs, and checks sections to put in a Report.
+// Where `flushQueue` asks for the records, runs, checks, and harnesses sections to put in a Report.
 export type SectionsSource = { pending: () => Promise<PendingSections> };
 
 export type Rejection = { detail: string; samples: number };
@@ -144,24 +146,31 @@ export const flushQueue = async ({
       ...(zone === undefined ? {} : { timeZone: zone }),
       transcripts: transcripts(),
     };
-    const reportWith = (carried: Pick<Report, 'checks' | 'records' | 'runs'>): Report => ({
+    const reportWith = (
+      carried: Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs'>,
+    ): Report => ({
       ...base,
       ...carried,
     });
-    const { checks, records, runs } = waiting;
+    const { checks, harnesses, records, runs } = waiting;
     const withSections = reportWith({
       ...(checks === undefined ? {} : { checks: checks.section }),
+      ...(harnesses === undefined ? {} : { harnesses: harnesses.section }),
       ...(records === undefined ? {} : { records: records.section }),
       ...(runs === undefined ? {} : { runs: runs.section }),
     });
     const carrying =
-      (checks !== undefined || records !== undefined || runs !== undefined) &&
+      (checks !== undefined ||
+        harnesses !== undefined ||
+        records !== undefined ||
+        runs !== undefined) &&
       Buffer.byteLength(JSON.stringify(withSections)) <= MAX_REPORT_BYTES;
     // oxlint-disable-next-line no-await-in-loop -- batches go one at a time, oldest first.
     let outcome = await send(carrying ? withSections : reportWith({}));
     if (carrying && outcome.kind !== 'failed') {
       waiting = {};
       checks?.settle(outcome);
+      harnesses?.settle(outcome);
       records?.settle(outcome);
       runs?.settle(outcome);
       if (outcome.kind === 'rejected') {

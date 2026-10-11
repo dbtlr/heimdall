@@ -6,12 +6,18 @@ import {
   MAX_RUNS_SECTION_BYTES,
   RECORD_NAME,
 } from '@heimdall/schema';
-import type { ChecksSection, RecordsSection, RunsSection } from '@heimdall/schema';
+import type {
+  ChecksSection,
+  HarnessesSection,
+  RecordsSection,
+  RunsSection,
+} from '@heimdall/schema';
 
 import type { CheckParts, CheckPartsSource } from './checks/parts.ts';
 import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
+import type { HarnessesSource } from './harness-scan.ts';
 import type { RecordStore } from './records.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
@@ -193,8 +199,11 @@ const createSectionState = <Section>({
 // last, or undefined while none has finished a pass.
 export type ChecksSource = CheckPartsSource;
 
+// A source that has found nothing, for a reporter given no Harness scan.
+const NO_HARNESSES: HarnessesSource = { latest: () => undefined };
+
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, and its checks. Each section is due at start, when its
+// jobs' latest runs, its checks, and the Harness installs it found. Each section is due at start, when its
 // content may have changed and its digest differs from the last one settled,
 // and once `refreshMs` after the last one the Hub answered. The store's content
 // may have changed when another process commits; the checks' when `checks`
@@ -214,6 +223,7 @@ export type ChecksSource = CheckPartsSource;
 // nothing.
 export const createSectionsReporter = ({
   checks,
+  harnesses = NO_HARNESSES,
   log,
   maxChecksBytes = MAX_CHECKS_PART_BYTES,
   maxRecordsBytes = MAX_RECORDS_SECTION_BYTES,
@@ -223,6 +233,7 @@ export const createSectionsReporter = ({
   refreshMs = SECTIONS_REFRESH_MS,
 }: {
   checks: ChecksSource;
+  harnesses?: HarnessesSource;
   log: Log;
   maxChecksBytes?: number;
   maxRecordsBytes?: number;
@@ -234,6 +245,7 @@ export const createSectionsReporter = ({
   let store: RecordStore | undefined;
   let seenVersion: number | undefined;
   let seenChecks: CheckParts | undefined;
+  let seenHarnesses: HarnessesSection | undefined;
   let failing = false;
 
   const records = createSectionState<RecordsSection>({
@@ -260,6 +272,18 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
+  const installed = createSectionState<HarnessesSection>({
+    // Asked for only once a scan has finished.
+    build: () => {
+      const section = harnesses.latest() ?? { installs: [] };
+      return { digest: digestOf(section), section };
+    },
+    label: 'Harness installs',
+    log,
+    now,
+    refreshMs,
+  });
+
   const pending = async () => {
     store ??= await open();
     // The version is read before the sections, so a write landing between the
@@ -267,18 +291,25 @@ export const createSectionsReporter = ({
     const version = store.version();
     const changed = version !== seenVersion;
     const latestChecks = checks.latest();
+    const latestHarnesses = harnesses.latest();
     const due = {
       checks:
         latestChecks === undefined
           ? undefined
           : checked.pending(store, latestChecks !== seenChecks),
+      harnesses:
+        latestHarnesses === undefined
+          ? undefined
+          : installed.pending(store, latestHarnesses !== seenHarnesses),
       records: records.pending(store, changed),
       runs: runs.pending(store, changed),
     };
     seenVersion = version;
     seenChecks = latestChecks;
+    seenHarnesses = latestHarnesses;
     return {
       ...(due.checks === undefined ? {} : { checks: due.checks }),
+      ...(due.harnesses === undefined ? {} : { harnesses: due.harnesses }),
       ...(due.records === undefined ? {} : { records: due.records }),
       ...(due.runs === undefined ? {} : { runs: due.runs }),
     };
@@ -291,6 +322,7 @@ export const createSectionsReporter = ({
       // A store opened again may carry a version this one never saw.
       seenVersion = undefined;
       seenChecks = undefined;
+      seenHarnesses = undefined;
     },
     // A store that cannot be opened or read costs the sections, never the
     // Vitals, and is warned about once until it works again.

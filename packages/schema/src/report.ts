@@ -25,8 +25,9 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 
 // The largest Report body the Hub reads; a larger one is rejected, Vitals with
 // it. The records section may take 8 MiB, the runs section 1 MiB, and the
-// checks section 1 MiB, which leaves 2 MiB for the samples, transcripts, and harnesses (at most about 16 KiB) when
-// all three are at their budget. A full batch of 1,000 samples of 24 disks each
+// checks section 1 MiB, which leaves 2 MiB for the samples, transcripts, and
+// harnesses (at most about 16 KiB) when all three are at their budget. A full
+// batch of 1,000 samples of 24 disks each
 // comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
 // sends a Report that would exceed this without its sections, which ride a
 // later, smaller Report.

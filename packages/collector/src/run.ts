@@ -15,6 +15,8 @@ import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import type { ReportIdentity } from './delivery.ts';
 import { describeError } from './errors.ts';
+import { fileReader } from './harness-installs.ts';
+import { startHarnessScan } from './harness-scan.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
@@ -190,8 +192,17 @@ export const runAction: ActionHandler<typeof run> = async ({
       now: Date.now,
       open: () => openRecords({ stateDir }),
     });
+    // Harness installs are found by reading install directories and package
+    // metadata; no Harness is run.
+    const harnessScan = startHarnessScan({
+      home,
+      log: runtime,
+      platform,
+      reader: fileReader,
+    });
     const sections = createSectionsReporter({
       checks: combineParts([fileChecks, serviceChecks]),
+      harnesses: harnessScan,
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
@@ -217,6 +228,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       });
     } finally {
       await stopCapture();
+      await harnessScan.stop();
       await serviceChecks.stop();
       await fileChecks.stop();
       spool.close();
