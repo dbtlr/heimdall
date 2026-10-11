@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ChecksSectionSchema } from './checks-section.ts';
+import { HarnessProcessesSectionSchema } from './harness-processes-section.ts';
 import { HarnessesSectionSchema } from './harnesses-section.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
@@ -74,6 +75,9 @@ export const ReportSchema = z.object({
     platform: z.enum(['darwin', 'linux']),
     version: z.string().min(1),
   }),
+  // Only when the Harness root processes on the System changed, the Collector
+  // started, or an hour passed (ADR-0014).
+  harnessProcesses: HarnessProcessesSectionSchema.optional(),
   // Only when the Harnesses installed on the System changed, the Collector
   // started, or an hour passed; the Hub keeps the System's latest list until
   // another arrives.
