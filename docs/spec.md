@@ -1,5 +1,5 @@
 ---
-description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, and how agent Session transcripts reach the Hub."
+description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, how agent Session transcripts reach the Hub, and how the Collector reports installed Harnesses."
 ---
 
 # Fleet observability spec
@@ -261,6 +261,23 @@ Every upload counts toward the System's Last seen, and no refusal raises a Condi
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 
 The Collector does not yet observe Harness processes. When it does (M5), it records each one's executable name, working directory, start and end, and the CPU and memory of its process tree, and never command-line arguments or environment variables.
+
+## Installed Harnesses
+
+The Collector reports which Harnesses are installed on its System and at what version, in a Report's `harnesses` section. It finds them by reading directories and package metadata under the account's home directory and the well-known system locations, never by running a Harness: it starts no `claude` or `codex`, so a Harness's own update or telemetry check never runs because of Heimdall. Tool-manager install directories and package metadata are observations, not a provisioner's records.
+
+The section is `{"installs": [{"harness": "claude-code", "location": "mise", "version": "2.1.296"}]}`. Each entry is one install: the `harness`, the `location` kind it was found in, and its `version`. No path is sent. A Harness that is not installed has no entry, and a System with none sends an empty list, which is not the same as a Report without the section. When the Collector finds an install and cannot read its version, the entry's version is `unknown`. A System with two installs of one Harness lists both, one entry for each location and version found, in order of Harness, then location, then version; the same location and version found by two paths counts once. At most 64 entries are kept.
+
+| Location kind | Where the Collector looks | The version comes from |
+| --- | --- | --- |
+| `mise` | `~/.local/share/mise/installs/<tool>/`, for the tool names `claude` and `npm-anthropic-ai-claude-code`, or `codex` and `npm-openai-codex` | The name of each directory that is a version. Symbolic links such as `latest` and `2.1` are aliases and are skipped. |
+| `native` | `~/.local/share/claude/versions/`, where Claude Code's native installer keeps one file per version | The name of each entry that is a version. |
+| `npm` | `node_modules/@anthropic-ai/claude-code` or `node_modules/@openai/codex` under `~/.npm-global/lib`, `~/.local/lib`, `~/.bun/install/global`, `~/.claude/local`, and the system prefixes: `/usr/lib` and `/usr/local/lib` on Linux, `/opt/homebrew/lib` and `/usr/local/lib` on macOS | The `version` in the package's `package.json`; `unknown` when the file is missing, is not JSON, or has no version. |
+| `homebrew` | `Cellar/<name>/` and `Caskroom/<name>/` under the Homebrew prefix, for `claude-code` or `codex`: `/opt/homebrew` and `/usr/local` on macOS, `/home/linuxbrew/.linuxbrew` and `~/.linuxbrew` on Linux | The name of each directory that is a version. |
+
+A directory name counts as a version when it reads as `major.minor.patch`, with an optional `-` or `+` suffix. A directory the Collector cannot list costs only the installs under it. Other places, such as Node version managers other than mise, are not read; a Harness installed only there is not reported.
+
+The Collector looks for installs when it starts and every 10 minutes, and sends the section when it starts, when it changes, and an hour after the Hub last answered a Report carrying it. If the Hub refuses a Report carrying it, the samples are sent again without it, as for the other sections. The Hub keeps each System's latest list, ignores one sent earlier than the one it holds unless the held one claims a time later than the Hub's own clock, leaves it unchanged for a Report without the section, and shows it beside each System on the dashboard.
 
 ## Trust
 
