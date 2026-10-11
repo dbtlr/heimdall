@@ -18,7 +18,7 @@ export type StoreResult = { skipped: number; stored: number };
 // allows, become U+FFFD. Refusing them would stall the Collector's queue.
 const storable = (text: string) => text.toWellFormed().replaceAll('\0', '\uFFFD');
 
-const storableJson = (value: unknown) =>
+export const storableJson = (value: unknown) =>
   JSON.stringify(value, (_, v: unknown) => (typeof v === 'string' ? storable(v) : v));
 
 // Records that the Hub heard from `system` at `at` (epoch milliseconds), on
@@ -191,6 +191,14 @@ const storeTranscriptSources = async (
       sent_at = excluded.sent_at
     WHERE transcript_sources.sent_at <= excluded.sent_at
        OR transcript_sources.sent_at > ${receivedAt}
+  `;
+  // Which Harness each source runs outlasts the set, so the projection can
+  // parse a removed source's transcripts (ADR-0014).
+  await sql`
+    INSERT INTO transcript_source_harnesses (system, source, harness)
+    SELECT ${system}, s->>'name', s->>'harness'
+    FROM jsonb_array_elements(${storableJson(sources)}::text::jsonb) AS s
+    ON CONFLICT (system, source) DO UPDATE SET harness = excluded.harness
   `;
 };
 
