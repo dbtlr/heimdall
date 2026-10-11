@@ -306,3 +306,23 @@ test("where a parent's time leaves out its reaped children, an ended nested root
 
   expect(cpuByPid(h)).toEqual({ 10: 2, 11: 100 });
 });
+
+test("the Hub's acknowledgement of an ended process keeps a later process that reused its pid", async () => {
+  const h = host();
+  h.state.table = [entry(10, { startedAt: BASE })];
+  await h.tracker.tick();
+  h.advance(15_000);
+  h.state.table = [entry(10, { startedAt: BASE + 50_000 })];
+  await h.tracker.tick();
+  const delivered = h.tracker.latest();
+  h.advance(15_000);
+  h.state.table = [];
+  await h.tracker.tick();
+
+  h.tracker.settled(delivered ?? { processes: [] });
+  await h.tracker.tick();
+
+  expect(h.tracker.latest()?.processes.map((p) => [p.startedAt, p.endedAt !== undefined])).toEqual([
+    [BASE + 50_000, true],
+  ]);
+});
