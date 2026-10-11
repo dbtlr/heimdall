@@ -1109,6 +1109,29 @@ describe('deriving a Session again after a delete', () => {
     const after = await h.db.sql`SELECT session_id, call_id FROM insight.tool_calls`;
     expect([...after]).toEqual([{ call_id: 'u-shared', session_id: SESSION }]);
   });
+
+  // A generation recorded failed is not read again until the next version,
+  // so it must not keep its Session hidden.
+  test('shows the Session again once every generation of it is parsed or failed', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: FORTY, path: mainPath() });
+    const old = await upload(h, { content: subagentOf('msg_a'), path: agentPath('a1') });
+    const damaged = await upload(h, { content: subagentOf('msg_b'), path: agentPath('a2') });
+    await projectAll(h);
+    await ageGeneration(h, old);
+
+    await deleteOld(h);
+    await h.db.sql`
+      UPDATE transcript_chunks SET content = ${Buffer.from('not gzip')}
+      WHERE generation = ${damaged}::bigint
+    `;
+    await projectAll(h);
+
+    expect(await totals(h.db.sql, 'session_totals')).toEqual([
+      expect.objectContaining({ input_tokens: 40, requests: 40 }),
+    ]);
+  });
 });
 
 describe('deleting transcripts while a batch is read', () => {
@@ -1313,27 +1336,61 @@ describe('a parser version change', () => {
     expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2, 2]);
   });
 
+  // A file opened during the rebuild is one the current version has not read
+  // either, so the rebuild need not wait for it.
+  test('switches without waiting for a generation opened while it ran', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: MAIN, path: mainPath() });
+    await projectAll(h);
+    let opened = false;
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      if (!opened) {
+        opened = true;
+        await upload(h, {
+          content: jsonl([user({ at: at(40), session: OTHER })]),
+          path: mainPath(OTHER),
+        });
+      }
+    });
+
+    const outcome = await projectTranscripts(sql, { parsers: [nextVersion] });
+
+    expect(outcome.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(outcome.pending).toBe(1);
+  });
+
   test('deletes the earlier version a bounded batch at a time, its progress last', async () => {
     await using h = await startHub();
     await nameSources(h);
     await uploadSession(h);
     await projectAll(h);
+    const tables = [
+      'projected_requests',
+      'projected_tool_calls',
+      'projected_subagents',
+      'projected_sessions',
+      'parse_progress',
+    ];
+    // How many rows of version 1 each table holds.
     const earlier = async () => {
-      const rows: { n: number }[] = await h.db.sql`
-        SELECT (SELECT count(*) FROM projected_requests WHERE parser_version = 1)
-             + (SELECT count(*) FROM projected_tool_calls WHERE parser_version = 1)
-             + (SELECT count(*) FROM projected_subagents WHERE parser_version = 1)
-             + (SELECT count(*) FROM projected_sessions WHERE parser_version = 1)
-             + (SELECT count(*) FROM parse_progress WHERE parser_version = 1) AS n
-      `;
-      return Number(rows[0]?.n);
+      const counts: number[] = [];
+      for (const table of tables) {
+        // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+        const [row]: { n: number }[] = await h.db.sql.unsafe(
+          `SELECT count(*)::int AS n FROM ${table} WHERE parser_version = 1`,
+        );
+        counts.push(row?.n ?? 0);
+      }
+      return counts;
     };
+    const total = (counts: number[]) => counts.reduce((sum, n) => sum + n, 0);
     const options = { cleanupRows: 2, parsers: [nextVersion] };
     const before = await earlier();
 
     const switching = await projectTranscripts(h.db.sql, options);
     const after = [await earlier()];
-    for (let run = 0; run < 30 && after.at(-1) !== 0; run += 1) {
+    for (let run = 0; run < 30 && total(after.at(-1) ?? []) !== 0; run += 1) {
       // oxlint-disable-next-line no-await-in-loop -- one bounded cleanup per run.
       await projectTranscripts(h.db.sql, options);
       // oxlint-disable-next-line no-await-in-loop -- counted after each run.
@@ -1341,9 +1398,20 @@ describe('a parser version change', () => {
     }
 
     expect(switching.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
-    expect(after[0]).toBeGreaterThan(0);
-    expect(after[0]).toBeLessThan(before);
-    expect(after.at(-1)).toBe(0);
+    expect(total(after[0] ?? [])).toBeGreaterThan(0);
+    expect(total(after.at(-1) ?? [])).toBe(0);
+    // No run deletes more than `cleanupRows` from any table, and progress
+    // goes once every fact has.
+    const runs = [before, ...after];
+    for (const [i, counts] of after.entries()) {
+      const previous = runs[i] ?? [];
+      for (const [t, n] of counts.entries()) {
+        expect((previous[t] ?? 0) - n).toBeLessThanOrEqual(options.cleanupRows);
+      }
+      if (counts.at(-1) !== previous.at(-1)) {
+        expect(total(counts.slice(0, -1))).toBe(0);
+      }
+    }
   });
 
   test('a rebuild a restart interrupts resumes, and switches with the same totals', async () => {
