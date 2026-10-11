@@ -415,31 +415,31 @@ const generations = async (sql: SQL) => {
   return rows.map((row) => Number(row.id));
 };
 
+// PostgreSQL aborts one side of a deadlock between a delete and the
+// projection's cleanup, which takes no lock the delete knows of.
+const deadlock = () => Object.assign(new Error('deadlock detected'), { errno: '40P01' as const });
+
+// `sql` whose transactions fail with `error` for the first `failures` begins.
+const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
+  let begun = 0;
+  return Object.assign(
+    new Proxy(sql, {
+      get: (target, property) => {
+        if (property === 'begin') {
+          return (...args: Parameters<SQL['begin']>) => {
+            begun += 1;
+            return begun <= failures ? Promise.reject(error()) : target.begin(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }),
+    { begun: () => begun },
+  );
+};
+
 describe('deleting transcripts', () => {
-  // PostgreSQL aborts one side of a deadlock between a delete and the
-  // projection's cleanup, which takes no lock the delete knows of.
-  const deadlock = () => Object.assign(new Error('deadlock detected'), { errno: '40P01' as const });
-
-  // `sql` whose transactions fail with `error` for the first `failures` begins.
-  const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
-    let begun = 0;
-    return Object.assign(
-      new Proxy(sql, {
-        get: (target, property) => {
-          if (property === 'begin') {
-            return (...args: Parameters<SQL['begin']>) => {
-              begun += 1;
-              return begun <= failures ? Promise.reject(error()) : target.begin(...args);
-            };
-          }
-          const value: unknown = Reflect.get(target, property);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      }),
-      { begun: () => begun },
-    );
-  };
-
   test('retries its transaction with a backoff when PostgreSQL aborts it for a deadlock', async () => {
     await using h = await startHub();
     await upload(h, NOW);
