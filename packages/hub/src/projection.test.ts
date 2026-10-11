@@ -1460,6 +1460,44 @@ describe('a parser version change', () => {
     expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
   });
 
+  // Versions 3 and 4 both build while a Hub with version 1 is mid-run, and
+  // version 4 switches. Version 3's rows are later than that Hub's own.
+  test('a Hub that falls behind mid-run deletes no rows of a version later than its own', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([assistant({ at: at(1), id: 'msg_1' })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    await append(h, generation, {
+      content: jsonl([assistant({ at: at(2), id: 'msg_2' })]),
+      offset: Buffer.byteLength(first),
+    });
+    const third = { ...claudeCodeParser, version: 3 };
+    const fourth = { ...claudeCodeParser, version: 4 };
+    let overtaken = false;
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      if (!overtaken) {
+        overtaken = true;
+        await projectAll(h, { cleanupRows: 0, parsers: [third] });
+        await projectAll(h, { cleanupRows: 0, parsers: [fourth] });
+      }
+    });
+    const thirds = async () => {
+      const [row]: { n: number }[] = await h.db.sql`
+        SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = 3
+      `;
+      return row?.n;
+    };
+
+    await projectTranscripts(sql);
+    const afterBehind = await thirds();
+    await projectTranscripts(h.db.sql, { parsers: [fourth] });
+
+    expect(afterBehind).toBe(2);
+    expect(await thirds()).toBe(0);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([4]);
+  });
+
   test('reports the switch once the rebuild completes', async () => {
     await using h = await startHub();
     await nameSources(h);

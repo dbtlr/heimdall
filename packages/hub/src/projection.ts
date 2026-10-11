@@ -83,7 +83,7 @@ export const projectTranscripts = async (
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     await showRederived(sql, parser.harness);
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
-    await dropEarlierVersions(sql, { harness: parser.harness, rows: cleanupRows });
+    await dropEarlierVersions(sql, { parser, rows: cleanupRows });
   }
   return projected;
 };
@@ -686,32 +686,32 @@ const switchVersion = async (sql: SQL, parser: HarnessParser): Promise<boolean> 
   return switched.length > 0;
 };
 
-// Deletes up to `rows` rows from each table of `harness`'s versions earlier
-// than its current one, such as the version a switch replaced. Progress goes
-// last, once no earlier fact is left, so it says whether any remain and a run
-// with none scans no facts. A version later than the current one is another
-// Hub's rebuild, and stays.
+// Deletes up to `rows` rows from each table of `harness`'s versions that are
+// stale: earlier than its current version, such as the one a switch
+// replaced, and earlier than `parser`'s own. A version below the current one
+// can never become current again. Each statement reads the current version
+// itself, so no Hub deletes rows of the current version or a later one, a
+// later one being another Hub's rebuild, and a Hub that falls behind mid-run
+// deletes none later than its own. Progress goes last, once no stale fact is
+// left, so it says whether any remain and a run with none scans no facts.
 const dropEarlierVersions = async (
   sql: SQL,
-  { harness, rows }: { harness: string; rows: number },
+  { parser, rows }: { parser: HarnessParser; rows: number },
 ) => {
-  const current = await currentVersion(sql, harness);
-  if (current === undefined) {
-    return;
-  }
-  const stale: unknown[] = await sql`
-    SELECT 1 FROM parse_progress WHERE harness = ${harness} AND parser_version < ${current} LIMIT 1
-  `;
-  if (stale.length === 0) {
+  const stale = `harness = $1 AND parser_version < $2
+    AND parser_version < (SELECT version FROM current_parsers WHERE harness = $1)`;
+  const any: unknown[] = await sql.unsafe(`SELECT 1 FROM parse_progress WHERE ${stale} LIMIT 1`, [
+    parser.harness,
+    parser.version,
+  ]);
+  if (any.length === 0) {
     return;
   }
   for (const table of PROJECTED_TABLES) {
     // oxlint-disable-next-line no-await-in-loop -- one table at a time, progress last.
     const deleted = await sql.unsafe(
-      `DELETE FROM ${table} WHERE ctid IN (
-         SELECT ctid FROM ${table} WHERE harness = $1 AND parser_version < $2 LIMIT $3
-       )`,
-      [harness, current, rows],
+      `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${stale} LIMIT $3)`,
+      [parser.harness, parser.version, rows],
     );
     if (deleted.count >= rows) {
       return;
