@@ -467,12 +467,20 @@ const EMPTY: Batch = {
 
 type Generation = { held: number; id: number; path: string; source: string; system: string };
 
-// Serializes the projection's writes with deleting transcripts. Every write
-// holds it shared for its transaction, and a delete holds it alone for its
-// own, so a batch either commits before a delete reads what the batch
-// stored, or starts after the delete commits and finds its generation gone
-// or its progress reset. The name is arbitrary; it only has to be the same
-// for every Hub.
+// Serializes deleting transcripts with the projection's writes of what a
+// delete removes, resets, or hides: storing a batch, counting a failed
+// attempt, and showing a Session again. Each holds it shared for its
+// transaction, and a delete holds it alone for its own, so a batch either
+// commits before a delete reads what the batch stored, or starts after the
+// delete commits and finds its generation gone or its progress reset.
+// Switching versions (`switchVersion`) and deleting an earlier version's rows
+// (`dropEarlierVersions`) take no lock, since neither writes a fact, the
+// current version's progress, or which Sessions are hidden. Each statement
+// of theirs sees a delete whole or not at all. A switch changes only which
+// version the views read, and a Session a delete hid stays hidden until the
+// version then current has parsed it again; rows of an earlier version are
+// in no view, and deleting them restores nothing a delete removed. The name
+// is arbitrary; it only has to be the same for every Hub.
 const PROJECTION_LOCK = 'heimdall-session-insight';
 
 // Takes the projection's lock shared for `tx`'s transaction, unless a delete
