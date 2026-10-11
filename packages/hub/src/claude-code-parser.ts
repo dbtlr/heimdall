@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   isShaped,
   MAX_ID_LENGTH,
@@ -165,6 +167,7 @@ const toolCallsOf = (blocks: unknown[], request: Request, offset: number) => {
         at: request.at,
         callId: callId.value,
         kind: 'tool',
+        lineId: null,
         mcpServer: server ?? null,
         name: name.value,
         offset,
@@ -218,6 +221,20 @@ const requestOf = (
   return { dropped, moment: momentOf(line, at), request, toolCalls: calls };
 };
 
+// The id of the `index`th command on line `uuid`: the uuid itself for the
+// first, and the uuid and its index after it for the rest, or, past
+// `MAX_ID_LENGTH`, the uuid's SHA-256 and the index. No id a line carries
+// holds `#`, so none is mistaken for another.
+const commandId = (uuid: string, index: number) => {
+  if (index === 0) {
+    return uuid;
+  }
+  const id = `${uuid}#${String(index)}`;
+  return id.length <= MAX_ID_LENGTH
+    ? id
+    : `${createHash('sha256').update(uuid).digest('hex')}#${String(index)}`;
+};
+
 // The slash commands a user line carries, each a call of its own. A command
 // names no skill: a built-in such as `/doctor` is none. A command not shaped
 // like one is left out, and so is every command of a line whose uuid is not
@@ -243,8 +260,9 @@ const commandsOf = (line: Record<string, unknown>, at: number, offset: number) =
   const names = found.filter((name) => isShaped(name, 'command'));
   const calls = names.map((name, i): ToolCall => ({
     at,
-    callId: i === 0 ? uuid.value : `${uuid.value}#${String(i)}`,
+    callId: commandId(uuid.value, i),
     kind: 'command',
+    lineId: uuid.value,
     mcpServer: null,
     name,
     offset,
@@ -294,8 +312,9 @@ const replaces = (later: Request, kept: Request) =>
 // line at which it holds `factLimit` requests and tool calls, and
 // `atFactLimit` says it did, so a batch's facts stay bounded; a line is never
 // split. Within this content a response counts once, from its last final
-// line, and a tool call from its first line; the caller keeps those rules
-// across batches and generations.
+// line; a tool call from its first line; and the commands under a line's id
+// from the first line with any. The caller keeps those rules across batches
+// and generations.
 export const parseConversation = (
   content: Uint8Array,
   {
@@ -306,6 +325,8 @@ export const parseConversation = (
 ): Conversation => {
   const requests = new Map<string, Request>();
   const toolCalls = new Map<string, ToolCall>();
+  // The lines whose commands are kept, by id: the first with a command under each.
+  const commandLines = new Set<string>();
   let span: Conversation['span'] = null;
   let unreadableLines = 0;
   let parsedThrough = offset;
@@ -350,8 +371,13 @@ export const parseConversation = (
       }
     }
     for (const call of facts.toolCalls) {
-      if (!toolCalls.has(call.callId)) {
+      if (!toolCalls.has(call.callId) && !(call.lineId !== null && commandLines.has(call.lineId))) {
         toolCalls.set(call.callId, call);
+      }
+    }
+    for (const call of facts.toolCalls) {
+      if (call.lineId !== null) {
+        commandLines.add(call.lineId);
       }
     }
   }

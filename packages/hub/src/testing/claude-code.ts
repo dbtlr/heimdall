@@ -151,6 +151,21 @@ export const user = ({
   uuid,
 });
 
+// One user line that carries each of `commands` under `uuid`.
+export const commandLine = ({
+  commands,
+  uuid,
+  ...context
+}: Context & { commands: readonly string[]; uuid: string }) => ({
+  ...envelope(context),
+  message: {
+    content: commands.map((command) => `<command-name>${command}</command-name>`).join(' '),
+    role: 'user',
+  },
+  type: 'user',
+  uuid,
+});
+
 // An attachment line listing the skills a Session may use, which invokes none.
 export const skillListing = (context: Context) => ({
   ...envelope(context),

@@ -30,11 +30,15 @@ export type Request = {
 };
 
 // One tool use by a response, or one slash command a person typed, which
-// names a skill or a built-in command.
+// names a skill or a built-in command. `lineId` is, for a command, the id of
+// the line it was typed on: the first line with a command under an id owns
+// every command under it, so a later line with the same id adds none. It is
+// null for a tool use.
 export type ToolCall = {
   at: number;
   callId: string;
   kind: 'command' | 'tool';
+  lineId: string | null;
   mcpServer: string | null;
   name: string;
   offset: number;

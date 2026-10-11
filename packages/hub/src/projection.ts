@@ -719,7 +719,9 @@ const recordHolders = async (
   );
 };
 
-// A tool call counts once within a System's source; the first line read keeps it.
+// A tool call counts once within a System's source; the first line read
+// keeps it. A command line whose id another line already has commands under
+// adds none, since that line owns them all.
 const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
   for (const calls of slicesOf(batch.toolCalls)) {
     // oxlint-disable-next-line no-await-in-loop -- one bounded statement at a time.
@@ -740,7 +742,13 @@ const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts)
            t.name, t."mcpServer", t.skill, ${generation.id}::bigint, t."offset"
     FROM jsonb_to_recordset(${storableJson(calls)}::text::jsonb) AS t(
       "callId" text, "requestId" text, at double precision, kind text, name text,
-      "mcpServer" text, skill text, "offset" bigint
+      "mcpServer" text, skill text, "offset" bigint, "lineId" text
+    )
+    WHERE t."lineId" IS NULL OR NOT EXISTS (
+      SELECT 1 FROM projected_tool_calls x
+      WHERE x.harness = ${key.harness} AND x.parser_version = ${key.version}
+        AND x.system = ${key.system} AND x.source = ${key.source} AND x.call_id = t."lineId"
+        AND (x.generation, x.byte_offset) <> (${generation.id}::bigint, t."offset")
     )
     ON CONFLICT (harness, parser_version, system, source, call_id) DO NOTHING
   `;

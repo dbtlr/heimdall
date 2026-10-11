@@ -14,6 +14,7 @@ import {
   agentMeta,
   agentPath,
   assistant,
+  commandLine,
   costState,
   jsonl,
   mainPath,
@@ -731,6 +732,31 @@ describe('parsing as transcripts grow', () => {
     const whole = await calls(false);
 
     expect(whole).toEqual([{ at: new Date(at(0)), byte_offset: '0', call_id: 'u-1' }]);
+    expect(await calls(true)).toEqual(whole);
+  });
+
+  // The first line with a command under a uuid owns all its commands, so a
+  // later line that carries more adds none, in one batch or two.
+  test('a later command line under the same uuid adds no command, parsed in pieces or whole', async () => {
+    const first = jsonl([commandLine({ at: at(0), commands: ['/a'], uuid: 'u-1' })]);
+    const calls = async (inPieces: boolean) => {
+      await using h = await startHub();
+      await nameSources(h);
+      const generation = await upload(h, { content: first, path: mainPath() });
+      if (inPieces) {
+        await projectAll(h);
+      }
+      await append(h, generation, {
+        content: jsonl([commandLine({ at: at(1), commands: ['/b', '/c'], uuid: 'u-1' })]),
+        offset: Buffer.byteLength(first),
+      });
+      await projectAll(h);
+      return [...(await h.db.sql`SELECT call_id, name FROM insight.tool_calls ORDER BY call_id`)];
+    };
+
+    const whole = await calls(false);
+
+    expect(whole).toEqual([{ call_id: 'u-1', name: '/a' }]);
     expect(await calls(true)).toEqual(whole);
   });
 

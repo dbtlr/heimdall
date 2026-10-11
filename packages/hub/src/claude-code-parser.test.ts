@@ -6,10 +6,12 @@ import {
   parseAgentMeta,
   parseConversation,
 } from './claude-code-parser.ts';
+import { MAX_ID_LENGTH } from './session-insight.ts';
 import {
   agentMeta,
   agentPath,
   assistant,
+  commandLine,
   costState,
   jsonl,
   mainPath,
@@ -229,6 +231,7 @@ describe('tool calls', () => {
         at: Date.parse(T0),
         callId: 'u-1',
         kind: 'command',
+        lineId: 'u-1',
         mcpServer: null,
         name: '/review',
         offset: 0,
@@ -283,6 +286,31 @@ describe('tool calls', () => {
     );
 
     expect(parsed.toolCalls).toEqual([expect.objectContaining({ at: Date.parse(T0), offset: 0 })]);
+  });
+
+  // The first line with a command under a uuid owns every command of that
+  // uuid, however many a later line carries.
+  test('a later line under the same uuid adds no command, whatever it carries', () => {
+    const parsed = parse(
+      jsonl([
+        commandLine({ at: T0, commands: ['/a'], uuid: 'dup' }),
+        commandLine({ at: T1, commands: ['/b', '/c'], uuid: 'dup' }),
+      ]),
+    );
+
+    expect(parsed.toolCalls.map((c) => [c.callId, c.name])).toEqual([['dup', '/a']]);
+  });
+
+  test('a command id derived from a uuid at the bound stays within it', () => {
+    const uuid = 'u'.repeat(MAX_ID_LENGTH);
+    const line = commandLine({ at: T0, commands: ['/a', '/b'], uuid });
+
+    const ids = parse(jsonl([line])).toolCalls.map((c) => c.callId);
+
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(uuid);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((id) => id.length <= MAX_ID_LENGTH)).toBe(true);
   });
 
   test('a listing of the skills available invokes none', () => {
