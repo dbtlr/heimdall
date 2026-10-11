@@ -368,10 +368,16 @@ export const MIGRATIONS: readonly Migration[] = [
     // row per process, identified by Harness, pid, and start, since a pid is
     // reused. A running process has no `ended_at`. One whose end the Collector
     // did not see has `end_missed` and ends at the last time it was seen. The
-    // totals are the process tree's CPU time and resident memory at
-    // `last_seen_at`, and the highest memory seen. `sent_at` is the Report that
-    // last touched the row, so an older Report does not undo a newer one. The
-    // index serves the join to Sessions by System, Harness, and time.
+    // highest memory the Collector saw is kept on the row. `sent_at` is the
+    // Report that last touched the row, so an older Report does not undo a
+    // newer one. The index serves the join to Sessions by System, Harness, and
+    // time. Process rows are kept.
+    //
+    // Each reading of a process's tree, cumulative CPU time and resident memory
+    // at a time, is a sample on the Vitals time axis, and rolls up into a
+    // 5-minute bucket as it arrives, as Vitals do (ADR-0008): CPU used in a
+    // bucket is its max less its min, or less the bucket before's max. Samples
+    // and rollups are pruned as Vitals are.
     sql: `
       CREATE TABLE harness_processes (
         id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -382,14 +388,34 @@ export const MIGRATIONS: readonly Migration[] = [
         ended_at timestamptz,
         end_missed boolean NOT NULL DEFAULT false,
         cwd text,
-        cpu_micros bigint NOT NULL,
-        rss_bytes bigint NOT NULL,
         peak_rss_bytes bigint NOT NULL,
         last_seen_at timestamptz NOT NULL,
         sent_at timestamptz NOT NULL
       );
       CREATE INDEX harness_processes_by_system_harness_start
         ON harness_processes (system, harness, started_at);
+
+      CREATE TABLE harness_process_samples (
+        process bigint NOT NULL REFERENCES harness_processes (id),
+        t timestamptz NOT NULL,
+        cpu_micros bigint NOT NULL,
+        rss_bytes bigint NOT NULL,
+        PRIMARY KEY (process, t)
+      );
+      CREATE INDEX harness_process_samples_by_t ON harness_process_samples (t);
+
+      CREATE TABLE harness_process_rollups (
+        process bigint NOT NULL REFERENCES harness_processes (id),
+        bucket timestamptz NOT NULL,
+        samples integer NOT NULL,
+        cpu_micros_min bigint NOT NULL,
+        cpu_micros_max bigint NOT NULL,
+        rss_min bigint NOT NULL,
+        rss_sum numeric NOT NULL,
+        rss_max bigint NOT NULL,
+        PRIMARY KEY (process, bucket)
+      );
+      CREATE INDEX harness_process_rollups_by_bucket ON harness_process_rollups (bucket);
     `,
     version: 14,
   },

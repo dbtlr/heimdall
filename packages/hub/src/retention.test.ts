@@ -75,6 +75,8 @@ test('pruning an empty database deletes nothing', async () => {
 
   expect(await pruneVitals(h.db.sql, NOW)).toEqual({
     diskRollups: 0,
+    processRollups: 0,
+    processSamples: 0,
     samples: 0,
     vitalsRollups: 0,
   });
