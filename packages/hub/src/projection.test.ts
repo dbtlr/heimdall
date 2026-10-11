@@ -1256,6 +1256,34 @@ describe('the insight views', () => {
     expect(used).toEqual([]);
   });
 
+  // Claude Code leaves out the thinking count and the cache split at times.
+  test('totals leave null a count no request recorded, and count zero for none', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const line = assistant({ at: at(1), id: 'msg_1', usage: { input: 2 } });
+    const { cache_creation: _, ...usage } = line.message.usage;
+    await upload(h, {
+      content: jsonl([user({ at: at(0) }), { ...line, message: { ...line.message, usage } }]),
+      path: mainPath(),
+    });
+    await upload(h, { content: jsonl([user({ at: at(0), session: OTHER })]), path: mainPath(OTHER) });
+
+    await projectAll(h);
+
+    const noCounts = {
+      cache_read_tokens: 0,
+      cache_write_1h_tokens: null,
+      cache_write_5m_tokens: null,
+      cache_write_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: null,
+    };
+    expect(await totals(h.db.sql, 'session_totals')).toEqual([
+      { ...noCounts, input_tokens: 2, requests: 1, session_id: SESSION },
+      { ...noCounts, input_tokens: 0, requests: 0, session_id: OTHER },
+    ]);
+  });
+
   test('show nothing until a parser has built its first complete set', async () => {
     await using h = await startHub();
     await nameSources(h);
