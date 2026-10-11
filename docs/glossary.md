@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, transcript, source, generation, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, subagent, transcript, source, generation, request, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -49,7 +49,7 @@ The service that receives Reports and transcripts, stores them in PostgreSQL, de
 _Avoid_: server, backend
 
 **Report**:
-One payload from a Collector to the Hub: a batch of Vitals samples, Session observations, and the Collector's records and its checks of them. Its shape is the versioned wire schema. Transcripts travel separately.
+One payload from a Collector to the Hub: a batch of Vitals samples, and the Collector's records and its checks of them. Its shape is the versioned wire schema. Transcripts travel separately.
 _Avoid_: event, metric, ping
 
 **Vitals**:
@@ -57,12 +57,16 @@ The small fixed set of host measurements: CPU, memory, disk, load, and uptime. S
 _Avoid_: metrics (too broad), telemetry
 
 **Harness**:
-An agent program, such as Claude Code or Codex, whose processes the Collector recognizes and whose transcripts it uploads.
+An agent program, such as Claude Code or Codex, that runs Sessions and writes their transcripts.
 _Avoid_: client, IDE, model
 
 **Session**:
-One run of a Harness. The Collector observes it from the process table, as the Harness process and its descendants with their working directory, start and end, and aggregate CPU and memory, and from its transcript.
-_Avoid_: conversation, run
+One main conversation in a Harness, started by a person or a program, together with its subagents; a Harness run that another Session's agent starts as a separate program, such as `codex exec`, is a Session of its own. What it did, used, and cost is derived from its transcripts.
+_Avoid_: conversation (as a synonym), thread, run (a job's run)
+
+**subagent**:
+A child conversation that a Session's agent starts inside the same Harness, with its own transcript, model, and agent type. It can start subagents of its own, and its usage counts toward its Session.
+_Avoid_: sidechain, child Session, worker
 
 **transcript**:
 The file a Harness writes for a Session, holding its prompts, responses, and tool calls. The Hub keeps it as the durable record of the Session after the Harness deletes its own copy.
@@ -75,6 +79,18 @@ _Avoid_: profile, capture target
 **generation**:
 One continuous run of a transcript file's content, as the Hub holds it. When a file shrinks, is replaced, or no longer matches what was uploaded, its content continues in a new generation, so content from two different files is never joined.
 _Avoid_: version, revision, upload
+
+**request**:
+One call from a Session or a subagent to its model, with the model and the tokens it used. It is the unit Heimdall counts and prices.
+_Avoid_: turn (a prompt and everything the agent does in reply), message, API call
+
+**cost**:
+What a Session's or a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. A model with no known price is unpriced, never free.
+_Avoid_: bill, charge, price (the per-token rate cost is computed from)
+
+**Harness process**:
+A running Harness as the Collector observes it from the process table, with its working directory, start and end, and the CPU and memory it and its descendants use. One can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous.
+_Avoid_: Session (the conversation, not the process), agent process
 
 **Condition**:
 A problem state the Hub derives for a System from what it receives, such as Reports rejected, a Service down, a job failing or overdue, Drift, a stale System, or low disk. The dashboard shows open Conditions and the Timeline records each one raised and cleared; a later alerting phase delivers them.

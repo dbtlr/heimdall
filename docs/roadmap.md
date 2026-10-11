@@ -78,12 +78,15 @@ Size: medium to large. The record contract lands in the [spec](spec.md) before p
 
 Agent work becomes visible: what each Session did, used, and cost, and which Session caused a spike.
 
-- The Hub derives each Session's model, tokens, tools, skills, context used, and approximate cost from its stored transcript, per Harness.
-- The Collector detects Harness processes and records Sessions with Harness, working directory, start and end, and aggregate CPU and memory across the process tree, on the same time axis as Vitals.
+- A versioned parser per Harness turns stored transcripts into a projection the Hub can always rebuild: each Session and subagent, each API request with its model, tokens, and context used, and each tool call, skill, and MCP tool. A parser version change rebuilds that Harness's rows from the archive ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)).
+- A Session is a main conversation, and its subagents count toward it. Totals are available with and without them.
+- Cost is an approximation at API list prices, from a dated price table that ships with the Hub and that configuration can override. It is computed when read, and a model with no known price shows as unpriced.
+- SQL views in an `insight` schema are the one read model. A read-only database role lets a person or an agent query months of history, and M6's reports read the same views. The views carry facts and locators, never transcript content; `heimdall-hub transcripts show` prints a Session's raw transcripts on the Hub's System.
+- The Collector detects Harness processes and records each root process with its Harness, working directory, start and end, and CPU and memory summed over its process tree, on the same time axis as Vitals. The Hub links one to the Sessions it ran only when the match is unambiguous.
 - The Collector reports each Harness's installed version without running Harness binaries.
-- The archive can be queried across months, by a person or an agent.
+- No new UI; M6 builds it on the views.
 
-Size: large. Sharp edges: each Harness's transcript format, a price table for cost, and process-tree aggregation that differs between macOS and Linux.
+Size: large. Sharp edges: duplicated usage in each Harness's transcript format, keeping parsers current as formats change, process-tree aggregation that differs between macOS and Linux, and linking processes to transcripts when Sessions overlap.
 
 ## M6: Dashboard
 
@@ -95,10 +98,10 @@ The full UI, designed before it is built.
 - Session views: what each Session did and cost.
 - Readable on a phone.
 
-Size: large. M1's plain page carries the project until here. Mocks can start once M4 and M5 fix the data shape.
+Size: large. M1's plain page carries the project until here. Mocks can start once M4 and M5 fix the data shape; its reports and graphs read M5's `insight` views.
 
 ## Later
 
-- Hardening before anyone else runs Heimdall: authentication for the dashboard and its reads, and handling of secrets that appear in transcripts.
+- Hardening before anyone else runs Heimdall: authentication for the dashboard and its reads, and handling of secrets that appear in transcripts. Full-text search over transcript content waits for it.
 - Alerting: deliver Conditions through a chosen channel, with silencing.
 - An external watcher for the System that hosts the Hub.

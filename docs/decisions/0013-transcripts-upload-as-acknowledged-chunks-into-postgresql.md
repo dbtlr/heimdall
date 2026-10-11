@@ -4,7 +4,7 @@ title: ADR-0013 - Transcripts upload as acknowledged chunks into PostgreSQL, fro
 description: "A System captures transcripts only from the sources its Collector configuration lists, each a Harness with an optional directory and name. The Collector uploads each file of a Harness's session tree as gzipped chunks; the Hub checks the offset, stores the chunk in PostgreSQL, and acknowledges it in one transaction. The Collector spools what the Hub has not acknowledged, without a size limit, and nothing expires on the Hub until it is deleted on purpose."
 status: accepted
 created: 2026-10-09
-modified: 2026-10-09
+modified: 2026-10-11
 ---
 
 # Transcripts upload as acknowledged chunks into PostgreSQL, from sources each System opts into
@@ -51,3 +51,4 @@ A Harness that changes where or how it writes transcripts needs a Collector rele
 ## Changelog
 
 - 2026-10-09: Clarification. Every Report carries the Collector's whole set of sources and its spool's size and age, not only Reports sent when the set changes, because the spool changes with every acknowledged chunk. A Collector that captures nothing reports no sources and an empty spool. The decision is unchanged.
+- 2026-10-11: Clarification. Deleting generations also removes the Session facts derived from them, re-deriving any that another generation still holds ([ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)), so nothing derived outlives its transcript. The decision is unchanged.
