@@ -10,7 +10,7 @@ import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
-import { migrate } from './migrations.ts';
+import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
 import { pruneVitals } from './retention.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
@@ -60,12 +60,26 @@ const serveUntilStopped = async ({
 }) => {
   const sql = openDatabase(options.database);
   try {
+    // The Hub does not listen until the migrations apply. A lock another session
+    // holds, such as a backup's, is waited out and logged, not a failure.
     // PostgreSQL's messages name the host and role, never the password.
-    const applied = await migrate(sql).catch((error: unknown) =>
-      log.fatal(clean(`Could not prepare the database: ${describeError(error)}`)),
+    const applied = await migrateWhenFree(sql, {
+      onBlocked: (holders) => log.warn(clean(describeLockWait(holders))),
+      signal,
+    }).catch((error: unknown) =>
+      signal.aborted
+        ? undefined
+        : log.fatal(clean(`Could not prepare the database: ${describeError(error)}`)),
     );
+    if (applied === undefined) {
+      return;
+    }
     if (applied.length > 0) {
       await log.info(`Applied database migrations ${applied.join(', ')}.`);
+    }
+    // A stop that landed as the migrations finished must not start listening.
+    if (signal.aborted) {
+      return;
     }
     const hub = createHub({
       now: Date.now,

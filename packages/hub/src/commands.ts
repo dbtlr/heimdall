@@ -3,31 +3,57 @@ import type { SQL } from 'bun';
 
 import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
-import { migrate } from './migrations.ts';
+import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+
+const INTERRUPTED = 'Interrupted while waiting for a database lock.';
 
 // The parts of a Loom action context the commands use.
 type Context = {
-  out: { fatal: (message: string) => never; print: (message: string) => Promise<void> };
+  out: {
+    fatal: (message: string) => never;
+    print: (message: string) => Promise<void>;
+    warn: (message: string) => Promise<void>;
+  };
+  signal?: AbortSignal;
   style: { escape: (text: string) => string };
 };
 
 // Opens the database at `url`, brings it to the latest schema, as `serve` does,
 // so a command works before `serve` first runs or while it runs, and runs `work`
 // against it. A failure is fatal; PostgreSQL's messages name the host and
-// role, never the password, and are shown with control characters escaped.
+// role, never the password, and are shown with control characters escaped. A
+// lock another session holds, such as a backup's, is waited out, printing the
+// holder once a minute, until the command is interrupted; an interrupt then ends
+// it with the signal's exit code.
 export const withDatabase = async <T>(
   url: URL,
-  { out, style }: Context,
+  { out, signal, style }: Context,
   work: (sql: SQL) => Promise<T>,
 ): Promise<T> => {
-  const fail = (message: string) => out.fatal(style.escape(escapeControlCharacters(message)));
+  const clean = (message: string) => style.escape(escapeControlCharacters(message));
+  const fail = (message: string) => out.fatal(clean(message));
+  // An interrupt ends the wait. Loom resolves the exit code from the signal and
+  // does not report a thrown AbortError.
+  const interrupted = async (): Promise<never> => {
+    await out.warn(INTERRUPTED);
+    throw new DOMException(INTERRUPTED, 'AbortError');
+  };
   const sql = openDatabase(url);
   try {
-    const applied = await migrate(sql).catch((error: unknown) =>
-      fail(`Could not reach the database: ${describeError(error)}`),
+    const applied = await migrateWhenFree(sql, {
+      onBlocked: (holders) => out.warn(clean(describeLockWait(holders))),
+      ...(signal === undefined ? {} : { signal }),
+    }).catch(async (error: unknown) =>
+      signal?.aborted === true
+        ? interrupted()
+        : fail(`Could not reach the database: ${describeError(error)}`),
     );
     if (applied.length > 0) {
       await out.print(`Applied database migrations ${applied.join(', ')}.`);
+    }
+    // A stop that lands as the migrations finish still ends the command before its work.
+    if (signal?.aborted === true) {
+      return await interrupted();
     }
     return await work(sql).catch((error: unknown) => fail(describeError(error)));
   } finally {
