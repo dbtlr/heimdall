@@ -177,10 +177,11 @@ const EMPTY: Batch = {
 type Generation = { held: number; id: number; path: string; source: string; system: string };
 
 // Stores a batch's facts with the generation's progress in one transaction.
-// The progress must still be what the batch was read from, `expected`, or
-// null for a generation never parsed. Otherwise it changed under the run, as
-// when a delete reset its Session, and the batch is dropped: the next run
-// reads again from the progress as it now stands.
+// Progress moves by compare-and-set: from `expected`, the `parsed_through` the
+// batch was read from, or from no row at all when `expected` is null. When the
+// progress changed under the run, as when a delete reset its Session, nothing
+// of the batch is stored, and the next run reads again from the progress as it
+// now stands.
 const storeBatch = async (
   sql: SQL,
   {
@@ -198,21 +199,29 @@ const storeBatch = async (
   },
 ) => {
   await sql.begin(async (tx) => {
-    const progressed: unknown[] = await tx`
-      INSERT INTO parse_progress (
-        generation, parser_version, harness, session_id, parsed_through, held_seen, unreadable_lines
-      )
-      VALUES (${generation.id}::bigint, ${parser.version}, ${parser.harness},
-              ${batch.owner?.sessionId ?? null}, ${batch.parsedThrough}, ${heldSeen},
-              ${batch.unreadableLines})
-      ON CONFLICT (generation, parser_version) DO UPDATE SET
-        session_id = COALESCE(excluded.session_id, parse_progress.session_id),
-        parsed_through = excluded.parsed_through,
-        held_seen = excluded.held_seen,
-        unreadable_lines = parse_progress.unreadable_lines + excluded.unreadable_lines
-      WHERE parse_progress.parsed_through = ${expected === null ? -1 : Number(expected)}
-      RETURNING generation
-    `;
+    const progressed: unknown[] =
+      expected === null
+        ? await tx`
+            INSERT INTO parse_progress (
+              generation, parser_version, harness, session_id, parsed_through, held_seen,
+              unreadable_lines
+            )
+            VALUES (${generation.id}::bigint, ${parser.version}, ${parser.harness},
+                    ${batch.owner?.sessionId ?? null}, ${batch.parsedThrough}, ${heldSeen},
+                    ${batch.unreadableLines})
+            ON CONFLICT DO NOTHING
+            RETURNING generation
+          `
+        : await tx`
+            UPDATE parse_progress SET
+              session_id = COALESCE(${batch.owner?.sessionId ?? null}, session_id),
+              parsed_through = ${batch.parsedThrough},
+              held_seen = ${heldSeen},
+              unreadable_lines = unreadable_lines + ${batch.unreadableLines}
+            WHERE generation = ${generation.id}::bigint AND parser_version = ${parser.version}
+              AND parsed_through = ${Number(expected)}
+            RETURNING generation
+          `;
     if (progressed.length > 0) {
       await storeFacts(tx, { batch, generation, parser });
     }

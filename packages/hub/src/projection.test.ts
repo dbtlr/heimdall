@@ -299,6 +299,23 @@ const totals = async (sql: SQL, view: 'main_conversation_totals' | 'session_tota
   return rows.map(numbers);
 };
 
+// `sql` as the projection sees it, except that `before` runs, and is awaited,
+// ahead of each transaction the projection opens: the moment after a batch is
+// read and before it is stored, where another connection's work can land.
+const beforeEachTransaction = (sql: SQL, before: () => Promise<void>): SQL =>
+  new Proxy(sql, {
+    get: (target, property) => {
+      if (property === 'begin') {
+        return async (...args: Parameters<SQL['begin']>) => {
+          await before();
+          return target.begin(...args);
+        };
+      }
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
 const sessions = async (sql: SQL) => {
   const rows: Record<string, unknown>[] = await sql`
     SELECT session_id, path, started_at, ended_at, first_cwd, last_cwd,
@@ -654,6 +671,52 @@ describe('deleting transcripts', () => {
     const generations = await h.db.sql`SELECT DISTINCT generation FROM insight.requests`;
     expect(generations.map((row: { generation: string }) => Number(row.generation))).toEqual([
       newer,
+    ]);
+  });
+});
+
+describe('deleting transcripts while a batch is read', () => {
+  // A delete resets the progress of every generation of the Sessions it
+  // touches, so a batch read before it from further on must not be stored.
+  test('drops the batch, and the Session is derived again whole', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([
+      user({ at: at(0) }),
+      assistant({ at: at(1), id: 'msg_1', usage: { input: 100 } }),
+    ]);
+    const live = await upload(h, { content: first, path: mainPath() });
+    const old = await upload(h, {
+      content: jsonl([assistant({ agent: 'a1', at: at(2), id: 'msg_a', usage: { input: 10 } })]),
+      path: agentPath('a1'),
+    });
+    await projectAll(h);
+    await append(h, live, {
+      content: jsonl([assistant({ at: at(3), id: 'msg_2', usage: { input: 1 } })]),
+      offset: Buffer.byteLength(first),
+    });
+    await h.db
+      .sql`UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 86_400_000)} WHERE id = ${old}`;
+    let armed = false;
+    const racing = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        armed ||= input.offset > 0;
+        return claudeCodeParser.parse(input);
+      },
+    };
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      if (armed) {
+        armed = false;
+        await deleteTranscripts(h.db.sql, { before: NOW - 3_600_000, now: NOW });
+      }
+    });
+
+    await projectTranscripts(sql, { parsers: [racing] });
+    await projectAll(h);
+
+    expect(await totals(h.db.sql, 'session_totals')).toEqual([
+      expect.objectContaining({ input_tokens: 101, requests: 2 }),
     ]);
   });
 });
