@@ -195,6 +195,7 @@ export const runAction: ActionHandler<typeof run> = async ({
     // Harness installs are found by reading install directories and package
     // metadata; no Harness is run.
     const harnessScan = startHarnessScan({
+      env: host.env,
       home,
       log: runtime,
       platform,

@@ -89,6 +89,7 @@ export type {
 } from './checks-section.ts';
 export {
   HarnessesSectionSchema,
+  HarnessInstallSchema,
   MAX_HARNESS_INSTALLS,
   UNKNOWN_HARNESS_VERSION,
 } from './harnesses-section.ts';

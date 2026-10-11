@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { InstallReader } from './harness-installs.ts';
-import { createHarnessScan } from './harness-scan.ts';
+import { createHarnessScan, startHarnessScan } from './harness-scan.ts';
 
 const MISE = '/home/operator/.local/share/mise/installs';
 
@@ -21,7 +21,7 @@ const readerOf = (held: { versions: string[]; failing?: boolean }): InstallReade
 });
 
 const scanOf = (held: { versions: string[]; failing?: boolean }) =>
-  createHarnessScan({ home: '/home/operator', platform: 'linux', reader: readerOf(held) });
+  createHarnessScan({ env: {}, home: '/home/operator', platform: 'linux', reader: readerOf(held) });
 
 test('has no section until the first scan finishes', () => {
   expect(scanOf({ versions: ['2.1.296'] }).latest()).toBeUndefined();
@@ -61,10 +61,66 @@ test('answers the same object until the installs change', async () => {
   expect(scan.latest()?.installs.map((i) => i.version)).toEqual(['2.1.296', '2.2.0']);
 });
 
-test('a System whose directories cannot be read reports no installs rather than failing', async () => {
+test('a System whose directories cannot be read reports their installs as unknown rather than failing', async () => {
   const scan = scanOf({ failing: true, versions: ['2.1.296'] });
 
   await scan.tick();
 
+  const installs = scan.latest()?.installs ?? [];
+  expect(installs.length).toBeGreaterThan(0);
+  expect(installs.every((i) => i.version === 'unknown')).toBe(true);
+});
+
+// A reader whose directory reads stay pending until `release` is called.
+const gatedReader = () => {
+  const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+  const reader: InstallReader = {
+    readDir: async () => {
+      await gate;
+      return undefined;
+    },
+    readText: () => Promise.resolve(undefined),
+  };
+  return { reader, release };
+};
+
+const started = (reader: InstallReader, stopWaitMs?: number) =>
+  startHarnessScan({
+    env: {},
+    home: '/home/operator',
+    log: { info: () => 0, warn: () => 0 },
+    platform: 'linux',
+    reader,
+    ...(stopWaitMs === undefined ? {} : { stopWaitMs }),
+  });
+
+test('stopping waits for a scan in flight', async () => {
+  const { reader, release } = gatedReader();
+  const scan = started(reader);
+  let stopped = false;
+
+  const stopping = (async () => {
+    await scan.stop();
+    stopped = true;
+  })();
+  await Bun.sleep(20);
+  const waitedForScan = !stopped;
+  release();
+  await stopping;
+
+  expect(waitedForScan).toBe(true);
   expect(scan.latest()).toEqual({ installs: [] });
+});
+
+test('a scan that never finishes cannot hold stopping forever', async () => {
+  const { reader } = gatedReader();
+  const scan = started(reader, 30);
+  const stopping = (async () => {
+    await scan.stop();
+    return 'stopped';
+  })();
+
+  const outcome = await Promise.race([stopping, Bun.sleep(2000)]);
+
+  expect(outcome).toBe('stopped');
 });

@@ -1,7 +1,12 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { constants } from 'node:fs';
+import { open, readdir } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 
-import { MAX_HARNESS_INSTALLS, UNKNOWN_HARNESS_VERSION } from '@heimdall/schema';
+import {
+  HarnessInstallSchema,
+  MAX_HARNESS_INSTALLS,
+  UNKNOWN_HARNESS_VERSION,
+} from '@heimdall/schema';
 import type { HarnessInstall } from '@heimdall/schema';
 
 import { HARNESS_NAMES, HARNESSES } from './harnesses.ts';
@@ -10,8 +15,8 @@ import type { Harness } from './harnesses.ts';
 export type DirEntry = { isDirectory: boolean; isSymlink: boolean; name: string };
 
 // All the Collector may do to find a Harness: list a directory and read a
-// text file. Each answers undefined for a path that does not exist and rejects
-// for one that cannot be read. Nothing here can run a Harness.
+// small text file. Each answers undefined for a path that does not exist and
+// rejects for one that cannot be read. Nothing here can run a Harness.
 export type InstallReader = {
   readDir: (path: string) => Promise<DirEntry[] | undefined>;
   readText: (path: string) => Promise<string | undefined>;
@@ -21,6 +26,31 @@ const isAbsent = (error: unknown) =>
   error instanceof Error &&
   'code' in error &&
   (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+
+// The most bytes of a file the reader returns. A package.json is a few KiB; a
+// bigger file is not one worth reading for a version.
+export const MAX_TEXT_BYTES = 64 * 1024;
+
+// The text of a regular file of at most MAX_TEXT_BYTES. The file is opened
+// without blocking and checked once open, so a FIFO or device someone put where
+// a package.json belongs is refused rather than waited on.
+const readSmallFile = async (path: string) => {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    if (!(await handle.stat()).isFile()) {
+      throw new Error('not a regular file');
+    }
+    // A regular file answers a read of this size in one piece, or all of it.
+    const buffer = Buffer.alloc(MAX_TEXT_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_TEXT_BYTES) {
+      throw new Error(`larger than ${String(MAX_TEXT_BYTES)} bytes`);
+    }
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+};
 
 // The reader over the real filesystem.
 export const fileReader: InstallReader = {
@@ -41,7 +71,7 @@ export const fileReader: InstallReader = {
   },
   readText: async (path) => {
     try {
-      return await readFile(path, 'utf8');
+      return await readSmallFile(path);
     } catch (error) {
       if (isAbsent(error)) {
         return undefined;
@@ -52,8 +82,14 @@ export const fileReader: InstallReader = {
 };
 
 // A release version such as `2.1.296` or `0.5.0-beta.1`, as a directory is
-// named or a package.json says. Anything else is not read as a version.
-const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]{1,40})?$/u;
+// named or a package.json says. Anything else is not read as a version. The
+// bounds keep the longest match within the 64 characters the section allows.
+const VERSION = /^\d{1,8}\.\d{1,8}\.\d{1,8}(?:[-+][0-9A-Za-z.+-]{1,36})?$/u;
+
+// Names of installs that are there and carry no release version: a mise
+// install of a git ref, and a Homebrew keg built from HEAD.
+const MISE_REF = /^ref-[0-9A-Za-z._-]{1,40}$/u;
+const HOMEBREW_HEAD = /^HEAD-[0-9A-Za-z._-]{1,40}$/u;
 
 // The answer of a read that failed, kept apart from a path that is absent.
 const FAILED = Symbol('failed');
@@ -66,21 +102,31 @@ const attempt = async <T>(read: () => Promise<T>): Promise<T | typeof FAILED> =>
   }
 };
 
-// The names of `dir`'s entries that are versions, and are not aliases such as
-// mise's `latest` or `2.1` links. A directory that is absent or cannot be
-// listed has none.
+// The versions of `dir`'s entries. An entry named for a full version counts,
+// symbolic link or not, since `mise link` makes the install one; aliases such as
+// `latest` or `2.1` are not versions. An entry matching `unversioned` is an
+// install whose version is unknown, and so is a `dir` that is there and cannot
+// be listed. A `dir` that is absent has none.
 const versionsIn = async (
   reader: InstallReader,
   dir: string,
-  { directoriesOnly }: { directoriesOnly: boolean },
+  { directoriesOnly, unversioned }: { directoriesOnly: boolean; unversioned?: RegExp },
 ) => {
   const entries = await attempt(() => reader.readDir(dir));
-  if (entries === FAILED || entries === undefined) {
+  if (entries === undefined) {
     return [];
   }
+  if (entries === FAILED) {
+    return [UNKNOWN_HARNESS_VERSION];
+  }
   return entries
-    .filter((e) => !e.isSymlink && (e.isDirectory || !directoriesOnly) && VERSION.test(e.name))
-    .map((e) => e.name);
+    .filter((e) => e.isDirectory || e.isSymlink || !directoriesOnly)
+    .flatMap((e) => {
+      if (VERSION.test(e.name)) {
+        return [e.name];
+      }
+      return unversioned?.test(e.name) === true ? [UNKNOWN_HARNESS_VERSION] : [];
+    });
 };
 
 // The version in a global npm package's package.json: unknown when the package
@@ -110,42 +156,57 @@ const exists = async (reader: InstallReader, dir: string) => {
 
 // Homebrew prefixes by platform: Apple Silicon and Intel on macOS, Linuxbrew
 // system-wide and in the home directory on Linux.
-const homebrewPrefixes = (platform: 'darwin' | 'linux', home: string) =>
+const homebrewPrefixes = (platform: Platform, home: string) =>
   platform === 'darwin'
     ? ['/opt/homebrew', '/usr/local']
     : ['/home/linuxbrew/.linuxbrew', join(home, '.linuxbrew')];
 
-// Where `npm install -g` and its alternatives put packages: system and
-// Homebrew prefixes, a user prefix, bun's global directory, and Claude Code's
-// own local installer.
-const npmRoots = (platform: 'darwin' | 'linux', home: string) => [
+// Where `npm install -g` and its alternatives put packages every Harness may
+// use: system and Homebrew prefixes, a user prefix, and bun's global directory.
+const sharedNpmRoots = (platform: Platform, home: string) => [
   ...(platform === 'darwin'
     ? ['/opt/homebrew/lib/node_modules', '/usr/local/lib/node_modules']
     : ['/usr/lib/node_modules', '/usr/local/lib/node_modules']),
   join(home, '.npm-global/lib/node_modules'),
   join(home, '.local/lib/node_modules'),
   join(home, '.bun/install/global/node_modules'),
-  join(home, '.claude/local/node_modules'),
 ];
+
+// The value of a directory variable, when it names an absolute path.
+const absoluteDir = (value: string | undefined) =>
+  value !== undefined && isAbsolute(value) ? value : undefined;
+
+type Platform = 'darwin' | 'linux';
+
+// The environment variables discovery honors. It is an input, so a test names
+// its own and discovery never reads the process's.
+export type InstallEnv = Readonly<Record<string, string | undefined>>;
+
+type Discovery = { env: InstallEnv; home: string; platform: Platform; reader: InstallReader };
 
 const installsOf = async (
   harness: Harness,
-  { home, platform, reader }: { home: string; platform: 'darwin' | 'linux'; reader: InstallReader },
+  { env, home, platform, reader }: Discovery,
 ): Promise<HarnessInstall[]> => {
   const places = HARNESSES[harness].installs;
+  const dataHome = absoluteDir(env.XDG_DATA_HOME) ?? join(home, '.local/share');
+  const miseData = absoluteDir(env.MISE_DATA_DIR) ?? join(dataHome, 'mise');
   const found = (location: string, versions: string[]) =>
     versions.map((version) => ({ harness, location, version }));
-  const perVersion = async (location: string, dirs: string[]) =>
+  const perVersion = async (location: string, dirs: string[], unversioned: RegExp) =>
     found(
       location,
       (
-        await Promise.all(dirs.map((dir) => versionsIn(reader, dir, { directoriesOnly: true })))
+        await Promise.all(
+          dirs.map((dir) => versionsIn(reader, dir, { directoriesOnly: true, unversioned })),
+        )
       ).flat(),
     );
 
   const mise = perVersion(
     'mise',
-    places.mise.map((tool) => join(home, '.local/share/mise/installs', tool)),
+    places.mise.map((tool) => join(miseData, 'installs', tool)),
+    MISE_REF,
   );
   const homebrew = perVersion(
     'homebrew',
@@ -155,16 +216,21 @@ const installsOf = async (
         join(prefix, 'Caskroom', name),
       ]),
     ),
+    HOMEBREW_HEAD,
   );
   const native =
     places.native === undefined
       ? []
       : found(
           'native',
-          await versionsIn(reader, join(home, places.native), { directoriesOnly: false }),
+          await versionsIn(reader, join(dataHome, places.native), { directoriesOnly: false }),
         );
+  const roots = [
+    ...sharedNpmRoots(platform, home),
+    ...(places.npmRoots ?? []).map((root) => join(home, root)),
+  ];
   const npm = await Promise.all(
-    npmRoots(platform, home).map(async (root) => {
+    roots.map(async (root) => {
       // A root that cannot be listed says nothing about the packages in it.
       const listing = await attempt(() => reader.readDir(root));
       if (listing === FAILED || listing === undefined) {
@@ -181,25 +247,48 @@ const installsOf = async (
   return [...(await mise), ...(await homebrew), ...native, ...npm.flat(2)];
 };
 
+// How many installs of one Harness the section keeps, so no Harness crowds out
+// another and the section as a whole stays within MAX_HARNESS_INSTALLS.
+const MAX_PER_HARNESS = Math.floor(MAX_HARNESS_INSTALLS / HARNESS_NAMES.length);
+
+const compareText = (a: string, b: string) => {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+};
+
+// Numeric order of versions, with plain text order to settle those that are
+// equal by number (`1.01.0` and `1.1.0`), so the order never depends on the
+// order a directory was listed in.
 const byInstall = (a: HarnessInstall, b: HarnessInstall) =>
   a.harness.localeCompare(b.harness) ||
   a.location.localeCompare(b.location) ||
-  a.version.localeCompare(b.version, 'en', { numeric: true });
+  a.version.localeCompare(b.version, 'en', { numeric: true }) ||
+  compareText(a.version, b.version);
+
+// The installs of one Harness the section can carry: the same install found by
+// two paths once, none the schema would refuse, sorted, and at most
+// MAX_PER_HARNESS.
+const carriable = (installs: HarnessInstall[]) => {
+  const unique = new Map(
+    installs
+      .filter((i) => HarnessInstallSchema.safeParse(i).success)
+      .map((i) => [JSON.stringify([i.harness, i.location, i.version]), i]),
+  );
+  return [...unique.values()].toSorted(byInstall).slice(0, MAX_PER_HARNESS);
+};
 
 // Every install of a Harness on this System, read from install directories and
 // package metadata alone, never by running a Harness. Where a version cannot
 // be read from an install that is there, it is unknown. A Harness that is not
-// installed has none. The same install found by two paths counts once. The
-// list is sorted by Harness, location, and version, and holds at most
-// MAX_HARNESS_INSTALLS.
-export const findHarnessInstalls = async (options: {
-  home: string;
-  platform: 'darwin' | 'linux';
-  reader: InstallReader;
-}): Promise<HarnessInstall[]> => {
-  const all = (
-    await Promise.all(HARNESS_NAMES.map((harness) => installsOf(harness, options)))
+// installed has none. The list is sorted by Harness, location, and version, and
+// each Harness keeps at most MAX_PER_HARNESS, so the whole is within
+// MAX_HARNESS_INSTALLS. `env` names the data directories to honor
+// (`MISE_DATA_DIR`, `XDG_DATA_HOME`).
+export const findHarnessInstalls = async (options: Discovery): Promise<HarnessInstall[]> =>
+  (
+    await Promise.all(
+      HARNESS_NAMES.map(async (harness) => carriable(await installsOf(harness, options))),
+    )
   ).flat();
-  const unique = new Map(all.map((i) => [JSON.stringify([i.harness, i.location, i.version]), i]));
-  return [...unique.values()].toSorted(byInstall).slice(0, MAX_HARNESS_INSTALLS);
-};

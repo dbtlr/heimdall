@@ -13,7 +13,7 @@ export const UNKNOWN_HARNESS_VERSION = 'unknown';
 // version. Harness and location are any short word, and the version any short
 // text, so a newer Collector's Harness, location, or version scheme does not
 // reject a Report (ADR-0004). No path is sent.
-const HarnessInstallSchema = z.object({
+export const HarnessInstallSchema = z.object({
   harness: z.string().min(1).max(64),
   location: z.string().min(1).max(64),
   version: z.string().min(1).max(64),

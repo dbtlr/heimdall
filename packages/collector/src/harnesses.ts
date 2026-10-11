@@ -10,17 +10,22 @@ export type HarnessInstallPlaces = {
   homebrew: readonly string[];
   // mise tool directory names under `installs`: each version has a directory.
   mise: readonly string[];
-  // A directory under the home directory whose entries are named by version,
-  // such as the Harness's own native installer keeps.
+  // A directory under the data directory (`$XDG_DATA_HOME`, else
+  // `~/.local/share`) whose entries are named by version, such as the
+  // Harness's own native installer keeps.
   native?: string;
   // npm package names: a global install has a `package.json` naming the version.
   npm: readonly string[];
+  // `node_modules` directories under the home directory that only this Harness
+  // installs into, beyond the global ones every Harness shares.
+  npmRoots?: readonly string[];
 };
 
 // The one list of Harnesses the Collector knows. A Harness has the directory
 // under the home directory it keeps its state in and the trees within it that
-// hold transcripts, and the places its installs are found. Transcript capture,
-// installed versions, and process observation all read it.
+// hold transcripts, and the places its installs are found. Transcript capture
+// and installed-version discovery read it today; Harness process observation
+// will (M5).
 export const HARNESSES: Record<
   Harness,
   { defaultDir: string; installs: HarnessInstallPlaces; trees: readonly string[] }
@@ -30,8 +35,9 @@ export const HARNESSES: Record<
     installs: {
       homebrew: ['claude-code'],
       mise: ['claude', 'npm-anthropic-ai-claude-code'],
-      native: '.local/share/claude/versions',
+      native: 'claude/versions',
       npm: ['@anthropic-ai/claude-code'],
+      npmRoots: ['.claude/local/node_modules'],
     },
     trees: ['projects'],
   },
