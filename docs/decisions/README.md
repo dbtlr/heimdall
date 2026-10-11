@@ -26,3 +26,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0011 — Collectors hold what provisioners record, and Heimdall stores no declarations](0011-collectors-hold-what-provisioners-record.md)
 - [ADR-0012 — The Hub archives agent Session transcripts](0012-hub-archives-agent-session-transcripts.md)
 - [ADR-0013 — Transcripts upload as acknowledged chunks into PostgreSQL, from sources each System opts into](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)
+- [ADR-0014 — Session insight is a rebuildable projection, read through insight views](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)

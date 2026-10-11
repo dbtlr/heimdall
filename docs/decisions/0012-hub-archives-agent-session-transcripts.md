@@ -4,7 +4,7 @@ title: ADR-0012 - The Hub archives agent Session transcripts
 description: "Collectors upload each Harness's Session transcripts to the Hub, which keeps them as the durable record of agent Sessions, content included, so it can derive token spend, tools, skills, context, and cost and support analysis across months. Process observation still records no command-line arguments or environment variables. Supersedes ADR-0002."
 status: accepted
 created: 2026-10-08
-modified: 2026-10-09
+modified: 2026-10-11
 ---
 
 # The Hub archives agent Session transcripts
@@ -45,3 +45,4 @@ The repository's rule that the Collector never stores transcript content is repl
 
 - 2026-10-09: Clarification. [ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md) settles the capture design: a System captures only the sources its configuration lists, so capture is off until turned on, and it fixes the upload protocol, the spool, and storage in PostgreSQL. The decision is unchanged.
 - 2026-10-09: Clarification. One refusal is not resent: an upload for a path deleted on purpose is refused as deleted, and the Collector stops uploading that path ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). It acknowledges a deliberate delete and is not an instruction about what to observe. The decision is unchanged.
+- 2026-10-11: Clarification. The Collector never observed Sessions from the process table: process observation was designed under ADR-0002 but not built, so "process observation is unchanged" holds as a rule about what it may record, not as a description of what runs. M5 builds it, and what it observes is now called a Harness process: one can run several Sessions, and the Hub links the two only when the match is unambiguous. How the Hub derives facts from transcripts, and how they are read, is settled in [ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md). The decision is unchanged.

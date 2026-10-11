@@ -13,7 +13,7 @@ Roles and Principles describe Heimdall as designed. Sections marked _planned_ de
 | Role | Runs | Does |
 | --- | --- | --- |
 | System | everywhere | One machine in the fleet, named by a DNS label. |
-| Collector | on each System, as one account | Samples Vitals, observes agent Sessions, holds what provisioners record, checks it, and sends Reports and transcripts to the Hub. |
+| Collector | on each System, as one account | Samples Vitals, holds what provisioners record, checks it, and sends Reports and transcripts to the Hub. |
 | Hub | on one System | Stores Reports and transcripts in PostgreSQL, derives Conditions, mirrors each System's records, and serves the dashboard. |
 | Provisioner | wherever its operator runs it | Installs things on Systems and records them with each System's Collector. Fleet is one provisioner; [Running Heimdall with Fleet](fleet.md) shows how it does this. |
 
@@ -25,7 +25,7 @@ A System joins by pairing its Collector with the Hub once, as the [README](../RE
 2. **Heimdall compares recorded with observed, on one System.** A recorded Service that stopped, a recorded job that missed its schedule, and a recorded file that changed are Heimdall's to report.
 3. **The provisioner compares declared with recorded.** Heimdall stores no provisioner's declarations. Gaps such as declared but not installed are found by the provisioner's own check, which reads the records the Hub mirrors.
 4. **Heimdall reports and never manages.** Nothing the Hub sends changes a Collector's records or what it observes.
-5. **Every record is optional.** A System nobody records anything on still shows its Vitals and its agent Sessions.
+5. **Every record is optional.** A System nobody records anything on still reports its Vitals and, from the sources it captures, its agent Sessions' transcripts.
 6. **The Hub keeps agent Session transcripts** as the durable record of agent work, after each Harness deletes its own copy.
 
 ## Recording what a provisioner installed
@@ -260,7 +260,7 @@ Every upload counts toward the System's Last seen, and no refusal raises a Condi
 
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 
-The Collector observes each Session's processes from the process table, recording only executable names and working directories, never command-line arguments or environment variables.
+The Collector does not yet observe Harness processes. When it does (M5), it records only executable names and working directories, never command-line arguments or environment variables.
 
 ## Trust
 
