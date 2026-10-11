@@ -1284,3 +1284,16 @@ test('a System with no Harness process sends an empty list once, then nothing un
   expect(second[0]?.harnessProcesses).toBeUndefined();
   expect(third[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
 });
+
+test('a records file that cannot be opened costs the Harness processes nothing', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
+  const watch = watched({ processes: [RUNNING] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+  expect(watch.acknowledged).toEqual([{ processes: [RUNNING] }]);
+});
