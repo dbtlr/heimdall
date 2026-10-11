@@ -40,7 +40,7 @@ const runUntil = async (argv: string[], { abortWhen = WAITING } = {}) => {
       signal: controller.signal,
     });
   } finally {
-    process.exitCode = runnerExitCode;
+    process.exitCode = runnerExitCode ?? 0;
     clearTimeout(safety);
     await rm(home, { force: true, recursive: true });
   }
