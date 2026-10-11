@@ -21,14 +21,26 @@ export type HarnessInstallPlaces = {
   npmRoots?: readonly string[];
 };
 
+// How a Harness shows in the process table: the executable names its native
+// process runs under. A process matches when its executable's name is one of
+// these exactly, so `claude-proxy` is not Claude Code. A Harness that runs as a
+// script under another runtime shows as that runtime and is not matched, since
+// telling it apart would take its command-line arguments.
+export type HarnessProcessIdentity = { names: readonly string[] };
+
 // The one list of Harnesses the Collector knows. A Harness has the directory
 // under the home directory it keeps its state in and the trees within it that
-// hold transcripts, and the places its installs are found. Transcript capture
-// and installed-version discovery read it today; Harness process observation
-// will (M5).
+// hold transcripts, the places its installs are found, and its process
+// identity. Transcript capture, installed versions, and process observation
+// all read it.
 export const HARNESSES: Record<
   Harness,
-  { defaultDir: string; installs: HarnessInstallPlaces; trees: readonly string[] }
+  {
+    defaultDir: string;
+    installs: HarnessInstallPlaces;
+    process: HarnessProcessIdentity;
+    trees: readonly string[];
+  }
 > = {
   'claude-code': {
     defaultDir: '.claude',
@@ -39,6 +51,7 @@ export const HARNESSES: Record<
       npm: ['@anthropic-ai/claude-code'],
       npmRoots: ['.claude/local/node_modules'],
     },
+    process: { names: ['claude'] },
     trees: ['projects'],
   },
   codex: {
@@ -48,6 +61,7 @@ export const HARNESSES: Record<
       mise: ['codex', 'npm-openai-codex'],
       npm: ['@openai/codex'],
     },
+    process: { names: ['codex'] },
     trees: ['sessions'],
   },
 };

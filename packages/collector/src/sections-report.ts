@@ -9,6 +9,7 @@ import {
 import type {
   ChecksSection,
   HarnessesSection,
+  HarnessProcessesSection,
   RecordsSection,
   RunsSection,
 } from '@heimdall/schema';
@@ -18,6 +19,7 @@ import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
 import type { HarnessesSource } from './harness-scan.ts';
+import type { HarnessProcessesSource } from './processes/loop.ts';
 import type { RecordStore } from './records.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
@@ -152,12 +154,15 @@ const createSectionState = <Section, Input>({
   label,
   log,
   now,
+  onSettled,
   refreshMs,
 }: {
   build: (input: Input) => { digest: string; section: Section };
   label: string;
   log: Log;
   now: () => number;
+  // Told which section the Hub answered, delivered or refused.
+  onSettled?: (section: Section) => void;
   refreshMs: number;
 }) => {
   let settledDigest: string | undefined;
@@ -165,8 +170,9 @@ const createSectionState = <Section, Input>({
   let due = true;
 
   const settleWith =
-    (digest: string): PendingSection<Section>['settle'] =>
+    (digest: string, section: Section): PendingSection<Section>['settle'] =>
     (outcome) => {
+      onSettled?.(section);
       settledDigest = digest;
       settledAt = now();
       due = false;
@@ -190,7 +196,7 @@ const createSectionState = <Section, Input>({
         return undefined;
       }
       due = true;
-      return { section, settle: settleWith(digest) };
+      return { section, settle: settleWith(digest, section) };
     },
   };
 };
@@ -202,11 +208,17 @@ export type ChecksSource = CheckPartsSource;
 // A source that has found nothing, for a reporter given no Harness scan.
 const NO_HARNESSES: HarnessesSource = { latest: () => undefined };
 
+// A source that has seen no process, for a reporter given no process tracking.
+const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
+  latest: () => undefined,
+  settled: () => undefined,
+};
+
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, its checks, and the Harness installs it found. Each
-// section is due at start, when its content may have changed and its digest
-// differs from the last one settled, and once `refreshMs` after the last one
-// the Hub answered. The store's content
+// jobs' latest runs, its checks, the Harness installs it found, and the
+// Harness processes it sees. Each section is due at start, when its content may
+// have changed and its digest differs from the last one settled, and once
+// `refreshMs` after the last one the Hub answered. The store's content
 // may have changed when another process commits; the checks' when `checks`
 // answers another section than before, which is none until the loop's first
 // pass. The sections settle apart, so recording a run sends the runs and not the
@@ -225,6 +237,7 @@ const NO_HARNESSES: HarnessesSource = { latest: () => undefined };
 export const createSectionsReporter = ({
   checks,
   harnesses = NO_HARNESSES,
+  harnessProcesses = NO_HARNESS_PROCESSES,
   log,
   maxChecksBytes = MAX_CHECKS_PART_BYTES,
   maxRecordsBytes = MAX_RECORDS_SECTION_BYTES,
@@ -235,6 +248,7 @@ export const createSectionsReporter = ({
 }: {
   checks: ChecksSource;
   harnesses?: HarnessesSource;
+  harnessProcesses?: HarnessProcessesSource;
   log: Log;
   maxChecksBytes?: number;
   maxRecordsBytes?: number;
@@ -247,6 +261,7 @@ export const createSectionsReporter = ({
   let seenVersion: number | undefined;
   let seenChecks: CheckParts | undefined;
   let seenHarnesses: HarnessesSection | undefined;
+  let seenProcesses: HarnessProcessesSection | undefined;
   let failing = false;
 
   const records = createSectionState<RecordsSection, RecordStore>({
@@ -285,14 +300,39 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
-  // The Harness installs, which come from the scan and not from the store, so a
-  // store that will not open costs them nothing.
+  const processes = createSectionState<HarnessProcessesSection, undefined>({
+    // Asked for only once a tick has finished.
+    build: () => {
+      const section = harnessProcesses.latest() ?? { processes: [] };
+      return { digest: digestOf(section), section };
+    },
+    label: 'Harness processes',
+    log,
+    now,
+    onSettled: harnessProcesses.settled,
+    refreshMs,
+  });
+
+  // The Harness installs and processes, which come from the scan and the
+  // process table and not from the store, so a store that will not open costs
+  // them nothing.
   const pendingHarnesses = () => {
     const latest = harnesses.latest();
-    const due =
-      latest === undefined ? undefined : installed.pending(undefined, latest !== seenHarnesses);
+    const latestProcesses = harnessProcesses.latest();
+    const due = {
+      harnessProcesses:
+        latestProcesses === undefined
+          ? undefined
+          : processes.pending(undefined, latestProcesses !== seenProcesses),
+      harnesses:
+        latest === undefined ? undefined : installed.pending(undefined, latest !== seenHarnesses),
+    };
     seenHarnesses = latest;
-    return due === undefined ? {} : { harnesses: due };
+    seenProcesses = latestProcesses;
+    return {
+      ...(due.harnesses === undefined ? {} : { harnesses: due.harnesses }),
+      ...(due.harnessProcesses === undefined ? {} : { harnessProcesses: due.harnessProcesses }),
+    };
   };
 
   const pendingFromStore = async () => {
@@ -327,6 +367,7 @@ export const createSectionsReporter = ({
       seenVersion = undefined;
       seenChecks = undefined;
       seenHarnesses = undefined;
+      seenProcesses = undefined;
     },
     // A store that cannot be opened or read costs the sections, never the
     // Vitals, and is warned about once until it works again.

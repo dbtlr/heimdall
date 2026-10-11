@@ -2,6 +2,7 @@ import { MAX_REPORT_BYTES, MAX_SAMPLES_PER_REPORT, REPORT_SCHEMA_VERSION } from 
 import type {
   ChecksSection,
   HarnessesSection,
+  HarnessProcessesSection,
   RecordsSection,
   Report,
   RunsSection,
@@ -83,6 +84,7 @@ export type PendingSection<Section> = {
 export type PendingSections = {
   checks?: PendingSection<ChecksSection>;
   harnesses?: PendingSection<HarnessesSection>;
+  harnessProcesses?: PendingSection<HarnessProcessesSection>;
   records?: PendingSection<RecordsSection>;
   runs?: PendingSection<RunsSection>;
 };
@@ -147,21 +149,23 @@ export const flushQueue = async ({
       transcripts: transcripts(),
     };
     const reportWith = (
-      carried: Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs'>,
+      carried: Pick<Report, 'checks' | 'harnesses' | 'harnessProcesses' | 'records' | 'runs'>,
     ): Report => ({
       ...base,
       ...carried,
     });
-    const { checks, harnesses, records, runs } = waiting;
+    const { checks, harnesses, harnessProcesses, records, runs } = waiting;
     const withSections = reportWith({
       ...(checks === undefined ? {} : { checks: checks.section }),
       ...(harnesses === undefined ? {} : { harnesses: harnesses.section }),
+      ...(harnessProcesses === undefined ? {} : { harnessProcesses: harnessProcesses.section }),
       ...(records === undefined ? {} : { records: records.section }),
       ...(runs === undefined ? {} : { runs: runs.section }),
     });
     const carrying =
       (checks !== undefined ||
         harnesses !== undefined ||
+        harnessProcesses !== undefined ||
         records !== undefined ||
         runs !== undefined) &&
       Buffer.byteLength(JSON.stringify(withSections)) <= MAX_REPORT_BYTES;
@@ -171,6 +175,7 @@ export const flushQueue = async ({
       waiting = {};
       checks?.settle(outcome);
       harnesses?.settle(outcome);
+      harnessProcesses?.settle(outcome);
       records?.settle(outcome);
       runs?.settle(outcome);
       if (outcome.kind === 'rejected') {

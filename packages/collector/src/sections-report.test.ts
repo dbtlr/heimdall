@@ -12,6 +12,7 @@ import {
 import type {
   ApplicationRecord,
   HarnessesSection,
+  HarnessProcessesSection,
   JobRecord,
   Report,
   RunRecord,
@@ -23,6 +24,7 @@ import type { CheckParts } from './checks/parts.ts';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import type { HarnessesSource } from './harness-scan.ts';
+import type { HarnessProcessesSource } from './processes/loop.ts';
 import { openQueue } from './queue.ts';
 import { openRecords } from './records.ts';
 import type { RecordStore } from './records.ts';
@@ -56,6 +58,7 @@ const setup = async (
     batchSize,
     checks,
     harnesses,
+    harnessProcesses,
     maxChecksBytes,
     maxRecordsBytes,
     maxRunsBytes,
@@ -65,6 +68,7 @@ const setup = async (
     batchSize?: number;
     checks?: ChecksSource;
     harnesses?: HarnessesSource;
+    harnessProcesses?: HarnessProcessesSource;
     maxChecksBytes?: number;
     maxRecordsBytes?: number;
     maxRunsBytes?: number;
@@ -82,6 +86,7 @@ const setup = async (
   const reporter = createSectionsReporter({
     checks: checks ?? { latest: () => checked.latest },
     ...(harnesses === undefined ? {} : { harnesses }),
+    ...(harnessProcesses === undefined ? {} : { harnessProcesses }),
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     ...(maxChecksBytes === undefined ? {} : { maxChecksBytes }),
     ...(maxRecordsBytes === undefined ? {} : { maxRecordsBytes }),
@@ -1204,4 +1209,78 @@ test('a records file that cannot be opened costs the Harness installs nothing', 
 
   expect(first[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
   expect(second[0]?.harnesses).toBeUndefined();
+});
+
+const RUNNING = {
+  cpuMicros: 5000,
+  cwd: '/work/project',
+  harness: 'claude-code',
+  lastSeenAt: 1_000_000,
+  peakRssBytes: 10,
+  pid: 10,
+  rssBytes: 10,
+  startedAt: 900_000,
+};
+
+// A process source whose latest section a test sets, and which records what
+// the Hub acknowledged.
+const watched = (section?: HarnessProcessesSection) => {
+  const held: { latest: HarnessProcessesSection | undefined } = { latest: section };
+  const acknowledged: HarnessProcessesSection[] = [];
+  return {
+    acknowledged,
+    held,
+    source: {
+      latest: () => held.latest,
+      settled: (s) => acknowledged.push(s),
+    } as HarnessProcessesSource,
+  };
+};
+
+test('a Report carries the Harness processes, and the next carries them again once a tick changed them', async () => {
+  await using dir = await tempStateDir();
+  const watch = watched({ processes: [RUNNING] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  const unchanged = await collector.push();
+  watch.held.latest = { processes: [{ ...RUNNING, cpuMicros: 9000 }] };
+  const ticked = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+  expect(unchanged[0]?.harnessProcesses).toBeUndefined();
+  expect(ticked[0]?.harnessProcesses?.processes[0]?.cpuMicros).toBe(9000);
+});
+
+test('the source is told which section the Hub answered, and not of one the Hub never took', async () => {
+  await using dir = await tempStateDir();
+  const ended = { ...RUNNING, endedAt: 1_000_500 };
+  const watch = watched({ processes: [ended] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+  collector.outcomes.push({ kind: 'failed', reason: 'down' });
+
+  await collector.push();
+  const toldAfterFailure = [...watch.acknowledged];
+  await collector.push();
+  collector.close();
+
+  expect(toldAfterFailure).toEqual([]);
+  expect(watch.acknowledged).toEqual([{ processes: [ended] }]);
+});
+
+test('a System with no Harness process sends an empty list once, then nothing until one appears', async () => {
+  await using dir = await tempStateDir();
+  const watch = watched({ processes: [] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  watch.held.latest = { processes: [RUNNING] };
+  const third = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [] });
+  expect(second[0]?.harnessProcesses).toBeUndefined();
+  expect(third[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
 });

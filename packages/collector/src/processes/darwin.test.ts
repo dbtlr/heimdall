@@ -1,0 +1,91 @@
+import { expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import { createDarwinReader, parsePs, PS_COLUMNS } from './darwin.ts';
+
+const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
+
+// `ps -axo pid=,ppid=,rss=,etime=,time=,comm=` as macOS prints it.
+const PS = `
+    1     0  12288 12-03:04:05   0:41.07 /sbin/launchd
+  612     1  50000     02:00:10   1:02:03.50 /Applications/Claude Code.app/Contents/MacOS/claude
+  613   612   2048        59:59   0:00.12 /bin/zsh
+  700     1 300000        05:30  10:00.25 /Users/operator/.local/share/mise/installs/codex/0.162.1/bin/codex
+ bad line
+`;
+
+test('names the columns it asks ps for, none of which is the command line or the environment', () => {
+  expect(PS_COLUMNS).toBe('pid=,ppid=,rss=,etime=,time=,comm=');
+});
+
+test('reads each process: name from its executable path, parent, memory in KiB, CPU time, and start', () => {
+  expect(parsePs(PS, NOW)).toEqual([
+    {
+      cpuMicros: 41_070_000,
+      name: 'launchd',
+      pid: 1,
+      ppid: 0,
+      rssBytes: 12_288 * 1024,
+      // 12 days, 3 hours, 4 minutes, 5 seconds before NOW.
+      startedAt: NOW - ((12 * 24 + 3) * 3600 + 4 * 60 + 5) * 1000,
+    },
+    {
+      cpuMicros: 3_723_500_000,
+      name: 'claude',
+      pid: 612,
+      ppid: 1,
+      rssBytes: 50_000 * 1024,
+      startedAt: NOW - (2 * 3600 + 10) * 1000,
+    },
+    {
+      cpuMicros: 120_000,
+      name: 'zsh',
+      pid: 613,
+      ppid: 612,
+      rssBytes: 2048 * 1024,
+      startedAt: NOW - 59 * 60_000 - 59_000,
+    },
+    {
+      cpuMicros: 600_250_000,
+      name: 'codex',
+      pid: 700,
+      ppid: 1,
+      rssBytes: 300_000 * 1024,
+      startedAt: NOW - (5 * 60 + 30) * 1000,
+    },
+  ]);
+});
+
+test('reads the table with one ps run, and the working directory of one process with the cwd reader', async () => {
+  const runs: (readonly string[])[] = [];
+  const cwds: number[] = [];
+  const reader = createDarwinReader({
+    cwdOf: (pid) => {
+      cwds.push(pid);
+      return Promise.resolve(pid === 612 ? '/Users/operator/project' : null);
+    },
+    now: () => NOW,
+    ps: (cmd) => {
+      runs.push(cmd);
+      return Promise.resolve(PS);
+    },
+  });
+
+  const table = await reader.table();
+
+  expect(runs).toEqual([['/bin/ps', '-axo', PS_COLUMNS]]);
+  expect(table).toHaveLength(4);
+  expect(cwds).toEqual([]);
+  expect(await reader.cwdOf(612)).toBe('/Users/operator/project');
+  expect(await reader.cwdOf(1)).toBeNull();
+});
+
+test('the macOS readers name no command-line or environment source, and run no lsof', async () => {
+  for (const file of ['darwin.ts', 'darwin-cwd.ts']) {
+    // oxlint-disable-next-line no-await-in-loop -- two small files.
+    const text = await readFile(join(import.meta.dir, file), 'utf8');
+
+    expect(text).not.toMatch(/cmdline|\benviron\b|lsof|\bargs=|\bcommand=/u);
+  }
+});
