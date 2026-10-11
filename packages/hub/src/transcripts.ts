@@ -1,7 +1,7 @@
 import type { OpenGeneration } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { forgetDeletedGenerations } from './projection.ts';
+import { forgetDeletedGenerations, holdProjection } from './projection.ts';
 import { seeSystem } from './store.ts';
 
 export type Opened = { generation: number; kind: 'opened' } | { kind: 'deleted' };
@@ -169,6 +169,10 @@ export const deleteTranscripts = (
         await tx`SELECT id, stored_bytes FROM transcript_generations WHERE ${matching}`,
       );
     }
+    // A batch the projection is storing commits first, and none starts until
+    // this delete commits, so nothing derived from a deleted generation is
+    // stored behind its back (ADR-0014).
+    await holdProjection(tx);
     // Marking takes each generation's row lock, which an open at its path
     // waits for. Locks are taken in id order, as an open takes them, so the
     // two cannot deadlock. A generation opened while a pass ran is not in that

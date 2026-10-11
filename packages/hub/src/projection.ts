@@ -63,7 +63,6 @@ export const projectTranscripts = async (
   sql: SQL,
   { budgetBytes = PARSE_BUDGET_BYTES, cleanupRows = CLEANUP_ROWS, parsers = PARSERS }: Options = {},
 ): Promise<Projected> => {
-  await forgetDeletedGenerations(sql);
   const projected: Projected = { failed: [], outdated: [], pending: 0, switched: [] };
   let budget = budgetBytes;
   for (const parser of parsers) {
@@ -192,19 +191,27 @@ const recordFailure = async (
   { error, parser, row }: { error: unknown; parser: HarnessParser; row: Pending },
 ) => {
   const failure = describe(error);
-  await (row.parsed_through === null
-    ? sql`
+  await sql.begin(async (tx) => {
+    if (!(await shareProjection(tx))) {
+      return;
+    }
+    await (row.parsed_through === null
+      ? tx`
         INSERT INTO parse_progress (
           harness, parser_version, generation, parsed_through, held_seen, failed_at, failure
         )
-        VALUES (${parser.harness}, ${parser.version}, ${row.id}::bigint, 0, 0, now(), ${failure})
+        SELECT ${parser.harness}, ${parser.version}, ${row.id}::bigint, 0, 0, now(), ${failure}
+        WHERE EXISTS (
+          SELECT 1 FROM transcript_generations WHERE id = ${row.id}::bigint AND deleted_at IS NULL
+        )
         ON CONFLICT DO NOTHING
       `
-    : sql`
+      : tx`
         UPDATE parse_progress SET failed_at = now(), failure = ${failure}
         WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
           AND generation = ${row.id}::bigint AND parsed_through = ${Number(row.parsed_through)}
       `);
+  });
 };
 
 // Generations of `parser`'s Harness that its version has not read through what
@@ -355,6 +362,30 @@ const EMPTY: Batch = {
 
 type Generation = { held: number; id: number; path: string; source: string; system: string };
 
+// Serializes the projection's writes with deleting transcripts. Every write
+// holds it shared for its transaction, and a delete holds it alone for its
+// own, so a batch either commits before a delete reads what the batch
+// stored, or starts after the delete commits and finds its generation gone
+// or its progress reset. The name is arbitrary; it only has to be the same
+// for every Hub.
+const PROJECTION_LOCK = 'heimdall-session-insight';
+
+// Takes the projection's lock shared for `tx`'s transaction, unless a delete
+// holds it or waits for it, and answers whether it did. A write that finds a
+// delete under way is left to the next run.
+const shareProjection = async (tx: SQL): Promise<boolean> => {
+  const [row]: { held: boolean }[] = await tx`
+    SELECT pg_try_advisory_xact_lock_shared(hashtext(${PROJECTION_LOCK})) AS held
+  `;
+  return row?.held === true;
+};
+
+// Takes the projection's lock alone for `tx`'s transaction, once every write
+// under way has committed, as a delete does before it marks a generation.
+export const holdProjection = async (tx: SQL): Promise<void> => {
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${PROJECTION_LOCK}))`;
+};
+
 // Stores a batch's facts with the generation's progress in one transaction.
 // Progress moves by compare-and-set: from `expected`, the `parsed_through` the
 // batch was read from, or from no row at all when `expected` is null. When the
@@ -380,6 +411,9 @@ const storeBatch = async (
   },
 ) => {
   await sql.begin(async (tx) => {
+    if (!(await shareProjection(tx))) {
+      return;
+    }
     const progressed: unknown[] =
       expected === null
         ? await tx`
@@ -775,7 +809,13 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
 // Shows again each Session of `harness` a delete hid, once its current
 // version has parsed every generation of it that the delete reset, or failed
 // there.
-const showRederived = (sql: SQL, harness: string) => sql`
+// Under the projection's lock, so it sees a delete whole or not at all.
+const showRederived = (sql: SQL, harness: string) =>
+  sql.begin(async (tx) => {
+    if (!(await shareProjection(tx))) {
+      return;
+    }
+    await tx`
   DELETE FROM rederiving_sessions r
   USING current_parsers c
   WHERE r.harness = ${harness} AND c.harness = r.harness
@@ -786,4 +826,5 @@ const showRederived = (sql: SQL, harness: string) => sql`
         AND p.session_id = r.session_id AND g.system = r.system AND g.source = r.source
         AND g.deleted_at IS NULL AND p.failed_at IS NULL AND p.held_seen < g.held
     )
-`;
+    `;
+  });

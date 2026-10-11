@@ -332,6 +332,42 @@ const beforeEachTransaction = (sql: SQL, before: () => Promise<void>): SQL =>
     },
   });
 
+// `sql` as the projection sees it, except that `during` runs, and is awaited,
+// after each transaction's work and before it commits: while the transaction
+// holds every lock it took.
+const beforeEachCommit = (sql: SQL, during: () => Promise<void>): SQL =>
+  new Proxy(sql, {
+    get: (target, property) => {
+      if (property === 'begin') {
+        return async (work: (tx: SQL) => Promise<unknown>) =>
+          target.begin(async (tx) => {
+            const done = await work(tx);
+            await during();
+            return done;
+          });
+      }
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+// Waits until another session of the database waits on a lock.
+const someoneWaitsOnALock = async (sql: SQL) => {
+  for (let tries = 0; tries < 500; tries += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- polls until the wait begins.
+    const [row]: { n: number }[] = await sql`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'
+    `;
+    if ((row?.n ?? 0) > 0) {
+      return;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- polls until the wait begins.
+    await Bun.sleep(10);
+  }
+  throw new Error('No session waited on a lock.');
+};
+
 // `sql` as the projection sees it, counting the rows of each query it runs
 // outside a transaction, as reads of transcript chunks are.
 const countingRows = (sql: SQL) => {
@@ -1118,6 +1154,76 @@ describe('deleting transcripts while a batch is read', () => {
     expect(await totals(h.db.sql, 'session_totals')).toEqual([
       expect.objectContaining({ input_tokens: 101, requests: 2 }),
     ]);
+  });
+
+  // A delete that starts while a batch of its generation is being stored
+  // must see what the batch stored, or the batch must find it gone.
+  test('that starts while the batch is stored leaves nothing of the deleted generation', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([user({ at: at(0) }), assistant({ at: at(1), id: 'msg_main' })]),
+      path: mainPath(),
+    });
+    const first = jsonl([assistant({ agent: 'a1', at: at(2), id: 'msg_old' })]);
+    const subagent = await upload(h, { content: first, path: agentPath('a1') });
+    await projectAll(h);
+    await append(h, subagent, {
+      content: jsonl([assistant({ agent: 'a1', at: at(3), id: 'msg_new' })]),
+      offset: Buffer.byteLength(first),
+    });
+    await h.db.sql`
+      UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 86_400_000)}
+      WHERE id = ${subagent}::bigint
+    `;
+    let deleting: Promise<unknown> | undefined;
+    const sql = beforeEachCommit(h.db.sql, async () => {
+      if (deleting === undefined) {
+        deleting = deleteTranscripts(h.db.sql, { before: NOW - 3_600_000, now: NOW });
+        await someoneWaitsOnALock(h.db.sql);
+      }
+    });
+
+    await projectTranscripts(sql);
+    await deleting;
+    await projectAll(h);
+
+    expect((await requests(h.db.sql)).map((r) => r.request_id)).toEqual(['msg_main']);
+    const left = await h.db.sql`
+      SELECT request_id FROM projected_requests WHERE generation = ${subagent}::bigint
+    `;
+    expect([...left]).toEqual([]);
+  });
+
+  // A batch read before a delete that removed its generation stores nothing,
+  // even before the next run tidies up.
+  test('that removed the generation before its first batch is stored leaves the views without it', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([user({ at: at(0) }), assistant({ at: at(1), id: 'msg_main' })]),
+      path: mainPath(),
+    });
+    await projectAll(h);
+    const subagent = await upload(h, {
+      content: jsonl([assistant({ agent: 'a1', at: at(2), id: 'msg_sub' })]),
+      path: agentPath('a1'),
+    });
+    await h.db.sql`
+      UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 86_400_000)}
+      WHERE id = ${subagent}::bigint
+    `;
+    let deleted = false;
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      if (!deleted) {
+        deleted = true;
+        await deleteTranscripts(h.db.sql, { before: NOW - 3_600_000, now: NOW });
+      }
+    });
+
+    await projectTranscripts(sql);
+
+    expect((await requests(h.db.sql)).map((r) => r.request_id)).toEqual(['msg_main']);
   });
 });
 
