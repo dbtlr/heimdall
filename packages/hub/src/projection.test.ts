@@ -1128,6 +1128,38 @@ const settled = async (sql: SQL) => ({
 });
 
 describe('a generation the projection cannot read', () => {
+  // Every chunk a read fetches counts against the run's budget, whether the
+  // read then succeeds or fails inside the reader.
+  test('a run charges the chunks of reads that fail, so many failing generations fetch no more than its bound', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const chunkBytes = 256 * 1024;
+    for (let i = 0; i < 40; i += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(i).padStart(12, '0')}`;
+      // oxlint-disable-next-line no-await-in-loop -- uploaded in order.
+      await upload(h, {
+        chunkBytes,
+        content: 'x'.repeat(5 * chunkBytes),
+        path: mainPath(session),
+      });
+    }
+    // The third chunk of each is damaged, so a read fetches four chunks
+    // (two valid, then the damaged one and the one after it) and fails.
+    await h.db.sql`
+      UPDATE transcript_chunks SET content = ${Buffer.from('not gzip')}
+      WHERE offset_bytes = ${2 * chunkBytes}
+    `;
+    const budgetBytes = 2 * 2 ** 20;
+    const sql = measuringReads(h.db.sql);
+
+    await projectTranscripts(sql, { budgetBytes });
+
+    // The run stops once the budget is spent: at most one more generation's
+    // read than the budget. Uncharged, it would fetch 40 MiB.
+    expect(sql.totalBytes()).toBeGreaterThanOrEqual(budgetBytes);
+    expect(sql.totalBytes()).toBeLessThanOrEqual(budgetBytes + 4 * chunkBytes);
+  }, 60_000);
+
   const sessionOf = (session = SESSION) =>
     jsonl([
       user({ at: at(0), session }),
