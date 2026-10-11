@@ -16,14 +16,17 @@ export const PARSE_BUDGET_BYTES = 64 * 2 ** 20;
 // How many generations one run considers at most.
 const GENERATIONS_PER_RUN = 1000;
 
-// A full rebuild's cleanup can outlast the usual statement timeout.
-const CLEANUP_TIMEOUT = '10min';
+// How many rows of an earlier parser version one run deletes from each table
+// at most, so no statement holds its locks for long.
+const CLEANUP_ROWS = 10_000;
 
 // What a run left: generations not yet parsed through what the Hub holds;
-// each generation it recorded failed, and why; and each Harness whose views it
-// switched to a newly complete parser version.
+// each generation it recorded failed, and why; each Harness whose views it
+// switched to a newly complete parser version; and each Harness it left alone
+// because its current version is newer than the Hub's parser.
 export type Projected = {
   failed: { error: string; generation: number; harness: string }[];
+  outdated: { current: number; harness: string; version: number }[];
   pending: number;
   switched: { harness: string; version: number }[];
 };
@@ -33,63 +36,96 @@ type Pending = {
   id: string;
   parsed_through: string | null;
   path: string;
+  skipping_line: boolean | null;
   source: string;
   system: string;
 };
 
-// Parses what the archive holds and no parser version has read yet, then
-// switches each Harness whose next version is complete (ADR-0014). Each
+type Options = {
+  budgetBytes?: number;
+  // How many rows of an earlier version one run deletes from each table at most.
+  cleanupRows?: number;
+  parsers?: readonly HarnessParser[];
+};
+
+// Parses what the archive holds and the Hub's parser version has not read yet,
+// then switches each Harness whose rebuild has caught up (ADR-0014). Each
 // generation's batch commits with its progress, so a run that stops, or a Hub
 // that restarts, loses nothing and resumes from the progress. A parser whose
-// version has no complete set yet writes beside the current one, which the
-// `insight` views keep showing until every generation is parsed; then the
-// views switch in one statement and the earlier version's rows are deleted.
+// version is not current writes beside the current one, which the `insight`
+// views keep showing until the new version has caught up; then the views
+// switch in one statement, and later runs delete the earlier version's rows.
+// Versions only move forward: a Hub whose parser is older than its Harness's
+// current version leaves that Harness alone.
 export const projectTranscripts = async (
   sql: SQL,
-  {
-    budgetBytes = PARSE_BUDGET_BYTES,
-    parsers = PARSERS,
-  }: { budgetBytes?: number; parsers?: readonly HarnessParser[] } = {},
+  { budgetBytes = PARSE_BUDGET_BYTES, cleanupRows = CLEANUP_ROWS, parsers = PARSERS }: Options = {},
 ): Promise<Projected> => {
   await forgetDeletedGenerations(sql);
+  const projected: Projected = { failed: [], outdated: [], pending: 0, switched: [] };
   let budget = budgetBytes;
-  let pending = 0;
-  const switched: Projected['switched'] = [];
-  const failed: Projected['failed'] = [];
   for (const parser of parsers) {
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
-    const work = await pendingGenerations(sql, parser);
-    for (const generation of work) {
-      if (budget <= 0) {
-        break;
-      }
-      try {
-        // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-        budget -= await parseGeneration(sql, parser, generation, budget);
-      } catch (error) {
-        if (!isPermanent(error)) {
-          throw error;
-        }
-        // oxlint-disable-next-line no-await-in-loop -- recorded before the next generation.
-        await recordFailure(sql, { error, parser, row: generation });
-        failed.push({
-          error: describe(error),
-          generation: Number(generation.id),
-          harness: parser.harness,
-        });
-      }
+    const current = await currentVersion(sql, parser.harness);
+    if (current !== undefined && current > parser.version) {
+      projected.outdated.push({ current, harness: parser.harness, version: parser.version });
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
+    budget -= await parsePending(sql, { budget, failed: projected.failed, parser });
+    // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
+    projected.pending += await pendingCount(sql, parser);
+    // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
+    if (current !== parser.version && (await switchVersion(sql, parser))) {
+      projected.switched.push({ harness: parser.harness, version: parser.version });
     }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
-    const left = await pendingCount(sql, parser);
-    pending += left;
-    // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
-    if (left === 0 && (await switchVersion(sql, parser))) {
-      switched.push({ harness: parser.harness, version: parser.version });
-    }
-    // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
-    await dropStaleVersions(sql, parser);
+    await dropEarlierVersions(sql, { harness: parser.harness, rows: cleanupRows });
   }
-  return { failed, pending, switched };
+  return projected;
+};
+
+const currentVersion = async (sql: SQL, harness: string) => {
+  const [row]: { version: number }[] = await sql`
+    SELECT version FROM current_parsers WHERE harness = ${harness}
+  `;
+  return row?.version;
+};
+
+// Parses the generations `parser` has not read through what the Hub holds,
+// within `budget` bytes, and answers the bytes it read. A generation that
+// cannot be parsed is recorded failed, and added to `failed`.
+const parsePending = async (
+  sql: SQL,
+  {
+    budget,
+    failed,
+    parser,
+  }: { budget: number; failed: Projected['failed']; parser: HarnessParser },
+) => {
+  let left = budget;
+  const work = await pendingGenerations(sql, parser);
+  for (const generation of work) {
+    if (left <= 0) {
+      break;
+    }
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
+      left -= await parseGeneration(sql, parser, generation, left);
+    } catch (error) {
+      if (!isPermanent(error)) {
+        throw error;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- recorded before the next generation.
+      await recordFailure(sql, { error, parser, row: generation });
+      failed.push({
+        error: describe(error),
+        generation: Number(generation.id),
+        harness: parser.harness,
+      });
+    }
+  }
+  return budget - left;
 };
 
 // PostgreSQL's classes of error that storing the same values again repeats:
@@ -140,7 +176,7 @@ const recordFailure = async (
 // the Hub holds, oldest upload first. A source runs the Harness its System's
 // Reports named for it.
 const pendingGenerations = (sql: SQL, parser: HarnessParser): Promise<Pending[]> => sql`
-  SELECT g.id, g.system, g.source, g.path, g.held, p.parsed_through
+  SELECT g.id, g.system, g.source, g.path, g.held, p.parsed_through, p.skipping_line
   FROM transcript_generations g
   JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
   LEFT JOIN parse_progress p
@@ -442,58 +478,79 @@ const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts)
   `;
 };
 
-// Switches the views to `parser`'s version once every generation of its
-// Harness is parsed through what the Hub holds, judged again under a lock so
-// two Hubs on one database cannot both switch. Answers whether it switched.
-const switchVersion = (sql: SQL, parser: HarnessParser): Promise<boolean> =>
-  sql.begin(async (tx) => {
-    await tx`SELECT pg_advisory_xact_lock(hashtext(${`heimdall-insight-${parser.harness}`}))`;
-    const [row]: { version: number }[] = await tx`
-      SELECT version FROM current_parsers WHERE harness = ${parser.harness}
-    `;
-    if (row?.version === parser.version || (await pendingCount(tx, parser)) > 0) {
-      return false;
-    }
-    await tx`
-      INSERT INTO current_parsers (harness, version) VALUES (${parser.harness}, ${parser.version})
-      ON CONFLICT (harness) DO UPDATE SET version = excluded.version
-    `;
-    return true;
-  });
+// Switches the views to `parser`'s version once it has caught up, in one
+// statement, and answers whether it switched. A first version has caught up
+// when no generation is pending for it. A rebuild has caught up when it has
+// read every generation at least as far as the current version has, unless it
+// failed there, so uploads that land during the rebuild, which the current
+// version has not read either, never hold the switch back. The current
+// version only moves forward, so two Hubs cannot switch back and forth.
+const switchVersion = async (sql: SQL, parser: HarnessParser): Promise<boolean> => {
+  const switched: unknown[] = await sql`
+    WITH cur AS (SELECT version FROM current_parsers WHERE harness = ${parser.harness})
+    INSERT INTO current_parsers (harness, version)
+    SELECT ${parser.harness}, ${parser.version}
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM transcript_generations g
+      JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
+      LEFT JOIN parse_progress n
+        ON n.harness = h.harness AND n.parser_version = ${parser.version} AND n.generation = g.id
+      LEFT JOIN parse_progress o
+        ON o.harness = h.harness AND o.parser_version = (SELECT version FROM cur)
+       AND o.generation = g.id
+      WHERE h.harness = ${parser.harness} AND g.deleted_at IS NULL
+        AND n.failed_at IS NULL AND (n.generation IS NULL OR n.held_seen < g.held)
+        AND (NOT EXISTS (SELECT 1 FROM cur)
+             OR (o.failed_at IS NULL AND o.generation IS NOT NULL
+                 AND (n.generation IS NULL OR n.held_seen < o.held_seen)))
+    )
+    ON CONFLICT (harness) DO UPDATE SET version = excluded.version
+    WHERE current_parsers.version < excluded.version
+    RETURNING version
+  `;
+  return switched.length > 0;
+};
 
-// Deletes the rows of `parser`'s Harness written by a version that is neither
-// current nor `parser`'s own, such as the version a switch replaced. Progress
-// rows say whether there are any, so a run with none scans no facts.
-const dropStaleVersions = (sql: SQL, parser: HarnessParser) =>
-  sql.begin(async (tx) => {
-    const [row]: { version: number }[] = await tx`
-      SELECT version FROM current_parsers WHERE harness = ${parser.harness}
-    `;
-    const current = row?.version ?? parser.version;
-    const stale: unknown[] = await tx`
-      SELECT 1 FROM parse_progress
-      WHERE harness = ${parser.harness}
-        AND parser_version <> ${parser.version} AND parser_version <> ${current}
-      LIMIT 1
-    `;
-    if (stale.length === 0) {
+// Deletes up to `rows` rows from each table of `harness`'s versions earlier
+// than its current one, such as the version a switch replaced. Progress goes
+// last, once no earlier fact is left, so it says whether any remain and a run
+// with none scans no facts. A version later than the current one is another
+// Hub's rebuild, and stays.
+const dropEarlierVersions = async (
+  sql: SQL,
+  { harness, rows }: { harness: string; rows: number },
+) => {
+  const current = await currentVersion(sql, harness);
+  if (current === undefined) {
+    return;
+  }
+  const stale: unknown[] = await sql`
+    SELECT 1 FROM parse_progress WHERE harness = ${harness} AND parser_version < ${current} LIMIT 1
+  `;
+  if (stale.length === 0) {
+    return;
+  }
+  for (const table of PROJECTED_TABLES) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time, progress last.
+    const deleted = await sql.unsafe(
+      `DELETE FROM ${table} WHERE ctid IN (
+         SELECT ctid FROM ${table} WHERE harness = $1 AND parser_version < $2 LIMIT $3
+       )`,
+      [harness, current, rows],
+    );
+    if (deleted.count >= rows) {
       return;
     }
-    await tx.unsafe(`SET LOCAL statement_timeout = '${CLEANUP_TIMEOUT}'`);
-    for (const table of PROJECTED_TABLES) {
-      // oxlint-disable-next-line no-await-in-loop -- one table at a time, in one transaction.
-      await tx.unsafe(
-        `DELETE FROM ${table} WHERE harness = $1 AND parser_version <> $2 AND parser_version <> $3`,
-        [parser.harness, parser.version, current],
-      );
-    }
-  });
+  }
+};
 
 const PROJECTED_TABLES = [
   'projected_requests',
   'projected_tool_calls',
   'projected_subagents',
   'projected_sessions',
+  'projected_holders',
   'parse_progress',
 ] as const;
 

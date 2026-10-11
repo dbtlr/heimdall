@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { SQL } from 'bun';
+import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
 import { projectTranscripts } from './projection.ts';
@@ -45,6 +45,9 @@ const COST = {
     outputTokens: 167,
   },
 } satisfies Record<string, ModelUsage>;
+
+// A second Session.
+const OTHER = '0b1c2d3e-0000-4000-8000-000000000002';
 
 const SONNET = 'claude-sonnet-5-5';
 const OPUS = 'claude-opus-5-5';
@@ -709,7 +712,6 @@ const settled = async (sql: SQL) => ({
 });
 
 describe('a generation the projection cannot read', () => {
-  const OTHER = '0b1c2d3e-0000-4000-8000-000000000002';
   const sessionOf = (session = SESSION) =>
     jsonl([
       user({ at: at(0), session }),
@@ -956,6 +958,123 @@ describe('a parser version change', () => {
     expect(left?.n).toBe(0);
   });
 
+  // Two Hubs can share a database across an upgrade.
+  test('a Hub with an older parser never switches back, and leaves the newer rows alone', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    await projectAll(h);
+    const before = await totals(h.db.sql, 'session_totals');
+    await projectAll(h, { parsers: [nextVersion] });
+
+    const older = await projectTranscripts(h.db.sql);
+    await projectTranscripts(h.db.sql, { parsers: [nextVersion] });
+    await projectTranscripts(h.db.sql);
+
+    expect(older).toEqual({
+      failed: [],
+      outdated: [{ current: 2, harness: 'claude-code', version: 1 }],
+      pending: 0,
+      switched: [],
+    });
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
+    const versions = await h.db.sql`
+      SELECT DISTINCT parser_version FROM parse_progress ORDER BY parser_version
+    `;
+    expect([...versions]).toEqual([{ parser_version: 2 }]);
+  });
+
+  // The Hub that rebuilds parses only its own version, so the current set
+  // stands still while uploads keep landing on it.
+  test('switches once the new version has caught up with the current one, while uploads keep arriving', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    const live = await upload(h, { content: jsonl([user({ at: at(40) })]), path: mainPath(OTHER) });
+    await projectAll(h);
+    let offset = Buffer.byteLength(jsonl([user({ at: at(40) })]));
+    let line = 0;
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      line += 1;
+      offset = await append(h, live, {
+        content: jsonl([user({ at: at(40 + (line % 20)), session: OTHER })]),
+        offset,
+      });
+    });
+
+    const outcomes = [];
+    for (let run = 0; run < 3; run += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each run picks up where the last stopped.
+      outcomes.push(await projectTranscripts(sql, { parsers: [nextVersion] }));
+    }
+
+    expect(outcomes.every((outcome) => outcome.pending > 0)).toBe(true);
+    expect(outcomes.flatMap((outcome) => outcome.switched)).toEqual([
+      { harness: 'claude-code', version: 2 },
+    ]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2, 2]);
+  });
+
+  test('deletes the earlier version a bounded batch at a time, its progress last', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    await projectAll(h);
+    const earlier = async () => {
+      const rows: { n: number }[] = await h.db.sql`
+        SELECT (SELECT count(*) FROM projected_requests WHERE parser_version = 1)
+             + (SELECT count(*) FROM projected_tool_calls WHERE parser_version = 1)
+             + (SELECT count(*) FROM projected_subagents WHERE parser_version = 1)
+             + (SELECT count(*) FROM projected_sessions WHERE parser_version = 1)
+             + (SELECT count(*) FROM parse_progress WHERE parser_version = 1) AS n
+      `;
+      return Number(rows[0]?.n);
+    };
+    const options = { cleanupRows: 2, parsers: [nextVersion] };
+    const before = await earlier();
+
+    const switching = await projectTranscripts(h.db.sql, options);
+    const after = [await earlier()];
+    for (let run = 0; run < 30 && after.at(-1) !== 0; run += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one bounded cleanup per run.
+      await projectTranscripts(h.db.sql, options);
+      // oxlint-disable-next-line no-await-in-loop -- counted after each run.
+      after.push(await earlier());
+    }
+
+    expect(switching.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(after[0]).toBeGreaterThan(0);
+    expect(after[0]).toBeLessThan(before);
+    expect(after.at(-1)).toBe(0);
+  });
+
+  test('a rebuild a restart interrupts resumes, and switches with the same totals', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    await projectAll(h);
+    const before = await totals(h.db.sql, 'session_totals');
+    const stopped = await projectTranscripts(h.db.sql, {
+      budgetBytes: 700,
+      parsers: [nextVersion],
+    });
+    expect(stopped.pending).toBeGreaterThan(0);
+
+    const restarted = new SQL(h.db.url.href);
+    try {
+      await projectAll(
+        { ...h, db: { ...h.db, sql: restarted } },
+        { budgetBytes: 700, parsers: [nextVersion] },
+      );
+    } finally {
+      await restarted.close();
+    }
+
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
+  });
+
   test('reports the switch once the rebuild completes', async () => {
     await using h = await startHub();
     await nameSources(h);
@@ -966,6 +1085,7 @@ describe('a parser version change', () => {
 
     expect(outcome).toEqual({
       failed: [],
+      outdated: [],
       pending: 0,
       switched: [{ harness: 'claude-code', version: 2 }],
     });
