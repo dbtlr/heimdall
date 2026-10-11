@@ -93,12 +93,13 @@ const invoke = async (argv: string[]) => {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   // Loom sets process.exitCode even for an injected host; keep it off the test runner.
+  // Bun ignores assigning undefined, so an unset code is restored as 0.
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
     code = await app.run({ host: { argv, cwd: repo, env: {}, stderr, stdout } });
   } finally {
-    process.exitCode = runnerExitCode;
+    process.exitCode = runnerExitCode ?? 0;
   }
   stdout.end();
   stderr.end();
