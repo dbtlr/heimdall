@@ -479,7 +479,11 @@ type Generation = { held: number; id: number; path: string; source: string; syst
 // of theirs sees a delete whole or not at all. A switch changes only which
 // version the views read, and a Session a delete hid stays hidden until the
 // version then current has parsed it again; rows of an earlier version are
-// in no view, and deleting them restores nothing a delete removed. The name
+// in no view, and deleting them restores nothing a delete removed. Since
+// cleanup takes no lock, it can deadlock with a delete over the rows of an
+// earlier version, and PostgreSQL aborts one of them (SQLSTATE 40P01). An
+// aborted cleanup loses nothing and is repeated by a later run; an aborted
+// delete tries its transaction again (`deleteTranscripts`). The name
 // is arbitrary; it only has to be the same for every Hub.
 const PROJECTION_LOCK = 'heimdall-session-insight';
 

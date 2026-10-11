@@ -141,22 +141,78 @@ const DELETE_TIMEOUT = '10min';
 
 type Matched = { id: string; stored_bytes: string };
 
+// PostgreSQL's deadlock_detected, which Bun reports in `errno`. It aborts one
+// transaction of the deadlock, and nothing of it commits.
+const DEADLOCK_DETECTED = '40P01';
+
+// How many times a delete tries its transaction when PostgreSQL aborts it for
+// a deadlock, and the wait after the first failure, doubling after each.
+const DELETE_TRIES = 3;
+const DELETE_BACKOFF_MS = 100;
+
+const isDeadlock = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'errno' in error &&
+  error.errno === DEADLOCK_DETECTED;
+
 // Deletes whole generations on purpose, as of `now`, and answers how many it
 // removed and their gzipped size; a dry run only answers. A deleted
 // generation keeps its row, without its content, so its path stays refused
 // once no generation there survives (ADR-0013), and the Session insight derived
 // from it go in the same transaction. Refuses to run without a
 // filter, so nothing deletes every transcript by omission.
+// The projection's cleanup of stale parser versions can deadlock with a
+// delete, and PostgreSQL then aborts one of them. A delete so aborted tries
+// its transaction again, up to three tries with a short backoff, and one that
+// deadlocks every time rejects with the deadlock, having deleted nothing.
+// `sleep` is for tests.
 export const deleteTranscripts = (
   sql: SQL,
-  { dryRun = false, now, ...filter }: TranscriptFilter & { dryRun?: boolean; now: number },
+  {
+    dryRun = false,
+    now,
+    sleep = (ms) => Bun.sleep(ms),
+    ...filter
+  }: TranscriptFilter & { dryRun?: boolean; now: number; sleep?: (ms: number) => Promise<void> },
 ): Promise<Removed> => {
   const { source, system } = filter;
   const before = filter.before === undefined ? null : new Date(filter.before);
   if (before === null && source === undefined && system === undefined) {
     return Promise.reject(new Error('Name a System, a source, or a date to delete before.'));
   }
-  return sql.begin(async (tx) => {
+  return retryOnDeadlock(sleep, () => deleteOnce(sql, { before, dryRun, filter, now }));
+};
+
+const retryOnDeadlock = async <T>(
+  sleep: (ms: number) => Promise<void>,
+  attempt: () => Promise<T>,
+): Promise<T> => {
+  for (let tried = 1; ; tried += 1) {
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- each try follows the failure of the last.
+      return await attempt();
+    } catch (error) {
+      if (!isDeadlock(error) || tried >= DELETE_TRIES) {
+        throw error;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- the backoff is the point.
+      await sleep(DELETE_BACKOFF_MS * 2 ** (tried - 1));
+    }
+  }
+};
+
+// One transaction of `deleteTranscripts`.
+const deleteOnce = (
+  sql: SQL,
+  {
+    before,
+    dryRun,
+    filter: { source, system },
+    now,
+  }: { before: Date | null; dryRun: boolean; filter: TranscriptFilter; now: number },
+): Promise<Removed> =>
+  sql.begin(async (tx) => {
     await tx.unsafe(`SET LOCAL statement_timeout = '${DELETE_TIMEOUT}'`);
     const matching = tx`
       deleted_at IS NULL
@@ -204,7 +260,6 @@ export const deleteTranscripts = (
     await forgetDeletedGenerations(tx);
     return removedOf(marked);
   });
-};
 
 const removedOf = (rows: Matched[]): Removed => ({
   bytes: rows.reduce((sum, row) => sum + Number(row.stored_bytes), 0),
