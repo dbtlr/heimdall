@@ -41,7 +41,9 @@ import type {
 // bounds). A field that names or identifies something holds only a value
 // shaped as one: a misshapen value a fact needs leaves the fact out of a line
 // that is otherwise read, and the line is counted unreadable; any other
-// becomes null.
+// becomes null. A path names its Session, agent, and workflow run by ids
+// held to the same shape: a file whose path names any of them otherwise is
+// misnamed, yields nothing, and is counted.
 
 // Bumping it rebuilds every Claude Code row from the archive (ADR-0014).
 export const CLAUDE_CODE_PARSER_VERSION = 1;
@@ -49,27 +51,32 @@ export const CLAUDE_CODE_PARSER_VERSION = 1;
 export type ClaudeCodeFile =
   | { kind: 'agent-meta'; owner: Owner & { agentId: string }; workflowRun: string | null }
   | { kind: 'conversation'; owner: Owner }
+  | { kind: 'misnamed' }
   | { kind: 'other' };
 
 const MAIN = /^projects\/[^/]+\/(?<session>[^/]+)\.jsonl$/u;
 const AGENT =
   /^projects\/[^/]+\/(?<session>[^/]+)\/subagents\/(?:workflows\/(?<run>[^/]+)\/)?agent-(?<agent>[^/]+?)\.(?<ext>jsonl|meta\.json)$/u;
 
+// Whether a name a path gives is an id, as a line's id fields must be.
+const isId = (name: string) => name.length <= MAX_ID_LENGTH && isShaped(name, 'id');
+
 // What a file in a Claude Code source holds, from its path within the source.
 // Tool outputs, workflow journals, and memory hold no conversation.
 export const classifyClaudeCodePath = (path: string): ClaudeCodeFile => {
   const main = MAIN.exec(path)?.groups;
   if (main?.session !== undefined) {
-    return main.session.length > MAX_ID_LENGTH
-      ? { kind: 'other' }
-      : { kind: 'conversation', owner: { agentId: null, sessionId: main.session } };
+    return isId(main.session)
+      ? { kind: 'conversation', owner: { agentId: null, sessionId: main.session } }
+      : { kind: 'misnamed' };
   }
   const agent = AGENT.exec(path)?.groups;
   if (agent?.session === undefined || agent.agent === undefined) {
     return { kind: 'other' };
   }
-  if ([agent.session, agent.agent, agent.run ?? ''].some((id) => id.length > MAX_ID_LENGTH)) {
-    return { kind: 'other' };
+  const names = [agent.session, agent.agent, ...(agent.run === undefined ? [] : [agent.run])];
+  if (!names.every(isId)) {
+    return { kind: 'misnamed' };
   }
   const owner = { agentId: agent.agent, sessionId: agent.session };
   return agent.ext === 'jsonl'
@@ -428,6 +435,10 @@ const MAX_DEPTH = 1000;
 // whole, from its first byte, once the Hub holds all of it.
 export const claudeCodeParser: HarnessParser = {
   harness: 'claude-code',
+  holds: (path) => {
+    const { kind } = classifyClaudeCodePath(path);
+    return kind === 'other' || kind === 'misnamed' ? kind : 'facts';
+  },
   parse: ({ complete, content, factLimit, offset, path }) => {
     const file = classifyClaudeCodePath(path);
     const nothing = {
@@ -462,6 +473,7 @@ export const claudeCodeParser: HarnessParser = {
           unreadableLines: whole && meta === undefined ? 1 : 0,
         };
       }
+      case 'misnamed':
       case 'other': {
         return {
           ...nothing,
@@ -476,6 +488,5 @@ export const claudeCodeParser: HarnessParser = {
       }
     }
   },
-  reads: (path) => classifyClaudeCodePath(path).kind !== 'other',
   version: CLAUDE_CODE_PARSER_VERSION,
 };

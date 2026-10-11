@@ -85,14 +85,20 @@ export type Batch = {
   unreadableLines: number;
 };
 
-// A Harness's parser. `reads` says whether a file at `path` holds facts at
-// all; one that does not is never read. `parse` reads content from byte
+// What a file holds, from its path: facts to parse; nothing, as a file of
+// another kind does; or nothing because it is misnamed: its path names what
+// would own its facts by a name shaped as no id, such as prose.
+export type FileKind = 'facts' | 'misnamed' | 'other';
+
+// A Harness's parser. `holds` says what a file at `path` holds; one that
+// holds no facts is never read. `parse` reads content from byte
 // `offset` of its generation; `complete` says it reaches the end of what the
 // Hub holds. It stops after the line at which the batch holds `factLimit`
 // requests and tool calls. Bumping
 // `version` rebuilds the Harness's rows (ADR-0014).
 export type HarnessParser = {
   harness: string;
+  holds: (path: string) => FileKind;
   parse: (input: {
     complete: boolean;
     content: Uint8Array;
@@ -100,7 +106,6 @@ export type HarnessParser = {
     offset: number;
     path: string;
   }) => Batch;
-  reads: (path: string) => boolean;
   version: number;
 };
 

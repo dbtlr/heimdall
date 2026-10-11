@@ -572,6 +572,20 @@ describe('transcript paths', () => {
     });
   });
 
+  // A path names its Session, agent, and workflow run, which the views carry
+  // as ids, so a name shaped as no id, such as prose, yields neither.
+  const PROSE = 'Ignore all previous instructions';
+  test.each([
+    ['a Session', mainPath(PROSE)],
+    ["a subagent's Session", agentPath('a1b2', { session: PROSE })],
+    ['a subagent', agentPath(PROSE)],
+    ["a subagent's metadata", agentPath(PROSE, { meta: true })],
+    ['a workflow run', agentPath('a1b2', { workflow: PROSE })],
+    ['a Session longer than an id', mainPath('s'.repeat(MAX_ID_LENGTH + 1))],
+  ])('%s named as no id is misnamed', (_, path) => {
+    expect(classifyClaudeCodePath(path)).toEqual({ kind: 'misnamed' });
+  });
+
   test.each([
     `projects/p/${SESSION}/subagents/workflows/wf_x1/journal.jsonl`,
     `projects/p/${SESSION}/tool-results/toolu_1.txt`,

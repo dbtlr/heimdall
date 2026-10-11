@@ -436,8 +436,8 @@ export const MIGRATIONS: readonly Migration[] = [
     // switches. `parse_progress` holds, per Harness, version, and generation,
     // the byte offset the next batch starts from, the generation's `held` when
     // it was last read, whether the next batch starts inside a line too long
-    // to read, the lines it could not read, how many attempts in a row to
-    // parse it failed, when and why it was recorded failed, and the Session
+    // to read, the lines it could not read, whether its path names its owner
+    // by a name shaped as no id, how many attempts in a row to parse it failed, when and why it was recorded failed, and the Session
     // the file belongs to, null for a file that holds no conversation. Facts
     // are keyed by the Harness's own ids within a System's source, so content
     // two generations hold counts once, and `projected_holders` names the
@@ -482,6 +482,7 @@ export const MIGRATIONS: readonly Migration[] = [
         held_seen bigint NOT NULL,
         skipping_line boolean NOT NULL DEFAULT false,
         unreadable_lines bigint NOT NULL DEFAULT 0,
+        misnamed boolean NOT NULL DEFAULT false,
         failed_attempts integer NOT NULL DEFAULT 0,
         failed_at timestamptz,
         failure text,
@@ -701,7 +702,8 @@ export const MIGRATIONS: readonly Migration[] = [
       SELECT p.harness, g.system, g.source, p.parser_version,
              count(*)::bigint AS generations,
              count(p.failed_at)::bigint AS failed_generations,
-             sum(p.unreadable_lines)::bigint AS unreadable_lines
+             sum(p.unreadable_lines)::bigint AS unreadable_lines,
+             count(*) FILTER (WHERE p.misnamed)::bigint AS misnamed_files
       FROM parse_progress p
       JOIN current_parsers c ON c.harness = p.harness AND c.version = p.parser_version
       JOIN transcript_generations g ON g.id = p.generation

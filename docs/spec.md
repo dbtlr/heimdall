@@ -323,7 +323,7 @@ A line that breaks a bound, or is not JSON, yields nothing and is counted unread
 A field that names or identifies something holds only a value shaped as one, so no prose a line carries there reaches the views:
 
 - A model, a tool, an MCP server, an agent type, a workflow phase, or a stop reason is a letter or digit followed by letters, digits, and `:_./@+-`.
-- An id, such as a response's, a tool call's, a line's `uuid`, a subagent's spawning tool call, or its parent agent, is a letter or digit followed by letters, digits, and `_.:-`.
+- An id, such as a response's, a tool call's, a line's `uuid`, a subagent's spawning tool call, or its parent agent, is a letter or digit followed by letters, digits, and `_.:-`. So are the Session id, agent id, and workflow run a file's path names. A file whose path names any of them otherwise is misnamed: it yields no Session or subagent, and `insight.parse_status` counts it.
 - A Harness version is a digit followed by letters, digits, and `.+-`.
 - A command or a skill is shaped as the [Claude Code](#claude-code) section describes.
 
@@ -365,7 +365,7 @@ Every view but `insight.parse_status` starts with the Session's key: `harness`, 
 | `insight.tool_calls` | tool call | `agent_id`; `request_id`, null for a command; `call_id`; `at`; `kind`, `tool` or `command`; `name`; `mcp_server`; `skill`; and the locator: `path`, `generation`, `byte_offset`. |
 | `insight.session_totals` | Session | Totals over the Session's requests, its subagents' included: `requests`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`. A count no request recorded, reasoning or a cache write split, is null; the others are zero for a Session with no requests. |
 | `insight.main_conversation_totals` | Session | The same totals over the main conversation's requests alone. |
-| `insight.parse_status` | Harness, System, and source | `harness`, `system`, `source`, and `parser_version`; `generations` the current version has read; `failed_generations`, those it recorded failed; `unreadable_lines`. Counts only, never what a line or a failure said. |
+| `insight.parse_status` | Harness, System, and source | `harness`, `system`, `source`, and `parser_version`; `generations` the current version has read; `failed_generations`, those it recorded failed; `unreadable_lines`; `misnamed_files`, files whose path names a Session, agent, or workflow run by no id, which yield nothing. Counts only, never what a line or a failure said. |
 
 ## Trust
 

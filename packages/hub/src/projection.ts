@@ -345,8 +345,9 @@ type Step = { kind: 'busy' } | { kind: 'done' } | { kind: 'more'; next: Progress
 // every chunk it fetches from `budget`. A read asks for what is left of the
 // budget, and never more than `READ_CAP_BYTES`, unless no whole line fits in
 // that: then it reads again from the same byte, up to the cap, so a run
-// passes its budget only to finish the line that crosses it. A file the
-// parser does not read is marked parsed through what the Hub holds, unread.
+// passes its budget only to finish the line that crosses it. A file that
+// holds no facts is marked parsed through what the Hub holds, unread, and
+// counted when it is misnamed.
 // A line longer than the cap is counted unreadable and skipped a read at a
 // time, so it is never held whole.
 const parseBatch = async (
@@ -362,7 +363,11 @@ const parseBatch = async (
   const { held, path } = generation;
   const store = async (
     batch: Batch,
-    { complete, skipping }: { complete: boolean; skipping: boolean },
+    {
+      complete,
+      misnamed = false,
+      skipping,
+    }: { complete: boolean; misnamed?: boolean; skipping: boolean },
   ): Promise<Step> => {
     // Content read only in part, or only up to a line too long to read or the
     // fact limit, stays pending.
@@ -372,6 +377,7 @@ const parseBatch = async (
       expected: progress.parsedThrough,
       generation,
       heldSeen,
+      misnamed,
       parser,
       skipping,
     });
@@ -382,8 +388,12 @@ const parseBatch = async (
       ? { kind: 'more', next: { parsedThrough: batch.parsedThrough, skipping } }
       : { kind: 'done' };
   };
-  if (!parser.reads(path)) {
-    return store({ ...EMPTY, parsedThrough: held }, { complete: true, skipping: false });
+  const holds = parser.holds(path);
+  if (holds !== 'facts') {
+    return store(
+      { ...EMPTY, parsedThrough: held },
+      { complete: true, misnamed: holds === 'misnamed', skipping: false },
+    );
   }
   for (let limit = Math.min(budget.left, READ_CAP_BYTES); ; limit = READ_CAP_BYTES) {
     // oxlint-disable-next-line no-await-in-loop -- reads again only when no line fits.
@@ -478,7 +488,8 @@ export const holdProjection = async (tx: SQL): Promise<void> => {
 // batch was read from, or from no row at all when `expected` is null. When the
 // progress changed under the run, as when a delete reset its Session, nothing
 // of the batch is stored, and the next run reads again from the progress as it
-// now stands. Answers `busy` when a delete was under way, so nothing was
+// now stands. `misnamed` marks a file whose path names its owner by a name
+// shaped as no id. Answers `busy` when a delete was under way, so nothing was
 // stored; `stale` when the progress had moved; and `stored`.
 const storeBatch = (
   sql: SQL,
@@ -487,6 +498,7 @@ const storeBatch = (
     expected,
     generation,
     heldSeen,
+    misnamed,
     parser,
     skipping,
   }: {
@@ -494,6 +506,7 @@ const storeBatch = (
     expected: number | null;
     generation: Generation;
     heldSeen: number;
+    misnamed: boolean;
     parser: HarnessParser;
     skipping: boolean;
   },
@@ -507,11 +520,11 @@ const storeBatch = (
         ? await tx`
             INSERT INTO parse_progress (
               generation, parser_version, harness, session_id, parsed_through, held_seen,
-              skipping_line, unreadable_lines
+              skipping_line, unreadable_lines, misnamed
             )
             SELECT ${generation.id}::bigint, ${parser.version}, ${parser.harness},
                    ${batch.owner?.sessionId ?? null}, ${batch.parsedThrough}, ${heldSeen},
-                   ${skipping}, ${batch.unreadableLines}
+                   ${skipping}, ${batch.unreadableLines}, ${misnamed}
             WHERE EXISTS (
               SELECT 1 FROM transcript_generations
               WHERE id = ${generation.id}::bigint AND deleted_at IS NULL
@@ -526,6 +539,7 @@ const storeBatch = (
               held_seen = ${heldSeen},
               skipping_line = ${skipping},
               unreadable_lines = unreadable_lines + ${batch.unreadableLines},
+              misnamed = ${misnamed},
               failed_attempts = 0
             WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
               AND generation = ${generation.id}::bigint AND parsed_through = ${expected}
