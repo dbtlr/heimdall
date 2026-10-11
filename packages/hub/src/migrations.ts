@@ -354,11 +354,24 @@ export const MIGRATIONS: readonly Migration[] = [
 // arbitrary; it only has to be the same for every Hub.
 const MIGRATION_LOCK = 'heimdall-migrations';
 
+// How long a migration waits for a lock another session holds before it gives
+// up with lock_not_available (SQLSTATE 55P03). The statement timeout would
+// otherwise end the wait after 30 seconds with a message that names no lock.
+// `migrateWhenFree` retries after it.
+export const MIGRATION_LOCK_TIMEOUT_MS = 5000;
+
 // Brings the database to the latest version in one transaction and answers the
-// versions it applied, oldest first. Tests pass `migrations` to stop at an
-// earlier version.
-export const migrate = (sql: SQL, migrations = MIGRATIONS): Promise<number[]> =>
+// versions it applied, oldest first. A lock held by another session, such as a
+// backup's, fails the run with lock_not_available after `lockTimeoutMs`;
+// the advisory lock that serializes Hubs counts too. Tests pass `migrations` to
+// stop at an earlier version, or to add a pending one.
+export const migrate = (
+  sql: SQL,
+  migrations = MIGRATIONS,
+  { lockTimeoutMs = MIGRATION_LOCK_TIMEOUT_MS }: { lockTimeoutMs?: number } = {},
+): Promise<number[]> =>
   sql.begin(async (tx) => {
+    await tx`SELECT set_config('lock_timeout', ${`${String(lockTimeoutMs)}ms`}, true)`;
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     await tx`
       CREATE TABLE IF NOT EXISTS schema_migrations (

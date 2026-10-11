@@ -6,9 +6,15 @@ import { issueCode, showCode, unpair as unpairSystem } from './pairing.ts';
 
 // `heimdall-hub pair <system>`: issues a Pairing code for the System, replacing
 // any code it held, and says how to redeem it (ADR-0009).
-export const pairAction: ActionHandler<typeof pair> = async ({ args, options, out, style }) => {
+export const pairAction: ActionHandler<typeof pair> = async ({
+  args,
+  options,
+  out,
+  signal,
+  style,
+}) => {
   const { system } = args;
-  const issued = await withDatabase(options.database, { out, style }, (sql) =>
+  const issued = await withDatabase(options.database, { out, signal, style }, (sql) =>
     issueCode(sql, { now: Date.now(), system }),
   );
   const shown = showCode(issued.code);
@@ -23,10 +29,18 @@ export const pairAction: ActionHandler<typeof pair> = async ({ args, options, ou
 // `heimdall-hub unpair <system>`: revokes the System's token and withdraws its
 // pending code. Its history stays. A System with neither is an error, so a
 // mistyped name does not pass for a revocation.
-export const unpairAction: ActionHandler<typeof unpair> = async ({ args, options, out, style }) => {
+export const unpairAction: ActionHandler<typeof unpair> = async ({
+  args,
+  options,
+  out,
+  signal,
+  style,
+}) => {
   const { system } = args;
-  const { revoked, withdrawn } = await withDatabase(options.database, { out, style }, (sql) =>
-    unpairSystem(sql, system),
+  const { revoked, withdrawn } = await withDatabase(
+    options.database,
+    { out, signal, style },
+    (sql) => unpairSystem(sql, system),
   );
   if (revoked) {
     await out.print(

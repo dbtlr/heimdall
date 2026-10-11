@@ -27,3 +27,27 @@ test('concurrent migrations apply each version once', async () => {
     MIGRATIONS.map((m) => m.version),
   );
 });
+
+test('migrate fails with lock_not_available, not a statement timeout, when a lock stays held', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  const session = await db.sql.reserve();
+  await session.unsafe('BEGIN');
+  await session.unsafe('LOCK TABLE systems IN ACCESS SHARE MODE');
+
+  const pending = [
+    ...MIGRATIONS,
+    { sql: 'ALTER TABLE systems ADD COLUMN note text', version: 9999 },
+  ];
+  const started = Date.now();
+  const failure = await migrate(db.sql, pending, { lockTimeoutMs: 100 }).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+
+  expect(failure).toMatchObject({ errno: '55P03' });
+  expect(Date.now() - started).toBeLessThan(5000);
+  await session.unsafe('ROLLBACK');
+  session.release();
+  expect(await migrate(db.sql, pending)).toEqual([9999]);
+});
