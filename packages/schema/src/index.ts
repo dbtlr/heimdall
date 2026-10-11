@@ -87,3 +87,9 @@ export type {
   ServiceCheckKind,
   ServiceCheckState,
 } from './checks-section.ts';
+export {
+  HarnessesSectionSchema,
+  MAX_HARNESS_INSTALLS,
+  UNKNOWN_HARNESS_VERSION,
+} from './harnesses-section.ts';
+export type { HarnessesSection, HarnessInstall } from './harnesses-section.ts';
