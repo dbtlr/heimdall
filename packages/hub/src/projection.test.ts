@@ -13,7 +13,9 @@ import {
   projectionNotes,
   projectTranscripts,
 } from './projection.ts';
+import type { Projected } from './projection.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
+import type { HarnessParser } from './session-insight.ts';
 import {
   agentMeta,
   agentPath,
@@ -1280,6 +1282,44 @@ describe('a generation the projection cannot read', () => {
     });
   });
 
+  // Only attempts in a row count: a batch that stores between them starts
+  // the count again.
+  test('whose parser throws three runs in a row after a run that stored is recorded failed only then', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const lines = jsonl(
+      Array.from({ length: 6 }, (_, i) => assistant({ at: at(i), id: `msg_${String(i)}` })),
+    );
+    const flaky = await upload(h, { content: lines, path: mainPath() });
+    await h.db.sql`
+      UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 5000)}
+      WHERE id = ${flaky}::bigint
+    `;
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    let run = 0;
+    const failing = new Set([1, 2, 4, 5, 6]);
+    const buggy = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        if (input.path === mainPath() && failing.has(run)) {
+          throw new TypeError('Synthetic parser bug.');
+        }
+        return claudeCodeParser.parse(input);
+      },
+    };
+    // A budget of a line and a half, so a run that stores reads one line.
+    const budgetBytes = Math.ceil((Buffer.byteLength(lines) / 6) * 1.5);
+
+    const failed = [];
+    for (run = 1; run <= 6; run += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each run counts one attempt.
+      const outcome = await projectTranscripts(h.db.sql, { budgetBytes, parsers: [buggy] });
+      failed.push(outcome.failed.length);
+    }
+
+    expect(failed).toEqual([0, 0, 0, 0, 0, 1]);
+  });
+
   test('whose batch outlasts the statement timeout on every run is recorded failed after three', async () => {
     await using h = await startHub();
     await nameSources(h);
@@ -1655,6 +1695,40 @@ describe('deriving a Session again after a delete', () => {
   });
 });
 
+// A run that starts while a delete is open, before it commits, writes
+// nothing the delete removes and waits for none of its locks: the delete
+// waits for the run, so a run that waited would never end. The run's
+// connection gives up on a lock after a second, so one that waits fails.
+const runDuringDelete = async (h: Hub, parsers?: HarnessParser[]) => {
+  await upload(h, {
+    content: jsonl([user({ at: at(0) }), assistant({ at: at(1), id: 'msg_main' })]),
+    path: mainPath(),
+  });
+  const first = jsonl([assistant({ agent: 'a1', at: at(2), id: 'msg_old' })]);
+  const subagent = await upload(h, { content: first, path: agentPath('a1') });
+  await projectAll(h);
+  await append(h, subagent, {
+    content: jsonl([assistant({ agent: 'a1', at: at(3), id: 'msg_new' })]),
+    offset: Buffer.byteLength(first),
+  });
+  await h.db.sql`
+    UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 86_400_000)}
+    WHERE id = ${subagent}::bigint
+  `;
+  const impatient = new SQL({ connection: { lock_timeout: 1000 }, url: h.db.url.href });
+  let during: Promise<Projected> | undefined;
+  const sql = beforeEachCommit(h.db.sql, async () => {
+    during ??= projectTranscripts(impatient, parsers === undefined ? {} : { parsers });
+    await during;
+  });
+  try {
+    const removed = await deleteTranscripts(sql, { before: NOW - 3_600_000, now: NOW });
+    return { removed, run: await during, subagent };
+  } finally {
+    await impatient.close();
+  }
+};
+
 describe('deleting transcripts while a batch is read', () => {
   // A delete resets the progress of every generation of the Sessions it
   // touches, so a batch read before it from further on must not be stored.
@@ -1738,6 +1812,41 @@ describe('deleting transcripts while a batch is read', () => {
     `;
     expect([...left]).toEqual([]);
   });
+
+  test('that a run meets while it is open is left to commit, and the run stores nothing', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+
+    const { removed, run, subagent } = await runDuringDelete(h);
+    await projectAll(h);
+
+    expect(removed.generations).toBe(1);
+    expect(run?.failed).toEqual([]);
+    expect((await requests(h.db.sql)).map((r) => r.request_id)).toEqual(['msg_main']);
+    const left = await h.db.sql`
+      SELECT generation FROM parse_progress WHERE generation = ${subagent}::bigint
+    `;
+    expect([...left]).toEqual([]);
+  }, 30_000);
+
+  test('that a run meets while it is open is left to commit, and the run counts no failed attempt', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const buggy = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        if (input.offset > 0) {
+          throw new TypeError('Synthetic parser bug.');
+        }
+        return claudeCodeParser.parse(input);
+      },
+    };
+
+    const { removed, run } = await runDuringDelete(h, [buggy]);
+
+    expect(removed.generations).toBe(1);
+    expect(run?.failed).toEqual([]);
+  }, 30_000);
 
   // A batch read before a delete that removed its generation stores nothing,
   // even before the next run tidies up.
