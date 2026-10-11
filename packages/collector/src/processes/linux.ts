@@ -1,7 +1,7 @@
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { basename } from 'node:path';
 
-import { HARNESS_NAMES, HARNESSES } from '../harnesses.ts';
+import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import { readCommand } from '../subprocess.ts';
 import type { ProcessEntry, ProcessReader } from './table.ts';
 
@@ -32,7 +32,9 @@ const CSTIME = 14;
 const START_TIME = 19;
 const RSS = 21;
 
-const CANDIDATE_NAMES = new Set(HARNESS_NAMES.flatMap((h) => HARNESSES[h].process.names));
+// The Harness whose process name a command name is, if any.
+const harnessNamed = (comm: string) =>
+  HARNESS_NAMES.find((harness) => HARNESSES[harness].process.names.includes(comm));
 
 // The process behind a stat line, or undefined when the line is not one. The
 // command name is in parentheses and may hold spaces and parentheses itself,
@@ -73,9 +75,12 @@ const parseStat = (text: string) => {
 //
 // CPU time is user plus system for the process and for the children it has
 // waited for, so the time of a descendant that has exited still counts toward
-// its parent's tree. A process is named by its executable's file name when the
-// link can be read, so a script run as `claude` by `node` is `node`; the
-// command name stands in when it cannot.
+// its parent's tree. A process whose command name is a Harness's keeps that
+// name when its executable confirms it (see `isHarnessExecutable`), such as
+// Claude Code's native install, whose executable is named by its version. One
+// whose executable does not, such as a script run as `claude` by `node`, is
+// named by the executable's file name, `node`. The command name stands in when
+// the link cannot be read.
 export const createLinuxReader = ({
   clockTicks,
   fs = nodeProcFs,
@@ -88,13 +93,13 @@ export const createLinuxReader = ({
   root?: string;
 }): ProcessReader => {
   const nameOf = async (pid: number, comm: string) => {
-    if (!CANDIDATE_NAMES.has(comm)) {
+    const harness = harnessNamed(comm);
+    if (harness === undefined) {
       return comm;
     }
     try {
-      return basename(
-        (await fs.readLink(`${root}/${String(pid)}/exe`)).replace(/ \(deleted\)$/u, ''),
-      );
+      const exe = (await fs.readLink(`${root}/${String(pid)}/exe`)).replace(/ \(deleted\)$/u, '');
+      return isHarnessExecutable(harness, exe) ? comm : basename(exe);
     } catch {
       return comm;
     }

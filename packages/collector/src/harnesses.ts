@@ -67,3 +67,19 @@ export const HARNESSES: Record<
 };
 
 export const isHarness = (value: string): value is Harness => Object.hasOwn(HARNESSES, value);
+
+// Whether an executable at `path` is one of `harness`'s: its file name is one
+// of the Harness's process names, or it is an entry of the Harness's native
+// install directory, whose executables the native installer names by version.
+// The native directory is matched by its tail, so it is found under any
+// account's data directory.
+export const isHarnessExecutable = (harness: Harness, path: string) => {
+  const { installs, process } = HARNESSES[harness];
+  const slash = path.lastIndexOf('/');
+  const name = path.slice(slash + 1);
+  const directory = path.slice(0, Math.max(slash, 0));
+  return (
+    process.names.includes(name) ||
+    (installs.native !== undefined && directory.endsWith(`/${installs.native}`))
+  );
+};

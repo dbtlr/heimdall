@@ -141,6 +141,28 @@ test("a process's name is its executable's file name, and its command name when 
   expect(names).toEqual(['claude', 'codex', 'codex', 'node', 'sleep']);
 });
 
+test("Claude Code's native install, whose executable is named by its version, is named by its command name", async () => {
+  const { fs } = fixtureFs({
+    1: {
+      exe: '/home/operator/.local/share/claude/versions/2.1.296',
+      stat: stat(1, 'claude', { ppid: 0 }),
+    },
+    2: { exe: '/srv/data/claude/versions/2.1.300 (deleted)', stat: stat(2, 'claude', { ppid: 0 }) },
+    3: {
+      exe: '/home/operator/.local/share/other/versions/2.1.296',
+      stat: stat(3, 'claude', { ppid: 0 }),
+    },
+    4: {
+      exe: '/home/operator/.local/share/claude/versions/2.1.296',
+      stat: stat(4, 'codex', { ppid: 0 }),
+    },
+  });
+
+  const names = (await readerOf(fs).table()).map((p) => p.name);
+
+  expect(names).toEqual(['claude', 'claude', '2.1.296', '2.1.296']);
+});
+
 test('a process that vanishes or cannot be read is left out, and so is a non-process entry', async () => {
   const { fs } = fixtureFs({
     1: { stat: stat(1, 'init', { ppid: 0 }) },
