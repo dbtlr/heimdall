@@ -42,7 +42,7 @@ const readSmallFile = async (path: string) => {
     }
     // A regular file answers a read of this size in one piece, or all of it.
     const buffer = Buffer.alloc(MAX_TEXT_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
     if (bytesRead > MAX_TEXT_BYTES) {
       throw new Error(`larger than ${String(MAX_TEXT_BYTES)} bytes`);
     }
