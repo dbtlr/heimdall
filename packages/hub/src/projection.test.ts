@@ -643,6 +643,42 @@ describe('parsing as transcripts grow', () => {
     expect(await calls(true)).toEqual(whole);
   });
 
+  // Claude Code can write a partial line after the final one, and a later
+  // batch must not undo the final usage.
+  test('a partial line read after the final one leaves the final usage', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([assistant({ at: at(1), id: 'msg_1', usage: { input: 3, output: 90 } })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+
+    await append(h, generation, {
+      content: jsonl([assistant({ at: at(2), id: 'msg_1', stop: null, usage: { output: 1 } })]),
+      offset: Buffer.byteLength(first),
+    });
+    await projectAll(h);
+
+    expect(await requests(h.db.sql)).toEqual([
+      expect.objectContaining({ output_tokens: 90, stop_reason: 'end_turn' }),
+    ]);
+  });
+
+  test('a Session ends where its later batch does when two lines share a moment', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([user({ at: at(0), cwd: '/w/a' }), user({ at: at(5), cwd: '/w/b' })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+
+    await append(h, generation, {
+      content: jsonl([user({ at: at(5), cwd: '/w/c' })]),
+      offset: Buffer.byteLength(first),
+    });
+    await projectAll(h);
+
+    expect(await sessions(h.db.sql)).toEqual([expect.objectContaining({ last_cwd: '/w/c' })]);
+  });
+
   // A line past the cap is skipped as it is read, never held whole.
   test.each([
     ['in one read', PARSE_BUDGET_BYTES],
@@ -827,12 +863,15 @@ describe('a generation the projection cannot read', () => {
     await damage(h.db.sql, damaged);
 
     await projectAll(h);
+    const again = await projectTranscripts(h.db.sql);
 
     expect(await settled(h.db.sql)).toEqual({
       requests: [`msg_${OTHER}`],
       sessions: [OTHER],
       status: [{ failed_generations: 1, generations: 2, unreadable_lines: 0 }],
     });
+    // A failed generation is not read again until the next version.
+    expect(again.failed).toEqual([]);
   });
 
   test('that the database refuses to store is recorded failed, and the views switch without it', async () => {
@@ -1227,6 +1266,25 @@ describe('a parser version change', () => {
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
   });
 
+  // Another Hub can switch while this one's run is under way.
+  test('a Hub that finishes its first set after a newer one switched leaves the newer current', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: MAIN, path: mainPath() });
+    let newerRan = false;
+    const sql = beforeEachTransaction(h.db.sql, async () => {
+      if (!newerRan) {
+        newerRan = true;
+        await projectAll(h, { parsers: [nextVersion] });
+      }
+    });
+
+    const older = await projectTranscripts(sql);
+
+    expect(older.switched).toEqual([]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+  });
+
   test('reports the switch once the rebuild completes', async () => {
     await using h = await startHub();
     await nameSources(h);
@@ -1256,6 +1314,42 @@ describe('the insight views', () => {
     expect(used).toEqual([]);
   });
 
+  // Rows another parser version wrote, as during a rebuild, stay out of every
+  // view, its joins included.
+  test("show only the current version's rows", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    await projectAll(h);
+    const shown = async () => ({
+      calls: [...(await h.db.sql`SELECT * FROM insight.tool_calls ORDER BY call_id`)],
+      requests: await requests(h.db.sql),
+      sessions: await sessions(h.db.sql),
+      subagents: [...(await h.db.sql`SELECT * FROM insight.subagents ORDER BY agent_id`)],
+      totals: await totals(h.db.sql, 'session_totals'),
+    });
+    const before = await shown();
+
+    for (const table of [
+      'projected_sessions',
+      'projected_subagents',
+      'projected_requests',
+      'projected_tool_calls',
+      'parse_progress',
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+      await h.db.sql.unsafe(`
+        CREATE TEMPORARY TABLE copied AS SELECT * FROM ${table};
+        UPDATE copied SET parser_version = 2;
+        INSERT INTO ${table} SELECT * FROM copied;
+        DROP TABLE copied;
+      `);
+    }
+    await h.db.sql`UPDATE projected_subagents SET parent_agent_id = NULL WHERE parser_version = 2`;
+
+    expect(await shown()).toEqual(before);
+  });
+
   // Claude Code leaves out the thinking count and the cache split at times.
   test('totals leave null a count no request recorded, and count zero for none', async () => {
     await using h = await startHub();
@@ -1266,7 +1360,10 @@ describe('the insight views', () => {
       content: jsonl([user({ at: at(0) }), { ...line, message: { ...line.message, usage } }]),
       path: mainPath(),
     });
-    await upload(h, { content: jsonl([user({ at: at(0), session: OTHER })]), path: mainPath(OTHER) });
+    await upload(h, {
+      content: jsonl([user({ at: at(0), session: OTHER })]),
+      path: mainPath(OTHER),
+    });
 
     await projectAll(h);
 
