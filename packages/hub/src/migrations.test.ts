@@ -76,11 +76,11 @@ test('migrate leaves no lock timeout on the connection it used', async () => {
 // Generations uploaded before the Hub kept each source's Harness still get
 // parsed (ADR-0014): the sets the Hub holds name most sources, and a source no
 // set names runs the Harness it is named after, the default name.
-test('migration 13 maps each held source to its Harness, and a source named for a Harness to it', async () => {
+test('migration 15 maps each held source to its Harness, and a source named for a Harness to it', async () => {
   await using db = await testDatabase();
   await migrate(
     db.sql,
-    MIGRATIONS.filter((m) => m.version <= 12),
+    MIGRATIONS.filter((m) => m.version <= 14),
   );
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
   await db.sql`
@@ -97,9 +97,9 @@ test('migration 13 maps each held source to its Harness, and a source named for 
   expect(
     await migrate(
       db.sql,
-      MIGRATIONS.filter((m) => m.version <= 13),
+      MIGRATIONS.filter((m) => m.version <= 15),
     ),
-  ).toEqual([13]);
+  ).toEqual([15]);
 
   const rows =
     await db.sql`SELECT source, harness FROM transcript_source_harnesses ORDER BY source`;

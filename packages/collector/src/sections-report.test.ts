@@ -9,13 +9,22 @@ import {
   RecordsSectionSchema,
   RunsSectionSchema,
 } from '@heimdall/schema';
-import type { ApplicationRecord, JobRecord, Report, RunRecord } from '@heimdall/schema';
+import type {
+  ApplicationRecord,
+  HarnessesSection,
+  HarnessProcessesSection,
+  JobRecord,
+  Report,
+  RunRecord,
+} from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { createChecks } from './checks/loop.ts';
 import type { CheckParts } from './checks/parts.ts';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
+import type { HarnessesSource } from './harness-scan.ts';
+import type { HarnessProcessesSource } from './processes/loop.ts';
 import { openQueue } from './queue.ts';
 import { openRecords } from './records.ts';
 import type { RecordStore } from './records.ts';
@@ -48,6 +57,8 @@ const setup = async (
   {
     batchSize,
     checks,
+    harnesses,
+    harnessProcesses,
     maxChecksBytes,
     maxRecordsBytes,
     maxRunsBytes,
@@ -56,6 +67,8 @@ const setup = async (
   }: {
     batchSize?: number;
     checks?: ChecksSource;
+    harnesses?: HarnessesSource;
+    harnessProcesses?: HarnessProcessesSource;
     maxChecksBytes?: number;
     maxRecordsBytes?: number;
     maxRunsBytes?: number;
@@ -72,6 +85,8 @@ const setup = async (
   const checked: { latest: CheckParts | undefined } = { latest: undefined };
   const reporter = createSectionsReporter({
     checks: checks ?? { latest: () => checked.latest },
+    ...(harnesses === undefined ? {} : { harnesses }),
+    ...(harnessProcesses === undefined ? {} : { harnessProcesses }),
     log: { info: () => 0, warn: (m) => warnings.push(m) },
     ...(maxChecksBytes === undefined ? {} : { maxChecksBytes }),
     ...(maxRecordsBytes === undefined ? {} : { maxRecordsBytes }),
@@ -1101,4 +1116,184 @@ test('a files record written by another process is hashed at once and its checks
   });
   expect(report?.records).toBeDefined();
   expect(quiet?.checks).toBeUndefined();
+});
+
+const CLAUDE_INSTALL = { harness: 'claude-code', location: 'mise', version: '2.1.296' };
+
+// A harnesses source whose latest section a test sets.
+const installed = (section?: HarnessesSection) => {
+  const held: { latest: HarnessesSection | undefined } = { latest: section };
+  return { held, source: { latest: () => held.latest } };
+};
+
+test('the Report after start carries the Harness installs, and the next does not while they are unchanged', async () => {
+  await using dir = await tempStateDir();
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+  expect(second[0]?.harnesses).toBeUndefined();
+});
+
+test('no Report carries a harnesses section until the first scan finishes', async () => {
+  await using dir = await tempStateDir();
+  const scan = installed();
+  const collector = await setup(dir, { harnesses: scan.source });
+
+  const before = await collector.push();
+  scan.held.latest = { installs: [] };
+  const after = await collector.push();
+  collector.close();
+
+  expect(before[0]?.harnesses).toBeUndefined();
+  expect(after[0]?.harnesses).toEqual({ installs: [] });
+});
+
+test('a changed install list rides the next Report, and the same list again does not', async () => {
+  await using dir = await tempStateDir();
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+  await collector.push();
+
+  scan.held.latest = { installs: [CLAUDE_INSTALL] };
+  const same = await collector.push();
+  const upgraded = { ...CLAUDE_INSTALL, version: '2.2.0' };
+  scan.held.latest = { installs: [upgraded] };
+  const changed = await collector.push();
+  collector.close();
+
+  expect(same[0]?.harnesses).toBeUndefined();
+  expect(changed[0]?.harnesses).toEqual({ installs: [upgraded] });
+});
+
+test('the Harness installs are sent again an hour after the Hub last answered', async () => {
+  await using dir = await tempStateDir();
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+  await collector.push();
+
+  collector.advance(SECTIONS_REFRESH_MS);
+  const again = await collector.push();
+  collector.close();
+
+  expect(again[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+});
+
+test('a Report the Hub fails to take leaves the Harness installs pending', async () => {
+  await using dir = await tempStateDir();
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+  collector.outcomes.push({ kind: 'failed', reason: 'down' });
+
+  const failed = await collector.push();
+  const retried = await collector.push();
+  collector.close();
+
+  expect(failed[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+  expect(retried[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+});
+
+test('a records file that cannot be opened costs the Harness installs nothing', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+  expect(second[0]?.harnesses).toBeUndefined();
+});
+
+const RUNNING = {
+  cpuMicros: 5000,
+  cwd: '/work/project',
+  harness: 'claude-code',
+  lastSeenAt: 1_000_000,
+  peakRssBytes: 10,
+  pid: 10,
+  rssBytes: 10,
+  startedAt: 900_000,
+};
+
+// A process source whose latest section a test sets, and which records what
+// the Hub acknowledged.
+const watched = (section?: HarnessProcessesSection) => {
+  const held: { latest: HarnessProcessesSection | undefined } = { latest: section };
+  const acknowledged: HarnessProcessesSection[] = [];
+  return {
+    acknowledged,
+    held,
+    source: {
+      latest: () => held.latest,
+      settled: (s) => acknowledged.push(s),
+    } as HarnessProcessesSource,
+  };
+};
+
+test('a Report carries the Harness processes, and the next carries them again once a tick changed them', async () => {
+  await using dir = await tempStateDir();
+  const watch = watched({ processes: [RUNNING] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  const unchanged = await collector.push();
+  watch.held.latest = { processes: [{ ...RUNNING, cpuMicros: 9000 }] };
+  const ticked = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+  expect(unchanged[0]?.harnessProcesses).toBeUndefined();
+  expect(ticked[0]?.harnessProcesses?.processes[0]?.cpuMicros).toBe(9000);
+});
+
+test('the source is told which section the Hub answered, and not of one the Hub never took', async () => {
+  await using dir = await tempStateDir();
+  const ended = { ...RUNNING, endedAt: 1_000_500 };
+  const watch = watched({ processes: [ended] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+  collector.outcomes.push({ kind: 'failed', reason: 'down' });
+
+  await collector.push();
+  const toldAfterFailure = [...watch.acknowledged];
+  await collector.push();
+  collector.close();
+
+  expect(toldAfterFailure).toEqual([]);
+  expect(watch.acknowledged).toEqual([{ processes: [ended] }]);
+});
+
+test('a System with no Harness process sends an empty list once, then nothing until one appears', async () => {
+  await using dir = await tempStateDir();
+  const watch = watched({ processes: [] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  watch.held.latest = { processes: [RUNNING] };
+  const third = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [] });
+  expect(second[0]?.harnessProcesses).toBeUndefined();
+  expect(third[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+});
+
+test('a records file that cannot be opened costs the Harness processes nothing', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
+  const watch = watched({ processes: [RUNNING] });
+  const collector = await setup(dir, { harnessProcesses: watch.source });
+
+  const first = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+  expect(watch.acknowledged).toEqual([{ processes: [RUNNING] }]);
 });

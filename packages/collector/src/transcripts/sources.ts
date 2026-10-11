@@ -3,26 +3,17 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import { MAX_TRANSCRIPT_SOURCES, SOURCE_NAME } from '@heimdall/schema';
 
+import { HARNESSES, isHarness } from '../harnesses.ts';
+import type { Harness } from '../harnesses.ts';
 import { isRecord } from '../json.ts';
-
-export type Harness = 'claude-code' | 'codex';
 
 // One place the Collector reads agent Session transcripts from: a Harness's
 // directory, and the trees inside it that hold transcripts.
 export type Source = { dir: string; harness: Harness; name: string; trees: readonly string[] };
 
-// Where each Harness keeps its transcripts: the directory under the home
-// directory, and the trees within it the Collector reads.
-export const HARNESSES: Record<Harness, { defaultDir: string; trees: readonly string[] }> = {
-  'claude-code': { defaultDir: '.claude', trees: ['projects'] },
-  codex: { defaultDir: '.codex', trees: ['sessions'] },
-};
-
 type Refused = { kind: 'refused'; problem: string };
 
 const refused = (problem: string): Refused => ({ kind: 'refused', problem });
-
-const isHarness = (value: string): value is Harness => Object.hasOwn(HARNESSES, value);
 
 // The first key of `value` outside `allowed`, if any.
 const strayKey = (value: Record<string, unknown>, allowed: readonly string[]) =>

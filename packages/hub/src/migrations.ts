@@ -349,6 +349,77 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 12,
   },
   {
+    // Each System's latest Harness installs, from the harnesses section of
+    // its Reports. `installs` is the list as sent, each with its Harness,
+    // location kind, and version. An empty list is a System with no Harness
+    // installed; no row is a System that never sent the section. `sent_at`
+    // keeps an older Report from replacing a newer list.
+    sql: `
+      CREATE TABLE harness_installs (
+        system text PRIMARY KEY REFERENCES systems (name),
+        installs jsonb NOT NULL,
+        sent_at timestamptz NOT NULL
+      );
+    `,
+    version: 13,
+  },
+  {
+    // The Harness root processes each System's Collector saw (ADR-0014): one
+    // row per process, identified by Harness, pid, and start, since a pid is
+    // reused. A running process has no `ended_at`. One whose end the Collector
+    // did not see has `end_missed` and ends at the last time it was seen. The
+    // highest memory the Collector saw is kept on the row. `sent_at` is the
+    // Report that last touched the row, so an older Report does not undo a
+    // newer one. The index serves the join to Sessions by System, Harness, and
+    // time. Process rows are kept.
+    //
+    // Each reading of a process's tree, cumulative CPU time and resident memory
+    // at a time, is a sample on the Vitals time axis, and rolls up into a
+    // 5-minute bucket as it arrives, as Vitals do (ADR-0008): CPU used in a
+    // bucket is its max less its min, or less the bucket before's max. Samples
+    // and rollups are pruned as Vitals are.
+    sql: `
+      CREATE TABLE harness_processes (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text NOT NULL REFERENCES systems (name),
+        harness text NOT NULL,
+        pid integer NOT NULL,
+        started_at timestamptz NOT NULL,
+        ended_at timestamptz,
+        end_missed boolean NOT NULL DEFAULT false,
+        cwd text,
+        peak_rss_bytes bigint NOT NULL,
+        last_seen_at timestamptz NOT NULL,
+        sent_at timestamptz NOT NULL
+      );
+      CREATE INDEX harness_processes_by_system_harness_start
+        ON harness_processes (system, harness, started_at);
+
+      CREATE TABLE harness_process_samples (
+        process bigint NOT NULL REFERENCES harness_processes (id),
+        t timestamptz NOT NULL,
+        cpu_micros bigint NOT NULL,
+        rss_bytes bigint NOT NULL,
+        PRIMARY KEY (process, t)
+      );
+      CREATE INDEX harness_process_samples_by_t ON harness_process_samples (t);
+
+      CREATE TABLE harness_process_rollups (
+        process bigint NOT NULL REFERENCES harness_processes (id),
+        bucket timestamptz NOT NULL,
+        samples integer NOT NULL,
+        cpu_micros_min bigint NOT NULL,
+        cpu_micros_max bigint NOT NULL,
+        rss_min bigint NOT NULL,
+        rss_sum numeric NOT NULL,
+        rss_max bigint NOT NULL,
+        PRIMARY KEY (process, bucket)
+      );
+      CREATE INDEX harness_process_rollups_by_bucket ON harness_process_rollups (bucket);
+    `,
+    version: 14,
+  },
+  {
     // Session insight: a projection of the transcript archive, rebuilt from it
     // whenever a Harness's parser version changes (ADR-0014).
     //
@@ -367,14 +438,14 @@ export const MIGRATIONS: readonly Migration[] = [
     // it was last read, whether the next batch starts inside a line too long
     // to read, the lines it could not read, how many attempts in a row to
     // parse it failed, when and why it was recorded failed, and the Session
-    // the file belongs to, null for a
-    // file that holds no conversation. Facts are keyed by the Harness's own ids
-    // within a System's source, so content two generations hold counts once,
-    // and `projected_holders` names the generations that held a fact more than
-    // one generation holds. `rederiving_sessions` names the Sessions a delete
-    // touched, hidden from the views until they are derived again. Requests and
-    // tool calls locate the line they were read from by generation and byte
-    // offset in its uncompressed content.
+    // the file belongs to, null for a file that holds no conversation. Facts
+    // are keyed by the Harness's own ids within a System's source, so content
+    // two generations hold counts once, and `projected_holders` names the
+    // generations that held a fact more than one generation holds.
+    // `rederiving_sessions` names the Sessions a delete touched, hidden from
+    // the views until they are derived again. Requests and tool calls locate
+    // the line they were read from by generation and byte offset in its
+    // uncompressed content.
     //
     // The `insight` views are the read model: facts and locators, never
     // transcript content, and only each Harness's current version.
@@ -637,7 +708,7 @@ export const MIGRATIONS: readonly Migration[] = [
       WHERE g.deleted_at IS NULL
       GROUP BY p.harness, g.system, g.source, p.parser_version;
     `,
-    version: 13,
+    version: 15,
   },
 ];
 

@@ -1,6 +1,8 @@
 import { mirrorChecks, mirrorRecords, mirrorRuns } from '@heimdall/schema';
 import type {
   ChecksSection,
+  HarnessInstall,
+  HarnessesSection,
   RecordRef,
   RecordsSection,
   Report,
@@ -10,6 +12,7 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { storeHarnessProcesses } from './harness-processes.ts';
 import { storable, storableJson } from './storable.ts';
 import { pairedSystems } from './tokens.ts';
 
@@ -144,6 +147,21 @@ export const storeReport = (
         transcripts: report.transcripts,
       });
     }
+    if (report.harnesses !== undefined) {
+      await storeHarnessInstalls(tx, {
+        harnesses: report.harnesses,
+        receivedAt: seenAt,
+        report,
+      });
+    }
+    if (report.harnessProcesses !== undefined) {
+      await storeHarnessProcesses(tx, {
+        receivedAt: seenAt,
+        section: report.harnessProcesses,
+        sentAt: report.sentAt,
+        system: report.system,
+      });
+    }
     if (report.records !== undefined) {
       await storeRecords(tx, { receivedAt: seenAt, report, section: report.records });
     }
@@ -198,6 +216,28 @@ const storeTranscriptSources = async (
       sent_at = excluded.sent_at
     WHERE transcript_source_harnesses.sent_at <= excluded.sent_at
        OR transcript_source_harnesses.sent_at > ${receivedAt}
+  `;
+};
+
+// Replaces the System's Harness installs with a Report's, unless the Hub holds
+// a list from a Report sent later. A held list that claims a time after
+// `receivedAt` comes from a bad clock, and gives way.
+const storeHarnessInstalls = async (
+  sql: SQL,
+  {
+    harnesses,
+    receivedAt,
+    report: { sentAt, system },
+  }: { harnesses: HarnessesSection; receivedAt: Date; report: Report },
+) => {
+  await sql`
+    INSERT INTO harness_installs (system, installs, sent_at)
+    VALUES (${system}, ${storableJson(harnesses.installs)}::text::jsonb, ${new Date(sentAt)})
+    ON CONFLICT (system) DO UPDATE SET
+      installs = excluded.installs,
+      sent_at = excluded.sent_at
+    WHERE harness_installs.sent_at <= excluded.sent_at
+       OR harness_installs.sent_at > ${receivedAt}
   `;
 };
 
@@ -403,6 +443,9 @@ export type TimelineEntry =
 // page's normal view.
 export type SystemSummary = {
   conditions: OpenCondition[];
+  // The Harness installs from the System's latest Report that carried them, or
+  // undefined while none has.
+  harnesses: HarnessInstall[] | undefined;
   lastSeenAt: number | undefined;
   name: string;
   paired: boolean;
@@ -532,6 +575,9 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
       WHERE n <= ${TIMELINE_CONDITIONS}
       ORDER BY id DESC
     `;
+    const installed: { installs: HarnessInstall[]; system: string }[] = await tx`
+      SELECT system, installs FROM harness_installs
+    `;
     return systems.map((row) => ({
       conditions: open
         .filter((c) => c.system === row.name)
@@ -541,6 +587,7 @@ export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
           reason: c.latest_reason,
           subject: c.subject,
         })),
+      harnesses: installed.find((h) => h.system === row.name)?.installs,
       lastSeenAt: row.last_seen_at?.getTime(),
       name: row.name,
       paired: paired.has(row.name),
