@@ -477,7 +477,8 @@ export const holdProjection = async (tx: SQL): Promise<void> => {
 // batch was read from, or from no row at all when `expected` is null. When the
 // progress changed under the run, as when a delete reset its Session, nothing
 // of the batch is stored, and the next run reads again from the progress as it
-// now stands.
+// now stands. Answers `busy` when a delete was under way, so nothing was
+// stored; `stale` when the progress had moved; and `stored`.
 const storeBatch = (
   sql: SQL,
   {
