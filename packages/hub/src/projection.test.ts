@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import { projectTranscripts } from './projection.ts';
+import { PARSE_BUDGET_BYTES, projectTranscripts } from './projection.ts';
 import {
   agentMeta,
   agentPath,
@@ -332,6 +332,24 @@ const beforeEachTransaction = (sql: SQL, before: () => Promise<void>): SQL =>
     },
   });
 
+// `sql` as the projection sees it, counting the rows of each query it runs
+// outside a transaction, as reads of transcript chunks are.
+const countingRows = (sql: SQL) => {
+  let most = 0;
+  const counted = new Proxy(sql, {
+    apply: async (target, _, [strings, ...values]: [TemplateStringsArray, ...unknown[]]) => {
+      const rows: unknown[] = await target(strings, ...values);
+      most = Math.max(most, rows.length);
+      return rows;
+    },
+    get: (target, property) => {
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return Object.assign(counted, { mostRows: () => most });
+};
+
 const sessions = async (sql: SQL) => {
   const rows: Record<string, unknown>[] = await sql`
     SELECT session_id, path, started_at, ended_at, first_cwd, last_cwd,
@@ -624,6 +642,38 @@ describe('parsing as transcripts grow', () => {
     expect(whole).toEqual([{ at: new Date(at(0)), byte_offset: '0', call_id: 'u-1' }]);
     expect(await calls(true)).toEqual(whole);
   });
+
+  // A line past the cap is skipped as it is read, never held whole.
+  test.each([
+    ['in one read', PARSE_BUDGET_BYTES],
+    ['over several reads', 2 ** 20],
+  ])(
+    'a line longer than 16 MiB is counted unreadable and skipped, %s',
+    async (_, budgetBytes) => {
+      await using h = await startHub();
+      await nameSources(h);
+      const huge = {
+        ...user({ at: at(0) }),
+        message: { content: 'x'.repeat(40 * 2 ** 20), role: 'user' },
+      };
+      await upload(h, {
+        content: jsonl([huge, assistant({ at: at(1), id: 'msg_after', usage: { input: 3 } })]),
+        path: mainPath(),
+      });
+      const sql = countingRows(h.db.sql);
+
+      await projectAll({ ...h, db: { ...h.db, sql } }, { budgetBytes });
+
+      expect(await settled(h.db.sql)).toEqual({
+        requests: ['msg_after'],
+        sessions: [SESSION],
+        status: [{ failed_generations: 0, generations: 1, unreadable_lines: 1 }],
+      });
+      // Chunks are 1 MiB, so no read held the line whole.
+      expect(sql.mostRows()).toBeLessThan(Math.max(budgetBytes / 2 ** 20, 32) + 2);
+    },
+    60_000,
+  );
 
   // ADR-0013 can store a file twice, as after a Collector's state is wiped.
   test('a request two generations both hold counts once', async () => {
