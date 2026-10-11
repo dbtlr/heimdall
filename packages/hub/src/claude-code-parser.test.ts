@@ -272,30 +272,6 @@ describe('tool calls', () => {
     expect(parsed.span?.first.at).toBe(Date.parse(T0));
   });
 
-  test('a Skill call whose skill is not shaped like a name is dropped and the line counted', () => {
-    const block = {
-      id: 'toolu_1',
-      input: { skill: 'my bank PIN is 4321' },
-      kind: 'tool',
-      name: 'Skill',
-    } as const;
-
-    const parsed = parse(jsonl([assistant({ at: T0, block, id: 'msg_1' })]));
-
-    expect(parsed.toolCalls).toEqual([]);
-    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1' })]);
-    expect(parsed.unreadableLines).toBe(1);
-  });
-
-  test('a skill attribution not shaped like a name is dropped and the line counted', () => {
-    const parsed = parse(
-      jsonl([assistant({ at: T0, id: 'msg_1', skill: 'a secret, said aloud' })]),
-    );
-
-    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1', skill: null })]);
-    expect(parsed.unreadableLines).toBe(1);
-  });
-
   // The database keeps the first line of a call it holds, so a batch does too,
   // and parsing in pieces derives what parsing whole does.
   test('a command line written twice under one uuid keeps its first line', () => {
@@ -311,6 +287,131 @@ describe('tool calls', () => {
 
   test('a listing of the skills available invokes none', () => {
     expect(parse(jsonl([skillListing({ at: T0 })])).toolCalls).toEqual([]);
+  });
+});
+
+// The views carry no content, so a field that names or identifies something
+// holds only a value shaped like a name, an id, or a version. Prose a line
+// carries there is left out: a value the fact needs leaves the fact out and
+// counts the line, and any other becomes null.
+describe('names, ids, and versions', () => {
+  const PROSE = 'my bank PIN is 4321';
+
+  test.each([
+    ['its model', assistant({ at: T0, id: 'msg_1', model: PROSE })],
+    ['its id', assistant({ at: T0, id: PROSE })],
+  ])('a response with prose for %s is left out, and the line counted', (_, line) => {
+    const parsed = parse(jsonl([line]));
+
+    expect(parsed).toEqual(
+      expect.objectContaining({ requests: [], toolCalls: [], unreadableLines: 1 }),
+    );
+    expect(parsed.span?.first.at).toBe(Date.parse(T0));
+  });
+
+  test.each([
+    ['its name', { id: 'toolu_1', kind: 'tool', name: PROSE } as const],
+    ['its MCP server', { id: 'toolu_1', kind: 'tool', name: `mcp__${PROSE}__query` } as const],
+    ['its id', { id: PROSE, kind: 'tool', name: 'Read' } as const],
+  ])('a tool call with prose for %s is left out, and the line counted', (_, block) => {
+    const parsed = parse(jsonl([assistant({ at: T0, block, id: 'msg_1' })]));
+
+    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1' })]);
+    expect(parsed.toolCalls).toEqual([]);
+    expect(parsed.unreadableLines).toBe(1);
+  });
+
+  test('a command line with prose for its uuid is left out, and the line counted', () => {
+    const parsed = parse(jsonl([user({ at: T0, command: '/review', uuid: PROSE })]));
+
+    expect(parsed.toolCalls).toEqual([]);
+    expect(parsed.unreadableLines).toBe(1);
+  });
+
+  test.each([
+    ['stop reason', assistant({ at: T0, id: 'msg_1', stop: PROSE }), { stopReason: null }],
+    ['skill attribution', assistant({ at: T0, id: 'msg_1', skill: PROSE }), { skill: null }],
+  ])('a response with prose for its %s keeps it null', (_, line, fields) => {
+    const parsed = parse(jsonl([line]));
+
+    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1', ...fields })]);
+    expect(parsed.unreadableLines).toBe(0);
+  });
+
+  test('a Skill call with prose for its skill names none', () => {
+    const block = { id: 'toolu_1', input: { skill: PROSE }, kind: 'tool', name: 'Skill' } as const;
+
+    const parsed = parse(jsonl([assistant({ at: T0, block, id: 'msg_1' })]));
+
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ name: 'Skill', skill: null })]);
+    expect(parsed.unreadableLines).toBe(0);
+  });
+
+  test('a line with prose for its Harness version keeps it null', () => {
+    const parsed = parse(jsonl([user({ at: T0, version: PROSE })]));
+
+    expect(parsed.span?.first).toEqual(expect.objectContaining({ version: null }));
+    expect(parsed.unreadableLines).toBe(0);
+  });
+
+  test('a working directory and a branch are kept as written', () => {
+    const parsed = parse(jsonl([user({ at: T0, branch: 'fix: the PIN', cwd: '/w/my PIN' })]));
+
+    expect(parsed.span?.first).toEqual(
+      expect.objectContaining({ cwd: '/w/my PIN', gitBranch: 'fix: the PIN' }),
+    );
+  });
+
+  test("a subagent's metadata with prose for a name or an id keeps it null", () => {
+    const meta = JSON.stringify({
+      agentType: PROSE,
+      parentAgentId: PROSE,
+      spawnDepth: 2,
+      toolUseId: PROSE,
+      workflowPhase: PROSE,
+    });
+
+    expect(parseAgentMeta(meta)).toEqual({
+      agentType: null,
+      depth: 2,
+      parentAgentId: null,
+      toolUseId: null,
+      workflowPhase: null,
+    });
+  });
+
+  test('names, ids, and versions as Claude Code writes them are kept', () => {
+    const meta = JSON.stringify({
+      agentType: 'plugin-dev:agent-creator',
+      parentAgentId: 'a1b2c3d4e5f6',
+      toolUseId: 'toolu_01AbC',
+      workflowPhase: 'Implement',
+    });
+    const parsed = parse(
+      jsonl([
+        assistant({
+          at: T0,
+          block: { id: 'toolu_01AbC', kind: 'tool', name: 'mcp__plugin_x_y__query-docs' },
+          id: 'msg_01XyZ',
+          model: 'claude-opus-4-1@20250805',
+          stop: 'tool_use',
+          version: '2.1.290-beta.1',
+        }),
+      ]),
+    );
+
+    expect(parseAgentMeta(meta)).toEqual(
+      expect.objectContaining({
+        agentType: 'plugin-dev:agent-creator',
+        parentAgentId: 'a1b2c3d4e5f6',
+      }),
+    );
+    expect(parsed.requests).toEqual([
+      expect.objectContaining({ model: 'claude-opus-4-1@20250805', stopReason: 'tool_use' }),
+    ]);
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ mcpServer: 'plugin_x_y' })]);
+    expect(parsed.span?.first.version).toBe('2.1.290-beta.1');
+    expect(parsed.unreadableLines).toBe(0);
   });
 });
 
@@ -476,10 +577,7 @@ describe("a subagent's metadata", () => {
     expect(parseAgentMeta('{"agentType":')).toBeUndefined();
   });
 
-  test('keeps its text with NUL replaced, and is unreadable with a value out of bounds', () => {
-    expect(parseAgentMeta(agentMeta({ agentType: 'Ex\0plore', toolUseId: 'toolu_9' }))).toEqual(
-      expect.objectContaining({ agentType: 'Ex\uFFFDplore' }),
-    );
+  test('is unreadable with a value out of bounds', () => {
     expect(parseAgentMeta(agentMeta({ agentType: 'Explore', toolUseId: 't'.repeat(256) }))).toBe(
       undefined,
     );

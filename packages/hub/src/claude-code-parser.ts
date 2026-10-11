@@ -1,8 +1,9 @@
 import {
-  idOf,
-  isName,
+  isShaped,
   MAX_ID_LENGTH,
   MAX_LINE_BYTES,
+  optionalOf,
+  shapedOf,
   textOf,
   timeOf,
   tokensOf,
@@ -125,20 +126,15 @@ const momentOf = (line: Record<string, unknown>, at: number): Moment => ({
   at,
   cwd: textOf(line.cwd),
   gitBranch: textOf(line.gitBranch),
-  version: textOf(line.version),
+  version: optionalOf(line.version, 'version'),
 });
-
-// A name field shaped like a name, or null; `dropped` says it held something else.
-const nameOf = (value: unknown): { dropped: boolean; name: string | null } => {
-  const name = textOf(value);
-  return name === null || isName(name) ? { dropped: false, name } : { dropped: true, name: null };
-};
 
 const MCP_TOOL = /^mcp__(?<server>.+?)__./u;
 const COMMAND = /<command-name>(?<name>[^<]*)<\/command-name>/gu;
 
-// What one line yields. `dropped` says a name in it was not shaped like one
-// and was left out, so the line counts as unreadable.
+// What one line yields. `dropped` says a fact in it was left out because a
+// value the fact needs was not shaped as it must be, so the line counts as
+// unreadable.
 type LineFacts = {
   dropped: boolean;
   moment: Moment | undefined;
@@ -152,27 +148,28 @@ const toolCallsOf = (blocks: unknown[], request: Request, offset: number) => {
     if (!isRecord(block) || block.type !== 'tool_use') {
       return [];
     }
-    const callId = idOf(block.id);
-    const name = idOf(block.name);
-    if (callId === null || name === null) {
+    const callId = shapedOf(block.id, 'id');
+    const name = shapedOf(block.name, 'name');
+    if (callId.kind !== 'shaped' || name.kind !== 'shaped') {
+      dropped ||= callId.kind === 'misshapen' || name.kind === 'misshapen';
       return [];
     }
-    const input = isRecord(block.input) ? block.input : {};
-    const skill = name === 'Skill' ? nameOf(input.skill) : { dropped: false, name: null };
-    if (skill.dropped) {
+    const server = MCP_TOOL.exec(name.value)?.groups?.server;
+    if (server !== undefined && !isShaped(server, 'name')) {
       dropped = true;
       return [];
     }
+    const input = isRecord(block.input) ? block.input : {};
     return [
       {
         at: request.at,
-        callId,
+        callId: callId.value,
         kind: 'tool',
-        mcpServer: MCP_TOOL.exec(name)?.groups?.server ?? null,
-        name,
+        mcpServer: server ?? null,
+        name: name.value,
         offset,
         requestId: request.requestId,
-        skill: skill.name,
+        skill: name.value === 'Skill' ? optionalOf(input.skill, 'command') : null,
       },
     ];
   });
@@ -187,18 +184,20 @@ const requestOf = (
   offset: number,
 ): LineFacts | undefined => {
   const message = isRecord(line.message) ? line.message : {};
-  const requestId = idOf(message.id);
-  const model = idOf(message.model);
-  if (requestId === null || model === null || model === '<synthetic>') {
+  const requestId = shapedOf(message.id, 'id');
+  const model = textOf(message.model, MAX_ID_LENGTH);
+  if (requestId.kind === 'absent' || model === null || model === '<synthetic>') {
     return undefined;
   }
   if (at === undefined) {
     throw new UnreadableLineError('A response has no time.');
   }
+  if (requestId.kind === 'misshapen' || !isShaped(model, 'name')) {
+    return { dropped: true, moment: momentOf(line, at), request: undefined, toolCalls: [] };
+  }
   const usage = isRecord(message.usage) ? message.usage : {};
   const split = isRecord(usage.cache_creation) ? usage.cache_creation : undefined;
   const details = isRecord(usage.output_tokens_details) ? usage.output_tokens_details : {};
-  const skill = nameOf(line.attributionSkill);
   const request: Request = {
     at,
     cacheRead: tokensOf(usage.cache_read_input_tokens) ?? 0,
@@ -210,26 +209,23 @@ const requestOf = (
     offset,
     output: tokensOf(usage.output_tokens) ?? 0,
     reasoning: tokensOf(details.thinking_tokens),
-    requestId,
-    skill: skill.name,
-    stopReason: idOf(message.stop_reason),
+    requestId: requestId.value,
+    skill: optionalOf(line.attributionSkill, 'command'),
+    stopReason: optionalOf(message.stop_reason, 'name'),
   };
   const blocks = Array.isArray(message.content) ? message.content : [];
   const { calls, dropped } = toolCallsOf(blocks, request, offset);
-  return {
-    dropped: dropped || skill.dropped,
-    moment: momentOf(line, at),
-    request,
-    toolCalls: calls,
-  };
+  return { dropped, moment: momentOf(line, at), request, toolCalls: calls };
 };
 
 // The slash commands a user line carries, each a call of its own. A command
-// names no skill: a built-in such as `/doctor` is none.
+// names no skill: a built-in such as `/doctor` is none. A command not shaped
+// like one is left out, and so is every command of a line whose uuid is not
+// shaped like an id.
 const commandsOf = (line: Record<string, unknown>, at: number, offset: number) => {
-  const uuid = idOf(line.uuid);
+  const uuid = shapedOf(line.uuid, 'id');
   const message = isRecord(line.message) ? line.message : {};
-  if (uuid === null) {
+  if (uuid.kind === 'absent') {
     return { calls: [], dropped: false };
   }
   const texts =
@@ -241,13 +237,16 @@ const commandsOf = (line: Record<string, unknown>, at: number, offset: number) =
             : [],
         );
   const found = texts.flatMap((t) => [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''));
-  const names = found.filter((name) => isName(name));
+  if (uuid.kind === 'misshapen') {
+    return { calls: [], dropped: found.length > 0 };
+  }
+  const names = found.filter((name) => isShaped(name, 'command'));
   const calls = names.map((name, i): ToolCall => ({
     at,
-    callId: i === 0 ? uuid : `${uuid}#${String(i)}`,
+    callId: i === 0 ? uuid.value : `${uuid.value}#${String(i)}`,
     kind: 'command',
     mcpServer: null,
-    name: textOf(name) ?? name,
+    name,
     offset,
     requestId: null,
     skill: null,
@@ -380,11 +379,11 @@ export const parseAgentMeta = (content: string): Omit<AgentMeta, 'workflowRun'> 
   }
   try {
     return {
-      agentType: idOf(value.agentType),
+      agentType: optionalOf(value.agentType, 'name'),
       depth: tokensOf(value.spawnDepth, MAX_DEPTH),
-      parentAgentId: idOf(value.parentAgentId),
-      toolUseId: idOf(value.toolUseId),
-      workflowPhase: textOf(value.workflowPhase),
+      parentAgentId: optionalOf(value.parentAgentId, 'id'),
+      toolUseId: optionalOf(value.toolUseId, 'id'),
+      workflowPhase: optionalOf(value.workflowPhase, 'name'),
     };
   } catch (error) {
     if (error instanceof UnreadableLineError) {

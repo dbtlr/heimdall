@@ -130,9 +130,6 @@ export const textOf = (value: unknown, maxLength = MAX_TEXT_LENGTH): string | nu
   return storable(value);
 };
 
-// An id field, as `textOf` reads it, within `MAX_ID_LENGTH`.
-export const idOf = (value: unknown): string | null => textOf(value, MAX_ID_LENGTH);
-
 // A token count, or null when the field is absent.
 export const tokensOf = (value: unknown, max = MAX_TOKENS): number | null => {
   if (value === undefined || value === null) {
@@ -156,8 +153,42 @@ export const timeOf = (value: unknown): number | undefined => {
   return at;
 };
 
-// A command or skill name: a word of letters, digits, and `:_./-`, at most 64
-// long, with an optional leading `/`. Anything else, such as prose a prompt
-// wrapped in a command tag, is no name.
-const NAME = /^\/?[A-Za-z0-9][A-Za-z0-9:_./-]{0,63}$/u;
-export const isName = (value: string): boolean => NAME.test(value);
+// The shapes a field that names or identifies something takes, so no prose
+// a line carries there reaches the views:
+//
+// - `command`: a command or skill, a letter or digit followed by at most 63
+//   letters, digits, and `:_./-`, after an optional `/`.
+// - `name`: a model, tool, MCP server, agent type, workflow phase, or stop
+//   reason, a letter or digit followed by letters, digits, and `:_./@+-`.
+// - `id`: a letter or digit followed by letters, digits, and `_.:-`.
+// - `version`: a digit followed by letters, digits, and `.+-`.
+const SHAPES = {
+  command: /^\/?[A-Za-z0-9][A-Za-z0-9:_./-]{0,63}$/u,
+  id: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u,
+  name: /^[A-Za-z0-9][A-Za-z0-9:_./@+-]*$/u,
+  version: /^[0-9][0-9A-Za-z.+-]*$/u,
+} as const;
+
+export type Shape = keyof typeof SHAPES;
+
+// Whether `value` takes `shape`.
+export const isShaped = (value: string, shape: Shape): boolean => SHAPES[shape].test(value);
+
+// A field that names or identifies something: absent when it is not a
+// string, misshapen when it holds anything not shaped as `shape`, such as
+// prose. Longer than `MAX_ID_LENGTH`, it makes the line unreadable.
+export type Shaped = { kind: 'absent' } | { kind: 'misshapen' } | { kind: 'shaped'; value: string };
+
+export const shapedOf = (value: unknown, shape: Shape): Shaped => {
+  const text = textOf(value, MAX_ID_LENGTH);
+  if (text === null) {
+    return { kind: 'absent' };
+  }
+  return isShaped(text, shape) ? { kind: 'shaped', value: text } : { kind: 'misshapen' };
+};
+
+// A field no fact needs: its value when shaped as `shape`, and otherwise null.
+export const optionalOf = (value: unknown, shape: Shape): string | null => {
+  const shaped = shapedOf(value, shape);
+  return shaped.kind === 'shaped' ? shaped.value : null;
+};

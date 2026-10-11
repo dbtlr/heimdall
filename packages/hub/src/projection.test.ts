@@ -301,6 +301,10 @@ const numbers = (row: Record<string, unknown>) =>
     ]),
   );
 
+// A tool use block named `name`, with `input`.
+const toolBlock = (id: string, name: string, input: Record<string, unknown> = {}) =>
+  ({ id, input, kind: 'tool', name }) as const;
+
 const sumOf = (counts: number[]) => counts.reduce((sum, n) => sum + n, 0);
 
 const requests = async (sql: SQL) => {
@@ -1782,6 +1786,76 @@ describe('the insight views', () => {
     `;
 
     expect(used).toEqual([]);
+  });
+
+  // A field that names or identifies something can hold anything a line
+  // carries, a secret included.
+  test('carry no prose a name, id, or version field held', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const prose = 'my bank PIN is 4321';
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(0), version: prose }),
+        user({ at: at(1), command: '/review', uuid: prose }),
+        assistant({ at: at(2), id: 'msg_model', model: prose }),
+        assistant({ at: at(3), id: prose }),
+        assistant({
+          at: at(4),
+          block: toolBlock('toolu_1', prose),
+          id: 'msg_1',
+          skill: prose,
+          stop: prose,
+        }),
+        assistant({ at: at(5), block: toolBlock('toolu_2', `mcp__${prose}__query`), id: 'msg_2' }),
+        assistant({ at: at(6), block: toolBlock(prose, 'Read'), id: 'msg_3' }),
+        assistant({
+          at: at(7),
+          block: toolBlock('toolu_4', 'Skill', { skill: prose }),
+          id: 'msg_4',
+        }),
+        assistant({ at: at(8), block: toolBlock('toolu_spawn', 'Agent'), id: 'msg_5' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, { content: subagentOf('msg_a'), path: agentPath('a1') });
+    await upload(h, {
+      content: JSON.stringify({
+        agentType: prose,
+        parentAgentId: prose,
+        spawnDepth: 1,
+        toolUseId: prose,
+        workflowPhase: prose,
+      }),
+      path: agentPath('a1', { meta: true }),
+    });
+
+    await projectAll(h);
+
+    const views = ['sessions', 'subagents', 'requests', 'tool_calls', 'parse_status'];
+    const found: string[] = [];
+    for (const view of views) {
+      // oxlint-disable-next-line no-await-in-loop -- one view at a time.
+      const rows: Record<string, unknown>[] = await h.db.sql.unsafe(
+        `SELECT * FROM insight.${view}`,
+      );
+      for (const row of rows) {
+        for (const [column, value] of Object.entries(row)) {
+          if (typeof value === 'string' && value.includes('PIN')) {
+            found.push(`${view}.${column}`);
+          }
+        }
+      }
+    }
+    expect(found).toEqual([]);
+    expect((await requests(h.db.sql)).map((r) => r.request_id)).toEqual([
+      'msg_1',
+      'msg_2',
+      'msg_3',
+      'msg_4',
+      'msg_5',
+      'msg_a',
+    ]);
   });
 
   // Rows another parser version wrote, as during a rebuild, stay out of every
