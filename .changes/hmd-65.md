@@ -1,0 +1,4 @@
+### Added
+
+- **The Hub derives Claude Code Session insight from the transcripts it holds** (HMD-65). `heimdall-hub serve` parses new transcript content every 15 seconds into each Session, subagent, request, and tool call, counting a response Claude Code wrote over several lines, or stored in two generations, once. A parser version change rebuilds the facts from the archive while the old ones stay readable, and deleting transcripts deletes what was derived from them. See [Session insight](docs/spec.md#session-insight).
+- **The `insight` views** in the Hub's database read Session insight: `insight.sessions`, `insight.subagents`, `insight.requests`, `insight.tool_calls`, and totals with and without subagents in `insight.session_totals` and `insight.main_conversation_totals`. They carry facts and locators into the archive, never transcript content. See [The insight views](docs/spec.md#the-insight-views).

@@ -1,5 +1,5 @@
 ---
-description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, and how agent Session transcripts reach the Hub."
+description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, how agent Session transcripts reach the Hub, and how the Hub derives Session insight from them and serves it through the insight views."
 ---
 
 # Fleet observability spec
@@ -14,7 +14,7 @@ Roles and Principles describe Heimdall as designed. Sections marked _planned_ de
 | --- | --- | --- |
 | System | everywhere | One machine in the fleet, named by a DNS label. |
 | Collector | on each System, as one account | Samples Vitals, holds what provisioners record, checks it, and sends Reports and transcripts to the Hub. |
-| Hub | on one System | Stores Reports and transcripts in PostgreSQL, derives Conditions, mirrors each System's records, and serves the dashboard. |
+| Hub | on one System | Stores Reports and transcripts in PostgreSQL, derives Conditions, mirrors each System's records, derives Session insight from transcripts, and serves the dashboard. |
 | Provisioner | wherever its operator runs it | Installs things on Systems and records them with each System's Collector. Fleet is one provisioner; [Running Heimdall with Fleet](fleet.md) shows how it does this. |
 
 A System joins by pairing its Collector with the Hub once, as the [README](../README.md#pairing-a-new-system) describes.
@@ -258,9 +258,51 @@ A Collector uploads with its System's token as a bearer token, like a Report. Th
 
 Every upload counts toward the System's Last seen, and no refusal raises a Condition. Every Report carries a `transcripts` section: each source's name, Harness, and status, and the spool's size and the time of its oldest content. A Collector that captures nothing sends no sources and, once what a removed source left is uploaded, an empty spool. The Hub keeps each System's section from the latest Report it was sent in; a Report from a Collector older than this section leaves it unchanged.
 
-`heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
+`heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there. The [Session insight](#session-insight) derived from deleted generations goes with them.
 
 The Collector does not yet observe Harness processes. When it does (M5), it records each one's executable name, working directory, start and end, and the CPU and memory of its process tree, and never command-line arguments or environment variables.
+
+## Session insight
+
+The Hub derives Session insight from the transcripts it holds: each Session, each of its subagents, each request, and each tool call. The facts are a projection of the archive that the Hub can always rebuild from it ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The Hub parses transcripts after it stores them, never as they arrive. Every reader reads the facts through the views in the `insight` schema, described [below](#the-insight-views). Cost is not derived yet.
+
+### How the Hub parses
+
+Each Harness has a parser with a version number. Claude Code has one; Codex transcripts are stored and wait for theirs. A source runs the Harness its System's Reports name for it. The Hub remembers that Harness after the source leaves the Collector's configuration, so a removed source's transcripts are still parsed. A source no Report has named waits until one does. Transcripts the Hub held before it remembered Harnesses, from a source that no held set names, run the Harness the source is named after, which is the default name.
+
+`serve` parses every 15 seconds, at most 64 MiB of transcript content each time. It reads each generation from where its parser last stopped, joining the generation's chunks in offset order and unpacking them, oldest upload first. A line without its newline waits for the rest unless it is the last line the generation holds and reads as JSON, so a line the Collector split across chunks is parsed once it is whole. A batch's facts and the generation's progress commit together, so a run that fails or a Hub that restarts resumes from the progress and loses nothing. Session insight therefore trails an upload by about 15 seconds, and a Session by about a minute more, since a Collector uploads every 60 seconds. A parse failure is logged, and the next run tries again.
+
+Every fact carries the parser version that wrote it, and the `insight` views show only each Harness's current version: the latest one whose parse of the Harness's whole archive is complete. A Hub whose parser has another version builds that version's facts beside the current ones, while the views keep showing the current, complete set. Once every generation of the Harness is parsed through what the Hub holds, the views switch to the new version in one statement, `serve` logs the switch, and the earlier version's facts are deleted. A restart during a rebuild resumes it. Until a Harness's first complete parse, the views show none of its Sessions.
+
+A request or a tool call counts once within a System's source, however many generations or files hold it, keyed by the Harness's own id for it. Deleting generations with `heimdall-hub transcripts delete` deletes, in the same transaction, the facts of every Session the generations touched, and the next run derives those Sessions again from the generations that still hold them. Nothing derived outlives its transcript. A Session touched during a rebuild leaves the views until the rebuild completes, since only the new parser can derive it again.
+
+### Claude Code
+
+The parser reads a source's `projects/` tree:
+
+- **A Session** is a main conversation, `projects/<project>/<session id>.jsonl`. A resumed Session appends to its file under the same id, so it stays one Session, and the Harness version at its first and last line can differ. `/clear` starts a new Session in a new file. A Session that keeps its file and id when it is compacted stays one Session; no compaction appeared in the transcripts the parser was checked against.
+- **A subagent** is `<session id>/subagents/agent-<agent id>.jsonl`, and a workflow agent `<session id>/subagents/workflows/<run>/agent-<agent id>.jsonl`. The `.meta.json` beside each names its agent type and spawn depth, and either the tool call that spawned it, which the parent conversation, the main conversation or another subagent, made, or the phase of the workflow run that started it. A workflow's `journal.jsonl`, tool outputs in `tool-results/`, and memory files hold no facts and are not read.
+- **A request** is one API response. Claude Code writes one line per content block and repeats the response's usage on each, so the parser keeps one line per `message.id`: the last line with a stop reason, or, for a response that was interrupted and has none, the last line. A `<synthetic>` message, which Claude Code writes itself, is not a request. A request names the model the API answered with, such as `claude-haiku-4-5-20251001`, which can differ from the alias Claude Code's own cost tally uses.
+- **Tokens** are as Claude Code recorded them. Reasoning tokens are within output tokens, and cache write tokens are split into 5-minute and 1-hour writes. Context fill is input, cache read, and cache write tokens together.
+- **A tool call** is a `tool_use` block. An MCP tool, `mcp__<server>__<tool>`, names its server, and the `Skill` tool names its skill. A slash command a person typed, from `<command-name>` in a user line, is a tool call of kind `command` that names the command and, without its `/`, its skill; the parser cannot tell a skill from a built-in command such as `/doctor`. A request also names the skill Claude Code attributed it to. Listings of the skills available invoke none.
+- **Times** are not in order within a file, so a Session or subagent spans its earliest and latest line, with the working directory, branch, and Harness version of each.
+
+Totals from transcripts match Claude Code's own running tally, the `cost-state` lines in a main transcript, with two known gaps. Claude Code counts small side requests, such as naming the Session, that it never writes to a transcript. An interrupted response is recorded with the usage of its last line, which can be lower than what the response used.
+
+### The insight views
+
+The views carry facts and locators, never transcript content, and read no chunk of a transcript. A locator is a System, a source, a path within the source, a generation, and a byte offset in the generation's uncompressed content, from which a reader on the Hub's System can find a line. Times are `timestamptz`, and token counts `bigint`. Every view but the totals carries `parser_version`, the version that wrote its rows. Changing a view's columns is a documented change ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)).
+
+Every view starts with the Session's key: `harness`, `system`, `source`, and `session_id`, the Harness's id for the Session.
+
+| View | One row per | Columns after the key |
+| --- | --- | --- |
+| `insight.sessions` | Session | `path` of its main transcript, null when the Hub holds only its subagents; `started_at` and `ended_at`; `first_cwd` and `last_cwd`; `first_git_branch` and `last_git_branch`; `first_harness_version` and `last_harness_version`. The first and last are as of `started_at` and `ended_at`. |
+| `insight.subagents` | subagent | `agent_id`; `parent_agent_id`, null when the main conversation or a workflow run spawned it; `agent_type`; `depth`, 1 for a subagent the main conversation spawned; `tool_use_id`, the spawning tool call's `call_id`; `workflow_run` and `workflow_phase` for a workflow agent; `path`; `started_at` and `ended_at`. |
+| `insight.requests` | request | `agent_id`, null for the main conversation; `request_id`; `at`; `model`; `input_tokens`; `output_tokens`; `reasoning_tokens`, null when the Harness did not record them; `cache_read_tokens`; `cache_write_tokens`, with `cache_write_5m_tokens` and `cache_write_1h_tokens`, null when the Harness did not split them; `context_tokens`; `stop_reason`, null for an interrupted response; `skill`; and the locator: `path`, `generation`, `byte_offset`. |
+| `insight.tool_calls` | tool call | `agent_id`; `request_id`, null for a command; `call_id`; `at`; `kind`, `tool` or `command`; `name`; `mcp_server`; `skill`; and the locator: `path`, `generation`, `byte_offset`. |
+| `insight.session_totals` | Session | Totals over the Session's requests, its subagents' included: `requests`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`. A Session with no requests has zeros. |
+| `insight.main_conversation_totals` | Session | The same totals over the main conversation's requests alone. |
 
 ## Trust
 

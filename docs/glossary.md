@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, subagent, transcript, source, generation, request, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, subagent, transcript, source, generation, request, Session insight, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -45,7 +45,7 @@ The process that runs on each System, observes it, holds its records, and sends 
 _Avoid_: agent (reserved for the AI driving a Harness), exporter, daemon
 
 **Hub**:
-The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, and serves the web dashboard.
+The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, derives Session insight from transcripts, and serves the web dashboard.
 _Avoid_: server, backend
 
 **Report**:
@@ -83,6 +83,10 @@ _Avoid_: version, revision, upload
 **request**:
 One call from a Session or a subagent to its model, with the model and the tokens it used. It is the unit Heimdall counts and prices.
 _Avoid_: turn (a prompt and everything the agent does in reply), message, API call
+
+**Session insight**:
+What the Hub derives from the transcripts it holds: each Session and subagent, each request, and each tool call, read through the `insight` views. It is a projection of the archive that the Hub rebuilds when a Harness's parser changes, so it never holds a fact the surviving transcripts do not.
+_Avoid_: analytics, stats, metrics (too broad)
 
 **cost**:
 What a Session's or a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. A model with no known price is unpriced, never free.
