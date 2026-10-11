@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { MAX_TRANSCRIPT_CHUNK_BYTES, MAX_TRANSCRIPT_REQUEST_BYTES } from '@heimdall/schema';
 import { SQL } from 'bun';
@@ -1351,6 +1354,119 @@ describe('a generation the projection cannot read', () => {
       runs.push(outcome);
     }
     expect(runs).toEqual(Array.from({ length: 4 }, () => 'Synthetic outage.'));
+
+    await projectAll(h);
+
+    expect(await settled(h.db.sql)).toEqual({
+      requests: ['msg_main'],
+      sessions: [SESSION],
+      status: [{ failed_generations: 0, generations: 1, unreadable_lines: 0 }],
+    });
+  });
+
+  // Errors Bun's client throws itself, as each outage makes them, rather
+  // than their fields alone.
+  const outages = {
+    'a server that refuses the connection': () => {
+      const probe = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data: () => {} } });
+      const { port } = probe;
+      probe.stop(true);
+      const sql = new SQL({ url: `postgres://postgres@127.0.0.1:${String(port)}/postgres` });
+      return { close: () => sql.close(), sql };
+    },
+    // A socket it cannot open, as a path that is no socket gives, carries
+    // neither a code nor a SQLSTATE.
+    'a socket Bun cannot open': async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'heimdall-no-socket-'));
+      const sql = new SQL({ database: 'postgres', path: dir, username: 'postgres' });
+      return {
+        close: async () => {
+          await sql.close();
+          await rm(dir, { force: true, recursive: true });
+        },
+        sql,
+      };
+    },
+  };
+
+  test.each(Object.entries(outages))(
+    'whose read meets %s is not counted against, and the run stops',
+    async (_, open) => {
+      await using h = await startHub();
+      await nameSources(h);
+      await upload(h, { content: sessionOf(), path: mainPath() });
+      const broken = await open();
+      // Every read of chunks goes to the broken connection.
+      const sql = new Proxy(h.db.sql, {
+        apply: (target, self, [strings, ...values]: [TemplateStringsArray, ...unknown[]]) =>
+          strings.join('').includes('FROM transcript_chunks')
+            ? broken.sql(strings, ...values)
+            : target(strings, ...values),
+        get: (target, property) => {
+          const value: unknown = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const runs: string[] = [];
+      try {
+        for (let run = 0; run < 4; run += 1) {
+          // oxlint-disable-next-line no-await-in-loop -- each run meets the outage.
+          const outcome = await projectTranscripts(sql).then(
+            () => 'ran',
+            () => 'stopped',
+          );
+          runs.push(outcome);
+        }
+      } finally {
+        await broken.close();
+      }
+      expect(runs).toEqual(['stopped', 'stopped', 'stopped', 'stopped']);
+
+      await projectAll(h);
+
+      expect(await settled(h.db.sql)).toEqual({
+        requests: ['msg_main'],
+        sessions: [SESSION],
+        status: [{ failed_generations: 0, generations: 1, unreadable_lines: 0 }],
+      });
+    },
+  );
+
+  // A connection the server ends while it is idle in a transaction, as a
+  // restart does, fails the transaction's next statement.
+  test('whose batch meets a connection the server ended is not counted against, and the run stops', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    const runs: string[] = [];
+    for (let run = 0; run < 4; run += 1) {
+      let ended = false;
+      const sql = new Proxy(h.db.sql, {
+        get: (target, property) => {
+          if (property === 'begin') {
+            return async (work: (tx: SQL) => Promise<unknown>) =>
+              target.begin(async (tx) => {
+                if (!ended) {
+                  ended = true;
+                  const [own]: { pid: number }[] = await tx`SELECT pg_backend_pid() AS pid`;
+                  await h.db.sql`SELECT pg_terminate_backend(${own?.pid ?? 0}::int)`;
+                  await Bun.sleep(200);
+                }
+                return work(tx);
+              });
+          }
+          const value: unknown = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      // oxlint-disable-next-line no-await-in-loop -- each run meets the outage.
+      const outcome = await projectTranscripts(sql).then(
+        () => 'ran',
+        () => 'stopped',
+      );
+      runs.push(outcome);
+    }
+    expect(runs).toEqual(['stopped', 'stopped', 'stopped', 'stopped']);
 
     await projectAll(h);
 

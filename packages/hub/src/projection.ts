@@ -211,8 +211,16 @@ const isPermanent = (error: unknown): boolean =>
 const TRANSIENT_CLASSES = new Set(['08', '53']);
 const TRANSIENT_STATES = new Set(['57P01', '57P02', '57P03']);
 
-// Bun's own errors for a connection it lost, could not open, or closed.
-const TRANSIENT_CLIENT = /^ERR_POSTGRES_(?:CONNECTION_|IDLE_TIMEOUT|LIFETIME_TIMEOUT)/u;
+// Bun's own errors for a connection it lost, could not open, or closed, and
+// for a statement sent on a connection the server had ended, as a restart
+// does to one idle in a transaction (`ERR_POSTGRES_EXPECTED_REQUEST`).
+const TRANSIENT_CLIENT =
+  /^ERR_POSTGRES_(?:CONNECTION_|EXPECTED_REQUEST|IDLE_TIMEOUT|LIFETIME_TIMEOUT)/u;
+
+// Bun's error for a socket it cannot open at all, as for a path that is no
+// socket or an address it cannot reach: a plain `Error` with neither a code
+// nor a SQLSTATE, told only by its message.
+const UNOPENED_SOCKET = /^FailedToOpenSocket\b/u;
 
 // Whether `error` is no generation's fault, so it counts against none: the
 // run stops, and the next one tries again.
@@ -221,13 +229,13 @@ const isTransient = (error: unknown): boolean => {
   if (state !== undefined) {
     return TRANSIENT_CLASSES.has(state.slice(0, 2)) || TRANSIENT_STATES.has(state);
   }
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    typeof error.code === 'string' &&
-    TRANSIENT_CLIENT.test(error.code)
-  );
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if ('code' in error && typeof error.code === 'string') {
+    return TRANSIENT_CLIENT.test(error.code);
+  }
+  return error instanceof Error && UNOPENED_SOCKET.test(error.message);
 };
 
 // The SQLSTATE of a PostgreSQL error, which Bun reports in `errno`.
