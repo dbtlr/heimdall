@@ -1,6 +1,7 @@
 import type { OpenGeneration } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { forgetDeletedGenerations } from './projection.ts';
 import { seeSystem } from './store.ts';
 
 export type Opened = { generation: number; kind: 'opened' } | { kind: 'deleted' };
@@ -143,7 +144,8 @@ type Matched = { id: string; stored_bytes: string };
 // Deletes whole generations on purpose, as of `now`, and answers how many it
 // removed and their gzipped size; a dry run only answers. A deleted
 // generation keeps its row, without its content, so its path stays refused
-// once no generation there survives (ADR-0013). Refuses to run without a
+// once no generation there survives (ADR-0013), and the Session facts derived
+// from it go in the same transaction. Refuses to run without a
 // filter, so nothing deletes every transcript by omission.
 export const deleteTranscripts = (
   sql: SQL,
@@ -194,6 +196,8 @@ export const deleteTranscripts = (
       }
       marked.push(...pass);
     }
+    // Nothing derived outlives its transcript (ADR-0014).
+    await forgetDeletedGenerations(tx);
     return removedOf(marked);
   });
 };

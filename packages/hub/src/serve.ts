@@ -11,12 +11,16 @@ import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+import { projectTranscripts } from './projection.ts';
 import { pruneVitals } from './retention.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
+// Collectors scan their transcripts every 60 seconds, so Session insight lags
+// an upload by at most this; a rebuild parses a budget each time.
+const PROJECT_INTERVAL_MS = 15_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -89,10 +93,11 @@ const serveUntilStopped = async ({
       sql,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
-    // Pruning and judging Conditions are routine, so only a failure is logged, and
-    // the next round tries again.
+    // Pruning, judging Conditions, and parsing transcripts are routine, so only
+    // a failure or a parser switch is logged, and the next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
+    let stopProjecting: (() => Promise<void>) | undefined;
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
@@ -110,13 +115,29 @@ const serveUntilStopped = async ({
         },
         task: () => evaluateConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
       });
+      stopProjecting = every({
+        intervalMs: PROJECT_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(clean(`Could not derive Session insight: ${describeError(error)}`));
+        },
+        task: async () => {
+          const { switched } = await projectTranscripts(sql);
+          for (const { harness, version } of switched) {
+            // oxlint-disable-next-line no-await-in-loop -- one line per switch, in order.
+            await log.info(
+              clean(`Session insight for ${harness} now reads parser version ${String(version)}.`),
+            );
+          }
+        },
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A prune or judgment still running must finish before the database closes.
+      // A prune, judgment, or parse still running must finish before the database closes.
       await stopPruning?.();
       await stopJudging?.();
+      await stopProjecting?.();
       await server.stop();
     }
   } finally {
