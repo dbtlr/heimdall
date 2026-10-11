@@ -197,3 +197,100 @@ test('a migration error that is not a lock wait still rejects, without waiting',
   expect(slept).toBe(false);
   expect(logged).toBe(false);
 });
+
+test('a wait sleeps one second, then doubles, to a cap of thirty', async () => {
+  await using db = await ready();
+  const holder = await holdSystems(db);
+  const slept: number[] = [];
+
+  await migrateWhenFree(db.sql, {
+    lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
+    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    onBlocked: () => {},
+    sleep: async (ms) => {
+      slept.push(ms);
+      if (slept.length === 7) {
+        await holder.release();
+      }
+    },
+  });
+
+  expect(slept).toEqual([1000, 2000, 4000, 8000, 16_000, 30_000, 30_000]);
+});
+
+test('an abort during the backoff runs no further attempt', async () => {
+  await using db = await ready();
+  const holder = await holdSystems(db);
+  const controller = new AbortController();
+
+  const failure = await failureOf(
+    migrateWhenFree(db.sql, {
+      lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
+      migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+      onBlocked: () => {},
+      signal: controller.signal,
+      sleep: async () => {
+        // With the lock free, any further attempt would apply the migration.
+        controller.abort();
+        await holder.release();
+      },
+    }),
+  );
+
+  expect(failure).toMatchObject({ errno: '55P03' });
+  const columns: { column_name: string }[] =
+    await db.sql`SELECT column_name FROM information_schema.columns WHERE table_name = 'systems'`;
+  expect(columns.map((c) => c.column_name)).not.toContain('note');
+});
+
+test('the holder is logged again at exactly sixty seconds, not at fifty-nine', async () => {
+  await using db = await ready();
+  const holder = await holdSystems(db);
+  let clock = 5_000;
+  const loggedAt: number[] = [];
+  const steps = [59_999, 1, 1];
+  let sleeps = 0;
+
+  await migrateWhenFree(db.sql, {
+    lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
+    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    now: () => clock,
+    onBlocked: () => {
+      loggedAt.push(clock);
+    },
+    sleep: async () => {
+      clock += steps[sleeps] ?? 0;
+      sleeps += 1;
+      if (sleeps === steps.length) {
+        await holder.release();
+      }
+    },
+  });
+
+  expect(loggedAt).toEqual([5000, 65_000]);
+});
+
+test('a holder lookup that fails does not end the wait', async () => {
+  await using db = await ready();
+  const holder = await holdSystems(db);
+  const blocked: LockHolder[][] = [];
+  let sleeps = 0;
+
+  const applied = await migrateWhenFree(db.sql, {
+    lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
+    lookupHolders: () => Promise.reject(new Error('permission denied for pg_locks')),
+    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    onBlocked: (holders) => {
+      blocked.push(holders);
+    },
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) {
+        await holder.release();
+      }
+    },
+  });
+
+  expect(applied).toEqual([9999]);
+  expect(blocked).toEqual([[]]);
+});

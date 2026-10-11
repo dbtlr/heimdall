@@ -77,6 +77,10 @@ const serveUntilStopped = async ({
     if (applied.length > 0) {
       await log.info(`Applied database migrations ${applied.join(', ')}.`);
     }
+    // A stop that landed as the migrations finished must not start listening.
+    if (signal.aborted) {
+      return;
+    }
     const hub = createHub({
       now: Date.now,
       onError: (error) => {

@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { SQL } from 'bun';
 
-import { MIGRATION_LOCK_TIMEOUT_MS, MIGRATIONS, migrate } from './migrations.ts';
+import { MIGRATIONS, migrate } from './migrations.ts';
 
 const LOCK_NOT_AVAILABLE = '55P03';
 const BACKOFF_START_MS = 1000;
@@ -46,10 +46,12 @@ export const oncePerInterval = (intervalMs: number, now: () => number): (() => b
   };
 };
 
-// The other sessions holding a lock on a table in this database or the
-// migration's advisory lock, longest-open first. Once the migration has rolled
+// The other sessions holding a lock on a table in this database or an advisory
+// lock, longest-open first (sessions whose start the Hub's role cannot see last). Once the migration has rolled
 // back, nothing says which of them blocked it, so this lists them all, which for
 // a Hub's database is a backup, another Hub migrating, or a stuck session.
+// PostgreSQL shows state and start time only for the Hub's own role's sessions or
+// a role with pg_read_all_stats, so for other sessions those come back empty.
 export const lockHolders = async (sql: SQL): Promise<LockHolder[]> => {
   const rows: {
     application_name: string | null;
@@ -63,7 +65,7 @@ export const lockHolders = async (sql: SQL): Promise<LockHolder[]> => {
       a.application_name,
       a.state,
       coalesce(a.xact_start, a.state_change) AS since,
-      string_agg(DISTINCT coalesce(c.relname, 'migration lock'), ', ') AS locked
+      string_agg(DISTINCT coalesce(c.relname, 'advisory lock'), ', ') AS locked
     FROM pg_locks l
     LEFT JOIN pg_stat_activity a ON a.pid = l.pid
     LEFT JOIN pg_class c ON l.locktype = 'relation' AND c.oid = l.relation
@@ -108,11 +110,13 @@ export const describeLockWait = (holders: readonly LockHolder[]): string =>
 // Runs `migrate`, and when another session's lock stalls it, rolls back, reports
 // the holders to `onBlocked` at most once a minute, waits with backoff, and tries
 // again until the migrations apply. Any other error rejects at once. A `signal`
-// that aborts ends the wait with the lock error. `now` and `sleep` are for tests.
+// that aborts ends the wait with the lock error. `lockTimeoutMs`, `lookupHolders`,
+// `now`, and `sleep` are for tests.
 export const migrateWhenFree = async (
   sql: SQL,
   {
-    lockTimeoutMs = MIGRATION_LOCK_TIMEOUT_MS,
+    lockTimeoutMs,
+    lookupHolders = lockHolders,
     migrations = MIGRATIONS,
     now = Date.now,
     onBlocked,
@@ -122,6 +126,7 @@ export const migrateWhenFree = async (
     },
   }: {
     lockTimeoutMs?: number;
+    lookupHolders?: (sql: SQL) => Promise<LockHolder[]>;
     migrations?: typeof MIGRATIONS;
     now?: () => number;
     onBlocked: (holders: LockHolder[]) => void | Promise<void>;
@@ -134,7 +139,7 @@ export const migrateWhenFree = async (
   for (let attempt = 0; ; attempt += 1) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- each try follows the failure of the last.
-      return await migrate(sql, migrations, { lockTimeoutMs });
+      return await migrate(sql, migrations, lockTimeoutMs === undefined ? {} : { lockTimeoutMs });
     } catch (error) {
       if (!isLockNotAvailable(error) || stopped()) {
         throw error;
@@ -142,7 +147,7 @@ export const migrateWhenFree = async (
       if (mayLog()) {
         // Naming the holder is a courtesy; failing to find it must not end the wait.
         // oxlint-disable-next-line no-await-in-loop -- reported before the wait.
-        const holders = await lockHolders(sql).catch((): LockHolder[] => []);
+        const holders = await lookupHolders(sql).catch((): LockHolder[] => []);
         // oxlint-disable-next-line no-await-in-loop -- reported before the wait.
         await onBlocked(holders);
       }
