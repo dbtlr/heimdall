@@ -11,15 +11,16 @@ import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
-import { projectTranscripts } from './projection.ts';
+import { projectionNotes, projectTranscripts } from './projection.ts';
 import { pruneVitals } from './retention.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
-// Collectors scan their transcripts every 60 seconds, so Session insight lags
-// an upload by at most this; a rebuild parses a budget each time.
+// How often serve parses transcripts. When it keeps up, Session insight trails
+// an upload by about this; a backlog or a rebuild parses at most a budget each
+// time, so it trails further until it catches up.
 const PROJECT_INTERVAL_MS = 15_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
@@ -94,10 +95,12 @@ const serveUntilStopped = async ({
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
     // Pruning, judging Conditions, and parsing transcripts are routine, so only
-    // a failure or a parser switch is logged, and the next round tries again.
+    // a failure, a parser switch, or a parser left behind is logged, and the
+    // next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
     let stopProjecting: (() => Promise<void>) | undefined;
+    const outdatedLogged = new Set<string>();
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
@@ -121,12 +124,10 @@ const serveUntilStopped = async ({
           void log.warn(clean(`Could not derive Session insight: ${describeError(error)}`));
         },
         task: async () => {
-          const { switched } = await projectTranscripts(sql);
-          for (const { harness, version } of switched) {
-            // oxlint-disable-next-line no-await-in-loop -- one line per switch, in order.
-            await log.info(
-              clean(`Session insight for ${harness} now reads parser version ${String(version)}.`),
-            );
+          const projected = await projectTranscripts(sql);
+          for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
+            // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+            await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
           }
         },
       });

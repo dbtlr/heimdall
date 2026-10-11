@@ -89,6 +89,37 @@ export const projectTranscripts = async (
   return projected;
 };
 
+// The lines `serve` logs of a run: each switch, each generation recorded
+// failed, and each Harness left alone for a newer parser version, once per
+// version pair, since every run would repeat it. `logged` remembers which
+// pairs were logged.
+export const projectionNotes = (
+  { failed, outdated, switched }: Projected,
+  logged: Set<string>,
+): { level: 'info' | 'warn'; text: string }[] => [
+  ...switched.map(({ harness, version }) => ({
+    level: 'info' as const,
+    text: `Session insight for ${harness} now reads parser version ${String(version)}.`,
+  })),
+  ...failed.map(({ error, generation, harness }) => ({
+    level: 'warn' as const,
+    text: `Could not parse generation ${String(generation)} for ${harness}, so it waits for the next parser version: ${error}`,
+  })),
+  ...outdated.flatMap(({ current, harness, version }) => {
+    const key = `${harness}:${String(current)}:${String(version)}`;
+    if (logged.has(key)) {
+      return [];
+    }
+    logged.add(key);
+    return [
+      {
+        level: 'warn' as const,
+        text: `Session insight for ${harness} is at parser version ${String(current)}, newer than this Hub's ${String(version)}, so this Hub leaves it alone until it is upgraded.`,
+      },
+    ];
+  }),
+];
+
 const currentVersion = async (sql: SQL, harness: string) => {
   const [row]: { version: number }[] = await sql`
     SELECT version FROM current_parsers WHERE harness = ${harness}

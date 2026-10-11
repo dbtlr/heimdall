@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import { PARSE_BUDGET_BYTES, projectTranscripts } from './projection.ts';
+import { PARSE_BUDGET_BYTES, projectionNotes, projectTranscripts } from './projection.ts';
 import {
   agentMeta,
   agentPath,
@@ -1389,5 +1389,33 @@ describe('the insight views', () => {
     await projectTranscripts(h.db.sql, { budgetBytes: 700 });
 
     expect(await sessions(h.db.sql)).toEqual([]);
+  });
+});
+
+describe('what serve logs of a run', () => {
+  test('each switch and failure, and a Harness left alone only the first time', () => {
+    const outdated = new Set<string>();
+    const run = {
+      failed: [{ error: 'Synthetic failure.', generation: 7, harness: 'claude-code' }],
+      outdated: [{ current: 3, harness: 'claude-code', version: 2 }],
+      pending: 0,
+      switched: [{ harness: 'codex', version: 4 }],
+    };
+
+    const first = projectionNotes(run, outdated);
+    const second = projectionNotes({ ...run, failed: [], switched: [] }, outdated);
+
+    expect(first).toEqual([
+      { level: 'info', text: 'Session insight for codex now reads parser version 4.' },
+      {
+        level: 'warn',
+        text: 'Could not parse generation 7 for claude-code, so it waits for the next parser version: Synthetic failure.',
+      },
+      {
+        level: 'warn',
+        text: "Session insight for claude-code is at parser version 3, newer than this Hub's 2, so this Hub leaves it alone until it is upgraded.",
+      },
+    ]);
+    expect(second).toEqual([]);
   });
 });

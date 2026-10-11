@@ -144,7 +144,7 @@ type Matched = { id: string; stored_bytes: string };
 // Deletes whole generations on purpose, as of `now`, and answers how many it
 // removed and their gzipped size; a dry run only answers. A deleted
 // generation keeps its row, without its content, so its path stays refused
-// once no generation there survives (ADR-0013), and the Session facts derived
+// once no generation there survives (ADR-0013), and the Session insight derived
 // from it go in the same transaction. Refuses to run without a
 // filter, so nothing deletes every transcript by omission.
 export const deleteTranscripts = (
