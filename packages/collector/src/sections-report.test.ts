@@ -1191,3 +1191,17 @@ test('a Report the Hub fails to take leaves the Harness installs pending', async
   expect(failed[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
   expect(retried[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
 });
+
+test('a records file that cannot be opened costs the Harness installs nothing', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
+  const scan = installed({ installs: [CLAUDE_INSTALL] });
+  const collector = await setup(dir, { harnesses: scan.source });
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
+  expect(second[0]?.harnesses).toBeUndefined();
+});
