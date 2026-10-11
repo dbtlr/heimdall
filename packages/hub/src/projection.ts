@@ -9,10 +9,14 @@ import { readHeldContent, UnreadableGenerationError } from './transcript-reader.
 // The parsers the Hub runs, one per Harness it derives Session insight for.
 export const PARSERS: readonly HarnessParser[] = [claudeCodeParser];
 
-// How much transcript content one run reads at most, across generations. It
-// passes the budget only to finish the one line that crosses it, which it
-// reads whole up to `MAX_LINE_BYTES`, so a run reads at most the budget and
-// `MAX_LINE_BYTES` more.
+// How much transcript content one run fetches, across generations, before it
+// starts no more reads. Every chunk a read fetches counts in full: chunks
+// fetched again, and reads that fail, included. A read asks for at most what
+// is left of the budget, unless no whole line fits in that: then it reads
+// again from the same byte, up to `READ_CAP_BYTES`, to finish the line that
+// crosses the budget. A read fetches whole chunks of at most 1 MiB, so up to
+// a chunk more than it asks for at each end. So a run fetches at most the
+// budget, `READ_CAP_BYTES`, and four chunks: 84 MiB and a byte.
 export const PARSE_BUDGET_BYTES = 64 * 2 ** 20;
 
 // How many requests and tool calls one batch holds at most, past the line
@@ -73,7 +77,7 @@ export const projectTranscripts = async (
   { budgetBytes = PARSE_BUDGET_BYTES, cleanupRows = CLEANUP_ROWS, parsers = PARSERS }: Options = {},
 ): Promise<Projected> => {
   const projected: Projected = { failed: [], outdated: [], pending: 0, switched: [] };
-  let budget = budgetBytes;
+  const budget: Budget = { left: budgetBytes };
   for (const parser of parsers) {
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     const current = await currentVersion(sql, parser.harness);
@@ -82,7 +86,7 @@ export const projectTranscripts = async (
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-    budget -= await parsePending(sql, { budget, failed: projected.failed, parser });
+    await parsePending(sql, { budget, failed: projected.failed, parser });
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     projected.pending += await pendingCount(sql, parser);
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
@@ -135,22 +139,24 @@ const currentVersion = async (sql: SQL, harness: string) => {
   return row?.version;
 };
 
+// What is left of a run's budget, which every read it makes draws on.
+type Budget = { left: number };
+
 // Parses the generations `parser` has not read through what the Hub holds,
-// within `budget` bytes, and answers the bytes it read. A generation that
-// cannot be parsed is recorded failed, and added to `failed`. A run that
-// finds a delete under way stops, and leaves the rest to the next run.
+// within `budget`. A generation that cannot be parsed is recorded failed, and
+// added to `failed`. A run that finds a delete under way stops, and leaves
+// the rest to the next run.
 const parsePending = async (
   sql: SQL,
   {
     budget,
     failed,
     parser,
-  }: { budget: number; failed: Projected['failed']; parser: HarnessParser },
+  }: { budget: Budget; failed: Projected['failed']; parser: HarnessParser },
 ) => {
-  let left = budget;
   const work = await pendingGenerations(sql, parser);
   for (const row of work) {
-    if (left <= 0) {
+    if (budget.left <= 0) {
       break;
     }
     const generation = { ...row, held: Number(row.held), id: Number(row.id) };
@@ -162,7 +168,7 @@ const parsePending = async (
       let step: Step;
       try {
         // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-        step = await parseBatch(sql, { budget: left, generation, parser, progress });
+        step = await parseBatch(sql, { budget, generation, parser, progress });
       } catch (error) {
         if (isTransient(error)) {
           throw error;
@@ -178,16 +184,14 @@ const parsePending = async (
         break;
       }
       if (step.kind === 'busy') {
-        return budget - left;
+        return;
       }
-      left -= step.read;
-      if (step.kind === 'done' || left <= 0) {
+      if (step.kind === 'done' || budget.left <= 0) {
         break;
       }
       progress = step.next;
     }
   }
-  return budget - left;
 };
 
 // PostgreSQL's classes of error that storing the same values again repeats:
@@ -334,20 +338,17 @@ type Progress = { parsedThrough: number | null; skipping: boolean };
 
 // What parsing one batch did: found a delete under way, so stored nothing;
 // stored it, or found the progress moved under the run, and has nothing more
-// to read now; or stored it, with more content held past it. `read` is the
-// content it read.
-type Step =
-  | { kind: 'busy' }
-  | { kind: 'done'; read: number }
-  | { kind: 'more'; next: Progress; read: number };
+// to read now; or stored it, with more content held past it.
+type Step = { kind: 'busy' } | { kind: 'done' } | { kind: 'more'; next: Progress };
 
-// Parses one batch of a generation from where its progress stopped. A read
-// holds at most `budget` bytes, and never more than `READ_CAP_BYTES`, unless
-// no whole line fits within the budget: then it grows until one does, up to
-// the cap, so a run passes its budget only to finish the line that crosses
-// it. A file the parser does not read is marked parsed through what the Hub
-// holds, unread. A line longer than the cap is counted unreadable and
-// skipped a read at a time, so it is never held whole.
+// Parses one batch of a generation from where its progress stopped, drawing
+// every chunk it fetches from `budget`. A read asks for what is left of the
+// budget, and never more than `READ_CAP_BYTES`, unless no whole line fits in
+// that: then it reads again from the same byte, up to the cap, so a run
+// passes its budget only to finish the line that crosses it. A file the
+// parser does not read is marked parsed through what the Hub holds, unread.
+// A line longer than the cap is counted unreadable and skipped a read at a
+// time, so it is never held whole.
 const parseBatch = async (
   sql: SQL,
   {
@@ -355,13 +356,13 @@ const parseBatch = async (
     generation,
     parser,
     progress,
-  }: { budget: number; generation: Generation; parser: HarnessParser; progress: Progress },
+  }: { budget: Budget; generation: Generation; parser: HarnessParser; progress: Progress },
 ): Promise<Step> => {
   const from = progress.parsedThrough ?? 0;
   const { held, path } = generation;
   const store = async (
     batch: Batch,
-    { complete, read, skipping }: { complete: boolean; read: number; skipping: boolean },
+    { complete, skipping }: { complete: boolean; skipping: boolean },
   ): Promise<Step> => {
     // Content read only in part, or only up to a line too long to read or the
     // fact limit, stays pending.
@@ -378,19 +379,18 @@ const parseBatch = async (
       return { kind: 'busy' };
     }
     return stored === 'stored' && heldSeen < held && batch.parsedThrough > from
-      ? { kind: 'more', next: { parsedThrough: batch.parsedThrough, skipping }, read }
-      : { kind: 'done', read };
+      ? { kind: 'more', next: { parsedThrough: batch.parsedThrough, skipping } }
+      : { kind: 'done' };
   };
   if (!parser.reads(path)) {
-    return store({ ...EMPTY, parsedThrough: held }, { complete: true, read: 0, skipping: false });
+    return store({ ...EMPTY, parsedThrough: held }, { complete: true, skipping: false });
   }
-  for (
-    let limit = Math.min(budget, READ_CAP_BYTES);
-    ;
-    limit = Math.min(limit * 2, READ_CAP_BYTES)
-  ) {
-    // oxlint-disable-next-line no-await-in-loop -- reads more only when no line fits.
+  for (let limit = Math.min(budget.left, READ_CAP_BYTES); ; limit = READ_CAP_BYTES) {
+    // oxlint-disable-next-line no-await-in-loop -- reads again only when no line fits.
     const { complete, content } = await readHeldContent(sql, {
+      fetched: (bytes) => {
+        budget.left -= bytes;
+      },
       from,
       generation: generation.id,
       held,
@@ -400,7 +400,7 @@ const parseBatch = async (
     if (progress.skipping) {
       const newline = content.indexOf(NEWLINE);
       return newline === -1
-        ? store({ ...EMPTY, parsedThrough: from + read }, { complete, read, skipping: true })
+        ? store({ ...EMPTY, parsedThrough: from + read }, { complete, skipping: true })
         : store(
             parser.parse({
               complete,
@@ -409,17 +409,17 @@ const parseBatch = async (
               offset: from + newline + 1,
               path,
             }),
-            { complete, read, skipping: false },
+            { complete, skipping: false },
           );
     }
     const batch = parser.parse({ complete, content, factLimit: BATCH_FACTS, offset: from, path });
     if (batch.parsedThrough > from || complete) {
-      return store(batch, { complete, read, skipping: false });
+      return store(batch, { complete, skipping: false });
     }
     if (read > MAX_LINE_BYTES) {
       return store(
         { ...EMPTY, owner: batch.owner, parsedThrough: from + read, unreadableLines: 1 },
-        { complete, read, skipping: true },
+        { complete, skipping: true },
       );
     }
     // A read shorter than asked that stops short of `held` means the
@@ -429,6 +429,7 @@ const parseBatch = async (
         `Generation ${String(generation.id)} holds no chunk past byte ${String(from + read)}.`,
       );
     }
+    // No whole line fits in what was left of the budget: read again up to the cap.
   }
 };
 

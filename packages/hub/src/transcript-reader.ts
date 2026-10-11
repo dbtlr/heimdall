@@ -32,16 +32,26 @@ type Row = { content: Uint8Array; length: string; offset_bytes: string };
 // chunks in offset order and unpacking each (ADR-0013). It answers at most
 // `limitBytes`, reading only the chunks that hold them and unpacking one at a
 // time into the answer, so it holds no more than the answer and one chunk
-// unpacked. A gap between chunks, or a chunk that unpacks to another length
-// than it was stored with, is an error rather than content spliced wrong.
+// unpacked. It tells `fetched` the uncompressed length of every chunk it
+// fetches as it fetches it, before anything can fail: whole chunks, so up to
+// a chunk more than it answers at each end. A gap between chunks, or a chunk
+// that unpacks to another length than it was stored with, is an error rather
+// than content spliced wrong.
 export const readHeldContent = async (
   sql: SQL,
   {
+    fetched,
     from,
     generation,
     held,
     limitBytes,
-  }: { from: number; generation: number; held: number; limitBytes: number },
+  }: {
+    fetched: (bytes: number) => void;
+    from: number;
+    generation: number;
+    held: number;
+    limitBytes: number;
+  },
 ): Promise<HeldContent> => {
   const until = Math.min(held, from + limitBytes);
   // Bun binds a number of 2^51 or more as a double, which the primary key's
@@ -52,6 +62,7 @@ export const readHeldContent = async (
       AND offset_bytes + length > ${from} AND offset_bytes < ${until}
     ORDER BY offset_bytes
   `;
+  fetched(rows.reduce((sum, row) => sum + Number(row.length), 0));
   if (rows.length === 0 && from < until) {
     throw new UnreadableGenerationError(
       `Generation ${String(generation)} holds no chunk at byte ${String(from)}.`,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { MAX_TRANSCRIPT_CHUNK_BYTES } from '@heimdall/schema';
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
@@ -381,11 +382,13 @@ const someoneWaitsOnALock = async (sql: SQL) => {
   throw new Error('No session waited on a lock.');
 };
 
-// `sql` as the projection sees it, measuring the most transcript content any
-// one query outside a transaction fetched, as reads of chunks are: the sum
-// of the uncompressed lengths of the chunks it answered.
+// `sql` as the projection sees it, measuring the transcript content queries
+// outside a transaction fetched, as reads of chunks are: the most any one
+// query fetched, and all of them together, each the sum of the uncompressed
+// lengths of the chunks it answered.
 const measuringReads = (sql: SQL) => {
   let most = 0;
+  let total = 0;
   const measured = new Proxy(sql, {
     apply: async (target, _, [strings, ...values]: [TemplateStringsArray, ...unknown[]]) => {
       const rows: Record<string, unknown>[] = await target(strings, ...values);
@@ -394,6 +397,7 @@ const measuringReads = (sql: SQL) => {
         0,
       );
       most = Math.max(most, bytes);
+      total += bytes;
       return rows;
     },
     get: (target, property) => {
@@ -401,7 +405,7 @@ const measuringReads = (sql: SQL) => {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return Object.assign(measured, { mostBytes: () => most });
+  return Object.assign(measured, { mostBytes: () => most, totalBytes: () => total });
 };
 
 // `parser` as the projection runs it, measuring the most content it was given at once.
@@ -645,6 +649,26 @@ const parsedBytes = async (sql: SQL) => {
 const linesOf = (session: string, count: number) =>
   jsonl(Array.from({ length: count }, (_, i) => user({ at: at(i), session })));
 
+// What the spec bounds a run's reads by: its budget, a line at the cap and
+// its newline, and the parts of a chunk at either end of each of the two
+// reads the line that crosses the budget can take.
+const mostPerRun = (budgetBytes: number) =>
+  budgetBytes + MAX_LINE_BYTES + 1 + 4 * MAX_TRANSCRIPT_CHUNK_BYTES;
+
+// One user line of `bytes` bytes, its newline included.
+const lineOf = (bytes: number, session = SESSION) => {
+  const line = (content: string) =>
+    jsonl([{ ...user({ at: at(0), session }), message: { content, role: 'user' } }]);
+  return line('x'.repeat(bytes - line('').length));
+};
+
+// User lines of about a KiB each, `bytes` bytes in all.
+const linesTo = (session: string, bytes: number) => {
+  const one = lineOf(1024, session);
+  const count = Math.floor(bytes / one.length) - 1;
+  return one.repeat(count) + lineOf(bytes - count * one.length, session);
+};
+
 // `lines` responses of the main conversation, each a line that makes `calls`
 // tool calls, written compactly, with ids as long as the bound allows, so
 // they hold as many facts as a line can.
@@ -875,6 +899,65 @@ describe('parsing as transcripts grow', () => {
 
     expect(await parsedBytes(h.db.sql)).toBe(Buffer.byteLength(first + long));
   });
+
+  test('a run fetches no more than its bound when the line that crosses its budget is long', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const long = lineOf(MAX_LINE_BYTES - 1000);
+    await upload(h, {
+      content: long + jsonl([assistant({ at: at(1), id: 'msg_after' })]),
+      path: mainPath(),
+    });
+    const sql = measuringReads(h.db.sql);
+
+    await projectTranscripts(sql, { budgetBytes: 1000 });
+
+    expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(1000));
+    expect(await parsedBytes(h.db.sql)).toBeGreaterThanOrEqual(long.length);
+  }, 60_000);
+
+  test('a run fetches no more than its bound when a long line follows its budget less a little', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const filler = await upload(h, {
+      content: linesTo(OTHER, PARSE_BUDGET_BYTES - 1000),
+      path: mainPath(OTHER),
+    });
+    await h.db.sql`
+      UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 5000)}
+      WHERE id = ${filler}::bigint
+    `;
+    await upload(h, { content: lineOf(MAX_LINE_BYTES - 1000), path: mainPath() });
+    const sql = measuringReads(h.db.sql);
+
+    await projectTranscripts(sql);
+
+    expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(PARSE_BUDGET_BYTES));
+  }, 120_000);
+
+  test('a run fetches no more than its bound when its reads fail', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    for (let i = 0; i < 30; i += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(i).padStart(12, '0')}`;
+      // oxlint-disable-next-line no-await-in-loop -- one file at a time, like a scan.
+      await upload(h, {
+        content: lineOf(MAX_TRANSCRIPT_CHUNK_BYTES - 100, session),
+        path: mainPath(session),
+      });
+    }
+    const buggy = {
+      ...claudeCodeParser,
+      parse: () => {
+        throw new TypeError('Synthetic parser bug.');
+      },
+    };
+    const sql = measuringReads(h.db.sql);
+
+    await projectTranscripts(sql, { budgetBytes: 2 ** 20, parsers: [buggy] });
+
+    expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(2 ** 20));
+  }, 60_000);
 
   // Each line is a response that makes 90,000 tool calls, so a batch of them
   // holds more facts than one statement can carry.
