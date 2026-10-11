@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { MAX_TRANSCRIPT_CHUNK_BYTES } from '@heimdall/schema';
+import { MAX_TRANSCRIPT_CHUNK_BYTES, MAX_TRANSCRIPT_REQUEST_BYTES } from '@heimdall/schema';
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
@@ -385,18 +385,23 @@ const someoneWaitsOnALock = async (sql: SQL) => {
 // `sql` as the projection sees it, measuring the transcript content queries
 // outside a transaction fetched, as reads of chunks are: the most any one
 // query fetched, and all of them together, each the sum of the uncompressed
-// lengths of the chunks it answered.
+// lengths of the chunks it answered; and the most compressed content any one
+// query answered.
 const measuringReads = (sql: SQL) => {
   let most = 0;
+  let mostCompressed = 0;
   let total = 0;
   const measured = new Proxy(sql, {
     apply: async (target, _, [strings, ...values]: [TemplateStringsArray, ...unknown[]]) => {
       const rows: Record<string, unknown>[] = await target(strings, ...values);
-      const bytes = rows.reduce(
-        (sum, row) => sum + ('content' in row && 'length' in row ? Number(row.length) : 0),
+      const chunks = rows.filter((row) => 'content' in row && 'length' in row);
+      const bytes = chunks.reduce((sum, row) => sum + Number(row.length), 0);
+      const compressed = chunks.reduce(
+        (sum, row) => sum + (row.content instanceof Uint8Array ? row.content.byteLength : 0),
         0,
       );
       most = Math.max(most, bytes);
+      mostCompressed = Math.max(mostCompressed, compressed);
       total += bytes;
       return rows;
     },
@@ -405,7 +410,11 @@ const measuringReads = (sql: SQL) => {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return Object.assign(measured, { mostBytes: () => most, totalBytes: () => total });
+  return Object.assign(measured, {
+    mostBytes: () => most,
+    mostCompressedBytes: () => mostCompressed,
+    totalBytes: () => total,
+  });
 };
 
 // `parser` as the projection runs it, measuring the most content it was given at once.
@@ -654,6 +663,10 @@ const linesOf = (session: string, count: number) =>
 // reads the line that crosses the budget can take.
 const mostPerRun = (budgetBytes: number) =>
   budgetBytes + MAX_LINE_BYTES + 1 + 4 * MAX_TRANSCRIPT_CHUNK_BYTES;
+
+// Random text from `bytes` random bytes, which barely compresses.
+const noise = (bytes: number) =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('base64');
 
 // One user line of `bytes` bytes, its newline included.
 const lineOf = (bytes: number, session = SESSION) => {
@@ -957,6 +970,26 @@ describe('parsing as transcripts grow', () => {
     await projectTranscripts(sql, { budgetBytes: 2 ** 20, parsers: [buggy] });
 
     expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(2 ** 20));
+  }, 60_000);
+
+  // Random text barely compresses, so its chunks are nearly as large packed
+  // as unpacked.
+  test('a read holds no more than two packed chunks at once', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const lines = Array.from({ length: 20 }, (_, i) => ({
+      ...user({ at: at(i) }),
+      message: { content: noise(600_000), role: 'user' },
+    }));
+    await upload(h, { content: jsonl(lines), path: mainPath() });
+    const sql = measuringReads(h.db.sql);
+
+    await projectAll({ ...h, db: { ...h.db, sql } });
+
+    expect(sql.mostCompressedBytes()).toBeLessThanOrEqual(2 * MAX_TRANSCRIPT_REQUEST_BYTES);
+    expect((await settled(h.db.sql)).status).toEqual([
+      { failed_generations: 0, generations: 1, unreadable_lines: 0 },
+    ]);
   }, 60_000);
 
   // Each line is a response that makes 90,000 tool calls, so a batch of them
