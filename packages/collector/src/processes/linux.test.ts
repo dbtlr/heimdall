@@ -172,6 +172,31 @@ test('a process that vanishes or cannot be read is left out, and so is a non-pro
   expect((await readerOf(fs).table()).map((p) => p.pid)).toEqual([1]);
 });
 
+test('reads at most 64 stat files at once, so a large process table does not run out of file descriptors', async () => {
+  const processes = Object.fromEntries(
+    Array.from({ length: 300 }, (_, i) => [i + 1, { stat: stat(i + 1, 'sleep', { ppid: 0 }) }]),
+  );
+  const { fs } = fixtureFs(processes);
+  let open = 0;
+  let most = 0;
+  const counting: ProcFs = {
+    ...fs,
+    readText: async (path) => {
+      open += 1;
+      most = Math.max(most, open);
+      await Bun.sleep(0);
+      open -= 1;
+      return fs.readText(path);
+    },
+  };
+
+  const table = await readerOf(counting).table();
+
+  expect(table).toHaveLength(300);
+  expect(most).toBeLessThanOrEqual(64);
+  expect(most).toBeGreaterThan(1);
+});
+
 test('reads the working directory through the cwd link, and answers null when it cannot be read', async () => {
   const { fs } = fixtureFs({
     1: { cwd: '/work/project', stat: stat(1, 'claude', { ppid: 0 }) },

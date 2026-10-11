@@ -20,6 +20,32 @@ export const nodeProcFs: ProcFs = {
 };
 
 const MICROS_PER_SECOND = 1_000_000;
+
+// The most /proc files a table read holds open at once, well under a usual
+// limit of 1024 file descriptors, whatever the number of processes.
+const MAX_OPEN_READS = 64;
+
+// `task` over every item, at most `limit` at a time, in the items' order.
+const mapBounded = async <Item, Result>(
+  items: readonly Item[],
+  limit: number,
+  task: (item: Item) => Promise<Result>,
+): Promise<Result[]> => {
+  const results: Result[] = [];
+  let next = 0;
+  const worker = async () => {
+    for (let index = next; index < items.length; index = next) {
+      next += 1;
+      const item = items[index];
+      if (item !== undefined) {
+        // oxlint-disable-next-line no-await-in-loop -- each worker reads one at a time.
+        results[index] = await task(item);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+};
 const MS_PER_SECOND = 1000;
 
 // Fields of /proc/<pid>/stat after the command name, by proc(5)'s field number
@@ -152,7 +178,7 @@ export const createLinuxReader = ({
     table: async () => {
       const [boot, names] = await Promise.all([bootSeconds(), fs.listDir(root)]);
       const pids = names.filter((name) => /^[1-9]\d*$/u.test(name));
-      return (await Promise.all(pids.map((pid) => entryOf(pid, boot)))).flat();
+      return (await mapBounded(pids, MAX_OPEN_READS, (pid) => entryOf(pid, boot))).flat();
     },
   };
 };
