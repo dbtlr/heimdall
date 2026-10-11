@@ -1,4 +1,4 @@
-import type { VitalsSample } from '@heimdall/schema';
+import type { HarnessInstall, VitalsSample } from '@heimdall/schema';
 
 import { TIMELINE_CONDITIONS } from './store.ts';
 import type { ConditionKind, OpenCondition, SystemSummary, TimelineEntry } from './store.ts';
@@ -98,6 +98,17 @@ const unpairedStatus = (conditions: OpenCondition[]) =>
     ? '<strong>Unpaired</strong>'
     : `<strong>Unpaired</strong><br>${status(conditions)}`;
 
+// The Harnesses installed on a System, one per line, with where each was found:
+// a dash while the System has not said, and so for a Collector that predates it.
+const harnessCell = (installs: HarnessInstall[] | undefined) => {
+  if (installs === undefined) {
+    return UNKNOWN;
+  }
+  return installs.length === 0
+    ? 'None installed'
+    : installs.map((i) => escape(`${i.harness} ${i.version} (${i.location})`)).join('<br>');
+};
+
 const row = (system: SystemSummary, now: number) => {
   const reported =
     system.reported === undefined
@@ -115,6 +126,7 @@ const row = (system: SystemSummary, now: number) => {
       : `${moment(system.lastSeenAt)}<br>${ago(now - system.lastSeenAt)}`,
     system.paired ? status(system.conditions) : unpairedStatus(system.conditions),
     ...reported,
+    harnessCell(system.harnesses),
   ];
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
 };
@@ -143,6 +155,7 @@ const HEADINGS = [
   'Load',
   'Uptime',
   'Collector',
+  'Harnesses',
 ];
 
 // Which of the Systems the page lists: the paired ones, or the unpaired ones

@@ -348,6 +348,21 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 12,
   },
+  {
+    // Each System's latest Harness installs, from the harnesses section of
+    // its Reports. `installs` is the list as sent, each with its Harness,
+    // location kind, and version. An empty list is a System with no Harness
+    // installed; no row is a System that never sent the section. `sent_at`
+    // keeps an older Report from replacing a newer list.
+    sql: `
+      CREATE TABLE harness_installs (
+        system text PRIMARY KEY REFERENCES systems (name),
+        installs jsonb NOT NULL,
+        sent_at timestamptz NOT NULL
+      );
+    `,
+    version: 13,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

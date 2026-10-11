@@ -1023,7 +1023,12 @@ test('migration 12 keeps the size of checks that were over budget as that of the
     VALUES ('laptop-1', now(), now(), 2000000, '[{"path":"/a"}]')
   `;
 
-  expect(await migrate(db.sql)).toEqual([12]);
+  expect(
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter((m) => m.version <= 12),
+    ),
+  ).toEqual([12]);
   await db.sql`UPDATE check_sets SET file_records = NULL`;
 
   const rows = await db.sql`
