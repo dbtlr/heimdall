@@ -1099,6 +1099,122 @@ describe('a generation the projection cannot read', () => {
     });
   });
 
+  // An error that is no data error can still repeat on every run, and must
+  // neither stall the rest nor be retried forever.
+  test('whose parser throws is recorded failed after three runs, and the others proceed', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    const buggy = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        if (input.path === mainPath()) {
+          throw new TypeError('Synthetic parser bug.');
+        }
+        return claudeCodeParser.parse(input);
+      },
+    };
+
+    const runs = [];
+    for (let run = 0; run < 3; run += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each run counts one attempt.
+      runs.push(await projectTranscripts(h.db.sql, { parsers: [buggy] }));
+    }
+
+    expect(runs.map((outcome) => outcome.failed.length)).toEqual([0, 0, 1]);
+    expect(runs[2]?.failed[0]?.error).toBe('Synthetic parser bug.');
+    expect(await settled(h.db.sql)).toEqual({
+      requests: [`msg_${OTHER}`],
+      sessions: [OTHER],
+      status: [{ failed_generations: 1, generations: 2, unreadable_lines: 0 }],
+    });
+  });
+
+  test('whose batch outlasts the statement timeout on every run is recorded failed after three', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    await h.db.sql.unsafe(`
+      CREATE FUNCTION slow_request() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.request_id = 'msg_main' THEN PERFORM pg_sleep(1); END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER slow_request BEFORE INSERT ON projected_requests
+        FOR EACH ROW EXECUTE FUNCTION slow_request();
+    `);
+    const timed = new SQL({ connection: { statement_timeout: 300 }, url: h.db.url.href });
+    try {
+      const runs = [];
+      for (let run = 0; run < 3; run += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- each run counts one attempt.
+        runs.push(await projectTranscripts(timed));
+      }
+
+      expect(runs.map((outcome) => outcome.failed.length)).toEqual([0, 0, 1]);
+    } finally {
+      await timed.close();
+    }
+    expect(await settled(h.db.sql)).toEqual({
+      requests: [`msg_${OTHER}`],
+      sessions: [OTHER],
+      status: [{ failed_generations: 1, generations: 2, unreadable_lines: 0 }],
+    });
+  });
+
+  test('dense with tool calls is stored within a statement timeout of a second', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: denseLines({ calls: 90_000, lines: 3 }), path: mainPath() });
+    const timed = new SQL({ connection: { statement_timeout: 1000 }, url: h.db.url.href });
+    try {
+      await projectAll({ ...h, db: { ...h.db, sql: timed } });
+    } finally {
+      await timed.close();
+    }
+
+    const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
+    expect(calls?.n).toBe(270_000);
+  }, 120_000);
+
+  // A lost connection or a server going down is not the generation's fault.
+  test.each([
+    ['a connection that failed', { errno: '08006' }],
+    ['a server out of resources', { errno: '53300' }],
+    ['a server shutting down', { errno: '57P01' }],
+    ['a connection Bun closed', { code: 'ERR_POSTGRES_CONNECTION_CLOSED' }],
+  ])('that meets %s is not counted against, and the run stops', async (_, fields) => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    const unlucky = {
+      ...claudeCodeParser,
+      parse: () => {
+        throw Object.assign(new Error('Synthetic outage.'), fields);
+      },
+    };
+    const runs: string[] = [];
+    for (let run = 0; run < 4; run += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each run meets the outage.
+      const outcome = await projectTranscripts(h.db.sql, { parsers: [unlucky] }).then(
+        () => 'ran',
+        (error: unknown) => (error instanceof Error ? error.message : 'threw'),
+      );
+      runs.push(outcome);
+    }
+    expect(runs).toEqual(Array.from({ length: 4 }, () => 'Synthetic outage.'));
+
+    await projectAll(h);
+
+    expect(await settled(h.db.sql)).toEqual({
+      requests: ['msg_main'],
+      sessions: [SESSION],
+      status: [{ failed_generations: 0, generations: 1, unreadable_lines: 0 }],
+    });
+  });
+
   test('counts the lines it could not read', async () => {
     await using h = await startHub();
     await nameSources(h);

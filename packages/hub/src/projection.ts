@@ -163,12 +163,17 @@ const parsePending = async (
         // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
         step = await parseBatch(sql, { budget: left, generation, parser, progress });
       } catch (error) {
-        if (!isPermanent(error)) {
+        if (isTransient(error)) {
           throw error;
         }
         // oxlint-disable-next-line no-await-in-loop -- recorded before the next generation.
-        await recordFailure(sql, { error, generation, parser, progress });
-        failed.push({ error: describe(error), generation: generation.id, harness: parser.harness });
+        if (await recordAttempt(sql, { error, generation, parser, progress })) {
+          failed.push({
+            error: describe(error),
+            generation: generation.id,
+            harness: parser.harness,
+          });
+        }
         break;
       }
       if (step.kind === 'busy') {
@@ -186,18 +191,50 @@ const parsePending = async (
 
 // PostgreSQL's classes of error that storing the same values again repeats:
 // data exceptions, integrity violations, and program limits, such as an index
-// row too large. Other errors, such as a lost connection, pass with time.
+// row too large.
 const PERMANENT_CLASSES = new Set(['22', '23', '54']);
 
 // Whether parsing the generation again would fail the same way: it cannot be
-// read, or the database refuses what it yields.
+// read, or the database refuses what it yields. It is recorded failed at once.
 const isPermanent = (error: unknown): boolean =>
   error instanceof UnreadableGenerationError ||
-  (typeof error === 'object' &&
+  PERMANENT_CLASSES.has(sqlStateOf(error)?.slice(0, 2) ?? '');
+
+// PostgreSQL's errors that are no generation's fault and pass with time: a
+// connection that failed, a server out of resources, and a server shutting
+// down or restarting.
+const TRANSIENT_CLASSES = new Set(['08', '53']);
+const TRANSIENT_STATES = new Set(['57P01', '57P02', '57P03']);
+
+// Bun's own errors for a connection it lost, could not open, or closed.
+const TRANSIENT_CLIENT = /^ERR_POSTGRES_(?:CONNECTION_|IDLE_TIMEOUT|LIFETIME_TIMEOUT)/u;
+
+// Whether `error` is no generation's fault, so it counts against none: the
+// run stops, and the next one tries again.
+const isTransient = (error: unknown): boolean => {
+  const state = sqlStateOf(error);
+  if (state !== undefined) {
+    return TRANSIENT_CLASSES.has(state.slice(0, 2)) || TRANSIENT_STATES.has(state);
+  }
+  return (
+    typeof error === 'object' &&
     error !== null &&
-    'errno' in error &&
-    typeof error.errno === 'string' &&
-    PERMANENT_CLASSES.has(error.errno.slice(0, 2)));
+    'code' in error &&
+    typeof error.code === 'string' &&
+    TRANSIENT_CLIENT.test(error.code)
+  );
+};
+
+// The SQLSTATE of a PostgreSQL error, which Bun reports in `errno`.
+const sqlStateOf = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null && 'errno' in error && typeof error.errno === 'string'
+    ? error.errno
+    : undefined;
+
+// How many attempts in a row to parse a generation may fail, whatever the
+// error, before it is recorded failed, so an error that repeats on every run
+// stalls neither the rest of the archive nor the switch.
+const ATTEMPTS = 3;
 
 // How much of a failure's message is kept: enough to say what went wrong.
 const FAILURE_LENGTH = 500;
@@ -205,10 +242,13 @@ const FAILURE_LENGTH = 500;
 const describe = (error: unknown) =>
   storable((error instanceof Error ? error.message : String(error)).slice(0, FAILURE_LENGTH));
 
-// Records a generation as failed for `parser`'s version, so it stops counting
-// as pending and the rest of the archive proceeds. The next parser version
-// parses it again. Under the same compare-and-set as a batch's progress.
-const recordFailure = async (
+// Counts a failed attempt to parse a generation for `parser`'s version, and
+// records it failed once `ATTEMPTS` have failed in a row, or at once for an
+// error that repeats; answers whether it did. A failed generation stops
+// counting as pending, so the rest of the archive proceeds, and the next
+// parser version parses it again. A batch that stores resets the count.
+// Under the same compare-and-set as a batch's progress.
+const recordAttempt = async (
   sql: SQL,
   {
     error,
@@ -216,29 +256,41 @@ const recordFailure = async (
     parser,
     progress,
   }: { error: unknown; generation: Generation; parser: HarnessParser; progress: Progress },
-) => {
+): Promise<boolean> => {
   const failure = describe(error);
-  await sql.begin(async (tx) => {
+  const permanent = isPermanent(error);
+  return sql.begin(async (tx) => {
     if (!(await shareProjection(tx))) {
-      return;
+      return false;
     }
-    await (progress.parsedThrough === null
-      ? tx`
-        INSERT INTO parse_progress (
-          harness, parser_version, generation, parsed_through, held_seen, failed_at, failure
-        )
-        SELECT ${parser.harness}, ${parser.version}, ${generation.id}::bigint, 0, 0, now(), ${failure}
-        WHERE EXISTS (
-          SELECT 1 FROM transcript_generations
-          WHERE id = ${generation.id}::bigint AND deleted_at IS NULL
-        )
-        ON CONFLICT DO NOTHING
-      `
-      : tx`
-        UPDATE parse_progress SET failed_at = now(), failure = ${failure}
-        WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
-          AND generation = ${generation.id}::bigint AND parsed_through = ${progress.parsedThrough}
-      `);
+    const recorded: { failed: boolean }[] =
+      progress.parsedThrough === null
+        ? await tx`
+            INSERT INTO parse_progress (
+              harness, parser_version, generation, parsed_through, held_seen, failed_attempts,
+              failed_at, failure
+            )
+            SELECT ${parser.harness}, ${parser.version}, ${generation.id}::bigint, 0, 0, 1,
+                   CASE WHEN ${permanent} OR 1 >= ${ATTEMPTS} THEN now() END, ${failure}
+            WHERE EXISTS (
+              SELECT 1 FROM transcript_generations
+              WHERE id = ${generation.id}::bigint AND deleted_at IS NULL
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING failed_at IS NOT NULL AS failed
+          `
+        : await tx`
+            UPDATE parse_progress SET
+              failed_attempts = failed_attempts + 1,
+              failed_at = CASE WHEN ${permanent} OR failed_attempts + 1 >= ${ATTEMPTS}
+                          THEN now() END,
+              failure = ${failure}
+            WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
+              AND generation = ${generation.id}::bigint
+              AND parsed_through = ${progress.parsedThrough}
+            RETURNING failed_at IS NOT NULL AS failed
+          `;
+    return recorded[0]?.failed === true;
   });
 };
 
@@ -470,7 +522,8 @@ const storeBatch = (
               parsed_through = ${batch.parsedThrough},
               held_seen = ${heldSeen},
               skipping_line = ${skipping},
-              unreadable_lines = unreadable_lines + ${batch.unreadableLines}
+              unreadable_lines = unreadable_lines + ${batch.unreadableLines},
+              failed_attempts = 0
             WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
               AND generation = ${generation.id}::bigint AND parsed_through = ${expected}
             RETURNING generation
@@ -818,7 +871,7 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     reset AS (
       UPDATE parse_progress p SET
         parsed_through = 0, held_seen = 0, skipping_line = false, unreadable_lines = 0,
-        failed_at = NULL, failure = NULL
+        failed_attempts = 0, failed_at = NULL, failure = NULL
       FROM transcript_generations g
       WHERE g.id = p.generation AND g.deleted_at IS NULL
         AND ((p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched)

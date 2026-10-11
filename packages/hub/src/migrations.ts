@@ -365,8 +365,9 @@ export const MIGRATIONS: readonly Migration[] = [
     // switches. `parse_progress` holds, per Harness, version, and generation,
     // the byte offset the next batch starts from, the generation's `held` when
     // it was last read, whether the next batch starts inside a line too long
-    // to read, the lines it could not read, when and why the generation could
-    // not be parsed at all, and the Session the file belongs to, null for a
+    // to read, the lines it could not read, how many attempts in a row to
+    // parse it failed, when and why it was recorded failed, and the Session
+    // the file belongs to, null for a
     // file that holds no conversation. Facts are keyed by the Harness's own ids
     // within a System's source, so content two generations hold counts once,
     // and `projected_holders` names the generations that held a fact more than
@@ -410,6 +411,7 @@ export const MIGRATIONS: readonly Migration[] = [
         held_seen bigint NOT NULL,
         skipping_line boolean NOT NULL DEFAULT false,
         unreadable_lines bigint NOT NULL DEFAULT 0,
+        failed_attempts integer NOT NULL DEFAULT 0,
         failed_at timestamptz,
         failure text,
         PRIMARY KEY (harness, parser_version, generation)
