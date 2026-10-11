@@ -4,7 +4,7 @@ title: ADR-0004 - The Report grows additively, and samples are keyed by System a
 description: "Report schema versions bump only on breaking changes; the Hub drops unknown fields. Samples are deduplicated by System and timestamp. An invalid Report is answered 422 and dropped; every other failed delivery is retried."
 status: accepted
 created: 2026-10-05
-modified: 2026-10-08
+modified: 2026-10-11
 ---
 
 # The Report grows additively, and samples are keyed by System and time
@@ -45,3 +45,4 @@ A Collector bug that produces an invalid sample loses that whole Report, at most
 - 2026-10-08: Clarification. The M3 section carries the observed state of Managed paths and of Fleet's install and run records; the Inventory reaches the Hub from Fleet, not in Reports ([ADR-0010](0010-fleet-publishes-inventory-collectors-read-install-records.md)). The decision is unchanged.
 - 2026-10-08: Clarification. Under [ADR-0011](0011-collectors-hold-what-provisioners-record.md), the M3 section carries the records the Collector holds and its checks of them, not Fleet's install and run records. The decision is unchanged.
 - 2026-10-08: Clarification. Session transcript uploads travel separately from Reports and are resent rather than dropped ([ADR-0012](0012-hub-archives-agent-session-transcripts.md)); this decision governs Reports only.
+- 2026-10-11: Clarification. The Sessions section the Context expected in M4 does not exist yet. M5 adds one for Harness processes, the process-table side of a Session, additively under this decision ([ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The decision is unchanged.
