@@ -86,7 +86,7 @@ const fixtureFs = (processes: Record<number, Fixture>) => {
       return text === undefined ? Promise.reject(new Error('ENOENT')) : Promise.resolve(text);
     },
   };
-  return { fs, opened };
+  return { files, fs, opened };
 };
 
 const readerOf = (fs: ProcFs) =>
@@ -111,6 +111,8 @@ test('reads a process from its stat line: name, parent, CPU time with reaped chi
     {
       // (300 + 200 + 150 + 50) ticks at 100 per second.
       cpuMicros: 7_000_000,
+      // The kernel's start, in clock ticks since boot.
+      kernelStart: 12_345,
       name: 'claude',
       pid: 42,
       ppid: 7,
@@ -255,4 +257,35 @@ test('the real filesystem reader lists, reads, and follows links', async () => {
   expect(await fs.listDir(dir.path)).toEqual(['7']);
   expect(await fs.readText(join(dir.path, '7', 'stat'))).toBe('x');
   expect(await fs.readLink(join(dir.path, '7', 'cwd'))).toBe('/work/project');
+});
+
+test('a wall-clock step that moves the boot time does not split a running process, and its start stays as first seen', async () => {
+  const { files, fs } = fixtureFs({
+    10: { exe: '/opt/bin/claude', stat: stat(10, 'claude', { ppid: 1, startTicks: 5000 }) },
+  });
+  let now = (BOOT_SECONDS + 3600) * 1000;
+  const tracker = createProcessTracker({ now: () => now, reader: readerOf(fs) });
+  await tracker.tick();
+  files.set('/proc/stat', `cpu 1 2 3\nbtime ${String(BOOT_SECONDS + 30)}\n`);
+  now += 15_000;
+
+  await tracker.tick();
+
+  expect(tracker.latest()?.processes).toEqual([
+    expect.objectContaining({ pid: 10, startedAt: (BOOT_SECONDS + 50) * 1000 }),
+  ]);
+  expect(tracker.latest()?.processes[0]).not.toHaveProperty('endedAt');
+});
+
+test('a pid reused within the same second is a new process, told apart by its start in clock ticks', async () => {
+  const { files, fs } = fixtureFs({
+    10: { exe: '/opt/bin/claude', stat: stat(10, 'claude', { ppid: 1, startTicks: 5010 }) },
+  });
+  const tracker = createProcessTracker({ now: () => 1_000, reader: readerOf(fs) });
+  await tracker.tick();
+  files.set('/proc/10/stat', stat(10, 'claude', { ppid: 1, startTicks: 5090 }));
+
+  await tracker.tick();
+
+  expect(tracker.latest()?.processes.map((p) => p.endedAt !== undefined)).toEqual([true, false]);
 });

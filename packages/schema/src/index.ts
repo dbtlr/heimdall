@@ -97,5 +97,6 @@ export type { HarnessesSection, HarnessInstall } from './harnesses-section.ts';
 export {
   HarnessProcessesSectionSchema,
   MAX_HARNESS_PROCESSES,
+  SAME_HARNESS_PROCESS_MS,
 } from './harness-processes-section.ts';
 export type { HarnessProcess, HarnessProcessesSection } from './harness-processes-section.ts';

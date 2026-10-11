@@ -154,6 +154,7 @@ export const createLinuxReader = ({
             ((stat.utime + stat.stime + stat.cutime + stat.cstime) * MICROS_PER_SECOND) /
               clockTicks,
           ),
+          kernelStart: stat.startTicks,
           name: await nameOf(stat.pid, stat.comm),
           pid: stat.pid,
           ppid: stat.ppid,

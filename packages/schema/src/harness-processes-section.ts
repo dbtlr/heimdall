@@ -6,6 +6,14 @@ import { bytes, epochMs } from './values.ts';
 // ended together. At about 300 bytes each, the section stays under 150 KiB.
 export const MAX_HARNESS_PROCESSES = 512;
 
+// How far two readings of one process's `startedAt` may differ and still be
+// the same process, for the Collector when it has no exact start from the
+// kernel and for the Hub, which matches each section to the rows it holds. A
+// start is to the second, and can read a second apart between ticks, or
+// further apart across a Collector restart after the wall clock stepped; a pid
+// the kernel reuses for a new process usually starts later than this.
+export const SAME_HARNESS_PROCESS_MS = 5000;
+
 const MAX_CWD_BYTES = 4096;
 
 // One Harness root process, as the Collector saw it on its latest tick: a

@@ -9,6 +9,7 @@ const BASE = 1_759_000_000_000;
 
 const entry = (pid: number, over: Partial<ProcessEntry> = {}): ProcessEntry => ({
   cpuMicros: 0,
+  kernelStart: null,
   name: 'claude',
   pid,
   ppid: 1,

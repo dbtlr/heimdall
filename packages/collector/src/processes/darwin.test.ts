@@ -23,6 +23,7 @@ test('reads each process: name from its executable path, parent, memory in KiB, 
   expect(parsePs(PS, NOW)).toEqual([
     {
       cpuMicros: 41_070_000,
+      kernelStart: null,
       name: 'launchd',
       pid: 1,
       ppid: 0,
@@ -32,6 +33,7 @@ test('reads each process: name from its executable path, parent, memory in KiB, 
     },
     {
       cpuMicros: 3_723_500_000,
+      kernelStart: null,
       name: 'claude',
       pid: 612,
       ppid: 1,
@@ -40,6 +42,7 @@ test('reads each process: name from its executable path, parent, memory in KiB, 
     },
     {
       cpuMicros: 120_000,
+      kernelStart: null,
       name: 'zsh',
       pid: 613,
       ppid: 612,
@@ -48,6 +51,7 @@ test('reads each process: name from its executable path, parent, memory in KiB, 
     },
     {
       cpuMicros: 600_250_000,
+      kernelStart: null,
       name: 'codex',
       pid: 700,
       ppid: 1,
@@ -65,6 +69,7 @@ test('reads the table with one ps run, and the working directory of one process 
       cwds.push(pid);
       return Promise.resolve(pid === 612 ? '/Users/operator/project' : null);
     },
+    kernelStartOf: () => Promise.resolve(null),
     now: () => NOW,
     ps: (cmd) => {
       runs.push(cmd);
@@ -82,10 +87,43 @@ test('reads the table with one ps run, and the working directory of one process 
 });
 
 test('the macOS readers name no command-line or environment source, and run no lsof', async () => {
-  for (const file of ['darwin.ts', 'darwin-cwd.ts']) {
+  for (const file of ['darwin.ts', 'darwin-libproc.ts']) {
     // oxlint-disable-next-line no-await-in-loop -- two small files.
     const text = await readFile(join(import.meta.dir, file), 'utf8');
 
     expect(text).not.toMatch(/cmdline|\benviron\b|lsof|\bargs=|\bcommand=/u);
   }
+});
+
+test('a start from the elapsed time is to the second, however far into the second the table is read', () => {
+  const [launchd] = parsePs(PS, NOW + 700);
+
+  expect(launchd?.startedAt).toBe(NOW - ((12 * 24 + 3) * 3600 + 4 * 60 + 5) * 1000);
+});
+
+test("a Harness process's start is the kernel's, to the second, and the elapsed time stands in when the kernel will not say", async () => {
+  const asked: number[] = [];
+  // 2 hours and 10.4 seconds before NOW, in microseconds.
+  const kernel = (NOW - 7_210_400) * 1000;
+  const reader = createDarwinReader({
+    cwdOf: () => Promise.resolve(null),
+    kernelStartOf: (pid) => {
+      asked.push(pid);
+      return Promise.resolve(pid === 612 ? kernel : null);
+    },
+    now: () => NOW,
+    ps: () => Promise.resolve(PS),
+  });
+
+  const table = await reader.table();
+
+  expect(asked).toEqual([612, 700]);
+  expect(table.find((p) => p.pid === 612)).toMatchObject({
+    kernelStart: kernel,
+    startedAt: NOW - 7_211_000,
+  });
+  expect(table.find((p) => p.pid === 700)).toMatchObject({
+    kernelStart: null,
+    startedAt: NOW - (5 * 60 + 30) * 1000,
+  });
 });

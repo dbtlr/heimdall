@@ -8,7 +8,13 @@ export type ProcessEntry = {
   pid: number;
   ppid: number;
   rssBytes: number;
-  // Epoch milliseconds, to the second, the same every time it is read.
+  // The kernel's own record of the start, exact and unmoved by a wall-clock
+  // step: clock ticks since boot on Linux, and microseconds since the epoch as
+  // the kernel recorded it on macOS. Null when it could not be read. Only
+  // compared for equality, within one Collector run.
+  kernelStart: number | null;
+  // Epoch milliseconds, to the second. On Linux it moves when the wall clock
+  // steps, since it is computed from the boot time.
   startedAt: number;
 };
 

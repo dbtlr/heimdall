@@ -8,7 +8,15 @@ const proc = (
   ppid: number,
   name: string,
   { cpuMicros = 0, rssBytes = 0 }: { cpuMicros?: number; rssBytes?: number } = {},
-): ProcessEntry => ({ cpuMicros, name, pid, ppid, rssBytes, startedAt: 1_000 * pid });
+): ProcessEntry => ({
+  cpuMicros,
+  kernelStart: pid,
+  name,
+  pid,
+  ppid,
+  rssBytes,
+  startedAt: 1_000 * pid,
+});
 
 test('a Harness process whose parent is not a Harness process is a root, with its tree summed', () => {
   const claude = proc(10, 1, 'claude', { cpuMicros: 100, rssBytes: 1000 });

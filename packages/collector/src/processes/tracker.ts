@@ -1,18 +1,22 @@
-import { MAX_HARNESS_PROCESSES } from '@heimdall/schema';
+import { MAX_HARNESS_PROCESSES, SAME_HARNESS_PROCESS_MS } from '@heimdall/schema';
 import type { HarnessProcess, HarnessProcessesSection } from '@heimdall/schema';
 
 import { findHarnessRoots } from './roots.ts';
-import type { ProcessReader } from './table.ts';
-
-// How far a process's start time may differ between two reads and still be the
-// same process. A pid reused by a new process starts later than this.
-const SAME_PROCESS_MS = 5000;
+import type { ProcessEntry, ProcessReader } from './table.ts';
 
 type Running = Omit<HarnessProcess, 'endedAt'>;
+// A running process, with the kernel's start it was first seen with.
+type Tracked = { kernelStart: number | null; process: Running };
 type Ended = HarnessProcess & { endedAt: number };
 
 const keyOf = (process: { harness: string; pid: number }) =>
   `${process.harness}:${String(process.pid)}`;
+
+// Whether a table entry is the process held under its pid.
+const sameProcess = (held: Tracked, entry: ProcessEntry) =>
+  held.kernelStart !== null && entry.kernelStart !== null
+    ? held.kernelStart === entry.kernelStart
+    : Math.abs(held.process.startedAt - entry.startedAt) <= SAME_HARNESS_PROCESS_MS;
 
 // Watches the Harness root processes tick by tick and keeps the section that
 // reports them: the ones running now, and the ones that ended, until the Hub
@@ -22,8 +26,14 @@ const keyOf = (process: { harness: string; pid: number }) =>
 // directory of each root. A process in the previous tick's table and not in
 // this one ended at this tick's time, which is when the Collector noticed, not
 // when the process exited. A process the Collector was not running to see end is
-// the Hub's to close (see the spec). A start time seen again within a few
-// seconds is the same process; a pid whose start moved further is a new process.
+// the Hub's to close (see the spec).
+//
+// A pid read again is the same process when the kernel's start is the same
+// (`kernelStart`), which no wall-clock step moves; a pid whose kernel start
+// changed is a new process. When either read has no kernel start, a
+// `startedAt` within SAME_HARNESS_PROCESS_MS is the same process. A process's
+// `startedAt` is the one of the tick that first saw it, so a clock step later
+// does not move it.
 //
 // `latest` is undefined before the first tick, and a new object after each, so
 // the reporter can tell by identity that a tick happened. A tick whose table
@@ -37,7 +47,7 @@ export const createProcessTracker = ({
   now: () => number;
   reader: ProcessReader;
 }) => {
-  const running = new Map<string, Running>();
+  const running = new Map<string, Tracked>();
   let ended: Ended[] = [];
   let latest: HarnessProcessesSection | undefined;
 
@@ -46,7 +56,9 @@ export const createProcessTracker = ({
   // first; the ended ones fill the room left, and the oldest are dropped. A
   // dropped end reaches the Hub as one it closes as missed.
   const rebuild = () => {
-    const listed = [...running.values()].slice(0, MAX_HARNESS_PROCESSES);
+    const listed = [...running.values()]
+      .map(({ process }) => process)
+      .slice(0, MAX_HARNESS_PROCESSES);
     ended = ended.slice(Math.max(0, ended.length - (MAX_HARNESS_PROCESSES - listed.length)));
     latest = { processes: [...ended, ...listed] };
   };
@@ -71,39 +83,39 @@ export const createProcessTracker = ({
     tick: async () => {
       const at = now();
       const seen = await rootsAt(at);
-      const next = new Map<string, Running>();
+      const next = new Map<string, Tracked>();
       for (const { cwd, root } of seen) {
         const { entry, harness } = root;
         const key = keyOf({ harness, pid: entry.pid });
-        let before = running.get(key);
-        if (
-          before !== undefined &&
-          Math.abs(before.startedAt - entry.startedAt) > SAME_PROCESS_MS
-        ) {
+        const held = running.get(key);
+        const kept = held !== undefined && sameProcess(held, entry) ? held : undefined;
+        if (held !== undefined && kept === undefined) {
           // The pid now belongs to another process.
-          ended.push({ ...before, endedAt: at });
-          before = undefined;
+          ended.push({ ...held.process, endedAt: at });
         }
+        const before = kept?.process;
         next.set(key, {
-          cpuMicros: root.cpuMicros,
-          cwd: cwd ?? before?.cwd ?? null,
-          harness,
-          lastSeenAt: at,
-          peakRssBytes: Math.max(before?.peakRssBytes ?? 0, root.rssBytes),
-          pid: entry.pid,
-          rssBytes: root.rssBytes,
-          startedAt: before?.startedAt ?? entry.startedAt,
+          kernelStart: kept === undefined ? entry.kernelStart : kept.kernelStart,
+          process: {
+            cpuMicros: root.cpuMicros,
+            cwd: cwd ?? before?.cwd ?? null,
+            harness,
+            lastSeenAt: at,
+            peakRssBytes: Math.max(before?.peakRssBytes ?? 0, root.rssBytes),
+            pid: entry.pid,
+            rssBytes: root.rssBytes,
+            startedAt: before?.startedAt ?? entry.startedAt,
+          },
         });
       }
-      for (const [key, process] of running) {
-        const kept = next.get(key);
-        if (kept === undefined) {
+      for (const [key, { process }] of running) {
+        if (!next.has(key)) {
           ended.push({ ...process, endedAt: at });
         }
       }
       running.clear();
-      for (const [key, process] of next) {
-        running.set(key, process);
+      for (const [key, tracked] of next) {
+        running.set(key, tracked);
       }
       rebuild();
     },
