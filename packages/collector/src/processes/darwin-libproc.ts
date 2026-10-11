@@ -1,6 +1,6 @@
-// Asks the macOS kernel, through libproc's `proc_pidinfo`, for the two things
-// `ps` cannot give exactly: a process's working directory and the start time
-// the kernel recorded for it. The calls are made in the Collector's own
+// Asks the macOS kernel, through libproc's `proc_pidinfo`, for what `ps`
+// cannot give exactly: a process's working directory, its executable's path,
+// and the start time the kernel recorded for it. The calls are made in the Collector's own
 // process and start nothing, and only for the few Harness processes. Each
 // answers null for a process it may not inspect, which belongs to another
 // user, and when libproc cannot be loaded.
@@ -11,6 +11,11 @@ const PROC_PIDVNODEPATHINFO = 9;
 const VNODE_PATH_INFO_SIZE = 2352;
 const CWD_PATH_OFFSET = 152;
 const MAX_PATH = 1024;
+
+// PROC_PIDPATHINFO returns the executable's path, NUL-terminated, in a buffer
+// of four times MAXPATHLEN. It is the image the kernel ran, not argv[0].
+const PROC_PIDPATHINFO = 11;
+const PATH_INFO_SIZE = 4096;
 
 // PROC_PIDTBSDINFO returns a proc_bsdinfo, 136 bytes, which ends with the
 // start's seconds and microseconds as two 64-bit fields. Only those are read.
@@ -70,6 +75,17 @@ export const darwinCwd = async (pid: number): Promise<string | null> => {
   const path = buffer.subarray(CWD_PATH_OFFSET, CWD_PATH_OFFSET + MAX_PATH);
   const end = path.indexOf(0);
   const text = path.toString('utf8', 0, end === -1 ? MAX_PATH : end);
+  return text === '' ? null : text;
+};
+
+// The path of the executable a process runs.
+export const darwinPath = async (pid: number): Promise<string | null> => {
+  const buffer = await pidInfo(pid, PROC_PIDPATHINFO, PATH_INFO_SIZE, 1);
+  if (buffer === undefined) {
+    return null;
+  }
+  const end = buffer.indexOf(0);
+  const text = buffer.toString('utf8', 0, end === -1 ? PATH_INFO_SIZE : end);
   return text === '' ? null : text;
 };
 
