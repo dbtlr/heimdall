@@ -3,9 +3,12 @@ import { runCommand } from '../subprocess.ts';
 import { darwinCwd, darwinKernelStart } from './darwin-libproc.ts';
 import type { ProcessEntry, ProcessReader } from './table.ts';
 
-// The columns the Collector asks `ps` for on macOS. `comm` is the executable's
-// path. No column carries a process's arguments or environment.
-export const PS_COLUMNS = 'pid=,ppid=,rss=,etime=,time=,comm=';
+// The columns the Collector asks `ps` for on macOS. `ucomm` is the accounting
+// name: the file name of the executable the process runs, cut to 16 bytes,
+// which the kernel sets at exec. It is not `comm`, which prints argv[0], so a
+// login shell shows as `-zsh`, and no column carries a process's arguments or
+// environment. `-ww` keeps `ps` from cutting a line to the terminal's width.
+export const PS_COLUMNS = 'pid=,ppid=,rss=,etime=,time=,ucomm=';
 
 const MICROS_PER_SECOND = 1_000_000;
 const MICROS_PER_MS = 1000;
@@ -40,17 +43,17 @@ export const parsePs = (output: string, nowMs: number): ProcessEntry[] =>
     if (match === null) {
       return [];
     }
-    const [, pid, ppid, rssKib, etime, time, path] = match;
+    const [, pid, ppid, rssKib, etime, time, name] = match;
     const elapsed = seconds(etime ?? '');
     const cpu = seconds(time ?? '');
-    if (elapsed === undefined || cpu === undefined || path === undefined) {
+    if (elapsed === undefined || cpu === undefined || name === undefined) {
       return [];
     }
     return [
       {
         cpuMicros: Math.round(cpu * MICROS_PER_SECOND),
         kernelStart: null,
-        name: path.slice(path.lastIndexOf('/') + 1),
+        name,
         pid: Number(pid),
         ppid: Number(ppid),
         rssBytes: Number(rssKib) * 1024,
@@ -81,7 +84,7 @@ export const createDarwinReader = ({
   includesReaped: false,
   table: async () => {
     const at = now();
-    const entries = parsePs(await ps(['/bin/ps', '-axo', PS_COLUMNS]), at);
+    const entries = parsePs(await ps(['/bin/ps', '-axww', '-o', PS_COLUMNS]), at);
     // The entries are this read's own, so each takes its kernel start in place.
     await Promise.all(
       entries

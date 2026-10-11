@@ -30,10 +30,12 @@ type ProcPidInfo = (
 
 let loaded: Promise<ProcPidInfo | undefined> | undefined;
 
+// `proc_pidinfo` is exported by libSystem, which every process loads; there is
+// no separate libproc library file to open on current macOS.
 const loadProcPidInfo = async (): Promise<ProcPidInfo | undefined> => {
   try {
     const { dlopen, ptr } = await import('bun:ffi');
-    const lib = dlopen('/usr/lib/libproc.dylib', {
+    const lib = dlopen('/usr/lib/libSystem.B.dylib', {
       proc_pidinfo: { args: ['i32', 'i32', 'u64', 'ptr', 'i32'], returns: 'i32' },
     });
     return (pid, flavor, arg, buffer, size) =>

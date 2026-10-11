@@ -6,20 +6,30 @@ import { createDarwinReader, parsePs, PS_COLUMNS } from './darwin.ts';
 
 const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
 
-// `ps -axo pid=,ppid=,rss=,etime=,time=,comm=` as macOS prints it.
+// `ps -axww -o pid=,ppid=,rss=,etime=,time=,ucomm=` as macOS prints it: the
+// accounting name is the executable's file name, cut to 16 bytes, and may hold
+// spaces. A login shell's is `zsh`, where its argv[0] would be `-zsh`.
 const PS = `
-    1     0  12288 12-03:04:05   0:41.07 /sbin/launchd
-  612     1  50000     02:00:10   1:02:03.50 /Applications/Claude Code.app/Contents/MacOS/claude
-  613   612   2048        59:59   0:00.12 /bin/zsh
-  700     1 300000        05:30  10:00.25 /Users/operator/.local/share/mise/installs/codex/0.162.1/bin/codex
+    1     0  12288 12-03:04:05   0:41.07 launchd
+  612     1  50000     02:00:10   1:02:03.50 claude
+  613   612   2048        59:59   0:00.12 zsh
+  700     1 300000        05:30  10:00.25 codex
+  801     1   4096        00:07   0:00.01 Google Chrome He
  bad line
 `;
 
 test('names the columns it asks ps for, none of which is the command line or the environment', () => {
-  expect(PS_COLUMNS).toBe('pid=,ppid=,rss=,etime=,time=,comm=');
+  expect(PS_COLUMNS).toBe('pid=,ppid=,rss=,etime=,time=,ucomm=');
 });
 
-test('reads each process: name from its executable path, parent, memory in KiB, CPU time, and start', () => {
+test('a name with spaces is read whole, and is not cut at a slash', () => {
+  const names = parsePs(PS, NOW).map((p) => p.name);
+
+  expect(names).toEqual(['launchd', 'claude', 'zsh', 'codex', 'Google Chrome He']);
+  expect(parsePs('  9  1  1  00:01  0:00.00 a/b c\n', NOW)[0]?.name).toBe('a/b c');
+});
+
+test('reads each process: its accounting name, parent, memory in KiB, CPU time, and start', () => {
   expect(parsePs(PS, NOW)).toEqual([
     {
       cpuMicros: 41_070_000,
@@ -58,6 +68,15 @@ test('reads each process: name from its executable path, parent, memory in KiB, 
       rssBytes: 300_000 * 1024,
       startedAt: NOW - (5 * 60 + 30) * 1000,
     },
+    {
+      cpuMicros: 10_000,
+      kernelStart: null,
+      name: 'Google Chrome He',
+      pid: 801,
+      ppid: 1,
+      rssBytes: 4096 * 1024,
+      startedAt: NOW - 7000,
+    },
   ]);
 });
 
@@ -79,8 +98,8 @@ test('reads the table with one ps run, and the working directory of one process 
 
   const table = await reader.table();
 
-  expect(runs).toEqual([['/bin/ps', '-axo', PS_COLUMNS]]);
-  expect(table).toHaveLength(4);
+  expect(runs).toEqual([['/bin/ps', '-axww', '-o', PS_COLUMNS]]);
+  expect(table).toHaveLength(5);
   expect(cwds).toEqual([]);
   expect(await reader.cwdOf(612)).toBe('/Users/operator/project');
   expect(await reader.cwdOf(1)).toBeNull();
@@ -91,7 +110,7 @@ test('the macOS readers name no command-line or environment source, and run no l
     // oxlint-disable-next-line no-await-in-loop -- two small files.
     const text = await readFile(join(import.meta.dir, file), 'utf8');
 
-    expect(text).not.toMatch(/cmdline|\benviron\b|lsof|\bargs=|\bcommand=/u);
+    expect(text).not.toMatch(/cmdline|\benviron\b|lsof|\bargs=|\bcommand=|\bcomm=/u);
   }
 });
 
