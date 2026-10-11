@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Session, subagent, transcript, source, generation, request, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -87,6 +87,10 @@ _Avoid_: turn (a prompt and everything the agent does in reply), message, API ca
 **cost**:
 What a Session's or a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. A model with no known price is unpriced, never free.
 _Avoid_: bill, charge, price (the per-token rate cost is computed from)
+
+**Harness install**:
+One copy of a Harness on a System, found by the Collector in a place such as a tool manager's install directory or an npm package, with its location kind and its version, or `unknown` when the version cannot be read. A System can have several. The Collector reads files to find it and never runs the Harness.
+_Avoid_: Harness version (a System can hold several), installation
 
 **Harness process**:
 A running Harness as the Collector observes it from the process table, with its working directory, start and end, and the CPU and memory it and its descendants use. One can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous.

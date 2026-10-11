@@ -6,12 +6,18 @@ import {
   MAX_RUNS_SECTION_BYTES,
   RECORD_NAME,
 } from '@heimdall/schema';
-import type { ChecksSection, RecordsSection, RunsSection } from '@heimdall/schema';
+import type {
+  ChecksSection,
+  HarnessesSection,
+  RecordsSection,
+  RunsSection,
+} from '@heimdall/schema';
 
 import type { CheckParts, CheckPartsSource } from './checks/parts.ts';
 import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
+import type { HarnessesSource } from './harness-scan.ts';
 import type { RecordStore } from './records.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
@@ -135,20 +141,20 @@ const buildRuns = (store: RecordStore, maxBytes: number, log: Log) => {
   );
 };
 
-// Decides when one section is due: at start, when `changed` says the store's
-// content may differ and the section's digest does, and once `refreshMs` after
+// Decides when one section is due: at start, when `changed` says the section's
+// source may differ and the section's digest does, and once `refreshMs` after
 // the last time the Hub answered a Report carrying it. It stays due after a
 // failed delivery. The Hub's refusal (422) settles it too, so a section the Hub
 // will not take cannot reject every later Report with its Vitals; the refresh
 // retries it.
-const createSectionState = <Section>({
+const createSectionState = <Section, Input>({
   build,
   label,
   log,
   now,
   refreshMs,
 }: {
-  build: (store: RecordStore) => { digest: string; section: Section };
+  build: (input: Input) => { digest: string; section: Section };
   label: string;
   log: Log;
   now: () => number;
@@ -174,12 +180,12 @@ const createSectionState = <Section>({
   return {
     // The section to send now, or undefined when it need not be sent. Nothing is
     // built unless the section is due, stale, or the store changed.
-    pending: (store: RecordStore, changed: boolean): PendingSection<Section> | undefined => {
+    pending: (input: Input, changed: boolean): PendingSection<Section> | undefined => {
       const stale = settledAt !== undefined && now() - settledAt >= refreshMs;
       if (!due && !changed && !stale) {
         return undefined;
       }
-      const { digest, section } = build(store);
+      const { digest, section } = build(input);
       if (!due && !stale && digest === settledDigest) {
         return undefined;
       }
@@ -193,10 +199,14 @@ const createSectionState = <Section>({
 // last, or undefined while none has finished a pass.
 export type ChecksSource = CheckPartsSource;
 
+// A source that has found nothing, for a reporter given no Harness scan.
+const NO_HARNESSES: HarnessesSource = { latest: () => undefined };
+
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, and its checks. Each section is due at start, when its
-// content may have changed and its digest differs from the last one settled,
-// and once `refreshMs` after the last one the Hub answered. The store's content
+// jobs' latest runs, its checks, and the Harness installs it found. Each
+// section is due at start, when its content may have changed and its digest
+// differs from the last one settled, and once `refreshMs` after the last one
+// the Hub answered. The store's content
 // may have changed when another process commits; the checks' when `checks`
 // answers another section than before, which is none until the loop's first
 // pass. The sections settle apart, so recording a run sends the runs and not the
@@ -214,6 +224,7 @@ export type ChecksSource = CheckPartsSource;
 // nothing.
 export const createSectionsReporter = ({
   checks,
+  harnesses = NO_HARNESSES,
   log,
   maxChecksBytes = MAX_CHECKS_PART_BYTES,
   maxRecordsBytes = MAX_RECORDS_SECTION_BYTES,
@@ -223,6 +234,7 @@ export const createSectionsReporter = ({
   refreshMs = SECTIONS_REFRESH_MS,
 }: {
   checks: ChecksSource;
+  harnesses?: HarnessesSource;
   log: Log;
   maxChecksBytes?: number;
   maxRecordsBytes?: number;
@@ -234,16 +246,17 @@ export const createSectionsReporter = ({
   let store: RecordStore | undefined;
   let seenVersion: number | undefined;
   let seenChecks: CheckParts | undefined;
+  let seenHarnesses: HarnessesSection | undefined;
   let failing = false;
 
-  const records = createSectionState<RecordsSection>({
+  const records = createSectionState<RecordsSection, RecordStore>({
     build: (held) => buildRecords(held, maxRecordsBytes, log),
     label: 'records',
     log,
     now,
     refreshMs,
   });
-  const runs = createSectionState<RunsSection>({
+  const runs = createSectionState<RunsSection, RecordStore>({
     build: (held) => buildRuns(held, maxRunsBytes, log),
     label: 'runs',
     log,
@@ -251,7 +264,7 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
-  const checked = createSectionState<ChecksSection>({
+  const checked = createSectionState<ChecksSection, RecordStore>({
     // Asked for only once the checks have a section.
     build: () => buildChecks(checks.latest() ?? {}, maxChecksBytes),
     label: 'checks',
@@ -260,7 +273,29 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
-  const pending = async () => {
+  const installed = createSectionState<HarnessesSection, undefined>({
+    // Asked for only once a scan has finished.
+    build: () => {
+      const section = harnesses.latest() ?? { installs: [] };
+      return { digest: digestOf(section), section };
+    },
+    label: 'Harness installs',
+    log,
+    now,
+    refreshMs,
+  });
+
+  // The Harness installs, which come from the scan and not from the store, so a
+  // store that will not open costs them nothing.
+  const pendingHarnesses = () => {
+    const latest = harnesses.latest();
+    const due =
+      latest === undefined ? undefined : installed.pending(undefined, latest !== seenHarnesses);
+    seenHarnesses = latest;
+    return due === undefined ? {} : { harnesses: due };
+  };
+
+  const pendingFromStore = async () => {
     store ??= await open();
     // The version is read before the sections, so a write landing between the
     // two shows as another change on the next call.
@@ -291,20 +326,22 @@ export const createSectionsReporter = ({
       // A store opened again may carry a version this one never saw.
       seenVersion = undefined;
       seenChecks = undefined;
+      seenHarnesses = undefined;
     },
     // A store that cannot be opened or read costs the sections, never the
     // Vitals, and is warned about once until it works again.
     pending: async () => {
+      const harnessSection = pendingHarnesses();
       try {
-        const next = await pending();
+        const next = await pendingFromStore();
         failing = false;
-        return next;
+        return { ...harnessSection, ...next };
       } catch (error) {
         if (!failing) {
           log.warn(`Could not read the records and runs to report: ${describeError(error)}`);
         }
         failing = true;
-        return {};
+        return harnessSection;
       }
     },
   };

@@ -59,3 +59,4 @@ The Fleet Inventory schema and the `heimdall-hub inventory` publish ADR-0010 int
 ## Changelog
 
 - 2026-10-11: Clarification. "Reports Vitals and Sessions" means its Sessions' transcripts, which travel beside Reports; the process-table side of a Session, a Harness process, reaches Reports in M5 ([ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The decision is unchanged.
+- 2026-10-11: Clarification. "The Collector does not observe installed versions" is about `application` records: it does not compare a recorded application's version with the System. Separately, the Collector observes each Harness's installed version from its install files, since Harnesses are what Heimdall itself watches and not something a provisioner recorded ([the spec](../spec.md#installed-harnesses)). The decision is unchanged.
