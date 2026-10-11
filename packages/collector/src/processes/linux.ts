@@ -58,6 +58,11 @@ const CSTIME = 14;
 const START_TIME = 19;
 const RSS = 21;
 
+// Where a /proc link points, without the " (deleted)" the kernel appends once
+// the file or directory it names is removed while the process still runs.
+const linkTarget = async (fs: ProcFs, path: string) =>
+  (await fs.readLink(path)).replace(/ \(deleted\)$/u, '');
+
 // The Harness whose process name a command name is, if any.
 const harnessNamed = (comm: string) =>
   HARNESS_NAMES.find((harness) => HARNESSES[harness].process.names.includes(comm));
@@ -124,7 +129,7 @@ export const createLinuxReader = ({
       return comm;
     }
     try {
-      const exe = (await fs.readLink(`${root}/${String(pid)}/exe`)).replace(/ \(deleted\)$/u, '');
+      const exe = await linkTarget(fs, `${root}/${String(pid)}/exe`);
       return isHarnessExecutable(harness, exe) ? comm : basename(exe);
     } catch {
       return comm;
@@ -174,7 +179,7 @@ export const createLinuxReader = ({
   return {
     cwdOf: async (pid) => {
       try {
-        return await fs.readLink(`${root}/${String(pid)}/cwd`);
+        return await linkTarget(fs, `${root}/${String(pid)}/cwd`);
       } catch {
         return null;
       }

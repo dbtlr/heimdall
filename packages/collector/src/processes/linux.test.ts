@@ -212,6 +212,14 @@ test('reads the working directory through the cwd link, and answers null when it
   expect(await reader.cwdOf(2)).toBeNull();
 });
 
+test('a working directory removed while the process runs is read without the kernel\'s " (deleted)" mark', async () => {
+  const { fs } = fixtureFs({
+    1: { cwd: '/work/tree (deleted)', stat: stat(1, 'claude', { ppid: 0 }) },
+  });
+
+  expect(await readerOf(fs).cwdOf(1)).toBe('/work/tree');
+});
+
 test('reads executable links only for processes that could be a Harness', async () => {
   const { fs, opened } = fixtureFs({
     1: { exe: '/usr/bin/sleep', stat: stat(1, 'sleep', { ppid: 0 }) },
