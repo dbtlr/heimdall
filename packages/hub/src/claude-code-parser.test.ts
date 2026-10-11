@@ -360,6 +360,8 @@ describe('the conversation', () => {
   });
 });
 
+const tool = (id: string) => ({ id, kind: 'tool', name: 'Read' }) as const;
+
 describe('how far it parsed', () => {
   test('through the last newline when the generation may still grow', () => {
     const whole = jsonl([user({ at: T0 })]);
@@ -387,6 +389,29 @@ describe('how far it parsed', () => {
 
     expect(parsed.parsedThrough).toBe(bytes(whole).byteLength);
     expect(parsed.unreadableLines).toBe(0);
+  });
+
+  // A batch holds a bounded number of facts, and a line is never split.
+  test('through the line at which it holds as many facts as asked, and no further', () => {
+    const lines = [
+      assistant({ at: T0, block: tool('toolu_1'), id: 'msg_1' }),
+      { ...user({ at: T1 }), cwd: '\0'.repeat(5000) },
+      assistant({ at: T2, block: tool('toolu_2'), id: 'msg_2' }),
+      '{"type":',
+      assistant({ at: T3, block: tool('toolu_3'), id: 'msg_3' }),
+    ];
+    const text = lines
+      .map((line) => (typeof line === 'string' ? `${line}\n` : jsonl([line])))
+      .join('');
+    const through = bytes(text.split('\n').slice(0, 3).join('\n')).byteLength + 1;
+
+    const parsed = parseConversation(bytes(text), { complete: true, factLimit: 3, offset: 0 });
+
+    expect(parsed).toEqual(
+      expect.objectContaining({ atFactLimit: true, parsedThrough: through, unreadableLines: 1 }),
+    );
+    expect(parsed.requests.map((r) => r.requestId)).toEqual(['msg_1', 'msg_2']);
+    expect(parsed.toolCalls.map((c) => c.callId)).toEqual(['toolu_1', 'toolu_2']);
   });
 });
 
@@ -472,6 +497,7 @@ describe('the parser as the projection runs it', () => {
     const parsed = claudeCodeParser.parse({
       complete: false,
       content: bytes(`${meta}  `),
+      factLimit: Number.POSITIVE_INFINITY,
       offset: 0,
       path: agentPath('a1', { meta: true }),
     });
@@ -483,6 +509,7 @@ describe('the parser as the projection runs it', () => {
     const parsed = claudeCodeParser.parse({
       complete: true,
       content: bytes('{"agentType":'),
+      factLimit: Number.POSITIVE_INFINITY,
       offset: 0,
       path: agentPath('a1', { meta: true }),
     });

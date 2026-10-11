@@ -3,7 +3,12 @@ import { describe, expect, test } from 'bun:test';
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import { PARSE_BUDGET_BYTES, projectionNotes, projectTranscripts } from './projection.ts';
+import {
+  BATCH_FACTS,
+  PARSE_BUDGET_BYTES,
+  projectionNotes,
+  projectTranscripts,
+} from './projection.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import {
   agentMeta,
@@ -635,6 +640,21 @@ const parsedBytes = async (sql: SQL) => {
 const linesOf = (session: string, count: number) =>
   jsonl(Array.from({ length: count }, (_, i) => user({ at: at(i), session })));
 
+// `lines` responses of the main conversation, each a line that makes `calls`
+// tool calls, written compactly, with ids as long as the bound allows, so
+// they hold as many facts as a line can.
+const denseLines = ({ calls, lines }: { calls: number; lines: number }) => {
+  let call = 0;
+  return Array.from({ length: lines }, (_, line) => {
+    const blocks = Array.from({ length: calls }, () => {
+      call += 1;
+      return `{"type":"tool_use","id":"t${call.toString(36)}","name":"Read"}`;
+    });
+    const id = `msg${String(line)}`.padEnd(255, 'r');
+    return `{"type":"assistant","timestamp":"${at(2)}","message":{"id":"${id}","model":"claude-sonnet-5-5","stop_reason":"tool_use","usage":{"input_tokens":1},"content":[${blocks.join(',')}]}}\n`;
+  }).join('');
+};
+
 describe('parsing as transcripts grow', () => {
   // A response whose lines straddle two uploads is first seen partial.
   test('a response streamed across two ticks counts once, from its final line', async () => {
@@ -825,6 +845,50 @@ describe('parsing as transcripts grow', () => {
 
     expect(await parsedBytes(h.db.sql)).toBe(Buffer.byteLength(first + long));
   });
+
+  // Each line is a response that makes 90,000 tool calls, so a batch of them
+  // holds more facts than one statement can carry.
+  test('a generation dense with tool calls is stored whole', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([user({ at: at(0), session: OTHER })]),
+      path: mainPath(OTHER),
+    });
+    const content = denseLines({ calls: 90_000, lines: 9 });
+    await upload(h, { content, path: mainPath() });
+
+    await projectAll(h);
+
+    const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
+    expect(calls?.n).toBe(810_000);
+    expect((await settled(h.db.sql)).status).toEqual([
+      { failed_generations: 0, generations: 2, unreadable_lines: 0 },
+    ]);
+  }, 600_000);
+
+  test('a batch holds a bounded number of facts, and a run parses on past it', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: denseLines({ calls: 30_000, lines: 10 }), path: mainPath() });
+    let most = 0;
+    const measuring = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        const batch = claudeCodeParser.parse(input);
+        most = Math.max(most, batch.requests.length + batch.toolCalls.length);
+        return batch;
+      },
+    };
+
+    const outcome = await projectTranscripts(h.db.sql, { parsers: [measuring] });
+
+    const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
+    expect(calls?.n).toBe(300_000);
+    expect(outcome.pending).toBe(0);
+    // At most the limit, and the facts of the line that reaches it.
+    expect(most).toBeLessThanOrEqual(BATCH_FACTS + 30_001);
+  }, 120_000);
 
   // ADR-0013 can store a file twice, as after a Collector's state is wiped.
   test('a request two generations both hold counts once', async () => {

@@ -15,6 +15,14 @@ export const PARSERS: readonly HarnessParser[] = [claudeCodeParser];
 // `MAX_LINE_BYTES` more.
 export const PARSE_BUDGET_BYTES = 64 * 2 ** 20;
 
+// How many requests and tool calls one batch holds at most, past the line
+// that reaches it, so a batch dense with facts stays bounded in memory.
+export const BATCH_FACTS = 100_000;
+
+// How many rows one statement writes at most, so no statement carries more
+// than PostgreSQL takes in one, however many facts its batch holds.
+const STATEMENT_ROWS = 5000;
+
 // How many generations one run considers at most.
 const GENERATIONS_PER_RUN = 1000;
 
@@ -302,8 +310,9 @@ const parseBatch = async (
     batch: Batch,
     { complete, read, skipping }: { complete: boolean; read: number; skipping: boolean },
   ): Promise<Step> => {
-    // Content read only in part, or only up to a line too long to read, stays pending.
-    const heldSeen = complete && !skipping ? held : batch.parsedThrough;
+    // Content read only in part, or only up to a line too long to read or the
+    // fact limit, stays pending.
+    const heldSeen = complete && !skipping && !batch.atFactLimit ? held : batch.parsedThrough;
     const stored = await storeBatch(sql, {
       batch,
       expected: progress.parsedThrough,
@@ -343,13 +352,14 @@ const parseBatch = async (
             parser.parse({
               complete,
               content: content.subarray(newline + 1),
+              factLimit: BATCH_FACTS,
               offset: from + newline + 1,
               path,
             }),
             { complete, read, skipping: false },
           );
     }
-    const batch = parser.parse({ complete, content, offset: from, path });
+    const batch = parser.parse({ complete, content, factLimit: BATCH_FACTS, offset: from, path });
     if (batch.parsedThrough > from || complete) {
       return store(batch, { complete, read, skipping: false });
     }
@@ -373,6 +383,7 @@ const NEWLINE = '\n'.charCodeAt(0);
 
 const EMPTY: Batch = {
   agent: null,
+  atFactLimit: false,
   owner: null,
   parsedThrough: 0,
   requests: [],
@@ -572,16 +583,16 @@ type Facts = { batch: Batch; generation: Generation; key: Key; owner: NonNullabl
 // hold it. A later line of it replaces the one kept unless the kept line is
 // final and the later one partial, so the final usage wins in any order.
 const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
-  if (batch.requests.length === 0) {
-    return;
-  }
-  await recordHolders(tx, {
-    generation,
-    ids: batch.requests.map((r) => r.requestId),
-    key,
-    table: 'projected_requests',
-  });
-  await tx`
+  for (const requests of slicesOf(batch.requests)) {
+    // oxlint-disable-next-line no-await-in-loop -- one bounded statement at a time.
+    await recordHolders(tx, {
+      generation,
+      ids: requests.map((r) => r.requestId),
+      key,
+      table: 'projected_requests',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one bounded statement at a time.
+    await tx`
     INSERT INTO projected_requests (
       parser_version, harness, system, source, session_id, agent_id, request_id, at, model,
       input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens,
@@ -591,7 +602,7 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
            ${owner.agentId}, r."requestId", to_timestamp(r.at / 1000.0), r.model, r.input, r.output,
            r.reasoning, r."cacheRead", r."cacheWrite", r."cacheWrite5m", r."cacheWrite1h",
            r."stopReason", r.skill, ${generation.id}::bigint, r."offset"
-    FROM jsonb_to_recordset(${storableJson(batch.requests)}::text::jsonb) AS r(
+    FROM jsonb_to_recordset(${storableJson(requests)}::text::jsonb) AS r(
       "requestId" text, at double precision, model text, input bigint, output bigint,
       reasoning bigint, "cacheRead" bigint, "cacheWrite" bigint, "cacheWrite5m" bigint,
       "cacheWrite1h" bigint, "stopReason" text, skill text, "offset" bigint
@@ -614,7 +625,14 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
       byte_offset = excluded.byte_offset
     WHERE excluded.stop_reason IS NOT NULL OR projected_requests.stop_reason IS NULL
   `;
+  }
 };
+
+// `rows` in slices of at most `STATEMENT_ROWS`, one statement's worth each.
+const slicesOf = <T>(rows: readonly T[]): T[][] =>
+  Array.from({ length: Math.ceil(rows.length / STATEMENT_ROWS) }, (_, i) =>
+    rows.slice(i * STATEMENT_ROWS, (i + 1) * STATEMENT_ROWS),
+  );
 
 // Notes every generation that holds a fact another generation's row already
 // keeps, the row's generation too, so a delete of either can derive the other
@@ -650,16 +668,16 @@ const recordHolders = async (
 
 // A tool call counts once within a System's source; the first line read keeps it.
 const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
-  if (batch.toolCalls.length === 0) {
-    return;
-  }
-  await recordHolders(tx, {
-    generation,
-    ids: batch.toolCalls.map((t) => t.callId),
-    key,
-    table: 'projected_tool_calls',
-  });
-  await tx`
+  for (const calls of slicesOf(batch.toolCalls)) {
+    // oxlint-disable-next-line no-await-in-loop -- one bounded statement at a time.
+    await recordHolders(tx, {
+      generation,
+      ids: calls.map((t) => t.callId),
+      key,
+      table: 'projected_tool_calls',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one bounded statement at a time.
+    await tx`
     INSERT INTO projected_tool_calls (
       parser_version, harness, system, source, session_id, agent_id, call_id, request_id, at,
       kind, name, mcp_server, skill, generation, byte_offset
@@ -667,12 +685,13 @@ const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts)
     SELECT ${key.version}, ${key.harness}, ${key.system}, ${key.source}, ${key.session},
            ${owner.agentId}, t."callId", t."requestId", to_timestamp(t.at / 1000.0), t.kind,
            t.name, t."mcpServer", t.skill, ${generation.id}::bigint, t."offset"
-    FROM jsonb_to_recordset(${storableJson(batch.toolCalls)}::text::jsonb) AS t(
+    FROM jsonb_to_recordset(${storableJson(calls)}::text::jsonb) AS t(
       "callId" text, "requestId" text, at double precision, kind text, name text,
       "mcpServer" text, skill text, "offset" bigint
     )
     ON CONFLICT (harness, parser_version, system, source, call_id) DO NOTHING
   `;
+  }
 };
 
 // Switches the views to `parser`'s version once it has caught up, in one

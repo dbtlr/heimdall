@@ -74,7 +74,7 @@ export const classifyClaudeCodePath = (path: string): ClaudeCodeFile => {
 
 export type Conversation = Pick<
   Batch,
-  'parsedThrough' | 'requests' | 'span' | 'toolCalls' | 'unreadableLines'
+  'atFactLimit' | 'parsedThrough' | 'requests' | 'span' | 'toolCalls' | 'unreadableLines'
 >;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -83,44 +83,43 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const NEWLINE = '\n'.charCodeAt(0);
 const decoder = new TextDecoder();
 
-// Each whole line of `content` with its offset, and how far the whole lines
-// reach. A last line without a newline is whole only when `complete` says no
-// more content can follow it and it reads as JSON; otherwise it waits. A line
-// longer than `MAX_LINE_BYTES` is unreadable, and is not decoded.
-const linesOf = (content: Uint8Array, offset: number, complete: boolean) => {
-  const lines: { offset: number; value: unknown }[] = [];
-  let unreadable = 0;
-  let start = 0;
-  const read = (end: number) => {
+type Line =
+  | { end: number; kind: 'blank' }
+  | { end: number; kind: 'json'; offset: number; value: unknown }
+  | { end: number; kind: 'unreadable' };
+
+// Each whole line of `content` in order, with the offset where the next one
+// starts: blank, its JSON and its offset, or unreadable, for a line that is
+// not JSON or is longer than `MAX_LINE_BYTES`, which is not decoded. A last
+// line without a newline is whole only when `complete` says no more content
+// can follow it and it reads as JSON; otherwise it waits.
+function* linesOf(content: Uint8Array, offset: number, complete: boolean): Generator<Line> {
+  const read = (start: number, end: number, next: number): Line => {
     if (end - start > MAX_LINE_BYTES) {
-      unreadable += 1;
-      return;
+      return { end: offset + next, kind: 'unreadable' };
     }
     const raw = decoder.decode(content.subarray(start, end));
     if (raw.trim() === '') {
-      return;
+      return { end: offset + next, kind: 'blank' };
     }
     try {
-      lines.push({ offset: offset + start, value: JSON.parse(raw) });
+      return { end: offset + next, kind: 'json', offset: offset + start, value: JSON.parse(raw) };
     } catch {
-      unreadable += 1;
+      return { end: offset + next, kind: 'unreadable' };
     }
   };
+  let start = 0;
   for (let end = content.indexOf(NEWLINE); end !== -1; end = content.indexOf(NEWLINE, start)) {
-    read(end);
+    yield read(start, end, end + 1);
     start = end + 1;
   }
   if (complete && start < content.byteLength && content.byteLength - start <= MAX_LINE_BYTES) {
-    const before = unreadable;
-    read(content.byteLength);
-    if (unreadable === before) {
-      start = content.byteLength;
-    } else {
-      unreadable = before;
+    const last = read(start, content.byteLength, content.byteLength);
+    if (last.kind !== 'unreadable') {
+      yield last;
     }
   }
-  return { lines, parsedThrough: offset + start, unreadable };
-};
+}
 
 const momentOf = (line: Record<string, unknown>, at: number): Moment => ({
   at,
@@ -292,22 +291,39 @@ const replaces = (later: Request, kept: Request) =>
 
 // Parses a conversation's transcript content that starts at byte `offset` of
 // its generation. `complete` says the content reaches the end of what the Hub
-// holds, so a last line without a newline can be read. Within this content a
-// response counts once, from its last final line, and a tool call from its
-// first line; the caller keeps those rules across batches and generations.
+// holds, so a last line without a newline can be read. It stops after the
+// line at which it holds `factLimit` requests and tool calls, and
+// `atFactLimit` says it did, so a batch's facts stay bounded; a line is never
+// split. Within this content a response counts once, from its last final
+// line, and a tool call from its first line; the caller keeps those rules
+// across batches and generations.
 export const parseConversation = (
   content: Uint8Array,
-  { complete, offset }: { complete: boolean; offset: number },
+  {
+    complete,
+    factLimit = Number.POSITIVE_INFINITY,
+    offset,
+  }: { complete: boolean; factLimit?: number; offset: number },
 ): Conversation => {
-  const { lines, parsedThrough, unreadable } = linesOf(content, offset, complete);
   const requests = new Map<string, Request>();
   const toolCalls = new Map<string, ToolCall>();
   let span: Conversation['span'] = null;
-  let unreadableLines = unreadable;
-  for (const { offset: at, value } of lines) {
+  let unreadableLines = 0;
+  let parsedThrough = offset;
+  let atFactLimit = false;
+  for (const line of linesOf(content, offset, complete)) {
+    if (requests.size + toolCalls.size >= factLimit) {
+      atFactLimit = true;
+      break;
+    }
+    parsedThrough = line.end;
+    if (line.kind !== 'json') {
+      unreadableLines += line.kind === 'unreadable' ? 1 : 0;
+      continue;
+    }
     let facts: LineFacts;
     try {
-      facts = readLine(value, at);
+      facts = readLine(line.value, line.offset);
     } catch (error) {
       if (!(error instanceof UnreadableLineError)) {
         throw error;
@@ -341,6 +357,7 @@ export const parseConversation = (
     }
   }
   return {
+    atFactLimit,
     parsedThrough,
     requests: [...requests.values()],
     span,
@@ -384,13 +401,20 @@ const MAX_DEPTH = 1000;
 // whole, from its first byte, once the Hub holds all of it.
 export const claudeCodeParser: HarnessParser = {
   harness: 'claude-code',
-  parse: ({ complete, content, offset, path }) => {
+  parse: ({ complete, content, factLimit, offset, path }) => {
     const file = classifyClaudeCodePath(path);
-    const nothing = { agent: null, requests: [], span: null, toolCalls: [], unreadableLines: 0 };
+    const nothing = {
+      agent: null,
+      atFactLimit: false,
+      requests: [],
+      span: null,
+      toolCalls: [],
+      unreadableLines: 0,
+    };
     switch (file.kind) {
       case 'conversation': {
         return {
-          ...parseConversation(content, { complete, offset }),
+          ...parseConversation(content, { complete, factLimit, offset }),
           agent: null,
           owner: file.owner,
           transcript: true,

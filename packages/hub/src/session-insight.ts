@@ -67,9 +67,11 @@ export type AgentMeta = {
 // What a parser made of one batch of a generation's content. `transcript`
 // says the file is its owner's own transcript, so the owner's row names its
 // path; `span` covers the conversation lines read. `parsedThrough` is the
-// byte offset the next batch starts from.
+// byte offset the next batch starts from, and `atFactLimit` says the parser
+// stopped there because the batch held as many facts as it was asked for.
 export type Batch = {
   agent: AgentMeta | null;
+  atFactLimit: boolean;
   owner: Owner | null;
   parsedThrough: number;
   requests: Request[];
@@ -82,10 +84,18 @@ export type Batch = {
 // A Harness's parser. `reads` says whether a file at `path` holds facts at
 // all; one that does not is never read. `parse` reads content from byte
 // `offset` of its generation; `complete` says it reaches the end of what the
-// Hub holds. Bumping `version` rebuilds the Harness's rows (ADR-0014).
+// Hub holds. It stops after the line at which the batch holds `factLimit`
+// requests and tool calls. Bumping
+// `version` rebuilds the Harness's rows (ADR-0014).
 export type HarnessParser = {
   harness: string;
-  parse: (input: { complete: boolean; content: Uint8Array; offset: number; path: string }) => Batch;
+  parse: (input: {
+    complete: boolean;
+    content: Uint8Array;
+    factLimit: number;
+    offset: number;
+    path: string;
+  }) => Batch;
   reads: (path: string) => boolean;
   version: number;
 };
