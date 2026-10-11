@@ -65,7 +65,7 @@ const text = (value: unknown) => (typeof value === 'string' ? value : null);
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
-const NEWLINE = 0x0a;
+const NEWLINE = '\n'.charCodeAt(0);
 const decoder = new TextDecoder();
 
 // Each whole line of `content` with its offset, and how far the whole lines
