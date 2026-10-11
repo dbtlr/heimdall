@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 // The most installs a Report's harnesses section lists. A Collector keeps the
-// first ones in sorted order, so the section never makes a Report too large.
+// newest versions of each Harness, so the section never makes a Report too
+// large.
 export const MAX_HARNESS_INSTALLS = 64;
 
 // What an install reports as its version when the Collector found the install

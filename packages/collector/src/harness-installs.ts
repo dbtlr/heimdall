@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import {
   HarnessInstallSchema,
@@ -102,28 +102,46 @@ const attempt = async <T>(read: () => Promise<T>): Promise<T | typeof FAILED> =>
   }
 };
 
+// Whether `dir` is there though it cannot be listed: its parent can be listed
+// and holds an entry of its name. A parent that cannot be listed says nothing
+// about what is under it.
+const isUnlistable = async (reader: InstallReader, dir: string) => {
+  const siblings = await attempt(() => reader.readDir(dirname(dir)));
+  return siblings !== FAILED && siblings?.some((e) => e.name === basename(dir)) === true;
+};
+
+// A trailing Homebrew revision such as the `_1` of `1.2.3_1`.
+const REVISION = /_\d{1,3}$/u;
+
 // The versions of `dir`'s entries. An entry named for a full version counts,
 // symbolic link or not, since `mise link` makes the install one; aliases such as
-// `latest` or `2.1` are not versions. An entry matching `unversioned` is an
-// install whose version is unknown, and so is a `dir` that is there and cannot
-// be listed. A `dir` that is absent has none.
+// `latest` or `2.1` are not versions. With `revisions`, a Homebrew revision
+// suffix is dropped from the name first. An entry matching `unversioned` is an
+// install whose version is unknown, and so is a `dir` that is there (its parent
+// lists it) and cannot be listed. A `dir` that is absent, or whose parent
+// cannot be listed, has none.
 const versionsIn = async (
   reader: InstallReader,
   dir: string,
-  { directoriesOnly, unversioned }: { directoriesOnly: boolean; unversioned?: RegExp },
+  {
+    directoriesOnly,
+    revisions = false,
+    unversioned,
+  }: { directoriesOnly: boolean; revisions?: boolean; unversioned?: RegExp },
 ) => {
   const entries = await attempt(() => reader.readDir(dir));
   if (entries === undefined) {
     return [];
   }
   if (entries === FAILED) {
-    return [UNKNOWN_HARNESS_VERSION];
+    return (await isUnlistable(reader, dir)) ? [UNKNOWN_HARNESS_VERSION] : [];
   }
   return entries
     .filter((e) => e.isDirectory || e.isSymlink || !directoriesOnly)
     .flatMap((e) => {
-      if (VERSION.test(e.name)) {
-        return [e.name];
+      const name = revisions ? e.name.replace(REVISION, '') : e.name;
+      if (VERSION.test(name)) {
+        return [name];
       }
       return unversioned?.test(e.name) === true ? [UNKNOWN_HARNESS_VERSION] : [];
     });
@@ -193,12 +211,16 @@ const installsOf = async (
   const miseData = absoluteDir(env.MISE_DATA_DIR) ?? join(dataHome, 'mise');
   const found = (location: string, versions: string[]) =>
     versions.map((version) => ({ harness, location, version }));
-  const perVersion = async (location: string, dirs: string[], unversioned: RegExp) =>
+  const perVersion = async (
+    location: string,
+    dirs: string[],
+    options: { revisions?: boolean; unversioned: RegExp },
+  ) =>
     found(
       location,
       (
         await Promise.all(
-          dirs.map((dir) => versionsIn(reader, dir, { directoriesOnly: true, unversioned })),
+          dirs.map((dir) => versionsIn(reader, dir, { directoriesOnly: true, ...options })),
         )
       ).flat(),
     );
@@ -206,7 +228,7 @@ const installsOf = async (
   const mise = perVersion(
     'mise',
     places.mise.map((tool) => join(miseData, 'installs', tool)),
-    MISE_REF,
+    { unversioned: MISE_REF },
   );
   const homebrew = perVersion(
     'homebrew',
@@ -216,7 +238,7 @@ const installsOf = async (
         join(prefix, 'Caskroom', name),
       ]),
     ),
-    HOMEBREW_HEAD,
+    { revisions: true, unversioned: HOMEBREW_HEAD },
   );
   const native =
     places.native === undefined
@@ -260,23 +282,30 @@ const compareText = (a: string, b: string) => {
 
 // Numeric order of versions, with plain text order to settle those that are
 // equal by number (`1.01.0` and `1.1.0`), so the order never depends on the
-// order a directory was listed in.
-const byInstall = (a: HarnessInstall, b: HarnessInstall) =>
-  a.harness.localeCompare(b.harness) ||
-  a.location.localeCompare(b.location) ||
+// order a directory was listed in. An unknown version is the oldest.
+const knownRank = (i: HarnessInstall) => (i.version === UNKNOWN_HARNESS_VERSION ? 0 : 1);
+
+const byVersion = (a: HarnessInstall, b: HarnessInstall) =>
+  knownRank(a) - knownRank(b) ||
   a.version.localeCompare(b.version, 'en', { numeric: true }) ||
   compareText(a.version, b.version);
 
+const byInstall = (a: HarnessInstall, b: HarnessInstall) =>
+  a.harness.localeCompare(b.harness) || a.location.localeCompare(b.location) || byVersion(a, b);
+
 // The installs of one Harness the section can carry: the same install found by
-// two paths once, none the schema would refuse, sorted, and at most
-// MAX_PER_HARNESS.
+// two paths once, none the schema would refuse, the newest MAX_PER_HARNESS by
+// version (ties by location), in the section's order.
 const carriable = (installs: HarnessInstall[]) => {
   const unique = new Map(
     installs
       .filter((i) => HarnessInstallSchema.safeParse(i).success)
       .map((i) => [JSON.stringify([i.harness, i.location, i.version]), i]),
   );
-  return [...unique.values()].toSorted(byInstall).slice(0, MAX_PER_HARNESS);
+  return [...unique.values()]
+    .toSorted((a, b) => byVersion(b, a) || a.location.localeCompare(b.location))
+    .slice(0, MAX_PER_HARNESS)
+    .toSorted(byInstall);
 };
 
 // Every install of a Harness on this System, read from install directories and

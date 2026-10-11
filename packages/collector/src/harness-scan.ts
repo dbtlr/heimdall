@@ -19,7 +19,8 @@ export type HarnessesSource = { latest: () => HarnessesSection | undefined };
 // Looks for Harness installs and keeps the section for them. `latest` answers
 // the same object until the installs differ, so the reporter can tell by
 // identity that nothing changed. A directory that cannot be read costs only
-// what is under it (see `findHarnessInstalls`).
+// what is under it, and an install there that is known to exist reports an
+// unknown version (see `findHarnessInstalls`).
 export const createHarnessScan = ({
   env,
   home,

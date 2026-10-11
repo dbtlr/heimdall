@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, mkdir, open, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { HarnessesSectionSchema, MAX_HARNESS_INSTALLS } from '@heimdall/schema';
@@ -430,10 +431,8 @@ test('a package.json past the size cap reports unknown', async () => {
   await using dir = await tempStateDir();
   const pkg = join(dir.path, '.npm-global/lib/node_modules/@openai/codex');
   await mkdir(pkg, { recursive: true });
-  await writeFile(
-    join(pkg, 'package.json'),
-    JSON.stringify({ description: 'x'.repeat(100_000), version: '0.5.0' }),
-  );
+  // Valid JSON naming a version, padded with whitespace: only its size refuses it.
+  await writeFile(join(pkg, 'package.json'), `{"version":"0.5.0"}${' '.repeat(100_000)}`);
 
   const installs = await findHarnessInstalls({
     env: {},
@@ -484,4 +483,72 @@ test('the file reader lists a directory, reads text, and answers undefined for w
   expect(await fileReader.readText(join(dir.path, 'versions', '2.1.296'))).toBe('binary');
   expect(await fileReader.readDir(join(dir.path, 'absent'))).toBeUndefined();
   expect(await fileReader.readText(join(dir.path, 'absent'))).toBeUndefined();
+});
+
+test('a package.json that is a FIFO holding a version is refused, not read', async () => {
+  await using dir = await tempStateDir();
+  const pkg = join(dir.path, '.npm-global/lib/node_modules/@openai/codex');
+  await mkdir(pkg, { recursive: true });
+  const fifo = join(pkg, 'package.json');
+  expect(await Bun.spawn(['mkfifo', fifo]).exited).toBe(0);
+  const writer = await open(fifo, constants.O_RDWR);
+  try {
+    await writer.write('{"version":"0.5.0"}');
+
+    const installs = await findHarnessInstalls({
+      env: {},
+      home: dir.path,
+      platform: 'linux',
+      reader: fileReader,
+    });
+
+    expect(installs).toEqual([{ harness: 'codex', location: 'npm', version: 'unknown' }]);
+  } finally {
+    await writer.close();
+  }
+});
+
+test.each([['.linuxbrew'], ['.local/share']])(
+  'an unreadable parent directory (%s) reports nothing for the places under it',
+  async (unreadable) => {
+    await using dir = await tempStateDir();
+    await mkdir(join(dir.path, unreadable), { recursive: true });
+    await chmod(join(dir.path, unreadable), 0o000);
+    try {
+      const installs = await findHarnessInstalls({
+        env: {},
+        home: dir.path,
+        platform: 'linux',
+        reader: fileReader,
+      });
+
+      expect(installs).toEqual([]);
+    } finally {
+      await chmod(join(dir.path, unreadable), 0o700);
+    }
+  },
+);
+
+test('a Homebrew keg with a revision is that version without the revision', async () => {
+  const reader = tree({
+    dirs: [
+      '/home/linuxbrew/.linuxbrew/Cellar/codex/0.5.0_1',
+      '/home/linuxbrew/.linuxbrew/Cellar/codex/0.6.0',
+    ],
+  });
+
+  expect((await find(reader)).map((i) => i.version)).toEqual(['0.5.0', '0.6.0']);
+});
+
+test('past the cap a Harness keeps its newest versions', async () => {
+  const dirs = Array.from(
+    { length: MAX_HARNESS_INSTALLS / 2 + 5 },
+    (_, i) => `${MISE}/claude/1.0.${String(i)}`,
+  );
+
+  const versions = (await find(tree({ dirs }))).map((i) => i.version);
+
+  expect(versions).toHaveLength(MAX_HARNESS_INSTALLS / 2);
+  expect(versions).toContain(`1.0.${String(MAX_HARNESS_INSTALLS / 2 + 4)}`);
+  expect(versions).not.toContain('1.0.0');
 });

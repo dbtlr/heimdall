@@ -61,14 +61,12 @@ test('answers the same object until the installs change', async () => {
   expect(scan.latest()?.installs.map((i) => i.version)).toEqual(['2.1.296', '2.2.0']);
 });
 
-test('a System whose directories cannot be read reports their installs as unknown rather than failing', async () => {
+test('a System whose directories cannot be read reports no installs rather than failing', async () => {
   const scan = scanOf({ failing: true, versions: ['2.1.296'] });
 
   await scan.tick();
 
-  const installs = scan.latest()?.installs ?? [];
-  expect(installs.length).toBeGreaterThan(0);
-  expect(installs.every((i) => i.version === 'unknown')).toBe(true);
+  expect(scan.latest()).toEqual({ installs: [] });
 });
 
 // A reader whose directory reads stay pending until `release` is called.
