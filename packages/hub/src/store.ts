@@ -13,16 +13,10 @@ import type {
 import type { SQL } from 'bun';
 
 import { storeHarnessProcesses } from './harness-processes.ts';
+import { storable, storableJson } from './storable.ts';
 import { pairedSystems } from './tokens.ts';
 
 export type StoreResult = { skipped: number; stored: number };
-
-// Text PostgreSQL can store: NUL and lone surrogates, which the Report schema
-// allows, become U+FFFD. Refusing them would stall the Collector's queue.
-const storable = (text: string) => text.toWellFormed().replaceAll('\0', '\uFFFD');
-
-const storableJson = (value: unknown) =>
-  JSON.stringify(value, (_, v: unknown) => (typeof v === 'string' ? storable(v) : v));
 
 // Records that the Hub heard from `system` at `at` (epoch milliseconds), on
 // its own row lock (glossary: Last seen).

@@ -1,17 +1,13 @@
 import type { HarnessProcessesSection } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { storableJson } from './storable.ts';
+
 // How far two start times may differ and still be one process. The Collector
 // reads a start to the second, from clocks that can differ by a second between
 // reads and across a Collector restart; a pid reused by a new process starts
 // much later.
 const SAME_PROCESS_SECONDS = 10;
-
-// Text PostgreSQL can store: NUL and lone surrogates become U+FFFD.
-const storableJson = (value: unknown) =>
-  JSON.stringify(value, (_, v: unknown) =>
-    typeof v === 'string' ? v.toWellFormed().replaceAll('\0', '�') : v,
-  );
 
 // Applies a Report's harnessProcesses section to the System's processes:
 // each process in it is updated in place or added, and every process the Hub
