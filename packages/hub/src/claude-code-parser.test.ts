@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { classifyClaudeCodePath, parseAgentMeta, parseConversation } from './claude-code-parser.ts';
+import {
+  classifyClaudeCodePath,
+  claudeCodeParser,
+  parseAgentMeta,
+  parseConversation,
+} from './claude-code-parser.ts';
 import {
   agentMeta,
   agentPath,
@@ -214,7 +219,9 @@ describe('tool calls', () => {
     ]);
   });
 
-  test('a slash command a person typed is a command naming its skill', () => {
+  // A built-in command such as `/doctor` is no skill; skills come from the
+  // Skill tool and the skill a request is attributed to.
+  test('a slash command a person typed is a command, naming no skill', () => {
     const parsed = parse(jsonl([user({ at: T0, command: '/review', uuid: 'u-1' })]));
 
     expect(parsed.toolCalls).toEqual([
@@ -226,9 +233,80 @@ describe('tool calls', () => {
         name: '/review',
         offset: 0,
         requestId: null,
-        skill: 'review',
+        skill: null,
       },
     ]);
+  });
+
+  test('each command a line carries is a call of its own', () => {
+    const line = {
+      ...user({ at: T0, uuid: 'u-1' }),
+      message: {
+        content: '<command-name>/clear</command-name> <command-name>/plugin:run</command-name>',
+        role: 'user',
+      },
+    };
+
+    expect(parse(jsonl([line])).toolCalls.map((c) => [c.callId, c.name])).toEqual([
+      ['u-1', '/clear'],
+      ['u-1#1', '/plugin:run'],
+    ]);
+  });
+
+  // A prompt can quote the tag around anything, a secret included, and the
+  // views carry no content.
+  test.each([
+    ['prose', 'my bank PIN is 4321'],
+    ['too long', `/${'x'.repeat(65)}`],
+    ['empty', ''],
+  ])('a command name that is %s is dropped and the line counted', (_, name) => {
+    const line = {
+      ...user({ at: T0, uuid: 'u-1' }),
+      message: { content: `please read <command-name>${name}</command-name>`, role: 'user' },
+    };
+
+    const parsed = parse(jsonl([line]));
+
+    expect(parsed.toolCalls).toEqual([]);
+    expect(parsed.unreadableLines).toBe(1);
+    expect(parsed.span?.first.at).toBe(Date.parse(T0));
+  });
+
+  test('a Skill call whose skill is not shaped like a name is dropped and the line counted', () => {
+    const block = {
+      id: 'toolu_1',
+      input: { skill: 'my bank PIN is 4321' },
+      kind: 'tool',
+      name: 'Skill',
+    } as const;
+
+    const parsed = parse(jsonl([assistant({ at: T0, block, id: 'msg_1' })]));
+
+    expect(parsed.toolCalls).toEqual([]);
+    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1' })]);
+    expect(parsed.unreadableLines).toBe(1);
+  });
+
+  test('a skill attribution not shaped like a name is dropped and the line counted', () => {
+    const parsed = parse(
+      jsonl([assistant({ at: T0, id: 'msg_1', skill: 'a secret, said aloud' })]),
+    );
+
+    expect(parsed.requests).toEqual([expect.objectContaining({ requestId: 'msg_1', skill: null })]);
+    expect(parsed.unreadableLines).toBe(1);
+  });
+
+  // The database keeps the first line of a call it holds, so a batch does too,
+  // and parsing in pieces derives what parsing whole does.
+  test('a command line written twice under one uuid keeps its first line', () => {
+    const parsed = parse(
+      jsonl([
+        user({ at: T0, command: '/review', uuid: 'u-1' }),
+        user({ at: T1, command: '/review', uuid: 'u-1' }),
+      ]),
+    );
+
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ at: Date.parse(T0), offset: 0 })]);
   });
 
   test('a listing of the skills available invokes none', () => {
@@ -252,6 +330,19 @@ describe('the conversation', () => {
       first: { at: Date.parse(T0), cwd: '/w/b', gitBranch: 'main', version: '2.1.289' },
       last: { at: Date.parse(T3), cwd: '/w/c', gitBranch: 'release', version: '2.1.291' },
     });
+  });
+
+  // In file order, a later line at the same moment is the later one.
+  test('ends at the later of two lines written at the same moment', () => {
+    const parsed = parse(
+      jsonl([
+        user({ at: T0, cwd: '/w/a' }),
+        user({ at: T1, cwd: '/w/b' }),
+        user({ at: T1, cwd: '/w/c' }),
+      ]),
+    );
+
+    expect(parsed.span?.last.cwd).toBe('/w/c');
   });
 
   test('lines without a time, such as a cost snapshot, leave the span alone', () => {
@@ -358,5 +449,114 @@ describe("a subagent's metadata", () => {
 
   test('that is not JSON is unreadable', () => {
     expect(parseAgentMeta('{"agentType":')).toBeUndefined();
+  });
+
+  test('keeps its text with NUL replaced, and is unreadable with a value out of bounds', () => {
+    expect(parseAgentMeta(agentMeta({ agentType: 'Ex\0plore', toolUseId: 'toolu_9' }))).toEqual(
+      expect.objectContaining({ agentType: 'Ex\uFFFDplore' }),
+    );
+    expect(parseAgentMeta(agentMeta({ agentType: 'Explore', toolUseId: 't'.repeat(256) }))).toBe(
+      undefined,
+    );
+    expect(
+      parseAgentMeta(agentMeta({ agentType: 'Explore', spawnDepth: 2 ** 31, toolUseId: 't1' })),
+    ).toBe(undefined);
+  });
+});
+
+describe('the parser as the projection runs it', () => {
+  const meta = agentMeta({ agentType: 'Explore', toolUseId: 'toolu_9' });
+
+  // Content that stops short of what the Hub holds may be cut off anywhere.
+  test("reads a subagent's metadata only once the Hub's whole content is read", () => {
+    const parsed = claudeCodeParser.parse({
+      complete: false,
+      content: bytes(`${meta}  `),
+      offset: 0,
+      path: agentPath('a1', { meta: true }),
+    });
+
+    expect(parsed).toEqual(expect.objectContaining({ agent: null, parsedThrough: 0 }));
+  });
+
+  test('counts metadata it cannot read as one unreadable line', () => {
+    const parsed = claudeCodeParser.parse({
+      complete: true,
+      content: bytes('{"agentType":'),
+      offset: 0,
+      path: agentPath('a1', { meta: true }),
+    });
+
+    expect(parsed).toEqual(expect.objectContaining({ agent: null, unreadableLines: 1 }));
+  });
+});
+
+// A line holds whatever its Harness wrote, so the parser keeps only what
+// PostgreSQL can store and what a transcript plausibly holds. A line it
+// rejects is counted, never stored in part.
+describe('a line the database could not store', () => {
+  test('keeps its text with NUL replaced', () => {
+    const parsed = parse(jsonl([{ ...user({ at: T0 }), cwd: '/w/a\0b', gitBranch: 'x\0' }]));
+
+    expect(parsed.span?.first).toEqual(expect.objectContaining({ cwd: '/w/a�b', gitBranch: 'x�' }));
+    expect(parsed.unreadableLines).toBe(0);
+  });
+
+  test.each([
+    ['before the year 1', '-005000-01-01T00:00:00.000Z'],
+    ['after the year 9999', '+010000-01-01T00:00:00.000Z'],
+    ['that does not parse', 'yesterday'],
+  ])('with a time %s is unreadable', (_, timestamp) => {
+    const parsed = parse(jsonl([{ ...assistant({ at: T0, id: 'msg_1' }), timestamp }]));
+
+    expect(parsed).toEqual(
+      expect.objectContaining({ requests: [], span: null, toolCalls: [], unreadableLines: 1 }),
+    );
+  });
+
+  test('a response without a time is unreadable', () => {
+    const { timestamp: _, ...line } = assistant({ at: T0, id: 'msg_1' });
+
+    expect(parse(jsonl([line]))).toEqual(
+      expect.objectContaining({ requests: [], unreadableLines: 1 }),
+    );
+  });
+
+  test.each([
+    ['a response id', { ...assistant({ at: T0, id: 'm'.repeat(256) }) }],
+    [
+      'a tool call id',
+      assistant({
+        at: T0,
+        block: { id: 't'.repeat(256), kind: 'tool', name: 'Read' },
+        id: 'msg_1',
+      }),
+    ],
+    ['a working directory', assistant({ at: T0, cwd: `/${'d'.repeat(4096)}`, id: 'msg_1' })],
+    ['a model', assistant({ at: T0, id: 'msg_1', model: 'm'.repeat(256) })],
+  ])('with %s longer than the bound is unreadable', (_, line) => {
+    expect(parse(jsonl([line]))).toEqual(
+      expect.objectContaining({ requests: [], span: null, toolCalls: [], unreadableLines: 1 }),
+    );
+  });
+
+  test.each([
+    ['negative', -1],
+    ['above the bound', 1_000_000_001],
+    ['not an integer', 1.5],
+    ['not a number', '5'],
+  ])('with a token count %s is unreadable', (_, input) => {
+    const line = assistant({ at: T0, id: 'msg_1' });
+    line.message.usage = { ...line.message.usage, input_tokens: input as number };
+
+    expect(parse(jsonl([line]))).toEqual(
+      expect.objectContaining({ requests: [], unreadableLines: 1 }),
+    );
+  });
+
+  test('a token count at the bound is read', () => {
+    const parsed = parse(jsonl([assistant({ at: T0, id: 'msg_1', usage: { input: 1e9 } })]));
+
+    expect(parsed.requests).toEqual([expect.objectContaining({ input: 1e9 })]);
   });
 });

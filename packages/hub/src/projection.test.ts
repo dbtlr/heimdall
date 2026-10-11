@@ -15,7 +15,7 @@ import {
   user,
 } from './testing/claude-code.ts';
 import type { ModelUsage } from './testing/claude-code.ts';
-import { NOW, openGeneration, push, report, sendChunk, startHub } from './testing/hub.ts';
+import { gzip, NOW, openGeneration, push, report, sendChunk, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { deleteTranscripts } from './transcripts.ts';
 
@@ -243,10 +243,19 @@ const append = async (
   return position;
 };
 
+// Splits content as the Collector does: on line boundaries, and a line longer
+// than a chunk into pieces. Synthetic content is ASCII, so a character is a byte.
 const chunksOf = (content: string, chunkBytes: number) => {
   const chunks: string[] = [];
   let chunk = '';
-  for (const line of content.split(/(?<=\n)/u)) {
+  const pieces = content
+    .split(/(?<=\n)/u)
+    .flatMap((line) =>
+      Array.from({ length: Math.ceil(line.length / chunkBytes) }, (_, i) =>
+        line.slice(i * chunkBytes, (i + 1) * chunkBytes),
+      ),
+    );
+  for (const line of pieces) {
     if (chunk !== '' && Buffer.byteLength(chunk + line) > chunkBytes) {
       chunks.push(chunk);
       chunk = '';
@@ -515,7 +524,7 @@ describe('a Claude Code Session', () => {
         call_id: 'u-review',
         kind: 'command',
         name: '/review',
-        skill: 'review',
+        skill: null,
       }),
     ]);
   });
@@ -591,6 +600,28 @@ describe('parsing as transcripts grow', () => {
     ]);
   });
 
+  // Whether the lines arrive in one batch or two, the first line of a call keeps it.
+  test('a command line written twice under one uuid derives the same call in pieces as whole', async () => {
+    const first = jsonl([user({ at: at(0), command: '/review', uuid: 'u-1' })]);
+    const second = jsonl([user({ at: at(5), command: '/review', uuid: 'u-1' })]);
+    const calls = async (inPieces: boolean) => {
+      await using h = await startHub();
+      await nameSources(h);
+      const generation = await upload(h, { content: first, path: mainPath() });
+      if (inPieces) {
+        await projectAll(h);
+      }
+      await append(h, generation, { content: second, offset: Buffer.byteLength(first) });
+      await projectAll(h);
+      return [...(await h.db.sql`SELECT call_id, at, byte_offset FROM insight.tool_calls`)];
+    };
+
+    const whole = await calls(false);
+
+    expect(whole).toEqual([{ at: new Date(at(0)), byte_offset: '0', call_id: 'u-1' }]);
+    expect(await calls(true)).toEqual(whole);
+  });
+
   // ADR-0013 can store a file twice, as after a Collector's state is wiped.
   test('a request two generations both hold counts once', async () => {
     await using h = await startHub();
@@ -664,6 +695,150 @@ describe('parsing as transcripts grow', () => {
     await projectAll(h);
 
     expect(await sessions(h.db.sql)).toEqual([expect.objectContaining({ session_id: SESSION })]);
+  });
+});
+
+// What the views show of each Session, and how well the current parser read
+// what the Hub holds.
+const settled = async (sql: SQL) => ({
+  requests: (await requests(sql)).map((r) => r.request_id),
+  sessions: (await sessions(sql)).map((s) => s.session_id),
+  status: (
+    await sql`SELECT generations, failed_generations, unreadable_lines FROM insight.parse_status`
+  ).map(numbers),
+});
+
+describe('a generation the projection cannot read', () => {
+  const OTHER = '0b1c2d3e-0000-4000-8000-000000000002';
+  const sessionOf = (session = SESSION) =>
+    jsonl([
+      user({ at: at(0), session }),
+      assistant({
+        at: at(1),
+        id: session === SESSION ? 'msg_main' : `msg_${session}`,
+        session,
+        usage: { input: 5 },
+      }),
+    ]);
+
+  // Each line PostgreSQL would refuse, were it stored as written.
+  test.each([
+    ['a NUL in its directory', { ...user({ at: at(2) }), cwd: 'a\0b' }, ['msg_main']],
+    ['a time before the year 1', user({ at: '-005000-01-01T00:00:00.000Z' }), ['msg_main']],
+    ['a 43 KB response id', assistant({ at: at(2), id: 'm'.repeat(43_000) }), ['msg_main']],
+    ['a 3 MB command', user({ at: at(2), command: `/${'x'.repeat(3_000_000)}` }), ['msg_main']],
+  ])('with %s leaves every other line and generation shown', async (_, line, kept) => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    await upload(h, { content: sessionOf() + jsonl([line]), path: mainPath() });
+
+    await projectAll(h);
+
+    const shown = await settled(h.db.sql);
+    expect(shown.requests).toEqual([...kept, `msg_${OTHER}`].toSorted());
+    expect(shown.sessions).toEqual([SESSION, OTHER].toSorted());
+  });
+
+  test.each([
+    [
+      'a damaged gzip chunk',
+      (sql: SQL, g: number) => sql`
+      UPDATE transcript_chunks SET content = ${Buffer.from('not gzip')} WHERE generation = ${g}::bigint
+    `,
+    ],
+    [
+      'a chunk shorter than it was stored as',
+      async (sql: SQL, g: number) => {
+        const shorter = await gzip('{}\n');
+        await sql`UPDATE transcript_chunks SET content = ${shorter} WHERE generation = ${g}::bigint`;
+      },
+    ],
+    [
+      'a gap between its chunks',
+      (sql: SQL, g: number) => sql`
+      UPDATE transcript_chunks SET offset_bytes = offset_bytes + 7
+      WHERE generation = ${g}::bigint AND offset_bytes > 0
+    `,
+    ],
+    [
+      'a gap at its start',
+      (sql: SQL, g: number) => sql`
+      DELETE FROM transcript_chunks WHERE generation = ${g}::bigint AND offset_bytes = 0
+    `,
+    ],
+  ])('with %s is recorded failed, and the views switch without it', async (_, damage) => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    const damaged = await upload(h, { chunkBytes: 100, content: sessionOf(), path: mainPath() });
+    await damage(h.db.sql, damaged);
+
+    await projectAll(h);
+
+    expect(await settled(h.db.sql)).toEqual({
+      requests: [`msg_${OTHER}`],
+      sessions: [OTHER],
+      status: [{ failed_generations: 1, generations: 2, unreadable_lines: 0 }],
+    });
+  });
+
+  test('that the database refuses to store is recorded failed, and the views switch without it', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(OTHER), path: mainPath(OTHER) });
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    // A parser that lets through what the database refuses.
+    const careless = {
+      ...claudeCodeParser,
+      parse: (input: Parameters<typeof claudeCodeParser.parse>[0]) => {
+        const batch = claudeCodeParser.parse(input);
+        return input.path === mainPath()
+          ? { ...batch, requests: batch.requests.map((r) => ({ ...r, input: 2 ** 70 })) }
+          : batch;
+      },
+    };
+
+    await projectAll(h, { parsers: [careless] });
+
+    expect(await settled(h.db.sql)).toEqual({
+      requests: [`msg_${OTHER}`],
+      sessions: [OTHER],
+      status: [{ failed_generations: 1, generations: 2, unreadable_lines: 0 }],
+    });
+  });
+
+  test('is parsed again by the next parser version', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: sessionOf(), path: mainPath() });
+    const failing = {
+      ...claudeCodeParser,
+      parse: () => {
+        throw Object.assign(new Error('Synthetic data error.'), { errno: '22003' });
+      },
+    };
+    await projectAll(h, { parsers: [failing] });
+
+    await projectAll(h, { parsers: [{ ...claudeCodeParser, version: 2 }] });
+
+    expect(await settled(h.db.sql)).toEqual({
+      requests: ['msg_main'],
+      sessions: [SESSION],
+      status: [{ failed_generations: 0, generations: 1, unreadable_lines: 0 }],
+    });
+  });
+
+  test('counts the lines it could not read', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { content: `{"type":\n${sessionOf()}`, path: mainPath() });
+
+    await projectAll(h);
+
+    expect((await settled(h.db.sql)).status).toEqual([
+      { failed_generations: 0, generations: 1, unreadable_lines: 1 },
+    ]);
   });
 });
 
@@ -789,7 +964,11 @@ describe('a parser version change', () => {
 
     const outcome = await projectTranscripts(h.db.sql, { parsers: [nextVersion] });
 
-    expect(outcome).toEqual({ pending: 0, switched: [{ harness: 'claude-code', version: 2 }] });
+    expect(outcome).toEqual({
+      failed: [],
+      pending: 0,
+      switched: [{ harness: 'claude-code', version: 2 }],
+    });
   });
 });
 

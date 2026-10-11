@@ -1,3 +1,13 @@
+import {
+  idOf,
+  isName,
+  MAX_ID_LENGTH,
+  MAX_LINE_BYTES,
+  textOf,
+  timeOf,
+  tokensOf,
+  UnreadableLineError,
+} from './session-insight.ts';
 import type {
   AgentMeta,
   Batch,
@@ -8,7 +18,7 @@ import type {
   ToolCall,
 } from './session-insight.ts';
 
-// Reads Claude Code transcripts into Session facts (ADR-0014). Pure: it sees
+// Reads Claude Code transcripts into Session insight (ADR-0014). Pure: it sees
 // bytes and paths, never the database. The facts it relies on:
 //
 // - A main conversation is `projects/<project>/<session>.jsonl`, named by its
@@ -22,6 +32,11 @@ import type {
 //   interrupted response has only partial lines.
 // - Timestamps are not monotonic, and `cwd`, `gitBranch`, and `version` can
 //   change within a file.
+//
+// A line with a value no transcript plausibly holds, or PostgreSQL cannot
+// store, is unreadable and yields nothing (session-insight.ts holds the
+// bounds). A command or skill name not shaped like one is dropped from a line
+// that is otherwise read, and the line is counted unreadable.
 
 // Bumping it rebuilds every Claude Code row from the archive (ADR-0014).
 export const CLAUDE_CODE_PARSER_VERSION = 1;
@@ -40,10 +55,15 @@ const AGENT =
 export const classifyClaudeCodePath = (path: string): ClaudeCodeFile => {
   const main = MAIN.exec(path)?.groups;
   if (main?.session !== undefined) {
-    return { kind: 'conversation', owner: { agentId: null, sessionId: main.session } };
+    return main.session.length > MAX_ID_LENGTH
+      ? { kind: 'other' }
+      : { kind: 'conversation', owner: { agentId: null, sessionId: main.session } };
   }
   const agent = AGENT.exec(path)?.groups;
   if (agent?.session === undefined || agent.agent === undefined) {
+    return { kind: 'other' };
+  }
+  if ([agent.session, agent.agent, agent.run ?? ''].some((id) => id.length > MAX_ID_LENGTH)) {
     return { kind: 'other' };
   }
   const owner = { agentId: agent.agent, sessionId: agent.session };
@@ -60,22 +80,22 @@ export type Conversation = Pick<
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const text = (value: unknown) => (typeof value === 'string' ? value : null);
-
-const count = (value: unknown) =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-
 const NEWLINE = '\n'.charCodeAt(0);
 const decoder = new TextDecoder();
 
 // Each whole line of `content` with its offset, and how far the whole lines
 // reach. A last line without a newline is whole only when `complete` says no
-// more content can follow it and it reads as JSON; otherwise it waits.
+// more content can follow it and it reads as JSON; otherwise it waits. A line
+// longer than `MAX_LINE_BYTES` is unreadable, and is not decoded.
 const linesOf = (content: Uint8Array, offset: number, complete: boolean) => {
   const lines: { offset: number; value: unknown }[] = [];
   let unreadable = 0;
   let start = 0;
   const read = (end: number) => {
+    if (end - start > MAX_LINE_BYTES) {
+      unreadable += 1;
+      return;
+    }
     const raw = decoder.decode(content.subarray(start, end));
     if (raw.trim() === '') {
       return;
@@ -90,7 +110,7 @@ const linesOf = (content: Uint8Array, offset: number, complete: boolean) => {
     read(end);
     start = end + 1;
   }
-  if (complete && start < content.byteLength) {
+  if (complete && start < content.byteLength && content.byteLength - start <= MAX_LINE_BYTES) {
     const before = unreadable;
     read(content.byteLength);
     if (unreadable === before) {
@@ -102,79 +122,116 @@ const linesOf = (content: Uint8Array, offset: number, complete: boolean) => {
   return { lines, parsedThrough: offset + start, unreadable };
 };
 
-const momentOf = (line: Record<string, unknown>): Moment | undefined => {
-  const at = typeof line.timestamp === 'string' ? Date.parse(line.timestamp) : Number.NaN;
-  if (Number.isNaN(at)) {
-    return undefined;
-  }
-  return { at, cwd: text(line.cwd), gitBranch: text(line.gitBranch), version: text(line.version) };
+const momentOf = (line: Record<string, unknown>, at: number): Moment => ({
+  at,
+  cwd: textOf(line.cwd),
+  gitBranch: textOf(line.gitBranch),
+  version: textOf(line.version),
+});
+
+// A name field shaped like a name, or null; `dropped` says it held something else.
+const nameOf = (value: unknown): { dropped: boolean; name: string | null } => {
+  const name = textOf(value);
+  return name === null || isName(name) ? { dropped: false, name } : { dropped: true, name: null };
 };
 
 const MCP_TOOL = /^mcp__(?<server>.+?)__./u;
-const COMMAND = /<command-name>(?<name>[^<]+)<\/command-name>/gu;
+const COMMAND = /<command-name>(?<name>[^<]*)<\/command-name>/gu;
 
-const toolCallsOf = (blocks: unknown[], request: Request, offset: number): ToolCall[] =>
-  blocks.flatMap((block) => {
+// What one line yields. `dropped` says a name in it was not shaped like one
+// and was left out, so the line counts as unreadable.
+type LineFacts = {
+  dropped: boolean;
+  moment: Moment | undefined;
+  request: Request | undefined;
+  toolCalls: ToolCall[];
+};
+
+const toolCallsOf = (blocks: unknown[], request: Request, offset: number) => {
+  let dropped = false;
+  const calls = blocks.flatMap((block): ToolCall[] => {
     if (!isRecord(block) || block.type !== 'tool_use') {
       return [];
     }
-    const callId = text(block.id);
-    const name = text(block.name);
+    const callId = idOf(block.id);
+    const name = idOf(block.name);
     if (callId === null || name === null) {
       return [];
     }
     const input = isRecord(block.input) ? block.input : {};
+    const skill = name === 'Skill' ? nameOf(input.skill) : { dropped: false, name: null };
+    if (skill.dropped) {
+      dropped = true;
+      return [];
+    }
     return [
       {
         at: request.at,
         callId,
-        kind: 'tool' as const,
+        kind: 'tool',
         mcpServer: MCP_TOOL.exec(name)?.groups?.server ?? null,
         name,
         offset,
         requestId: request.requestId,
-        skill: name === 'Skill' ? text(input.skill) : null,
+        skill: skill.name,
       },
     ];
   });
+  return { calls, dropped };
+};
 
 // The request an assistant line reports, or undefined for a line that reports
 // none, such as a `<synthetic>` message no model answered.
-const requestOf = (line: Record<string, unknown>, at: number, offset: number) => {
+const requestOf = (
+  line: Record<string, unknown>,
+  at: number | undefined,
+  offset: number,
+): LineFacts | undefined => {
   const message = isRecord(line.message) ? line.message : {};
-  const requestId = text(message.id);
-  const model = text(message.model);
+  const requestId = idOf(message.id);
+  const model = idOf(message.model);
   if (requestId === null || model === null || model === '<synthetic>') {
     return undefined;
+  }
+  if (at === undefined) {
+    throw new UnreadableLineError('A response has no time.');
   }
   const usage = isRecord(message.usage) ? message.usage : {};
   const split = isRecord(usage.cache_creation) ? usage.cache_creation : undefined;
   const details = isRecord(usage.output_tokens_details) ? usage.output_tokens_details : {};
+  const skill = nameOf(line.attributionSkill);
   const request: Request = {
     at,
-    cacheRead: count(usage.cache_read_input_tokens) ?? 0,
-    cacheWrite: count(usage.cache_creation_input_tokens) ?? 0,
-    cacheWrite1h: split === undefined ? null : (count(split.ephemeral_1h_input_tokens) ?? 0),
-    cacheWrite5m: split === undefined ? null : (count(split.ephemeral_5m_input_tokens) ?? 0),
-    input: count(usage.input_tokens) ?? 0,
+    cacheRead: tokensOf(usage.cache_read_input_tokens) ?? 0,
+    cacheWrite: tokensOf(usage.cache_creation_input_tokens) ?? 0,
+    cacheWrite1h: split === undefined ? null : (tokensOf(split.ephemeral_1h_input_tokens) ?? 0),
+    cacheWrite5m: split === undefined ? null : (tokensOf(split.ephemeral_5m_input_tokens) ?? 0),
+    input: tokensOf(usage.input_tokens) ?? 0,
     model,
     offset,
-    output: count(usage.output_tokens) ?? 0,
-    reasoning: count(details.thinking_tokens),
+    output: tokensOf(usage.output_tokens) ?? 0,
+    reasoning: tokensOf(details.thinking_tokens),
     requestId,
-    skill: text(line.attributionSkill),
-    stopReason: text(message.stop_reason),
+    skill: skill.name,
+    stopReason: idOf(message.stop_reason),
   };
   const blocks = Array.isArray(message.content) ? message.content : [];
-  return { request, toolCalls: toolCallsOf(blocks, request, offset) };
+  const { calls, dropped } = toolCallsOf(blocks, request, offset);
+  return {
+    dropped: dropped || skill.dropped,
+    moment: momentOf(line, at),
+    request,
+    toolCalls: calls,
+  };
 };
 
-// The slash commands a user line carries, each a call of its own.
-const commandsOf = (line: Record<string, unknown>, at: number, offset: number): ToolCall[] => {
-  const uuid = text(line.uuid);
+// The slash commands a user line carries, each a call of its own. A command
+// names no skill: a built-in such as `/doctor` is none.
+const commandsOf = (line: Record<string, unknown>, at: number, offset: number) => {
+  const uuid = idOf(line.uuid);
   const message = isRecord(line.message) ? line.message : {};
   if (uuid === null) {
-    return [];
+    return { calls: [], dropped: false };
   }
   const texts =
     typeof message.content === 'string'
@@ -184,17 +241,48 @@ const commandsOf = (line: Record<string, unknown>, at: number, offset: number): 
             ? [block.text]
             : [],
         );
-  const names = texts.flatMap((t) => [...t.matchAll(COMMAND)].flatMap((m) => m.groups?.name ?? []));
-  return names.map((name, i) => ({
+  const found = texts.flatMap((t) => [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''));
+  const names = found.filter((name) => isName(name));
+  const calls = names.map((name, i): ToolCall => ({
     at,
     callId: i === 0 ? uuid : `${uuid}#${String(i)}`,
-    kind: 'command' as const,
+    kind: 'command',
     mcpServer: null,
-    name,
+    name: textOf(name) ?? name,
     offset,
     requestId: null,
-    skill: name.replace(/^\//u, ''),
+    skill: null,
   }));
+  return { calls, dropped: names.length < found.length };
+};
+
+// What one line yields, or throws `UnreadableLineError`.
+const readLine = (value: unknown, offset: number): LineFacts => {
+  const nothing: LineFacts = {
+    dropped: false,
+    moment: undefined,
+    request: undefined,
+    toolCalls: [],
+  };
+  if (!isRecord(value)) {
+    return nothing;
+  }
+  const at = timeOf(value.timestamp);
+  if (value.type === 'assistant') {
+    const read = requestOf(value, at, offset);
+    if (read !== undefined) {
+      return read;
+    }
+  }
+  if (at === undefined) {
+    return nothing;
+  }
+  const moment = momentOf(value, at);
+  if (value.type !== 'user') {
+    return { ...nothing, moment };
+  }
+  const { calls, dropped } = commandsOf(value, at, offset);
+  return { dropped, moment, request: undefined, toolCalls: calls };
 };
 
 // A later line of a response replaces the one kept unless the kept line is
@@ -205,8 +293,8 @@ const replaces = (later: Request, kept: Request) =>
 // Parses a conversation's transcript content that starts at byte `offset` of
 // its generation. `complete` says the content reaches the end of what the Hub
 // holds, so a last line without a newline can be read. Within this content a
-// response counts once, from its last final line; the caller keeps that rule
-// across batches and generations.
+// response counts once, from its last final line, and a tool call from its
+// first line; the caller keeps those rules across batches and generations.
 export const parseConversation = (
   content: Uint8Array,
   { complete, offset }: { complete: boolean; offset: number },
@@ -215,37 +303,39 @@ export const parseConversation = (
   const requests = new Map<string, Request>();
   const toolCalls = new Map<string, ToolCall>();
   let span: Conversation['span'] = null;
+  let unreadableLines = unreadable;
   for (const { offset: at, value } of lines) {
-    if (!isRecord(value)) {
+    let facts: LineFacts;
+    try {
+      facts = readLine(value, at);
+    } catch (error) {
+      if (!(error instanceof UnreadableLineError)) {
+        throw error;
+      }
+      unreadableLines += 1;
       continue;
     }
-    const moment = momentOf(value);
-    if (moment === undefined) {
-      continue;
+    const { moment, request } = facts;
+    if (facts.dropped) {
+      unreadableLines += 1;
     }
-    span =
-      span === null
-        ? { first: moment, last: moment }
-        : {
-            first: moment.at < span.first.at ? moment : span.first,
-            last: moment.at >= span.last.at ? moment : span.last,
-          };
-    if (value.type === 'assistant') {
-      const read = requestOf(value, moment.at, at);
-      if (read === undefined) {
-        continue;
+    if (moment !== undefined) {
+      span =
+        span === null
+          ? { first: moment, last: moment }
+          : {
+              first: moment.at < span.first.at ? moment : span.first,
+              last: moment.at >= span.last.at ? moment : span.last,
+            };
+    }
+    if (request !== undefined) {
+      const kept = requests.get(request.requestId);
+      if (kept === undefined || replaces(request, kept)) {
+        requests.set(request.requestId, request);
       }
-      const kept = requests.get(read.request.requestId);
-      if (kept === undefined || replaces(read.request, kept)) {
-        requests.set(read.request.requestId, read.request);
-      }
-      for (const call of read.toolCalls) {
-        if (!toolCalls.has(call.callId)) {
-          toolCalls.set(call.callId, call);
-        }
-      }
-    } else if (value.type === 'user') {
-      for (const call of commandsOf(value, moment.at, at)) {
+    }
+    for (const call of facts.toolCalls) {
+      if (!toolCalls.has(call.callId)) {
         toolCalls.set(call.callId, call);
       }
     }
@@ -255,11 +345,12 @@ export const parseConversation = (
     requests: [...requests.values()],
     span,
     toolCalls: [...toolCalls.values()],
-    unreadableLines: unreadable,
+    unreadableLines,
   };
 };
 
-// A subagent's metadata, or undefined when the file is not a JSON object.
+// A subagent's metadata, or undefined when the file is not a JSON object or
+// holds a value out of bounds.
 export const parseAgentMeta = (content: string): Omit<AgentMeta, 'workflowRun'> | undefined => {
   let value: unknown;
   try {
@@ -270,14 +361,24 @@ export const parseAgentMeta = (content: string): Omit<AgentMeta, 'workflowRun'> 
   if (!isRecord(value)) {
     return undefined;
   }
-  return {
-    agentType: text(value.agentType),
-    depth: count(value.spawnDepth),
-    parentAgentId: text(value.parentAgentId),
-    toolUseId: text(value.toolUseId),
-    workflowPhase: text(value.workflowPhase),
-  };
+  try {
+    return {
+      agentType: idOf(value.agentType),
+      depth: tokensOf(value.spawnDepth, MAX_DEPTH),
+      parentAgentId: idOf(value.parentAgentId),
+      toolUseId: idOf(value.toolUseId),
+      workflowPhase: textOf(value.workflowPhase),
+    };
+  } catch (error) {
+    if (error instanceof UnreadableLineError) {
+      return undefined;
+    }
+    throw error;
+  }
 };
+
+// The deepest spawn depth a subagent's metadata may name.
+const MAX_DEPTH = 1000;
 
 // The Claude Code parser as the projection runs it. A `.meta.json` is read
 // whole, from its first byte, once the Hub holds all of it.
@@ -296,13 +397,18 @@ export const claudeCodeParser: HarnessParser = {
         };
       }
       case 'agent-meta': {
-        const meta = complete && offset === 0 ? parseAgentMeta(decoder.decode(content)) : undefined;
+        const whole = complete && offset === 0;
+        const meta =
+          whole && content.byteLength <= MAX_LINE_BYTES
+            ? parseAgentMeta(decoder.decode(content))
+            : undefined;
         return {
           ...nothing,
           agent: meta === undefined ? null : { ...meta, workflowRun: file.workflowRun },
           owner: file.owner,
           parsedThrough: meta === undefined ? offset : content.byteLength,
           transcript: false,
+          unreadableLines: whole && meta === undefined ? 1 : 0,
         };
       }
       case 'other': {

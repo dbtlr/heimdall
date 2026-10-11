@@ -1,12 +1,14 @@
-// The facts every Harness's parser derives from transcripts, and the shape of
-// a parser, so the projection stores each Harness's facts the same way
-// (ADR-0014).
+import { storable } from './storable.ts';
+
+// The Session insight every Harness's parser derives from transcripts, the
+// shape of a parser, and the bounds every parser holds a line to, so the
+// projection stores each Harness's facts the same way (ADR-0014).
 
 // The conversation a file belongs to: a Session's main conversation, with no
 // agent, or one of its subagents.
 export type Owner = { agentId: string | null; sessionId: string };
 
-// One API response. `reasoning` is within `output`, and `cacheWrite` is
+// One API response. Its token counts are at most `MAX_TOKENS`. `reasoning` is within `output`, and `cacheWrite` is
 // `cacheWrite5m` plus `cacheWrite1h` when the Harness splits it. `requestId`
 // is the Harness's own id for the response, which counts it once however
 // many files or generations hold it. `offset` is the byte offset of the line
@@ -87,3 +89,65 @@ export type HarnessParser = {
   reads: (path: string) => boolean;
   version: number;
 };
+
+// The bounds a line is held to. A line longer than `MAX_LINE_BYTES` is
+// unreadable, and is skipped without being held whole. An id or a name is at
+// most `MAX_ID_LENGTH` code units, which keeps every key PostgreSQL indexes
+// within its limit, and other text at most `MAX_TEXT_LENGTH`. A token count is
+// a whole number from 0 to `MAX_TOKENS`, far above any context window, so no
+// Session's sum nears bigint's range. A time is within the years 1 to 9999.
+export const MAX_LINE_BYTES = 16 * 2 ** 20;
+export const MAX_ID_LENGTH = 255;
+export const MAX_TEXT_LENGTH = 4096;
+export const MAX_TOKENS = 1_000_000_000;
+const EARLIEST = Date.parse('0001-01-01T00:00:00.000Z');
+const LATEST = Date.parse('9999-12-31T23:59:59.999Z');
+
+// Thrown by the readers below for a value a line cannot hold, which makes the
+// line unreadable. A parser catches it per line.
+export class UnreadableLineError extends Error {
+  override name = 'UnreadableLineError';
+}
+
+// A string field as it can be stored, or null when the field is not a string.
+export const textOf = (value: unknown, maxLength = MAX_TEXT_LENGTH): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  if (value.length > maxLength) {
+    throw new UnreadableLineError(`A text field is longer than ${String(maxLength)}.`);
+  }
+  return storable(value);
+};
+
+// An id field, as `textOf` reads it, within `MAX_ID_LENGTH`.
+export const idOf = (value: unknown): string | null => textOf(value, MAX_ID_LENGTH);
+
+// A token count, or null when the field is absent.
+export const tokensOf = (value: unknown, max = MAX_TOKENS): number | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > max) {
+    throw new UnreadableLineError('A count is not a whole number within its bounds.');
+  }
+  return value;
+};
+
+// A time field in epoch milliseconds, or undefined when the field is absent.
+export const timeOf = (value: unknown): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(at) || at < EARLIEST || at > LATEST) {
+    throw new UnreadableLineError('A time does not parse, or is out of range.');
+  }
+  return at;
+};
+
+// A command or skill name: a word of letters, digits, and `:_./-`, at most 64
+// long, with an optional leading `/`. Anything else, such as prose a prompt
+// wrapped in a command tag, is no name.
+const NAME = /^\/?[A-Za-z0-9][A-Za-z0-9:_./-]{0,63}$/u;
+export const isName = (value: string): boolean => NAME.test(value);

@@ -5,6 +5,23 @@ import type { SQL } from 'bun';
 
 const gunzip = promisify(gunzipCallback);
 
+// A generation whose chunks cannot yield its content: a gap between them, or a
+// chunk that does not unpack to the length it was stored with. Reading again
+// cannot help, so the projection records the generation failed.
+export class UnreadableGenerationError extends Error {
+  override name = 'UnreadableGenerationError';
+}
+
+const unpack = async (generation: number, offset: string, content: Uint8Array) => {
+  try {
+    return await gunzip(content);
+  } catch {
+    throw new UnreadableGenerationError(
+      `Generation ${String(generation)} has a chunk at byte ${offset} that does not unpack.`,
+    );
+  }
+};
+
 // A stretch of a generation's uncompressed content from byte `from`.
 // `complete` says it reaches the end of what the Hub held when asked.
 export type HeldContent = { complete: boolean; content: Uint8Array };
@@ -40,7 +57,9 @@ export const readHeldContent = async (
     )
     ORDER BY offset_bytes
   `;
-  const unpacked = await Promise.all(rows.map(async (row) => gunzip(row.content)));
+  const unpacked = await Promise.all(
+    rows.map(async (row) => unpack(generation, row.offset_bytes, row.content)),
+  );
   const pieces: Uint8Array[] = [];
   let end = from;
   for (const [i, row] of rows.entries()) {
@@ -48,7 +67,7 @@ export const readHeldContent = async (
     const length = Number(row.length);
     const bytes = unpacked[i];
     if (bytes?.byteLength !== length || offset > end || (i > 0 && offset !== end)) {
-      throw new Error(
+      throw new UnreadableGenerationError(
         `Generation ${String(generation)} has a gap or a damaged chunk at byte ${String(offset)}.`,
       );
     }
@@ -56,7 +75,9 @@ export const readHeldContent = async (
     end = offset + length;
   }
   if (rows.length === 0 && from < held) {
-    throw new Error(`Generation ${String(generation)} holds no chunk at byte ${String(from)}.`);
+    throw new UnreadableGenerationError(
+      `Generation ${String(generation)} holds no chunk at byte ${String(from)}.`,
+    );
   }
   return { complete: end >= held, content: Buffer.concat(pieces) };
 };

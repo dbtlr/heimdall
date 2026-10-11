@@ -2,8 +2,8 @@ import type { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
 import type { Batch, HarnessParser } from './session-insight.ts';
-import { storableJson } from './storable.ts';
-import { readHeldContent } from './transcript-reader.ts';
+import { storable, storableJson } from './storable.ts';
+import { readHeldContent, UnreadableGenerationError } from './transcript-reader.ts';
 
 // The parsers the Hub runs, one per Harness it derives Session insight for.
 export const PARSERS: readonly HarnessParser[] = [claudeCodeParser];
@@ -19,9 +19,11 @@ const GENERATIONS_PER_RUN = 1000;
 // A full rebuild's cleanup can outlast the usual statement timeout.
 const CLEANUP_TIMEOUT = '10min';
 
-// What a run left: generations not yet parsed through what the Hub holds, and
-// each Harness whose views it switched to a newly complete parser version.
+// What a run left: generations not yet parsed through what the Hub holds;
+// each generation it recorded failed, and why; and each Harness whose views it
+// switched to a newly complete parser version.
 export type Projected = {
+  failed: { error: string; generation: number; harness: string }[];
   pending: number;
   switched: { harness: string; version: number }[];
 };
@@ -53,7 +55,7 @@ export const projectTranscripts = async (
   let budget = budgetBytes;
   let pending = 0;
   const switched: Projected['switched'] = [];
-  const errors: unknown[] = [];
+  const failed: Projected['failed'] = [];
   for (const parser of parsers) {
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     const work = await pendingGenerations(sql, parser);
@@ -65,7 +67,16 @@ export const projectTranscripts = async (
         // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
         budget -= await parseGeneration(sql, parser, generation, budget);
       } catch (error) {
-        errors.push(error);
+        if (!isPermanent(error)) {
+          throw error;
+        }
+        // oxlint-disable-next-line no-await-in-loop -- recorded before the next generation.
+        await recordFailure(sql, { error, parser, row: generation });
+        failed.push({
+          error: describe(error),
+          generation: Number(generation.id),
+          harness: parser.harness,
+        });
       }
     }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
@@ -78,10 +89,51 @@ export const projectTranscripts = async (
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     await dropStaleVersions(sql, parser);
   }
-  if (errors.length > 0) {
-    throw new AggregateError(errors, `Could not parse ${String(errors.length)} generations.`);
-  }
-  return { pending, switched };
+  return { failed, pending, switched };
+};
+
+// PostgreSQL's classes of error that storing the same values again repeats:
+// data exceptions, integrity violations, and program limits, such as an index
+// row too large. Other errors, such as a lost connection, pass with time.
+const PERMANENT_CLASSES = new Set(['22', '23', '54']);
+
+// Whether parsing the generation again would fail the same way: it cannot be
+// read, or the database refuses what it yields.
+const isPermanent = (error: unknown): boolean =>
+  error instanceof UnreadableGenerationError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'errno' in error &&
+    typeof error.errno === 'string' &&
+    PERMANENT_CLASSES.has(error.errno.slice(0, 2)));
+
+// How much of a failure's message is kept: enough to say what went wrong.
+const FAILURE_LENGTH = 500;
+
+const describe = (error: unknown) =>
+  storable((error instanceof Error ? error.message : String(error)).slice(0, FAILURE_LENGTH));
+
+// Records a generation as failed for `parser`'s version, so it stops counting
+// as pending and the rest of the archive proceeds. The next parser version
+// parses it again. Under the same compare-and-set as a batch's progress.
+const recordFailure = async (
+  sql: SQL,
+  { error, parser, row }: { error: unknown; parser: HarnessParser; row: Pending },
+) => {
+  const failure = describe(error);
+  await (row.parsed_through === null
+    ? sql`
+        INSERT INTO parse_progress (
+          harness, parser_version, generation, parsed_through, held_seen, failed_at, failure
+        )
+        VALUES (${parser.harness}, ${parser.version}, ${row.id}::bigint, 0, 0, now(), ${failure})
+        ON CONFLICT DO NOTHING
+      `
+    : sql`
+        UPDATE parse_progress SET failed_at = now(), failure = ${failure}
+        WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
+          AND generation = ${row.id}::bigint AND parsed_through = ${Number(row.parsed_through)}
+      `);
 };
 
 // Generations of `parser`'s Harness that its version has not read through what
@@ -94,7 +146,7 @@ const pendingGenerations = (sql: SQL, parser: HarnessParser): Promise<Pending[]>
   LEFT JOIN parse_progress p
     ON p.harness = h.harness AND p.parser_version = ${parser.version} AND p.generation = g.id
   WHERE h.harness = ${parser.harness} AND g.deleted_at IS NULL
-    AND (p.generation IS NULL OR p.held_seen < g.held)
+    AND (p.generation IS NULL OR (p.failed_at IS NULL AND p.held_seen < g.held))
   ORDER BY g.last_upload_at, g.id
   LIMIT ${GENERATIONS_PER_RUN}
 `;
@@ -107,7 +159,7 @@ const pendingCount = async (sql: SQL, parser: HarnessParser) => {
     LEFT JOIN parse_progress p
       ON p.harness = h.harness AND p.parser_version = ${parser.version} AND p.generation = g.id
     WHERE h.harness = ${parser.harness} AND g.deleted_at IS NULL
-      AND (p.generation IS NULL OR p.held_seen < g.held)
+      AND (p.generation IS NULL OR (p.failed_at IS NULL AND p.held_seen < g.held))
   `;
   return row?.n ?? 0;
 };
@@ -158,7 +210,7 @@ const parseGeneration = async (
     // A read as large as the whole generation that still stops short of
     // `held` means its chunks do.
     if (limit > generation.held) {
-      throw new Error(
+      throw new UnreadableGenerationError(
         `Generation ${row.id} holds no chunk past byte ${String(from + content.byteLength)}.`,
       );
     }
