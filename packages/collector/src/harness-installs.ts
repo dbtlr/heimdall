@@ -166,10 +166,14 @@ const npmVersion = async (reader: InstallReader, packageDir: string) => {
   }
 };
 
-// Whether `dir` is there, even if it cannot be listed.
+// Whether `dir` is there: it lists, or it cannot be listed and its parent lists
+// it.
 const exists = async (reader: InstallReader, dir: string) => {
   const entries = await attempt(() => reader.readDir(dir));
-  return entries === FAILED || entries !== undefined;
+  if (entries === FAILED) {
+    return isUnlistable(reader, dir);
+  }
+  return entries !== undefined;
 };
 
 // Homebrew prefixes by platform: Apple Silicon and Intel on macOS, Linuxbrew

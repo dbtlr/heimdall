@@ -552,3 +552,38 @@ test('past the cap a Harness keeps its newest versions', async () => {
   expect(versions).toContain(`1.0.${String(MAX_HARNESS_INSTALLS / 2 + 4)}`);
   expect(versions).not.toContain('1.0.0');
 });
+
+test('an unreadable scope directory reports no npm install under it', async () => {
+  await using dir = await tempStateDir();
+  const scope = join(dir.path, '.npm-global/lib/node_modules/@openai');
+  await mkdir(scope, { recursive: true });
+  await chmod(scope, 0o000);
+  try {
+    const installs = await findHarnessInstalls({
+      env: {},
+      home: dir.path,
+      platform: 'linux',
+      reader: fileReader,
+    });
+
+    expect(installs).toEqual([]);
+  } finally {
+    await chmod(scope, 0o700);
+  }
+});
+
+test('an unknown version is the oldest, so the cap drops a real version only after it', async () => {
+  const dirs = [
+    ...Array.from(
+      { length: MAX_HARNESS_INSTALLS / 2 },
+      (_, i) => `${MISE}/claude/1.0.${String(i)}`,
+    ),
+    `${MISE}/claude/ref-main`,
+  ];
+
+  const versions = (await find(tree({ dirs }))).map((i) => i.version);
+
+  expect(versions).toHaveLength(MAX_HARNESS_INSTALLS / 2);
+  expect(versions).toContain('1.0.0');
+  expect(versions).not.toContain('unknown');
+});
