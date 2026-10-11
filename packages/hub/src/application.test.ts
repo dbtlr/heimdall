@@ -58,6 +58,7 @@ const invoke = async (
   });
   const errors = text(stderr);
   // Loom sets process.exitCode even for an injected host; keep it off the test runner.
+  // Bun ignores assigning undefined, so an unset code is restored as 0.
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
@@ -73,7 +74,7 @@ const invoke = async (
     });
     await serving;
   } finally {
-    process.exitCode = runnerExitCode;
+    process.exitCode = runnerExitCode ?? 0;
     clearTimeout(safety);
     await rm(home, { force: true, recursive: true });
   }

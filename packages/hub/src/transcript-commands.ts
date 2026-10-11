@@ -13,6 +13,7 @@ const count = (n: number, noun: string) =>
 export const deleteTranscriptsAction: ActionHandler<typeof deleteTranscripts> = async ({
   options,
   out,
+  signal,
   style,
 }) => {
   const { before, source, system } = options;
@@ -20,7 +21,7 @@ export const deleteTranscriptsAction: ActionHandler<typeof deleteTranscripts> = 
     out.fatal('Name what to delete with --system, --source, or --before.');
   }
   const dryRun = options['dry-run'] ?? false;
-  const removed = await withDatabase(options.database, { out, style }, (sql) =>
+  const removed = await withDatabase(options.database, { out, signal, style }, (sql) =>
     deleteGenerations(sql, {
       dryRun,
       now: Date.now(),

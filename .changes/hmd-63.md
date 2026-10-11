@@ -1,0 +1,3 @@
+### Fixed
+
+- **The Hub waits for a lock a backup holds instead of crash-looping** (HMD-63). A migration that needs a lock another session holds, such as a stalled `pg_dump` on `systems`, now fails after 5 seconds with a lock error, not after the 30-second statement timeout. `heimdall-hub serve`, `pair`, `unpair`, and `transcripts delete` roll back, log the holding session's pid and application name at most once a minute, with its state and start time when the Hub's role can see them (a role with `pg_read_all_stats`, such as `pg_monitor`, can), and retry with a backoff of 1 to 30 seconds, so `serve` stays up and listens once the migrations apply. A migration error that is not a lock wait still exits 1.
