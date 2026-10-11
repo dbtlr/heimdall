@@ -56,6 +56,8 @@ describe('the harnesses section', () => {
   test.each([
     ['an empty version', { ...install, version: '' }],
     ['a version over 64 characters', { ...install, version: '1'.repeat(65) }],
+    ['a Harness over 64 characters', { ...install, harness: 'h'.repeat(65) }],
+    ['a location over 64 characters', { ...install, location: 'l'.repeat(65) }],
     ['an empty Harness', { ...install, harness: '' }],
     ['an empty location', { ...install, location: '' }],
   ])('refuses %s', (_, bad) => {

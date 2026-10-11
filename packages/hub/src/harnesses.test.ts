@@ -84,6 +84,23 @@ test('a Report sent earlier does not replace installs from one sent later', asyn
   expect(await installsOf(h, 'laptop-1')).toEqual([CODEX]);
 });
 
+test('the newest Report sent wins whatever order they arrive in', async () => {
+  await using h = await startHub();
+  await pushInstalls(h, 'laptop-1', { harnesses: { installs: [CODEX] }, sentAt: NOW - 120_000 });
+  await pushInstalls(h, 'laptop-1', {
+    harnesses: { installs: [CLAUDE] },
+    sentAt: NOW,
+    t: NOW + 1_000,
+  });
+  await pushInstalls(h, 'laptop-1', {
+    harnesses: { installs: [CODEX, CLAUDE] },
+    sentAt: NOW - 60_000,
+    t: NOW + 2_000,
+  });
+
+  expect(await installsOf(h, 'laptop-1')).toEqual([CLAUDE]);
+});
+
 test('installs claiming a time after the Hub received them give way to a correct Report', async () => {
   await using h = await startHub();
   await pushInstalls(h, 'laptop-1', {
@@ -115,14 +132,15 @@ test('the page shows an unknown version as unknown, and escapes what Collectors 
   await using h = await startHub();
   await pushInstalls(h, 'laptop-1', {
     harnesses: {
-      installs: [{ harness: '<b>x</b>', location: 'npm', version: 'unknown' }],
+      installs: [{ harness: '<b>x</b>', location: '<i>y</i>', version: 'unknown' }],
     },
   });
 
   const html = await page(h.hub);
 
-  expect(html).toContain('&lt;b&gt;x&lt;/b&gt; unknown (npm)');
+  expect(html).toContain('&lt;b&gt;x&lt;/b&gt; unknown (&lt;i&gt;y&lt;/i&gt;)');
   expect(html).not.toContain('<b>x</b>');
+  expect(html).not.toContain('<i>y</i>');
 });
 
 test('the page shows a dash for a System that never sent the section', async () => {
