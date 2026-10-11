@@ -618,7 +618,9 @@ describe('deleting transcripts', () => {
     expect(removed.generations).toBe(70_001);
     const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
     expect(left).toEqual({ n: 0 });
-  });
+    // Inserting and then marking 70,000 generations takes about 3.5 seconds on
+    // its own, too close to the default 5 for a loaded machine.
+  }, 30_000);
 
   test('refuses to run without a filter', async () => {
     await using h = await startHub();

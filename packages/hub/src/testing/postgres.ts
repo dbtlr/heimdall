@@ -70,6 +70,12 @@ const testServer = () => {
   return server;
 };
 
+// Starts the test server, if it is not running, so a file whose first test is
+// timed can pay for `initdb` in `beforeAll`: `beforeAll(startTestServer, 60_000)`.
+export const startTestServer = async () => {
+  await testServer();
+};
+
 // Stops the throwaway cluster, if this run started one.
 export const stopTestServer = async () => {
   const stop = stopThrowawayCluster;

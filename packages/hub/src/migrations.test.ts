@@ -1,10 +1,13 @@
-import { expect, test } from 'bun:test';
+import { beforeAll, expect, test } from 'bun:test';
 
 import { SQL } from 'bun';
 
 import { STATEMENT_TIMEOUT_MS } from './database.ts';
 import { migrate, MIGRATION_LOCK_TIMEOUT_MS, MIGRATIONS } from './migrations.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { startTestServer, testDatabase } from './testing/postgres.ts';
+
+// A test run on its own would otherwise pay for `initdb` within its timeout.
+beforeAll(startTestServer, 60_000);
 
 test('migrate brings an empty database to the latest version', async () => {
   await using db = await testDatabase();
