@@ -84,6 +84,8 @@ export const parsePs = (output: string, nowMs: number): ProcessEntry[] =>
         name,
         pid: Number(pid),
         ppid: Number(ppid),
+        // `ps` prints each live process's own CPU time.
+        reapedCpuMicros: 0,
         rssBytes: Number(rssKib) * 1024,
         startedAt: toSecond(nowMs - elapsed * MS_PER_SECOND),
       },
@@ -112,8 +114,6 @@ export const createDarwinReader = ({
   ps: (cmd: readonly string[]) => Promise<string>;
 }): ProcessReader => ({
   cwdOf,
-  // `ps` prints each live process's own CPU time.
-  includesReaped: false,
   table: async () => {
     const at = now();
     const entries = parsePs(await ps(['/bin/ps', '-axww', '-o', PS_COLUMNS]), at);

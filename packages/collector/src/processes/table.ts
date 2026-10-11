@@ -7,6 +7,10 @@ export type ProcessEntry = {
   name: string;
   pid: number;
   ppid: number;
+  // The part of `cpuMicros` that is children the process has waited for,
+  // which an ended process's time moves into. Always 0 where the platform
+  // does not count them, as on macOS.
+  reapedCpuMicros: number;
   rssBytes: number;
   // The kernel's own record of the start, exact and unmoved by a wall-clock
   // step: clock ticks since boot on Linux, and microseconds since the epoch as
@@ -23,8 +27,5 @@ export type ProcessEntry = {
 // it cannot be read.
 export type ProcessReader = {
   cwdOf: (pid: number) => Promise<string | null>;
-  // Whether a process's CPU time includes the children it has waited for, so
-  // an ended process's time moves into its parent's.
-  includesReaped: boolean;
   table: () => Promise<ProcessEntry[]>;
 };

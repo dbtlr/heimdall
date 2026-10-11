@@ -11,6 +11,8 @@ export type HarnessRoot = {
   enclosing: { harness: Harness; pid: number } | undefined;
   entry: ProcessEntry;
   harness: Harness;
+  // The part of `cpuMicros` that is children the tree's processes waited for.
+  reapedCpuMicros: number;
   rssBytes: number;
 };
 
@@ -39,6 +41,7 @@ export const findHarnessRoots = (table: readonly ProcessEntry[]): HarnessRoot[] 
 
   const totalsOf = (root: ProcessEntry) => {
     let cpuMicros = 0;
+    let reapedCpuMicros = 0;
     let rssBytes = 0;
     const visited = new Set<number>();
     const pending = [root];
@@ -48,6 +51,7 @@ export const findHarnessRoots = (table: readonly ProcessEntry[]): HarnessRoot[] 
       }
       visited.add(entry.pid);
       cpuMicros += entry.cpuMicros;
+      reapedCpuMicros += entry.reapedCpuMicros;
       rssBytes += entry.rssBytes;
       for (const child of children.get(entry.pid) ?? []) {
         const childHarness = harnesses.get(child.pid);
@@ -57,7 +61,7 @@ export const findHarnessRoots = (table: readonly ProcessEntry[]): HarnessRoot[] 
         }
       }
     }
-    return { cpuMicros, rssBytes };
+    return { cpuMicros, reapedCpuMicros, rssBytes };
   };
 
   const rootHarnessOf = (entry: ProcessEntry) => {

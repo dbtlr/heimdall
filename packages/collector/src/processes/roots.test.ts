@@ -14,6 +14,7 @@ const proc = (
   name,
   pid,
   ppid,
+  reapedCpuMicros: 0,
   rssBytes,
   startedAt: 1_000 * pid,
 });
@@ -34,6 +35,7 @@ test('a Harness process whose parent is not a Harness process is a root, with it
       enclosing: undefined,
       entry: claude,
       harness: 'claude-code',
+      reapedCpuMicros: 0,
       rssBytes: 11_100,
     },
   ]);
@@ -59,7 +61,14 @@ test('a Harness process under a process of the same Harness belongs to its tree 
   ];
 
   expect(findHarnessRoots(table)).toEqual([
-    { cpuMicros: 7, enclosing: undefined, entry: codex, harness: 'codex', rssBytes: 0 },
+    {
+      cpuMicros: 7,
+      enclosing: undefined,
+      entry: codex,
+      harness: 'codex',
+      reapedCpuMicros: 0,
+      rssBytes: 0,
+    },
   ]);
 });
 

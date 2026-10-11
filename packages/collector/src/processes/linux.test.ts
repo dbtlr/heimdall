@@ -116,6 +116,8 @@ test('reads a process from its stat line: name, parent, CPU time with reaped chi
       name: 'claude',
       pid: 42,
       ppid: 7,
+      // (150 + 50) ticks of children it waited for.
+      reapedCpuMicros: 2_000_000,
       rssBytes: 100 * PAGE_SIZE,
       // btime plus 123.45 s, to the second.
       startedAt: (BOOT_SECONDS + 123) * 1000,

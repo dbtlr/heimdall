@@ -13,20 +13,20 @@ const entry = (pid: number, over: Partial<ProcessEntry> = {}): ProcessEntry => (
   name: 'claude',
   pid,
   ppid: 1,
+  reapedCpuMicros: 0,
   rssBytes: 0,
   startedAt: BASE + pid * 1000,
   ...over,
 });
 
 // A process table a test changes between ticks, with working directories.
-const host = ({ includesReaped = true }: { includesReaped?: boolean } = {}) => {
+const host = () => {
   const state: { cwds: Record<number, string | null>; table: ProcessEntry[]; failing?: boolean } = {
     cwds: {},
     table: [],
   };
   const reader: ProcessReader = {
     cwdOf: (pid) => Promise.resolve(state.cwds[pid] ?? null),
-    includesReaped,
     table: () =>
       state.failing ? Promise.reject(new Error('ps failed')) : Promise.resolve(state.table),
   };
@@ -264,7 +264,7 @@ test("a nested root's CPU counts once after it ends and its parent's tree reaps 
   await h.tracker.tick();
   h.advance(15_000);
   // The parent waited for the ended root, so its time now holds the root's.
-  h.state.table = [entry(10, { cpuMicros: 101, name: 'codex' })];
+  h.state.table = [entry(10, { cpuMicros: 101, name: 'codex', reapedCpuMicros: 100 })];
 
   await h.tracker.tick();
 
@@ -281,11 +281,11 @@ test('a root nested two deep counts once at each level as each ends', async () =
   await h.tracker.tick();
   h.state.table = [
     entry(10, { cpuMicros: 1, name: 'codex' }),
-    entry(11, { cpuMicros: 110, ppid: 10 }),
+    entry(11, { cpuMicros: 110, ppid: 10, reapedCpuMicros: 100 }),
   ];
   await h.tracker.tick();
   const middle = cpuByPid(h);
-  h.state.table = [entry(10, { cpuMicros: 111, name: 'codex' })];
+  h.state.table = [entry(10, { cpuMicros: 111, name: 'codex', reapedCpuMicros: 110 })];
 
   await h.tracker.tick();
 
@@ -294,17 +294,72 @@ test('a root nested two deep counts once at each level as each ends', async () =
 });
 
 test("where a parent's time leaves out its reaped children, an ended nested root takes nothing from it", async () => {
-  const h = host({ includesReaped: false });
+  const h = host();
   h.state.table = [
     entry(10, { cpuMicros: 1, name: 'codex' }),
     entry(11, { cpuMicros: 100, ppid: 10 }),
   ];
   await h.tracker.tick();
+  // As on macOS: the parent's time never takes the ended root's.
   h.state.table = [entry(10, { cpuMicros: 2, name: 'codex' })];
 
   await h.tracker.tick();
 
   expect(cpuByPid(h)).toEqual({ 10: 2, 11: 100 });
+});
+
+test("a nested root's CPU that reaches its enclosing root a tick late is still counted once, and the reading never falls", async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 100, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  h.state.table = [entry(10, { cpuMicros: 1, name: 'codex' })];
+  await h.tracker.tick();
+  const beforeReaped = cpuByPid(h)[10];
+  h.state.table = [entry(10, { cpuMicros: 101, name: 'codex', reapedCpuMicros: 100 })];
+
+  await h.tracker.tick();
+
+  expect([beforeReaped, cpuByPid(h)[10]]).toEqual([1, 1]);
+});
+
+test('a nested root that its enclosing root never reaped, such as an orphan init waited for, takes nothing from it', async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 100, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  h.state.table = [entry(10, { cpuMicros: 1, name: 'codex' })];
+  await h.tracker.tick();
+  h.state.table = [entry(10, { cpuMicros: 1, name: 'codex' })];
+  await h.tracker.tick();
+  // Later, a build the root waited for finishes: its time is the root's own.
+  h.state.table = [entry(10, { cpuMicros: 51, name: 'codex', reapedCpuMicros: 50 })];
+
+  await h.tracker.tick();
+
+  expect(cpuByPid(h)[10]).toBe(51);
+});
+
+test("a root's reported CPU never falls, even when a descendant leaves its tree", async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 4, name: 'codex' }),
+    entry(20, { cpuMicros: 6, name: 'bun', ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  // The descendant is reparented away, out of the tree, taking its time.
+  h.state.table = [
+    entry(10, { cpuMicros: 4, name: 'codex' }),
+    entry(20, { cpuMicros: 7, name: 'bun' }),
+  ];
+
+  await h.tracker.tick();
+
+  expect(cpuByPid(h)[10]).toBe(10);
 });
 
 test("the Hub's acknowledgement of an ended process keeps a later process that reused its pid", async () => {
@@ -325,4 +380,28 @@ test("the Hub's acknowledgement of an ended process keeps a later process that r
   expect(h.tracker.latest()?.processes.map((p) => [p.startedAt, p.endedAt !== undefined])).toEqual([
     [BASE + 50_000, true],
   ]);
+});
+
+test('reaped time that leaves the tree with a descendant does not count against an ended nested root', async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 10, name: 'codex' }),
+    entry(20, { cpuMicros: 30, name: 'bun', ppid: 10, reapedCpuMicros: 30 }),
+    entry(11, { cpuMicros: 100, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  // The nested root ends, and a descendant leaves the tree with its reaped time.
+  h.state.table = [
+    entry(10, { cpuMicros: 10, name: 'codex' }),
+    entry(20, { cpuMicros: 30, name: 'bun' }),
+  ];
+  await h.tracker.tick();
+  // The nested root's time arrives, then the root works on.
+  h.state.table = [entry(10, { cpuMicros: 110, name: 'codex', reapedCpuMicros: 100 })];
+  await h.tracker.tick();
+  h.state.table = [entry(10, { cpuMicros: 200, name: 'codex', reapedCpuMicros: 100 })];
+
+  await h.tracker.tick();
+
+  expect(cpuByPid(h)[10]).toBe(100);
 });

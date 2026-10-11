@@ -158,6 +158,9 @@ export const createLinuxReader = ({
           name: await nameOf(stat.pid, stat.comm),
           pid: stat.pid,
           ppid: stat.ppid,
+          reapedCpuMicros: Math.round(
+            ((stat.cutime + stat.cstime) * MICROS_PER_SECOND) / clockTicks,
+          ),
           rssBytes: stat.rssPages * pageSize,
           startedAt: (boot + Math.floor(stat.startTicks / clockTicks)) * MS_PER_SECOND,
         },
@@ -176,8 +179,6 @@ export const createLinuxReader = ({
         return null;
       }
     },
-    // A process's CPU time here includes `cutime` and `cstime`.
-    includesReaped: true,
     table: async () => {
       const [boot, names] = await Promise.all([bootSeconds(), fs.listDir(root)]);
       const pids = names.filter((name) => /^[1-9]\d*$/u.test(name));

@@ -7,15 +7,45 @@ import type { ProcessEntry, ProcessReader } from './table.ts';
 type Running = Omit<HarnessProcess, 'endedAt'>;
 type Ended = HarnessProcess & { endedAt: number };
 
+// How many ticks, counting the one that finds a nested root gone, its CPU
+// time may take to reach the enclosing root's reaped children's time. Time
+// that has not arrived by then went elsewhere, such as to init.
+const ABSORB_TICKS = 2;
+
+// The CPU time of a nested root that ended, which may still move into the
+// enclosing root's reading, and the ticks left for it to.
+type Pending = { cpuMicros: number; ticksLeft: number };
+
 // A running process as the tracker holds it: the kernel's start it was first
-// seen with, its tree's CPU time as read, the CPU time of nested roots that
-// ended and moved into that reading, and the root whose tree it sits in.
+// seen with, its tree's CPU time and reaped children's time as read, the CPU
+// time of ended nested roots that moved into that reading or may yet, and the
+// root whose tree it sits in.
 type Tracked = {
   absorbedCpuMicros: number;
   enclosing: string | undefined;
   kernelStart: number | null;
+  pending: Pending[];
   process: Running;
   readCpuMicros: number;
+  reapedCpuMicros: number;
+};
+
+// Takes from `pending`, oldest first, as much as the reaped children's time
+// grew since the last tick, and counts each pending one's tick. Returns the
+// CPU time taken and what is still pending.
+const absorb = (pending: readonly Pending[], grew: number) => {
+  let left = Math.max(0, grew);
+  let taken = 0;
+  const still: Pending[] = [];
+  for (const { cpuMicros, ticksLeft } of pending) {
+    const take = Math.min(left, cpuMicros);
+    left -= take;
+    taken += take;
+    if (cpuMicros > take && ticksLeft > 1) {
+      still.push({ cpuMicros: cpuMicros - take, ticksLeft: ticksLeft - 1 });
+    }
+  }
+  return { still, taken };
 };
 
 const keyOf = (process: { harness: string; pid: number }) =>
@@ -46,10 +76,16 @@ const sameProcess = (held: Tracked, entry: ProcessEntry) =>
 //
 // Each CPU second counts once. A root nested in another root's tree reports
 // its own tree, which the enclosing root leaves out. When the nested root ends
-// and a reader's CPU time includes reaped children (`includesReaped`), its time
-// moves into the enclosing root's reading, so the nested root's last reading is
-// subtracted from the enclosing root's from then on. A nested root's CPU used
-// between its last tick and its end still counts in the enclosing root.
+// and is waited for inside the enclosing root's tree, its time moves into the
+// enclosing root's reaped children's time, so the enclosing root subtracts the
+// nested root's last reading, but never more than its reaped children's time
+// grew from the tick before the end through the next ABSORB_TICKS ticks. A
+// nested root that an outside process waited for, such as init, so takes
+// nothing, and where reaped time is not counted (macOS) nothing is ever taken.
+// A nested root's CPU used between its last tick and its end still counts in
+// the enclosing root. A root's reported CPU time never falls: a reading below
+// the last one reported, as when a descendant leaves the tree, reports the
+// last one again.
 //
 // `latest` is undefined before the first tick, and a new object after each, so
 // the reporter can tell by identity that a tick happened. A tick whose table
@@ -79,15 +115,12 @@ export const createProcessTracker = ({
     latest = { processes: [...ended, ...listed] };
   };
 
-  // Ends a process at `at`. Its CPU time moves into the enclosing root's
-  // reading when the reader counts reaped children, so the enclosing root
-  // subtracts it from now on.
+  // Ends a process at `at`. Its CPU time may move into the enclosing root's
+  // reading, so the enclosing root holds it as pending.
   const end = (tracked: Tracked, at: number, next: Map<string, Tracked>) => {
     ended.push({ ...tracked.process, endedAt: at });
     const enclosing = tracked.enclosing === undefined ? undefined : next.get(tracked.enclosing);
-    if (reader.includesReaped && enclosing !== undefined) {
-      enclosing.absorbedCpuMicros += tracked.readCpuMicros;
-    }
+    enclosing?.pending.push({ cpuMicros: tracked.readCpuMicros, ticksLeft: ABSORB_TICKS });
   };
 
   const rootsAt = async (at: number) => {
@@ -112,6 +145,7 @@ export const createProcessTracker = ({
       const seen = await rootsAt(at);
       const next = new Map<string, Tracked>();
       const replaced: Tracked[] = [];
+      const reapedNow = new Map<string, number>();
       for (const { cwd, root } of seen) {
         const { entry, harness } = root;
         const key = keyOf({ harness, pid: entry.pid });
@@ -126,8 +160,9 @@ export const createProcessTracker = ({
           absorbedCpuMicros: kept?.absorbedCpuMicros ?? 0,
           enclosing: root.enclosing === undefined ? undefined : keyOf(root.enclosing),
           kernelStart: kept === undefined ? entry.kernelStart : kept.kernelStart,
+          pending: kept?.pending ?? [],
           process: {
-            cpuMicros: root.cpuMicros,
+            cpuMicros: before?.cpuMicros ?? 0,
             cwd: cwd ?? before?.cwd ?? null,
             harness,
             lastSeenAt: at,
@@ -137,7 +172,10 @@ export const createProcessTracker = ({
             startedAt: before?.startedAt ?? entry.startedAt,
           },
           readCpuMicros: root.cpuMicros,
+          // Read as of the last tick until this one's growth is taken below.
+          reapedCpuMicros: kept?.reapedCpuMicros ?? root.reapedCpuMicros,
         });
+        reapedNow.set(key, root.reapedCpuMicros);
       }
       for (const tracked of replaced) {
         end(tracked, at, next);
@@ -149,7 +187,15 @@ export const createProcessTracker = ({
       }
       running.clear();
       for (const [key, tracked] of next) {
-        tracked.process.cpuMicros = Math.max(0, tracked.readCpuMicros - tracked.absorbedCpuMicros);
+        const reaped = reapedNow.get(key) ?? tracked.reapedCpuMicros;
+        const { still, taken } = absorb(tracked.pending, reaped - tracked.reapedCpuMicros);
+        tracked.absorbedCpuMicros += taken;
+        tracked.pending = still;
+        tracked.reapedCpuMicros = reaped;
+        tracked.process.cpuMicros = Math.max(
+          tracked.process.cpuMicros,
+          tracked.readCpuMicros - tracked.absorbedCpuMicros,
+        );
         running.set(key, tracked);
       }
       rebuild();
