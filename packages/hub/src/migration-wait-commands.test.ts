@@ -119,3 +119,16 @@ test('serve does not listen when it is stopped as the migrations finish', async 
   expect(stdout).toContain('Applied database migrations');
   expect(stdout).not.toContain('Listening on');
 });
+
+test('pair issues no Pairing code when it is stopped as the migrations finish', async () => {
+  await using db = await testDatabase();
+
+  const { code, stdout } = await runUntil(['pair', 'laptop-1', '--database', db.url.href], {
+    abortWhen: 'Applied database migrations',
+  });
+
+  expect(stdout).toContain('Applied database migrations');
+  const [{ count }] = await db.sql`SELECT count(*)::int AS count FROM pairing_codes`;
+  expect(count).toBe(0);
+  expect(code).toBe(130);
+});

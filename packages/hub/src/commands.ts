@@ -32,22 +32,28 @@ export const withDatabase = async <T>(
 ): Promise<T> => {
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
   const fail = (message: string) => out.fatal(clean(message));
+  // An interrupt ends the wait. Loom resolves the exit code from the signal and
+  // does not report a thrown AbortError.
+  const interrupted = async (): Promise<never> => {
+    await out.warn(INTERRUPTED);
+    throw new DOMException(INTERRUPTED, 'AbortError');
+  };
   const sql = openDatabase(url);
   try {
     const applied = await migrateWhenFree(sql, {
       onBlocked: (holders) => out.warn(clean(describeLockWait(holders))),
       ...(signal === undefined ? {} : { signal }),
-    }).catch(async (error: unknown) => {
-      // An interrupt ends the wait. Loom resolves the exit code from the signal and
-      // does not report a thrown AbortError.
-      if (signal?.aborted === true) {
-        await out.warn(INTERRUPTED);
-        throw new DOMException(INTERRUPTED, 'AbortError');
-      }
-      return fail(`Could not reach the database: ${describeError(error)}`);
-    });
+    }).catch(async (error: unknown) =>
+      signal?.aborted === true
+        ? interrupted()
+        : fail(`Could not reach the database: ${describeError(error)}`),
+    );
     if (applied.length > 0) {
       await out.print(`Applied database migrations ${applied.join(', ')}.`);
+    }
+    // A stop that lands as the migrations finish still ends the command before its work.
+    if (signal?.aborted === true) {
+      return await interrupted();
     }
     return await work(sql).catch((error: unknown) => fail(describeError(error)));
   } finally {

@@ -10,7 +10,7 @@ const BACKOFF_CAP_MS = 30_000;
 const HOLDER_LOG_INTERVAL_MS = 60_000;
 const HOLDERS_LISTED = 5;
 
-// A session that holds a lock on one of the Hub's tables, or the migration lock.
+// A session that holds a lock on one of the Hub's tables, or an advisory lock.
 // The activity fields are empty when the Hub's role may not see that session.
 export type LockHolder = {
   applicationName: string | null;
@@ -47,9 +47,10 @@ export const oncePerInterval = (intervalMs: number, now: () => number): (() => b
 };
 
 // The other sessions holding a lock on a table in this database or an advisory
-// lock, longest-open first (sessions whose start the Hub's role cannot see last). Once the migration has rolled
-// back, nothing says which of them blocked it, so this lists them all, which for
-// a Hub's database is a backup, another Hub migrating, or a stuck session.
+// lock, longest-open first, with sessions whose start the Hub's role cannot see
+// last. Once the migration has rolled back, nothing says which of them blocked it,
+// so this lists them all, which for a Hub's database is a backup, another Hub
+// migrating, or a stuck session.
 // PostgreSQL shows state and start time only for the Hub's own role's sessions or
 // a role with pg_read_all_stats, so for other sessions those come back empty.
 export const lockHolders = async (sql: SQL): Promise<LockHolder[]> => {
