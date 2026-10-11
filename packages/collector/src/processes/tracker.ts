@@ -41,8 +41,14 @@ export const createProcessTracker = ({
   let ended: Ended[] = [];
   let latest: HarnessProcessesSection | undefined;
 
+  // The section lists at most MAX_HARNESS_PROCESSES, running and ended
+  // together, so it always passes its own schema. Running processes come
+  // first; the ended ones fill the room left, and the oldest are dropped. A
+  // dropped end reaches the Hub as one it closes as missed.
   const rebuild = () => {
-    latest = { processes: [...ended, ...running.values()] };
+    const listed = [...running.values()].slice(0, MAX_HARNESS_PROCESSES);
+    ended = ended.slice(Math.max(0, ended.length - (MAX_HARNESS_PROCESSES - listed.length)));
+    latest = { processes: [...ended, ...listed] };
   };
 
   const rootsAt = async (at: number) => {
@@ -99,7 +105,6 @@ export const createProcessTracker = ({
       for (const [key, process] of next) {
         running.set(key, process);
       }
-      ended = ended.slice(-MAX_HARNESS_PROCESSES);
       rebuild();
     },
   };

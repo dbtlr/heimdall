@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { MAX_HARNESS_PROCESSES } from '@heimdall/schema';
+import { HarnessProcessesSectionSchema, MAX_HARNESS_PROCESSES } from '@heimdall/schema';
 
 import type { ProcessEntry, ProcessReader } from './table.ts';
 import { createProcessTracker } from './tracker.ts';
@@ -226,4 +226,26 @@ test('keeps the newest ended processes when the Hub is gone so long that they pa
 
   expect(pids).toHaveLength(MAX_HARNESS_PROCESSES);
   expect(pids.at(-1)).toBe(total);
+});
+
+test('running and ended processes together stay within the budget, the oldest ended dropped first', async () => {
+  const h = host();
+  for (let pid = 1; pid <= MAX_HARNESS_PROCESSES; pid += 1) {
+    h.state.table = [entry(pid)];
+    // oxlint-disable-next-line no-await-in-loop -- one tick after another.
+    await h.tracker.tick();
+    h.advance(1000);
+  }
+  h.state.table = [entry(9000), entry(9001)];
+  await h.tracker.tick();
+
+  const section = h.tracker.latest();
+  const processes = section?.processes ?? [];
+
+  expect(HarnessProcessesSectionSchema.safeParse(section).success).toBe(true);
+  expect(processes).toHaveLength(MAX_HARNESS_PROCESSES);
+  expect(processes.filter((p) => p.endedAt === undefined).map((p) => p.pid)).toEqual([9000, 9001]);
+  // The 512 ended processes lose the two oldest to the two running.
+  expect(processes[0]?.pid).toBe(3);
+  expect(processes.at(-3)?.pid).toBe(MAX_HARNESS_PROCESSES);
 });
