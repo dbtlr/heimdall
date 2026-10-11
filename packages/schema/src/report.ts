@@ -75,8 +75,11 @@ export const ReportSchema = z.object({
     platform: z.enum(['darwin', 'linux']),
     version: z.string().min(1),
   }),
-  // Only when the Harness root processes on the System changed, the Collector
-  // started, or an hour passed (ADR-0014).
+  // Sent when the Collector starts, an hour after the Hub last answered it, and
+  // whenever a look at the process table changed it. Each look sets every
+  // running process's `lastSeenAt`, so while a Harness runs the section rides
+  // a Report after every look; with none running and no end waiting, the empty
+  // list is not sent again until the hour is up.
   harnessProcesses: HarnessProcessesSectionSchema.optional(),
   // Only when the Harnesses installed on the System changed, the Collector
   // started, or an hour passed; the Hub keeps the System's latest list until
