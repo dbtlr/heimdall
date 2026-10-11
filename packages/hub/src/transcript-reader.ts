@@ -29,10 +29,11 @@ export type HeldContent = { complete: boolean; content: Uint8Array };
 type Row = { content: Uint8Array; length: string; offset_bytes: string };
 
 // Reads a generation's content from byte `from` up to `held`, joining its
-// chunks in offset order and unpacking each (ADR-0013). It reads about
-// `limitBytes`: whole chunks until they pass the limit, so always at least
-// one. A gap between chunks, or a chunk that unpacks to another length than
-// it was stored with, is an error rather than content spliced wrong.
+// chunks in offset order and unpacking each (ADR-0013). It answers at most
+// `limitBytes`, reading only the chunks that hold them and unpacking one at a
+// time into the answer, so it holds no more than the answer and one chunk
+// unpacked. A gap between chunks, or a chunk that unpacks to another length
+// than it was stored with, is an error rather than content spliced wrong.
 export const readHeldContent = async (
   sql: SQL,
   {
@@ -42,42 +43,45 @@ export const readHeldContent = async (
     limitBytes,
   }: { from: number; generation: number; held: number; limitBytes: number },
 ): Promise<HeldContent> => {
+  const until = Math.min(held, from + limitBytes);
   // Bun binds a number of 2^51 or more as a double, which the primary key's
   // index cannot match, so the id is cast back to bigint.
   const rows: Row[] = await sql`
     SELECT offset_bytes, length, content FROM transcript_chunks
-    WHERE generation = ${generation}::bigint AND offset_bytes IN (
-      SELECT offset_bytes FROM (
-        SELECT offset_bytes, sum(length) OVER (ORDER BY offset_bytes) - length AS before
-        FROM transcript_chunks
-        WHERE generation = ${generation}::bigint
-          AND offset_bytes + length > ${from} AND offset_bytes < ${held}
-      ) AS window_of_chunks
-      WHERE before < ${limitBytes}
-    )
+    WHERE generation = ${generation}::bigint
+      AND offset_bytes + length > ${from} AND offset_bytes < ${until}
     ORDER BY offset_bytes
   `;
-  const unpacked = await Promise.all(
-    rows.map(async (row) => unpack(generation, row.offset_bytes, row.content)),
-  );
-  const pieces: Uint8Array[] = [];
-  let end = from;
-  for (const [i, row] of rows.entries()) {
-    const offset = Number(row.offset_bytes);
-    const length = Number(row.length);
-    const bytes = unpacked[i];
-    if (bytes?.byteLength !== length || offset > end || (i > 0 && offset !== end)) {
-      throw new UnreadableGenerationError(
-        `Generation ${String(generation)} has a gap or a damaged chunk at byte ${String(offset)}.`,
-      );
-    }
-    pieces.push(bytes.subarray(end - offset));
-    end = offset + length;
-  }
-  if (rows.length === 0 && from < held) {
+  if (rows.length === 0 && from < until) {
     throw new UnreadableGenerationError(
       `Generation ${String(generation)} holds no chunk at byte ${String(from)}.`,
     );
   }
-  return { complete: end >= held, content: Buffer.concat(pieces) };
+  let end = from;
+  for (const [i, row] of rows.entries()) {
+    const offset = Number(row.offset_bytes);
+    if (offset > end || (i > 0 && offset !== end)) {
+      throw new UnreadableGenerationError(
+        `Generation ${String(generation)} has a gap or a damaged chunk at byte ${String(offset)}.`,
+      );
+    }
+    end = offset + Number(row.length);
+  }
+  const content = new Uint8Array(Math.max(0, Math.min(end, until) - from));
+  for (const row of rows) {
+    const offset = Number(row.offset_bytes);
+    // oxlint-disable-next-line no-await-in-loop -- one chunk unpacked at a time bounds memory.
+    const bytes = await unpack(generation, row.offset_bytes, row.content);
+    if (bytes.byteLength !== Number(row.length)) {
+      throw new UnreadableGenerationError(
+        `Generation ${String(generation)} has a gap or a damaged chunk at byte ${String(offset)}.`,
+      );
+    }
+    const start = Math.max(from, offset);
+    content.set(
+      bytes.subarray(start - offset, Math.min(bytes.byteLength, until - offset)),
+      start - from,
+    );
+  }
+  return { complete: from + content.byteLength >= held, content };
 };

@@ -4,6 +4,7 @@ import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
 import { PARSE_BUDGET_BYTES, projectionNotes, projectTranscripts } from './projection.ts';
+import { MAX_LINE_BYTES } from './session-insight.ts';
 import {
   agentMeta,
   agentPath,
@@ -370,14 +371,19 @@ const someoneWaitsOnALock = async (sql: SQL) => {
   throw new Error('No session waited on a lock.');
 };
 
-// `sql` as the projection sees it, counting the rows of each query it runs
-// outside a transaction, as reads of transcript chunks are.
-const countingRows = (sql: SQL) => {
+// `sql` as the projection sees it, measuring the most transcript content any
+// one query outside a transaction fetched, as reads of chunks are: the sum
+// of the uncompressed lengths of the chunks it answered.
+const measuringReads = (sql: SQL) => {
   let most = 0;
-  const counted = new Proxy(sql, {
+  const measured = new Proxy(sql, {
     apply: async (target, _, [strings, ...values]: [TemplateStringsArray, ...unknown[]]) => {
-      const rows: unknown[] = await target(strings, ...values);
-      most = Math.max(most, rows.length);
+      const rows: Record<string, unknown>[] = await target(strings, ...values);
+      const bytes = rows.reduce(
+        (sum, row) => sum + ('content' in row && 'length' in row ? Number(row.length) : 0),
+        0,
+      );
+      most = Math.max(most, bytes);
       return rows;
     },
     get: (target, property) => {
@@ -385,7 +391,20 @@ const countingRows = (sql: SQL) => {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return Object.assign(counted, { mostRows: () => most });
+  return Object.assign(measured, { mostBytes: () => most });
+};
+
+// `parser` as the projection runs it, measuring the most content it was given at once.
+const measuringParser = (parser = claudeCodeParser) => {
+  let most = 0;
+  return {
+    ...parser,
+    mostBytes: () => most,
+    parse: (input: Parameters<typeof parser.parse>[0]) => {
+      most = Math.max(most, input.content.byteLength);
+      return parser.parse(input);
+    },
+  };
 };
 
 const sessions = async (sql: SQL) => {
@@ -606,6 +625,16 @@ describe('a Claude Code Session', () => {
   });
 });
 
+// How far a run's progress reaches across every generation.
+const parsedBytes = async (sql: SQL) => {
+  const [row]: { n: number }[] = await sql`
+    SELECT COALESCE(sum(parsed_through), 0)::int AS n FROM parse_progress
+  `;
+  return row?.n ?? 0;
+};
+const linesOf = (session: string, count: number) =>
+  jsonl(Array.from({ length: count }, (_, i) => user({ at: at(i), session })));
+
 describe('parsing as transcripts grow', () => {
   // A response whose lines straddle two uploads is first seen partial.
   test('a response streamed across two ticks counts once, from its final line', async () => {
@@ -734,20 +763,68 @@ describe('parsing as transcripts grow', () => {
         content: jsonl([huge, assistant({ at: at(1), id: 'msg_after', usage: { input: 3 } })]),
         path: mainPath(),
       });
-      const sql = countingRows(h.db.sql);
+      const sql = measuringReads(h.db.sql);
+      const parser = measuringParser();
 
-      await projectAll({ ...h, db: { ...h.db, sql } }, { budgetBytes });
+      await projectAll({ ...h, db: { ...h.db, sql } }, { budgetBytes, parsers: [parser] });
 
       expect(await settled(h.db.sql)).toEqual({
         requests: ['msg_after'],
         sessions: [SESSION],
         status: [{ failed_generations: 0, generations: 1, unreadable_lines: 1 }],
       });
-      // Chunks are 1 MiB, so no read held the line whole.
-      expect(sql.mostRows()).toBeLessThan(Math.max(budgetBytes / 2 ** 20, 32) + 2);
+      // No read holds more than the cap, and the 1 MiB chunks it starts
+      // and ends inside, and the parser is never given more than the cap.
+      expect(sql.mostBytes()).toBeLessThanOrEqual(MAX_LINE_BYTES + 2 * 2 ** 20);
+      expect(parser.mostBytes()).toBeLessThanOrEqual(MAX_LINE_BYTES + 1);
     },
     60_000,
   );
+
+  test('a run parses no more than its budget', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const third = '0b1c2d3e-0000-4000-8000-000000000003';
+    for (const session of [SESSION, OTHER, third]) {
+      // oxlint-disable-next-line no-await-in-loop -- uploaded in order, oldest first.
+      await upload(h, { content: linesOf(session, 8), path: mainPath(session) });
+    }
+    const budgetBytes = Buffer.byteLength(linesOf(SESSION, 12));
+
+    await projectTranscripts(h.db.sql, { budgetBytes });
+
+    const parsed = await parsedBytes(h.db.sql);
+    expect(parsed).toBeLessThanOrEqual(budgetBytes);
+    expect(parsed).toBeGreaterThan(budgetBytes - Buffer.byteLength(linesOf(SESSION, 1)));
+  });
+
+  test('a run parses past its budget only to finish the line that crosses it', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const third = '0b1c2d3e-0000-4000-8000-000000000003';
+    const first = linesOf(SESSION, 8);
+    const long = jsonl([
+      { ...user({ at: at(0), session: OTHER }), message: { content: 'x'.repeat(20_000) } },
+    ]);
+    const files = [
+      { content: first, path: mainPath() },
+      { content: long, path: mainPath(OTHER) },
+      { content: linesOf(third, 8), path: mainPath(third) },
+    ];
+    for (const [i, file] of files.entries()) {
+      // oxlint-disable-next-line no-await-in-loop -- uploaded in order, oldest first.
+      const generation = await upload(h, file);
+      // oxlint-disable-next-line no-await-in-loop -- dated in the same order.
+      await h.db.sql`
+        UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 3000 + i * 1000)}
+        WHERE id = ${generation}::bigint
+      `;
+    }
+
+    await projectTranscripts(h.db.sql, { budgetBytes: Buffer.byteLength(first) + 100 });
+
+    expect(await parsedBytes(h.db.sql)).toBe(Buffer.byteLength(first + long));
+  });
 
   // ADR-0013 can store a file twice, as after a Collector's state is wiped.
   test('a request two generations both hold counts once', async () => {
