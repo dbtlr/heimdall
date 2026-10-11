@@ -260,7 +260,7 @@ Every upload counts toward the System's Last seen, and no refusal raises a Condi
 
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 
-The Collector does not yet observe Harness processes. When it does (M5), it records only executable names and working directories, never command-line arguments or environment variables.
+The Collector does not yet observe Harness processes. When it does (M5), it records each one's executable name, working directory, start and end, and the CPU and memory of its process tree, and never command-line arguments or environment variables.
 
 ## Trust
 
