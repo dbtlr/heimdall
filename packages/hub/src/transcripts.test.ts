@@ -418,8 +418,7 @@ const generations = async (sql: SQL) => {
 describe('deleting transcripts', () => {
   // PostgreSQL aborts one side of a deadlock between a delete and the
   // projection's cleanup, which takes no lock the delete knows of.
-  const deadlock = () =>
-    Object.assign(new Error('deadlock detected'), { errno: '40P01' as const });
+  const deadlock = () => Object.assign(new Error('deadlock detected'), { errno: '40P01' as const });
 
   // `sql` whose transactions fail with `error` for the first `failures` begins.
   const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
