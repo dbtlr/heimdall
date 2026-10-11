@@ -1,5 +1,5 @@
 ---
-description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, how agent Session transcripts reach the Hub, and how the Collector reports installed Harnesses."
+description: "The fleet observability spec: the roles in a Heimdall fleet, the principles that divide their work, what a provisioner records with a Collector and what Heimdall checks, how a provisioner reads the records back, how agent Session transcripts reach the Hub, how the Collector reports installed Harnesses, and how it reports Harness processes."
 ---
 
 # Fleet observability spec
@@ -260,7 +260,7 @@ Every upload counts toward the System's Last seen, and no refusal raises a Condi
 
 `heimdall-hub transcripts delete` deletes whole generations that match every filter given: `--system`, `--source`, and `--before <date>`, which compares a generation's last upload with the start of that day in UTC. At least one filter is required, and `--dry-run` reports what would be deleted. Once every generation at a path is deleted, the Hub refuses new generations there.
 
-The Collector does not yet observe Harness processes. When it does (M5), it records each one's executable name, working directory, start and end, and the CPU and memory of its process tree, and never command-line arguments or environment variables.
+The Collector observes Harness processes beside transcripts; see [Harness processes](#harness-processes).
 
 ## Installed Harnesses
 
@@ -278,6 +278,24 @@ The section is `{"installs": [{"harness": "claude-code", "location": "mise", "ve
 A directory name counts as a version when it reads as `major.minor.patch`, each number of at most 8 digits, with an optional `-` or `+` suffix, and the whole is at most 64 characters; a longer or stranger name is not a version. A Homebrew keg name may end in a revision such as `_1`; the reported version leaves it off. A directory the Collector cannot list costs only the installs under it, and it reports an unknown install only when its parent directory can be listed and holds it; when the parent cannot be listed either, nothing is reported for that place. Other places, such as Node version managers other than mise, are not read; a Harness installed only there is not reported.
 
 The Collector looks for installs when it starts and every 10 minutes, and sends the section when it starts, when it changes, and an hour after the Hub last answered a Report carrying it. If the Hub refuses a Report carrying it, the samples are sent again without it, as for the other sections. The Hub keeps each System's latest list, ignores one sent earlier than the one it holds unless the held one claims a time later than the Hub's own clock, leaves it unchanged for a Report without the section, and shows it beside each System on the dashboard.
+
+## Harness processes
+
+The Collector watches the process table for Harness root processes and reports them in a Report's `harnessProcesses` section, so the Hub can set a Session's transcript beside the CPU and memory its Harness used. From the process table it reads only an executable's name, its parent, start, CPU time, resident memory, and working directory. It never reads command-line arguments or environment variables ([ADR-0002](decisions/0002-collector-observes-processes-never-content.md)).
+
+**What counts.** A process is a Harness process when its executable's file name is exactly one of the Harness's names: `claude` for Claude Code and `codex` for Codex. A Harness that runs as a script under another runtime shows as that runtime, is not matched, and cannot be told apart without its arguments. A **root** is a Harness process whose parent is not a process of the same Harness, so a helper Claude Code starts under itself is part of its root's tree, while a Claude Code that an SDK host, a shell, or another Harness starts is a root of its own. Codex runs its subagents as threads of one process, so they get no process of their own and are not told apart here. A root's totals cover its descendants except the trees of other roots under it, which count once, in their own root.
+
+**What a row says.** Each process in the section has its `harness`, `pid`, `startedAt` (to the second), `cwd` (null when unreadable, such as another user's process), `cpuMicros`, `rssBytes`, `peakRssBytes`, `lastSeenAt`, and, once gone, `endedAt`.
+
+- `cpuMicros` is the user and system CPU time the process and its descendants have used. On Linux it includes children already reaped, so a build that has finished still counts; on macOS it is the live processes' time. CPU used over a span is the difference of two readings.
+- `rssBytes` is the sum of the tree's resident memory at `lastSeenAt`, which counts shared pages once per process. `peakRssBytes` is the highest of those the Collector saw.
+- One Harness process can run several Sessions in turn. The Hub joins a process to a Session by Harness, System, working directory, and overlapping time, and only when the match is unambiguous.
+
+**How it is read.** The Collector reads the table once per 15-second Vitals interval, in one pass whatever the number of Harnesses. On Linux it reads each process's `/proc/<pid>/stat`, and the `exe` and `cwd` links only of processes whose command name could be a Harness. On macOS it runs `ps -axo pid=,ppid=,rss=,etime=,time=,comm=` once, and asks libproc (`proc_pidinfo`, through `bun:ffi`) for the working directory of each root, since `ps` has no column for it and `lsof` is a heavy way to ask. A start is computed to the second so it reads the same on every tick and after a Collector restart.
+
+**Ends.** The section lists every root running now, with no `endedAt`, and every root that ended and the Hub has not acknowledged, with an `endedAt` that is the time of the tick that found it gone, so the true end falls up to one interval earlier. The Collector keeps ended roots until the Hub answers a Report carrying them, up to 512, so an outage loses no end. A pid seen again with a start more than 5 seconds apart is a new process. When the Collector was not running to see a process end, the Hub closes it: a process the Hub holds as running that a later section no longer lists gets the last time the Collector saw it as its end, and is marked as an end the Collector missed, since the real end is later than that. A process that is running has no end in the Hub either.
+
+The Hub keeps one row per process, identified by System, Harness, pid, and a start within 10 seconds, and replaces a row's totals with each section sent no earlier than the one that last touched it. A Report without the section leaves the rows as they are.
 
 ## Trust
 

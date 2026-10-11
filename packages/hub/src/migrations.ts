@@ -363,6 +363,36 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 13,
   },
+  {
+    // The Harness root processes each System's Collector saw (ADR-0014): one
+    // row per process, identified by Harness, pid, and start, since a pid is
+    // reused. A running process has no `ended_at`. One whose end the Collector
+    // did not see has `end_missed` and ends at the last time it was seen. The
+    // totals are the process tree's CPU time and resident memory at
+    // `last_seen_at`, and the highest memory seen. `sent_at` is the Report that
+    // last touched the row, so an older Report does not undo a newer one. The
+    // index serves the join to Sessions by System, Harness, and time.
+    sql: `
+      CREATE TABLE harness_processes (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text NOT NULL REFERENCES systems (name),
+        harness text NOT NULL,
+        pid integer NOT NULL,
+        started_at timestamptz NOT NULL,
+        ended_at timestamptz,
+        end_missed boolean NOT NULL DEFAULT false,
+        cwd text,
+        cpu_micros bigint NOT NULL,
+        rss_bytes bigint NOT NULL,
+        peak_rss_bytes bigint NOT NULL,
+        last_seen_at timestamptz NOT NULL,
+        sent_at timestamptz NOT NULL
+      );
+      CREATE INDEX harness_processes_by_system_harness_start
+        ON harness_processes (system, harness, started_at);
+    `,
+    version: 14,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

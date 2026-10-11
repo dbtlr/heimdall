@@ -12,6 +12,7 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { storeHarnessProcesses } from './harness-processes.ts';
 import { pairedSystems } from './tokens.ts';
 
 export type StoreResult = { skipped: number; stored: number };
@@ -157,6 +158,14 @@ export const storeReport = (
         harnesses: report.harnesses,
         receivedAt: seenAt,
         report,
+      });
+    }
+    if (report.harnessProcesses !== undefined) {
+      await storeHarnessProcesses(tx, {
+        receivedAt: seenAt,
+        section: report.harnessProcesses,
+        sentAt: report.sentAt,
+        system: report.system,
       });
     }
     if (report.records !== undefined) {

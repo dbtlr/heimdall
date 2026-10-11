@@ -1,0 +1,3 @@
+### Added
+
+- **Collector reports Harness processes** (HMD-69). On Linux and macOS the Collector finds each running Claude Code and Codex root process every 15 seconds, and a Report's new `harnessProcesses` section carries its Harness, pid, start, end, working directory, and the CPU time and memory of its process tree. It reads only executable names, parents, and working directories, never command-line arguments or environment variables. The Hub stores the processes, closes one the Collector stopped listing at the last time it was seen, and marks an end it did not witness. Upgrade the Hub, which applies migration 14, before the Collectors. The spec describes how each platform is read (`docs/spec.md`).

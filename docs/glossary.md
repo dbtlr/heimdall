@@ -93,7 +93,7 @@ One copy of a Harness on a System, found by the Collector in a place such as a t
 _Avoid_: Harness version (a System can hold several), installation
 
 **Harness process**:
-A running Harness as the Collector observes it from the process table, with its working directory, start and end, and the CPU and memory it and its descendants use. One can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous.
+A running Harness root process as the Collector observes it from the process table: a process of a Harness whose parent is not a process of the same Harness. The Collector records its Harness, working directory, start and end, and the CPU time and memory of it and its descendants, and never command-line arguments or environment variables. A Codex subagent is a thread, not a process. One Harness process can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous. An end the Collector did not see is marked as missed.
 _Avoid_: Session (the conversation, not the process), agent process
 
 **Condition**:
