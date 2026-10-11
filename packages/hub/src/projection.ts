@@ -80,6 +80,8 @@ export const projectTranscripts = async (
       projected.switched.push({ harness: parser.harness, version: parser.version });
     }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
+    await showRederived(sql, parser.harness);
+    // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     await dropEarlierVersions(sql, { harness: parser.harness, rows: cleanupRows });
   }
   return projected;
@@ -422,6 +424,12 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
   if (batch.requests.length === 0) {
     return;
   }
+  await recordHolders(tx, {
+    generation,
+    ids: batch.requests.map((r) => r.requestId),
+    key,
+    table: 'projected_requests',
+  });
   await tx`
     INSERT INTO projected_requests (
       parser_version, harness, system, source, session_id, agent_id, request_id, at, model,
@@ -457,11 +465,49 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
   `;
 };
 
+// Notes every generation that holds a fact another generation's row already
+// keeps, the row's generation too, so a delete of either can derive the other
+// again (`forgetDeletedGenerations`). Only facts held twice are noted, so the
+// cost grows with what the archive duplicates, not with its size.
+const recordHolders = async (
+  tx: SQL,
+  {
+    generation,
+    ids,
+    key,
+    table,
+  }: {
+    generation: Generation;
+    ids: string[];
+    key: Key;
+    table: 'projected_requests' | 'projected_tool_calls';
+  },
+) => {
+  const id = table === 'projected_requests' ? 'request_id' : 'call_id';
+  await tx.unsafe(
+    `INSERT INTO projected_holders (harness, parser_version, system, source, fact_id, generation)
+     SELECT x.harness, x.parser_version, x.system, x.source, x.${id}, held.generation
+     FROM ${table} x
+     CROSS JOIN LATERAL (VALUES (x.generation), ($5::bigint)) AS held (generation)
+     WHERE x.harness = $1 AND x.parser_version = $2 AND x.system = $3 AND x.source = $4
+       AND x.${id} IN (SELECT jsonb_array_elements_text($6::text::jsonb))
+       AND x.generation <> $5::bigint
+     ON CONFLICT DO NOTHING`,
+    [key.harness, key.version, key.system, key.source, generation.id, storableJson(ids)],
+  );
+};
+
 // A tool call counts once within a System's source; the first line read keeps it.
 const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
   if (batch.toolCalls.length === 0) {
     return;
   }
+  await recordHolders(tx, {
+    generation,
+    ids: batch.toolCalls.map((t) => t.callId),
+    key,
+    table: 'projected_tool_calls',
+  });
   await tx`
     INSERT INTO projected_tool_calls (
       parser_version, harness, system, source, session_id, agent_id, call_id, request_id, at,
@@ -554,12 +600,21 @@ const PROJECTED_TABLES = [
   'parse_progress',
 ] as const;
 
-// Removes what the projection derived from generations deleted on purpose,
-// and forgets the progress of every other generation of the Sessions they
-// touched, so the next run derives those Sessions again from what still holds
-// them (ADR-0013, ADR-0014). Every parser version's rows go, the current
-// one's too, so a Session touched while a rebuild runs shows again once the
-// rebuild completes. Answers how many Sessions it touched.
+// Removes what the projection derived from generations deleted on purpose
+// (ADR-0013, ADR-0014), so the projection is what the surviving archive
+// yields:
+//
+// - Every Session the deleted generations touched loses its facts, under
+//   every parser version, and every other generation of it is reset to be
+//   parsed from its start. The Session is hidden from the views until its
+//   current version has parsed it again, so it reappears whole.
+// - A fact the deleted Sessions kept that another Session's generation also
+//   holds, as `projected_holders` notes, sends that generation to be parsed
+//   again. Its Session keeps its facts, which parsing again only restores.
+//
+// A Session touched while a rebuild runs stays hidden until the rebuild's
+// version is current and has parsed it again. Answers how many Sessions it
+// touched.
 export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   const [row]: { touched: number }[] = await sql`
     WITH deleted AS (
@@ -571,12 +626,36 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     touched AS (
       SELECT DISTINCT harness, system, source, session_id FROM deleted WHERE session_id IS NOT NULL
     ),
-    progress AS (
-      DELETE FROM parse_progress p
-      USING transcript_generations g
-      WHERE g.id = p.generation
-        AND (p.generation IN (SELECT generation FROM deleted)
-             OR (p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched))
+    hidden AS (
+      INSERT INTO rederiving_sessions (harness, system, source, session_id)
+      SELECT * FROM touched
+      ON CONFLICT DO NOTHING
+    ),
+    kept AS (
+      SELECT x.harness, x.parser_version, x.system, x.source, x.request_id AS fact_id
+      FROM projected_requests x JOIN touched t USING (harness, system, source, session_id)
+      UNION
+      SELECT x.harness, x.parser_version, x.system, x.source, x.call_id
+      FROM projected_tool_calls x JOIN touched t USING (harness, system, source, session_id)
+    ),
+    holders AS (
+      SELECT DISTINCT h.harness, h.parser_version, h.generation
+      FROM projected_holders h JOIN kept k USING (harness, parser_version, system, source, fact_id)
+    ),
+    forgotten AS (
+      DELETE FROM parse_progress WHERE generation IN (SELECT generation FROM deleted)
+    ),
+    reset AS (
+      UPDATE parse_progress p SET
+        parsed_through = 0, held_seen = 0, skipping_line = false, unreadable_lines = 0,
+        failed_at = NULL, failure = NULL
+      FROM transcript_generations g
+      WHERE g.id = p.generation AND g.deleted_at IS NULL
+        AND ((p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched)
+             OR (p.harness, p.parser_version, p.generation) IN (SELECT * FROM holders))
+    ),
+    unheld AS (
+      DELETE FROM projected_holders WHERE generation IN (SELECT generation FROM deleted)
     ),
     requests AS (
       DELETE FROM projected_requests x USING touched t
@@ -598,3 +677,19 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   `;
   return row?.touched ?? 0;
 };
+
+// Shows again each Session of `harness` a delete hid, once its current
+// version has parsed every generation of it that the delete reset, or failed
+// there.
+const showRederived = (sql: SQL, harness: string) => sql`
+  DELETE FROM rederiving_sessions r
+  USING current_parsers c
+  WHERE r.harness = ${harness} AND c.harness = r.harness
+    AND NOT EXISTS (
+      SELECT 1 FROM parse_progress p
+      JOIN transcript_generations g ON g.id = p.generation
+      WHERE p.harness = r.harness AND p.parser_version = c.version
+        AND p.session_id = r.session_id AND g.system = r.system AND g.source = r.source
+        AND g.deleted_at IS NULL AND p.failed_at IS NULL AND p.held_seen < g.held
+    )
+`;

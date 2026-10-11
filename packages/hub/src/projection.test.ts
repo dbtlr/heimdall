@@ -884,6 +884,108 @@ describe('deleting transcripts', () => {
   });
 });
 
+const subagentOf = (id: string) =>
+  jsonl([assistant({ agent: 'a1', at: at(50), id, usage: { input: 1000 } })]);
+
+// Makes a generation a day old, so `deleteOld` deletes it and no other.
+const ageGeneration = (h: Hub, generation: number) =>
+  h.db
+    .sql`UPDATE transcript_generations SET last_upload_at = ${new Date(NOW - 86_400_000)} WHERE id = ${generation}`;
+
+const deleteOld = (h: Hub) => deleteTranscripts(h.db.sql, { before: NOW - 3_600_000, now: NOW });
+
+describe('deriving a Session again after a delete', () => {
+  const FORTY = jsonl(
+    Array.from({ length: 40 }, (_, i) =>
+      assistant({ at: at(i), id: `msg_${String(i)}`, usage: { input: 1 } }),
+    ),
+  );
+
+  test('hides the Session until it is derived again whole', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, { chunkBytes: 400, content: FORTY, path: mainPath() });
+    const old = await upload(h, { content: subagentOf('msg_a'), path: agentPath('a1') });
+    await projectAll(h);
+    await ageGeneration(h, old);
+
+    await deleteOld(h);
+    const afterDelete = await totals(h.db.sql, 'session_totals');
+    await projectTranscripts(h.db.sql, { budgetBytes: 2000 });
+    const afterOneRun = await totals(h.db.sql, 'session_totals');
+    await projectAll(h);
+
+    expect([afterDelete, afterOneRun]).toEqual([[], []]);
+    expect(await totals(h.db.sql, 'session_totals')).toEqual([
+      expect.objectContaining({ input_tokens: 40, requests: 40 }),
+    ]);
+  });
+
+  test('leaves a live Session shown as it grows', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([assistant({ at: at(0), id: 'msg_first', usage: { input: 1 } })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    await append(h, generation, {
+      chunkBytes: 400,
+      content: FORTY,
+      offset: Buffer.byteLength(first),
+    });
+
+    await projectTranscripts(h.db.sql, { budgetBytes: 2000 });
+
+    const [shown] = await totals(h.db.sql, 'session_totals');
+    expect(shown?.requests).toBeGreaterThan(1);
+    expect(shown?.requests).toBeLessThan(41);
+  });
+
+  // The request is kept with the Session parsed last, so deleting that
+  // Session's generation must derive the other holder again.
+  test('keeps a request another Session still holds', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const shared = assistant({ at: at(1), id: 'msg_shared', usage: { input: 5, output: 7 } });
+    await upload(h, { content: jsonl([user({ at: at(0) }), shared]), path: mainPath() });
+    await projectAll(h);
+    const later = await upload(h, {
+      content: jsonl([user({ at: at(0), session: OTHER }), { ...shared, sessionId: OTHER }]),
+      path: mainPath(OTHER),
+    });
+    await projectAll(h);
+    const before = await h.db.sql`SELECT session_id FROM insight.requests`;
+    await ageGeneration(h, later);
+
+    await deleteOld(h);
+    await projectAll(h);
+
+    expect([...before]).toEqual([{ session_id: OTHER }]);
+    const after = await h.db.sql`SELECT session_id, request_id FROM insight.requests`;
+    expect([...after]).toEqual([{ request_id: 'msg_shared', session_id: SESSION }]);
+  });
+
+  test('keeps a tool call another Session still holds', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    // The first line read keeps a tool call, so the Session parsed first holds it.
+    const command = user({ at: at(0), command: '/review', uuid: 'u-shared' });
+    const earlier = await upload(h, {
+      content: jsonl([{ ...command, sessionId: OTHER }]),
+      path: mainPath(OTHER),
+    });
+    await projectAll(h);
+    await upload(h, { content: jsonl([command]), path: mainPath() });
+    await projectAll(h);
+    await ageGeneration(h, earlier);
+
+    await deleteOld(h);
+    await projectAll(h);
+
+    const after = await h.db.sql`SELECT session_id, call_id FROM insight.tool_calls`;
+    expect([...after]).toEqual([{ call_id: 'u-shared', session_id: SESSION }]);
+  });
+});
+
 describe('deleting transcripts while a batch is read', () => {
   // A delete resets the progress of every generation of the Sessions it
   // touches, so a batch read before it from further on must not be stored.
