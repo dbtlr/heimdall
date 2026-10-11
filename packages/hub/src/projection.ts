@@ -1,8 +1,8 @@
 import type { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import type { Batch, HarnessParser } from './session-facts.ts';
-import { storableJson } from './store.ts';
+import type { Batch, HarnessParser } from './session-insight.ts';
+import { storableJson } from './storable.ts';
 import { readHeldContent } from './transcript-reader.ts';
 
 // The parsers the Hub runs, one per Harness it derives Session insight for.
@@ -91,7 +91,8 @@ const pendingGenerations = (sql: SQL, parser: HarnessParser): Promise<Pending[]>
   SELECT g.id, g.system, g.source, g.path, g.held, p.parsed_through
   FROM transcript_generations g
   JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
-  LEFT JOIN parse_progress p ON p.generation = g.id AND p.parser_version = ${parser.version}
+  LEFT JOIN parse_progress p
+    ON p.harness = h.harness AND p.parser_version = ${parser.version} AND p.generation = g.id
   WHERE h.harness = ${parser.harness} AND g.deleted_at IS NULL
     AND (p.generation IS NULL OR p.held_seen < g.held)
   ORDER BY g.last_upload_at, g.id
@@ -103,7 +104,8 @@ const pendingCount = async (sql: SQL, parser: HarnessParser) => {
     SELECT count(*)::int AS n
     FROM transcript_generations g
     JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
-    LEFT JOIN parse_progress p ON p.generation = g.id AND p.parser_version = ${parser.version}
+    LEFT JOIN parse_progress p
+      ON p.harness = h.harness AND p.parser_version = ${parser.version} AND p.generation = g.id
     WHERE h.harness = ${parser.harness} AND g.deleted_at IS NULL
       AND (p.generation IS NULL OR p.held_seen < g.held)
   `;
@@ -218,8 +220,8 @@ const storeBatch = async (
               parsed_through = ${batch.parsedThrough},
               held_seen = ${heldSeen},
               unreadable_lines = unreadable_lines + ${batch.unreadableLines}
-            WHERE generation = ${generation.id}::bigint AND parser_version = ${parser.version}
-              AND parsed_through = ${Number(expected)}
+            WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
+              AND generation = ${generation.id}::bigint AND parsed_through = ${Number(expected)}
             RETURNING generation
           `;
     if (progressed.length > 0) {
@@ -269,7 +271,7 @@ const storeFacts = async (
       ${main?.first.gitBranch ?? null}, ${main?.last.gitBranch ?? null},
       ${main?.first.version ?? null}, ${main?.last.version ?? null}
     )
-    ON CONFLICT (parser_version, system, source, session_id) DO UPDATE SET
+    ON CONFLICT (harness, parser_version, system, source, session_id) DO UPDATE SET
       path = COALESCE(excluded.path, projected_sessions.path),
       -- The batch's first moment wins when it is earlier, and its last when it
       -- is as late or later. Every SET reads the row as it was; a batch with no
@@ -306,7 +308,7 @@ const storeFacts = async (
         ${agent?.toolUseId ?? null}, ${agent?.workflowRun ?? null}, ${agent?.workflowPhase ?? null},
         ${at(span?.first.at)}, ${at(span?.last.at)}
       )
-      ON CONFLICT (parser_version, system, source, session_id, agent_id) DO UPDATE SET
+      ON CONFLICT (harness, parser_version, system, source, session_id, agent_id) DO UPDATE SET
         path = COALESCE(excluded.path, projected_subagents.path),
         agent_type = COALESCE(excluded.agent_type, projected_subagents.agent_type),
         depth = COALESCE(excluded.depth, projected_subagents.depth),
@@ -347,7 +349,7 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
       reasoning bigint, "cacheRead" bigint, "cacheWrite" bigint, "cacheWrite5m" bigint,
       "cacheWrite1h" bigint, "stopReason" text, skill text, "offset" bigint
     )
-    ON CONFLICT (parser_version, system, source, request_id) DO UPDATE SET
+    ON CONFLICT (harness, parser_version, system, source, request_id) DO UPDATE SET
       session_id = excluded.session_id,
       agent_id = excluded.agent_id,
       at = excluded.at,
@@ -384,7 +386,7 @@ const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts)
       "callId" text, "requestId" text, at double precision, kind text, name text,
       "mcpServer" text, skill text, "offset" bigint
     )
-    ON CONFLICT (parser_version, system, source, call_id) DO NOTHING
+    ON CONFLICT (harness, parser_version, system, source, call_id) DO NOTHING
   `;
 };
 
@@ -452,36 +454,36 @@ const PROJECTED_TABLES = [
 export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   const [row]: { touched: number }[] = await sql`
     WITH deleted AS (
-      SELECT p.generation, g.system, g.source, p.session_id
+      SELECT p.harness, p.generation, g.system, g.source, p.session_id
       FROM parse_progress p
       JOIN transcript_generations g ON g.id = p.generation
       WHERE g.deleted_at IS NOT NULL
     ),
     touched AS (
-      SELECT DISTINCT system, source, session_id FROM deleted WHERE session_id IS NOT NULL
+      SELECT DISTINCT harness, system, source, session_id FROM deleted WHERE session_id IS NOT NULL
     ),
     progress AS (
       DELETE FROM parse_progress p
       USING transcript_generations g
       WHERE g.id = p.generation
         AND (p.generation IN (SELECT generation FROM deleted)
-             OR (g.system, g.source, p.session_id) IN (SELECT * FROM touched))
+             OR (p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched))
     ),
     requests AS (
       DELETE FROM projected_requests x USING touched t
-      WHERE (x.system, x.source, x.session_id) = (t.system, t.source, t.session_id)
+      WHERE (x.harness, x.system, x.source, x.session_id) = (t.harness, t.system, t.source, t.session_id)
     ),
     tool_calls AS (
       DELETE FROM projected_tool_calls x USING touched t
-      WHERE (x.system, x.source, x.session_id) = (t.system, t.source, t.session_id)
+      WHERE (x.harness, x.system, x.source, x.session_id) = (t.harness, t.system, t.source, t.session_id)
     ),
     subagents AS (
       DELETE FROM projected_subagents x USING touched t
-      WHERE (x.system, x.source, x.session_id) = (t.system, t.source, t.session_id)
+      WHERE (x.harness, x.system, x.source, x.session_id) = (t.harness, t.system, t.source, t.session_id)
     ),
     sessions AS (
       DELETE FROM projected_sessions x USING touched t
-      WHERE (x.system, x.source, x.session_id) = (t.system, t.source, t.session_id)
+      WHERE (x.harness, x.system, x.source, x.session_id) = (t.harness, t.system, t.source, t.session_id)
     )
     SELECT count(*)::int AS touched FROM touched
   `;

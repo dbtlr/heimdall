@@ -6,7 +6,7 @@ import type {
   Owner,
   Request,
   ToolCall,
-} from './session-facts.ts';
+} from './session-insight.ts';
 
 // Reads Claude Code transcripts into Session facts (ADR-0014). Pure: it sees
 // bytes and paths, never the database. The facts it relies on:

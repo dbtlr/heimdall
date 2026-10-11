@@ -185,14 +185,18 @@ const SESSION_FILES = [
 
 // Tells the Hub which Harness each of the laptop's sources runs, as every
 // Report does (ADR-0013).
-const nameSources = async (h: Hub, sources = [{ harness: 'claude-code', name: 'claude-code' }]) => {
+const nameSources = async (
+  h: Hub,
+  sources = [{ harness: 'claude-code', name: 'claude-code' }],
+  { sentAt = NOW }: { sentAt?: number } = {},
+) => {
   const transcripts = {
     sources: sources.map((source) => ({ ...source, status: 'capturing' })),
     spool: { bytes: 0, oldestAt: null },
   };
   const response = await push(
     h.hub,
-    { ...report('laptop-1', [NOW]), transcripts },
+    { ...report('laptop-1', [NOW]), sentAt, transcripts },
     { token: 'laptop-token' },
   );
   expect(response.status).toBe(200);
@@ -616,6 +620,34 @@ describe('parsing as transcripts grow', () => {
     await nameSources(h, [{ harness: 'claude-code', name: 'work' }]);
     await upload(h, { content: MAIN, path: mainPath(), source: 'work' });
     await nameSources(h, []);
+
+    await projectAll(h);
+
+    expect(await sessions(h.db.sql)).toEqual([expect.objectContaining({ session_id: SESSION })]);
+  });
+
+  // Progress is each Harness's own, so another Harness's parser at the same
+  // version number reads the source afresh.
+  test('a source that changes Harness is parsed again by the new Harness', async () => {
+    await using h = await startHub();
+    await nameSources(h, undefined, { sentAt: NOW - 60_000 });
+    await upload(h, { content: MAIN, path: mainPath() });
+    await projectAll(h);
+    await nameSources(h, [{ harness: 'codex', name: 'claude-code' }]);
+    const codex = { ...claudeCodeParser, harness: 'codex' };
+
+    await projectAll(h, { parsers: [codex] });
+
+    const harnesses = await h.db.sql`SELECT harness FROM insight.sessions ORDER BY harness`;
+    expect([...harnesses]).toEqual([{ harness: 'claude-code' }, { harness: 'codex' }]);
+  });
+
+  // Reports can arrive out of order; the latest one sent names the Harness.
+  test("a Report sent earlier than the one the Hub holds leaves a source's Harness alone", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await nameSources(h, [{ harness: 'codex', name: 'claude-code' }], { sentAt: NOW - 60_000 });
+    await upload(h, { content: MAIN, path: mainPath() });
 
     await projectAll(h);
 

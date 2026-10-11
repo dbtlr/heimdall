@@ -10,16 +10,10 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { storable, storableJson } from './storable.ts';
 import { pairedSystems } from './tokens.ts';
 
 export type StoreResult = { skipped: number; stored: number };
-
-// Text PostgreSQL can store: NUL and lone surrogates, which the Report schema
-// allows, become U+FFFD. Refusing them would stall the Collector's queue.
-const storable = (text: string) => text.toWellFormed().replaceAll('\0', '\uFFFD');
-
-export const storableJson = (value: unknown) =>
-  JSON.stringify(value, (_, v: unknown) => (typeof v === 'string' ? storable(v) : v));
 
 // Records that the Hub heard from `system` at `at` (epoch milliseconds), on
 // its own row lock (glossary: Last seen).
@@ -193,12 +187,17 @@ const storeTranscriptSources = async (
        OR transcript_sources.sent_at > ${receivedAt}
   `;
   // Which Harness each source runs outlasts the set, so the projection can
-  // parse a removed source's transcripts (ADR-0014).
+  // parse a removed source's transcripts (ADR-0014). The latest Report sent
+  // names it, under the same rule as the set.
   await sql`
-    INSERT INTO transcript_source_harnesses (system, source, harness)
-    SELECT ${system}, s->>'name', s->>'harness'
+    INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
+    SELECT ${system}, s->>'name', s->>'harness', ${new Date(sentAt)}
     FROM jsonb_array_elements(${storableJson(sources)}::text::jsonb) AS s
-    ON CONFLICT (system, source) DO UPDATE SET harness = excluded.harness
+    ON CONFLICT (system, source) DO UPDATE SET
+      harness = excluded.harness,
+      sent_at = excluded.sent_at
+    WHERE transcript_source_harnesses.sent_at <= excluded.sent_at
+       OR transcript_source_harnesses.sent_at > ${receivedAt}
   `;
 };
 
