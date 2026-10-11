@@ -64,7 +64,8 @@ type Options = {
 // that restarts, loses nothing and resumes from the progress. A parser whose
 // version is not current writes beside the current one, which the `insight`
 // views keep showing until the new version has caught up; then the views
-// switch in one statement, and later runs delete the earlier version's rows.
+// switch in one statement, and that run and later ones delete the earlier
+// version's rows.
 // Versions only move forward: a Hub whose parser is older than its Harness's
 // current version leaves that Harness alone.
 export const projectTranscripts = async (

@@ -38,8 +38,10 @@ import type {
 //
 // A line with a value no transcript plausibly holds, or PostgreSQL cannot
 // store, is unreadable and yields nothing (session-insight.ts holds the
-// bounds). A command or skill name not shaped like one is dropped from a line
-// that is otherwise read, and the line is counted unreadable.
+// bounds). A field that names or identifies something holds only a value
+// shaped as one: a misshapen value a fact needs leaves the fact out of a line
+// that is otherwise read, and the line is counted unreadable; any other
+// becomes null.
 
 // Bumping it rebuilds every Claude Code row from the archive (ADR-0014).
 export const CLAUDE_CODE_PARSER_VERSION = 1;
