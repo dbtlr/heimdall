@@ -295,6 +295,8 @@ const numbers = (row: Record<string, unknown>) =>
     ]),
   );
 
+const sumOf = (counts: number[]) => counts.reduce((sum, n) => sum + n, 0);
+
 const requests = async (sql: SQL) => {
   const rows: Record<string, unknown>[] = await sql`
     SELECT session_id, agent_id, request_id, model, input_tokens, output_tokens, reasoning_tokens,
@@ -1384,13 +1386,12 @@ describe('a parser version change', () => {
       }
       return counts;
     };
-    const total = (counts: number[]) => counts.reduce((sum, n) => sum + n, 0);
     const options = { cleanupRows: 2, parsers: [nextVersion] };
     const before = await earlier();
 
     const switching = await projectTranscripts(h.db.sql, options);
     const after = [await earlier()];
-    for (let run = 0; run < 30 && total(after.at(-1) ?? []) !== 0; run += 1) {
+    for (let run = 0; run < 30 && sumOf(after.at(-1) ?? []) !== 0; run += 1) {
       // oxlint-disable-next-line no-await-in-loop -- one bounded cleanup per run.
       await projectTranscripts(h.db.sql, options);
       // oxlint-disable-next-line no-await-in-loop -- counted after each run.
@@ -1398,8 +1399,8 @@ describe('a parser version change', () => {
     }
 
     expect(switching.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
-    expect(total(after[0] ?? [])).toBeGreaterThan(0);
-    expect(total(after.at(-1) ?? [])).toBe(0);
+    expect(sumOf(after[0] ?? [])).toBeGreaterThan(0);
+    expect(sumOf(after.at(-1) ?? [])).toBe(0);
     // No run deletes more than `cleanupRows` from any table, and progress
     // goes once every fact has.
     const runs = [before, ...after];
@@ -1409,7 +1410,7 @@ describe('a parser version change', () => {
         expect((previous[t] ?? 0) - n).toBeLessThanOrEqual(options.cleanupRows);
       }
       if (counts.at(-1) !== previous.at(-1)) {
-        expect(total(counts.slice(0, -1))).toBe(0);
+        expect(sumOf(counts.slice(0, -1))).toBe(0);
       }
     }
   });
