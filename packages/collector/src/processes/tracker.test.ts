@@ -19,13 +19,14 @@ const entry = (pid: number, over: Partial<ProcessEntry> = {}): ProcessEntry => (
 });
 
 // A process table a test changes between ticks, with working directories.
-const host = () => {
+const host = ({ includesReaped = true }: { includesReaped?: boolean } = {}) => {
   const state: { cwds: Record<number, string | null>; table: ProcessEntry[]; failing?: boolean } = {
     cwds: {},
     table: [],
   };
   const reader: ProcessReader = {
     cwdOf: (pid) => Promise.resolve(state.cwds[pid] ?? null),
+    includesReaped,
     table: () =>
       state.failing ? Promise.reject(new Error('ps failed')) : Promise.resolve(state.table),
   };
@@ -249,4 +250,59 @@ test('running and ended processes together stay within the budget, the oldest en
   // The 512 ended processes lose the two oldest to the two running.
   expect(processes[0]?.pid).toBe(3);
   expect(processes.at(-3)?.pid).toBe(MAX_HARNESS_PROCESSES);
+});
+
+const cpuByPid = (h: ReturnType<typeof host>) =>
+  Object.fromEntries((h.tracker.latest()?.processes ?? []).map((p) => [p.pid, p.cpuMicros]));
+
+test("a nested root's CPU counts once after it ends and its parent's tree reaps it", async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 100, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  h.advance(15_000);
+  // The parent waited for the ended root, so its time now holds the root's.
+  h.state.table = [entry(10, { cpuMicros: 101, name: 'codex' })];
+
+  await h.tracker.tick();
+
+  expect(cpuByPid(h)).toEqual({ 10: 1, 11: 100 });
+});
+
+test('a root nested two deep counts once at each level as each ends', async () => {
+  const h = host();
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 10, ppid: 10 }),
+    entry(12, { cpuMicros: 100, name: 'codex', ppid: 11 }),
+  ];
+  await h.tracker.tick();
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 110, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  const middle = cpuByPid(h);
+  h.state.table = [entry(10, { cpuMicros: 111, name: 'codex' })];
+
+  await h.tracker.tick();
+
+  expect(middle).toEqual({ 10: 1, 11: 10, 12: 100 });
+  expect(cpuByPid(h)).toEqual({ 10: 1, 11: 10, 12: 100 });
+});
+
+test("where a parent's time leaves out its reaped children, an ended nested root takes nothing from it", async () => {
+  const h = host({ includesReaped: false });
+  h.state.table = [
+    entry(10, { cpuMicros: 1, name: 'codex' }),
+    entry(11, { cpuMicros: 100, ppid: 10 }),
+  ];
+  await h.tracker.tick();
+  h.state.table = [entry(10, { cpuMicros: 2, name: 'codex' })];
+
+  await h.tracker.tick();
+
+  expect(cpuByPid(h)).toEqual({ 10: 2, 11: 100 });
 });

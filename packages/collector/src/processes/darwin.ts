@@ -77,6 +77,8 @@ export const createDarwinReader = ({
   ps: (cmd: readonly string[]) => Promise<string>;
 }): ProcessReader => ({
   cwdOf,
+  // `ps` prints each live process's own CPU time.
+  includesReaped: false,
   table: async () => {
     const at = now();
     const entries = parsePs(await ps(['/bin/ps', '-axo', PS_COLUMNS]), at);

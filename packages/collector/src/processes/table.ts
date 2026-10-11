@@ -23,5 +23,8 @@ export type ProcessEntry = {
 // it cannot be read.
 export type ProcessReader = {
   cwdOf: (pid: number) => Promise<string | null>;
+  // Whether a process's CPU time includes the children it has waited for, so
+  // an ended process's time moves into its parent's.
+  includesReaped: boolean;
   table: () => Promise<ProcessEntry[]>;
 };

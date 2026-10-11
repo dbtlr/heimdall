@@ -5,9 +5,18 @@ import { findHarnessRoots } from './roots.ts';
 import type { ProcessEntry, ProcessReader } from './table.ts';
 
 type Running = Omit<HarnessProcess, 'endedAt'>;
-// A running process, with the kernel's start it was first seen with.
-type Tracked = { kernelStart: number | null; process: Running };
 type Ended = HarnessProcess & { endedAt: number };
+
+// A running process as the tracker holds it: the kernel's start it was first
+// seen with, its tree's CPU time as read, the CPU time of nested roots that
+// ended and moved into that reading, and the root whose tree it sits in.
+type Tracked = {
+  absorbedCpuMicros: number;
+  enclosing: string | undefined;
+  kernelStart: number | null;
+  process: Running;
+  readCpuMicros: number;
+};
 
 const keyOf = (process: { harness: string; pid: number }) =>
   `${process.harness}:${String(process.pid)}`;
@@ -34,6 +43,13 @@ const sameProcess = (held: Tracked, entry: ProcessEntry) =>
 // `startedAt` within SAME_HARNESS_PROCESS_MS is the same process. A process's
 // `startedAt` is the one of the tick that first saw it, so a clock step later
 // does not move it.
+//
+// Each CPU second counts once. A root nested in another root's tree reports
+// its own tree, which the enclosing root leaves out. When the nested root ends
+// and a reader's CPU time includes reaped children (`includesReaped`), its time
+// moves into the enclosing root's reading, so the nested root's last reading is
+// subtracted from the enclosing root's from then on. A nested root's CPU used
+// between its last tick and its end still counts in the enclosing root.
 //
 // `latest` is undefined before the first tick, and a new object after each, so
 // the reporter can tell by identity that a tick happened. A tick whose table
@@ -63,6 +79,17 @@ export const createProcessTracker = ({
     latest = { processes: [...ended, ...listed] };
   };
 
+  // Ends a process at `at`. Its CPU time moves into the enclosing root's
+  // reading when the reader counts reaped children, so the enclosing root
+  // subtracts it from now on.
+  const end = (tracked: Tracked, at: number, next: Map<string, Tracked>) => {
+    ended.push({ ...tracked.process, endedAt: at });
+    const enclosing = tracked.enclosing === undefined ? undefined : next.get(tracked.enclosing);
+    if (reader.includesReaped && enclosing !== undefined) {
+      enclosing.absorbedCpuMicros += tracked.readCpuMicros;
+    }
+  };
+
   const rootsAt = async (at: number) => {
     const roots = findHarnessRoots(await reader.table());
     return Promise.all(
@@ -84,6 +111,7 @@ export const createProcessTracker = ({
       const at = now();
       const seen = await rootsAt(at);
       const next = new Map<string, Tracked>();
+      const replaced: Tracked[] = [];
       for (const { cwd, root } of seen) {
         const { entry, harness } = root;
         const key = keyOf({ harness, pid: entry.pid });
@@ -91,10 +119,12 @@ export const createProcessTracker = ({
         const kept = held !== undefined && sameProcess(held, entry) ? held : undefined;
         if (held !== undefined && kept === undefined) {
           // The pid now belongs to another process.
-          ended.push({ ...held.process, endedAt: at });
+          replaced.push(held);
         }
         const before = kept?.process;
         next.set(key, {
+          absorbedCpuMicros: kept?.absorbedCpuMicros ?? 0,
+          enclosing: root.enclosing === undefined ? undefined : keyOf(root.enclosing),
           kernelStart: kept === undefined ? entry.kernelStart : kept.kernelStart,
           process: {
             cpuMicros: root.cpuMicros,
@@ -106,15 +136,20 @@ export const createProcessTracker = ({
             rssBytes: root.rssBytes,
             startedAt: before?.startedAt ?? entry.startedAt,
           },
+          readCpuMicros: root.cpuMicros,
         });
       }
-      for (const [key, { process }] of running) {
+      for (const tracked of replaced) {
+        end(tracked, at, next);
+      }
+      for (const [key, tracked] of running) {
         if (!next.has(key)) {
-          ended.push({ ...process, endedAt: at });
+          end(tracked, at, next);
         }
       }
       running.clear();
       for (const [key, tracked] of next) {
+        tracked.process.cpuMicros = Math.max(0, tracked.readCpuMicros - tracked.absorbedCpuMicros);
         running.set(key, tracked);
       }
       rebuild();

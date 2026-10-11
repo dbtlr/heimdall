@@ -176,6 +176,8 @@ export const createLinuxReader = ({
         return null;
       }
     },
+    // A process's CPU time here includes `cutime` and `cstime`.
+    includesReaped: true,
     table: async () => {
       const [boot, names] = await Promise.all([bootSeconds(), fs.listDir(root)]);
       const pids = names.filter((name) => /^[1-9]\d*$/u.test(name));

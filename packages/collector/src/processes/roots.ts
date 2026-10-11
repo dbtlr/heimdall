@@ -6,6 +6,9 @@ import type { ProcessEntry } from './table.ts';
 // descendants.
 export type HarnessRoot = {
   cpuMicros: number;
+  // The root whose tree holds this root's parent, if any: the one whose CPU
+  // time takes this root's once it ends and is waited for.
+  enclosing: { harness: Harness; pid: number } | undefined;
   entry: ProcessEntry;
   harness: Harness;
   rssBytes: number;
@@ -57,12 +60,34 @@ export const findHarnessRoots = (table: readonly ProcessEntry[]): HarnessRoot[] 
     return { cpuMicros, rssBytes };
   };
 
+  const rootHarnessOf = (entry: ProcessEntry) => {
+    const harness = harnesses.get(entry.pid);
+    return harness !== undefined && isRoot(entry, harness) ? harness : undefined;
+  };
+
+  // The nearest root among a root's ancestors. A loop in the table ends.
+  const enclosingOf = (root: ProcessEntry) => {
+    const visited = new Set([root.pid]);
+    for (
+      let entry = byPid.get(root.ppid);
+      entry !== undefined && !visited.has(entry.pid);
+      entry = byPid.get(entry.ppid)
+    ) {
+      visited.add(entry.pid);
+      const harness = rootHarnessOf(entry);
+      if (harness !== undefined) {
+        return { harness, pid: entry.pid };
+      }
+    }
+    return undefined;
+  };
+
   return table
     .flatMap((entry) => {
-      const harness = harnesses.get(entry.pid);
-      return harness !== undefined && isRoot(entry, harness)
-        ? [{ ...totalsOf(entry), entry, harness }]
-        : [];
+      const harness = rootHarnessOf(entry);
+      return harness === undefined
+        ? []
+        : [{ ...totalsOf(entry), enclosing: enclosingOf(entry), entry, harness }];
     })
     .toSorted(
       (a, b) =>
