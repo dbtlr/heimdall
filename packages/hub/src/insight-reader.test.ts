@@ -59,10 +59,10 @@ const insightViews = async (sql: SQL) => {
 };
 
 // Every table and view in the public schema, each with a column a write can
-// name: one that is neither an identity nor generated.
+// name: one that is neither an identity nor generated, and whether it is a view.
 const publicTables = async (sql: SQL) => {
-  const rows: { column: string; name: string }[] = await sql`
-    SELECT DISTINCT ON (c.relname) c.relname AS name, a.attname AS column
+  const rows: { column: string; name: string; view: boolean }[] = await sql`
+    SELECT DISTINCT ON (c.relname) c.relname AS name, a.attname AS column, c.relkind = 'v' AS view
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -70,7 +70,7 @@ const publicTables = async (sql: SQL) => {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm')
     ORDER BY c.relname, a.attnum
   `;
-  return rows.map(({ column, name }) => ({ column, name }));
+  return rows.map(({ column, name, view }) => ({ column, name, view }));
 };
 
 // The SQLSTATE a statement fails with, or undefined when it succeeds.
@@ -88,6 +88,8 @@ const rowsOf = async (query: Promise<unknown>) => [...((await query) as unknown[
 
 const INSUFFICIENT_PRIVILEGE = '42501';
 const NOT_UPDATABLE = '55000';
+// A write through a view to a column the table generates as an identity.
+const IDENTITY_WRITE = '428C9';
 
 // One Session in the insight views, written straight into the tables the views read.
 const seedSession = async (sql: SQL) => {
@@ -257,25 +259,40 @@ describe('grantInsightReader', () => {
     for (const name of ['transcript_chunks', 'transcript_generations', 'projected_sessions']) {
       expect(names).toContain(name);
     }
-    for (const { column, name } of tables) {
-      const statements = [
-        `SELECT * FROM ${name}`,
+    for (const { column, name, view } of tables) {
+      // oxlint-disable-next-line no-await-in-loop -- one statement at a time names the one that passes.
+      expect([name, await failureOf(reader.sql.unsafe(`SELECT * FROM ${name}`))]).toEqual([
+        name,
+        INSUFFICIENT_PRIVILEGE,
+      ]);
+      // A view that joins, or names an identity column, refuses a write before
+      // it checks privileges.
+      const refusals = view
+        ? [INSUFFICIENT_PRIVILEGE, NOT_UPDATABLE, IDENTITY_WRITE]
+        : [INSUFFICIENT_PRIVILEGE];
+      for (const statement of [
         `INSERT INTO ${name} DEFAULT VALUES`,
         `UPDATE ${name} SET ${column} = ${column}`,
         `DELETE FROM ${name}`,
-      ];
-      for (const statement of statements) {
+      ]) {
         // oxlint-disable-next-line no-await-in-loop -- one statement at a time names the one that passes.
-        expect([statement, await failureOf(reader.sql.unsafe(statement))]).toEqual([
-          statement,
-          INSUFFICIENT_PRIVILEGE,
-        ]);
+        const failure = await failureOf(reader.sql.unsafe(statement));
+        expect([statement, refusals.includes(String(failure))]).toEqual([statement, true]);
       }
     }
+    // A view can refuse a write as not updatable before PostgreSQL checks the
+    // role's privileges, so a refused statement alone could hide a write grant.
+    const writable: { name: string }[] = await db.sql`
+      SELECT n.nspname || '.' || c.relname AS name
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname IN ('public', 'insight') AND c.relkind IN ('r', 'p', 'v', 'm')
+        AND has_table_privilege(${reader.name}, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
+    `;
+    expect(writable).toEqual([]);
     for (const view of await insightViews(db.sql)) {
       for (const statement of [
         `INSERT INTO insight.${view} DEFAULT VALUES`,
-        `UPDATE insight.${view} SET harness = harness`,
+        `UPDATE insight.${view} SET system = system`,
         `DELETE FROM insight.${view}`,
       ]) {
         // A view that joins or groups refuses a write before it checks privileges.
