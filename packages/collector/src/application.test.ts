@@ -2,14 +2,21 @@ import { expect, test } from 'bun:test';
 import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
+
+import packageJson from '../package.json' with { type: 'json' };
 import { givenIdentity, invoke, TOKEN } from './testing/cli.ts';
 import { fakeHub } from './testing/fake-hub.ts';
 import { tempStateDir } from './testing/fixtures.ts';
-import { versionLine } from './version.ts';
 
-test('--version prints the version line Fleet compares and exits 0', async () => {
+test('--version names the Collector release and the Report schema it speaks, and exits 0', async () => {
   const { code, stderr, stdout } = await invoke(['--version']);
-  expect(stdout).toBe(`${versionLine()}\n`);
+  expect(stdout).toMatch(
+    /^heimdall-collector v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)? \(Report schema v\d+\)\n$/,
+  );
+  expect(stdout).toBe(
+    `heimdall-collector v${packageJson.version} (Report schema v${REPORT_SCHEMA_VERSION})\n`,
+  );
   expect(stderr).toBe('');
   expect(code).toBe(0);
 });

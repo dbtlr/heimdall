@@ -8,6 +8,7 @@ import { text } from 'node:stream/consumers';
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
+import packageJson from '../package.json' with { type: 'json' };
 import { app } from './application.ts';
 import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
@@ -15,7 +16,6 @@ import { gzip } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
-import { versionLine } from './version.ts';
 
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
 
@@ -91,9 +91,12 @@ const configFile = async (lines: string[]) => {
   return { path, [Symbol.asyncDispose]: () => rm(dir, { force: true, recursive: true }) };
 };
 
-test('--version prints the version line Fleet compares and exits 0', async () => {
+test('--version names the Hub release and the Report schema it accepts, and exits 0', async () => {
   const { code, stderr, stdout } = await invoke(['--version']);
-  expect(stdout).toBe(`${versionLine()}\n`);
+  expect(stdout).toMatch(/^heimdall-hub v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)? \(Report schema v\d+\)\n$/);
+  expect(stdout).toBe(
+    `heimdall-hub v${packageJson.version} (Report schema v${REPORT_SCHEMA_VERSION})\n`,
+  );
   expect(stderr).toBe('');
   expect(code).toBe(0);
 });
