@@ -23,6 +23,7 @@ export type Request = {
   cacheWrite: number;
   cacheWrite1h: number | null;
   cacheWrite5m: number | null;
+  contextWindow?: number | null;
   input: number;
   model: string;
   offset: number;
@@ -48,6 +49,7 @@ export type ToolCall = {
   offset: number;
   requestId: string | null;
   skill: string | null;
+  skillInferred?: boolean;
 };
 
 // Where a conversation was at a moment: its directory, branch, and Harness version.
@@ -67,6 +69,7 @@ export type AgentMeta = {
   agentType: string | null;
   depth: number | null;
   parentAgentId: string | null;
+  parentThreadId?: string | null;
   toolUseId: string | null;
   workflowPhase: string | null;
   workflowRun: string | null;
@@ -87,6 +90,8 @@ export type Batch = {
   toolCalls: ToolCall[];
   transcript: boolean;
   unreadableLines: number;
+  // Opaque, content-free continuation state, committed with byte progress.
+  state?: unknown;
 };
 
 // What a file holds, from its path: facts to parse; nothing, as a file of
@@ -113,10 +118,16 @@ export type HarnessParser = {
     factLimit: number;
     offset: number;
     path: string;
+    state?: unknown;
   }) => Batch;
   requestIdOf: (line: unknown) => string | null;
   version: number;
 };
+
+// The model a request names when the Harness recorded usage it cannot
+// attribute to a model, as Codex usage outside any turn it knows. Reserved:
+// the price table holds no entry for it, so such a request is never priced.
+export const UNATTRIBUTED_MODEL = 'unknown';
 
 // The bounds a line is held to. A line longer than `MAX_LINE_BYTES` is
 // unreadable, and is skipped without being held whole. An id or a name is at

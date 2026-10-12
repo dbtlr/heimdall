@@ -626,6 +626,25 @@ describe('the bundled table', () => {
     expect(row?.n).toBe(BUNDLED_PRICES.length + 1);
   });
 
+  test('refuses an entry for the reserved model unknown, bundled or configured, and keeps the table', async () => {
+    await using db = await prepared({ bundled: [PRICE] });
+    const reserved = { ...PRICE, model: 'unknown' };
+
+    for (const prices of [
+      { bundled: [reserved], configured: [] },
+      { bundled: [PRICE], configured: [reserved] },
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- each load is refused in turn.
+      const refused = await syncPrices(db.sql, prices).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect((refused as Error).message).toContain('The model unknown is reserved');
+    }
+    const rows: { model: string }[] = await db.sql`SELECT model FROM model_prices`;
+    expect(rows).toEqual([{ model: MODEL }]);
+  });
+
   test('loads into a migrated database', async () => {
     await using db = await testDatabase();
     await migrate(db.sql);
@@ -719,6 +738,14 @@ describe('a price overrides file', () => {
     ],
   ])('rejects %s', (_name, text) => {
     expect(() => parsePriceOverrides(text)).toThrow();
+  });
+
+  test('refuses an entry for the reserved model unknown, and says why', () => {
+    expect(() =>
+      parsePriceOverrides(
+        '{"prices":[{"model":"unknown","validFrom":"2026-01-01","input":1,"output":1,"contextWindow":1}]}',
+      ),
+    ).toThrow('prices.0.model: The model unknown is reserved');
   });
 
   test('loads from a path, and names the path when it cannot', async () => {

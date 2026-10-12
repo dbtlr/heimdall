@@ -728,7 +728,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // request with no such row, or with tokens of a kind the row has no price
     // for, has a null cost; it is never free. A cache write the Harness did
     // not split is priced as a 5-minute write. A request's context window
-    // comes from the row alone.
+    // comes from the row here; migration 18 prefers one the Harness recorded.
     sql: `
       CREATE TABLE model_prices (
         model text NOT NULL,
@@ -849,6 +849,71 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER VIEW insight.parse_status SET (security_barrier = true);
     `,
     version: 17,
+  },
+  {
+    // Codex resumes with header and turn facts from earlier batches. Skills
+    // inferred from reads stay distinguishable from recorded invocations. A
+    // context window the Harness recorded on a request takes precedence over
+    // the price table's.
+    sql: `
+      ALTER TABLE parse_progress ADD COLUMN parser_state jsonb;
+      ALTER TABLE parse_progress ADD COLUMN agent_id text;
+      ALTER TABLE projected_subagents ADD COLUMN parent_thread_id text;
+      CREATE UNIQUE INDEX projected_codex_subagents_by_thread
+        ON projected_subagents (harness, parser_version, system, source, agent_id) WHERE harness = 'codex';
+      CREATE INDEX projected_codex_subagents_to_link
+        ON projected_subagents (parser_version) WHERE harness = 'codex' AND depth IS NULL;
+      ALTER TABLE projected_requests ADD COLUMN context_window bigint;
+      ALTER TABLE projected_tool_calls ADD COLUMN skill_inferred boolean NOT NULL DEFAULT false;
+
+      CREATE OR REPLACE VIEW insight.requests WITH (security_barrier = true) AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+             r.cache_write_tokens, r.cache_write_5m_tokens, r.cache_write_1h_tokens,
+             r.input_tokens + r.cache_read_tokens + r.cache_write_tokens AS context_tokens,
+             r.stop_reason, r.skill, g.path, r.generation, r.byte_offset, r.parser_version,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+               + price_tokens(r.output_tokens, price.output_per_mtok)
+               + price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+               + price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
+                              price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cost_usd,
+             COALESCE(r.context_window, price.context_window) AS context_window,
+             (r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)::numeric * 100
+               / COALESCE(r.context_window, price.context_window) AS context_fill_percent
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      JOIN transcript_generations g ON g.id = r.generation
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM model_prices p
+        WHERE p.model = regexp_replace(r.model, '-[0-9]{8}$', '') AND p.valid_from <= r.at
+          AND p.min_prompt_tokens <= r.input_tokens + r.cache_read_tokens + r.cache_write_tokens
+        ORDER BY p.min_prompt_tokens DESC, p.valid_from DESC, p.source = 'configured' DESC
+        LIMIT 1
+      ) price ON true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+
+      CREATE OR REPLACE VIEW insight.tool_calls WITH (security_barrier = true) AS
+      SELECT t.harness, t.system, t.source, t.session_id, t.agent_id, t.request_id, t.call_id,
+             t.at, t.kind, t.name, t.mcp_server, t.skill, g.path, t.generation, t.byte_offset,
+             t.parser_version, t.skill_inferred
+      FROM projected_tool_calls t
+      JOIN current_parsers c ON c.harness = t.harness AND c.version = t.parser_version
+      JOIN transcript_generations g ON g.id = t.generation
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = t.harness AND x.system = t.system AND x.source = t.source
+          AND x.session_id = t.session_id
+      );
+    `,
+    version: 18,
   },
 ];
 
