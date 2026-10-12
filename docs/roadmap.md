@@ -90,15 +90,15 @@ Size: large. Sharp edges: duplicated usage in each Harness's transcript format, 
 
 ## M6: Dashboard
 
-The full UI, designed before it is built.
+The full UI, designed before it is built, as its own app that reads the Hub's database ([ADR-0015](decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)).
 
-- Static mock variants first. One is chosen before any component is written.
-- Fleet overview: every System with last seen, headline Vitals, and open Conditions.
-- System detail: Vitals charts with min/max ranges and Session overlays, recorded Services and jobs with their health and runs, Applications, Drift, and the Timeline.
-- Session views: what each Session did and cost.
+- Static mock variants first. One is chosen before any component is written. The chosen direction puts every System on one time axis.
+- Fleet overview: every System as a lane on a shared time axis, with its CPU, agent Sessions, Conditions where they were raised and cleared, last seen, and open Conditions.
+- System detail: Vitals with min/max ranges, CPU per Harness process, and the System's Sessions stacked on one axis, with a panel that inspects one sample; recorded Services and jobs with their health and runs, Applications, Drift, and the Timeline.
+- Session views: what each Session did and cost, mocked in a second round in the same direction.
 - Readable on a phone.
 
-Size: large. M1's plain page carries the project until here. Mocks can start once M4 and M5 fix the data shape; its reports and graphs read M5's `insight` views.
+Size: large. M1's plain page carries the project until the dashboard shows everything it shows. Session facts come from M5's `insight` views.
 
 ## Later
 

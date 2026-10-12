@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -47,6 +47,10 @@ _Avoid_: agent (reserved for the AI driving a Harness), exporter, daemon
 **Hub**:
 The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, derives Session insight from transcripts, and serves the web dashboard.
 _Avoid_: server, backend
+
+**dashboard**:
+The web app that shows the fleet: every System's Vitals, records, and Conditions, and its agent Sessions. It runs on the Hub's System and reads the Hub's database; until it shows everything, the Hub's own page remains.
+_Avoid_: UI, frontend, console
 
 **Report**:
 One payload from a Collector to the Hub: a batch of Vitals samples, and the Collector's records and its checks of them. Its shape is the versioned wire schema. Transcripts travel separately.

@@ -15,6 +15,7 @@ Roles and Principles describe Heimdall as designed. Sections marked _planned_ de
 | System | everywhere | One machine in the fleet, named by a DNS label. |
 | Collector | on each System, as one account | Samples Vitals, holds what provisioners record, checks it, finds the installed Harnesses and their versions, watches the running Harness processes, and sends Reports and transcripts to the Hub. |
 | Hub | on one System | Stores Reports and transcripts in PostgreSQL, derives Conditions, mirrors each System's records, derives Session insight from transcripts, and serves the dashboard. |
+| Dashboard | on the Hub's System | Reads the Hub's database and shows every System, its Vitals, records, and Conditions, and its agent Sessions ([ADR-0015](decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)). |
 | Provisioner | wherever its operator runs it | Installs things on Systems and records them with each System's Collector. Fleet is one provisioner; [Running Heimdall with Fleet](fleet.md) shows how it does this. |
 
 A System joins by pairing its Collector with the Hub once, as the [README](../README.md#pairing-a-new-system) describes.
