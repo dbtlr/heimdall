@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -88,9 +88,9 @@ _Avoid_: turn (a prompt and everything the agent does in reply), message, API ca
 What the Hub derives from the transcripts it holds: each Session and subagent, each request, and each tool call, read through the `insight` views. It is a projection of the archive that the Hub rebuilds when a Harness's parser changes, so it never holds a fact the surviving transcripts do not.
 _Avoid_: analytics, stats, metrics (too broad)
 
-**cost**:
-What a Session's or a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. A model with no known price is unpriced, never free.
-_Avoid_: bill, charge, price (the per-token rate cost is computed from)
+**list-price cost**:
+What a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. Each kind of token, such as input, output, and cache reads and writes, is priced separately, from a dated price table that configuration can override. A Session's list-price cost is the sum over its requests, subagents included. A request whose model has no price for its day is unpriced, never free, and a total that includes one has no list-price cost, only a count of its unpriced requests and a lower bound, the cost of the requests that are priced.
+_Avoid_: cost (alone, where a subscription's spend could be meant), bill, charge, spend, price (the per-token rate list-price cost is computed from)
 
 **Harness install**:
 One copy of a Harness on a System, found by the Collector in a place such as a tool manager's install directory or an npm package, with its location kind and its version, or `unknown` when the version cannot be read. A System can have several. The Collector reads files to find it and never runs the Harness.
