@@ -712,6 +712,118 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 15,
   },
+  {
+    // List-price cost and context fill, computed when read and never stored
+    // (ADR-0014). `model_prices` holds the Hub's price table, loaded by
+    // `serve` from the bundled prices and the configured ones (prices.ts,
+    // price-table.ts): one row per model, start day, and source, in dollars
+    // per million tokens. A request is priced by the row with the latest
+    // `valid_from` on or before its time, a configured row before a bundled
+    // one of the same day, for its model without a `-YYYYMMDD` suffix. A
+    // request with no such row, or with tokens of a kind the row has no price
+    // for, has a null cost; it is never free. A cache write the Harness did
+    // not split is priced as a 5-minute write. A request's recorded context
+    // window, when a Harness records one, takes precedence over the row's:
+    // COALESCE it ahead of `price.context_window` below.
+    sql: `
+      CREATE TABLE model_prices (
+        model text NOT NULL,
+        valid_from timestamptz NOT NULL,
+        source text NOT NULL CHECK (source IN ('bundled', 'configured')),
+        input_per_mtok numeric NOT NULL CHECK (input_per_mtok >= 0),
+        output_per_mtok numeric NOT NULL CHECK (output_per_mtok >= 0),
+        cache_read_per_mtok numeric CHECK (cache_read_per_mtok >= 0),
+        cache_write_5m_per_mtok numeric CHECK (cache_write_5m_per_mtok >= 0),
+        cache_write_1h_per_mtok numeric CHECK (cache_write_1h_per_mtok >= 0),
+        context_window bigint NOT NULL CHECK (context_window > 0),
+        PRIMARY KEY (model, valid_from, source)
+      );
+
+      -- Tokens at a price per million tokens. No tokens cost nothing even at no
+      -- price; tokens at no price have no cost.
+      CREATE FUNCTION price_tokens(tokens bigint, per_mtok numeric) RETURNS numeric
+      LANGUAGE sql IMMUTABLE AS $$
+        SELECT CASE WHEN tokens = 0 THEN 0 ELSE tokens * per_mtok / 1000000 END
+      $$;
+
+      CREATE OR REPLACE VIEW insight.requests AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+             r.cache_write_tokens, r.cache_write_5m_tokens, r.cache_write_1h_tokens,
+             r.input_tokens + r.cache_read_tokens + r.cache_write_tokens AS context_tokens,
+             r.stop_reason, r.skill, g.path, r.generation, r.byte_offset, r.parser_version,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+               + price_tokens(r.output_tokens, price.output_per_mtok)
+               + price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+               + price_tokens(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0),
+                              price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cost_usd,
+             price.context_window AS context_window,
+             (r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)::numeric * 100
+               / price.context_window AS context_fill_percent
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      JOIN transcript_generations g ON g.id = r.generation
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM model_prices p
+        WHERE p.model = regexp_replace(r.model, '-[0-9]{8}$', '') AND p.valid_from <= r.at
+        ORDER BY p.valid_from DESC, p.source = 'configured' DESC
+        LIMIT 1
+      ) price ON true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+
+      -- cost_usd is null when any request is unpriced, so a partial sum is never
+      -- read as the total; priced_cost_usd is the sum over the priced requests,
+      -- null when there are none.
+      CREATE OR REPLACE VIEW insight.session_totals AS
+      SELECT s.harness, s.system, s.source, s.session_id,
+             count(r.request_id)::bigint AS requests,
+             COALESCE(sum(r.input_tokens), 0)::bigint AS input_tokens,
+             COALESCE(sum(r.output_tokens), 0)::bigint AS output_tokens,
+             sum(r.reasoning_tokens)::bigint AS reasoning_tokens,
+             COALESCE(sum(r.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+             COALESCE(sum(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+             sum(r.cache_write_5m_tokens)::bigint AS cache_write_5m_tokens,
+             sum(r.cache_write_1h_tokens)::bigint AS cache_write_1h_tokens,
+             CASE WHEN count(r.request_id) FILTER (WHERE r.cost_usd IS NULL) = 0
+                  THEN COALESCE(sum(r.cost_usd), 0) END AS cost_usd,
+             sum(r.cost_usd) AS priced_cost_usd,
+             (count(r.request_id) FILTER (WHERE r.cost_usd IS NULL))::bigint AS unpriced_requests
+      FROM insight.sessions s
+      LEFT JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id
+      GROUP BY s.harness, s.system, s.source, s.session_id;
+
+      CREATE OR REPLACE VIEW insight.main_conversation_totals AS
+      SELECT s.harness, s.system, s.source, s.session_id,
+             count(r.request_id)::bigint AS requests,
+             COALESCE(sum(r.input_tokens), 0)::bigint AS input_tokens,
+             COALESCE(sum(r.output_tokens), 0)::bigint AS output_tokens,
+             sum(r.reasoning_tokens)::bigint AS reasoning_tokens,
+             COALESCE(sum(r.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+             COALESCE(sum(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+             sum(r.cache_write_5m_tokens)::bigint AS cache_write_5m_tokens,
+             sum(r.cache_write_1h_tokens)::bigint AS cache_write_1h_tokens,
+             CASE WHEN count(r.request_id) FILTER (WHERE r.cost_usd IS NULL) = 0
+                  THEN COALESCE(sum(r.cost_usd), 0) END AS cost_usd,
+             sum(r.cost_usd) AS priced_cost_usd,
+             (count(r.request_id) FILTER (WHERE r.cost_usd IS NULL))::bigint AS unpriced_requests
+      FROM insight.sessions s
+      LEFT JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id AND r.agent_id IS NULL
+      GROUP BY s.harness, s.system, s.source, s.session_id;
+    `,
+    version: 16,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
