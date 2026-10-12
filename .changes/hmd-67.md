@@ -1,0 +1,4 @@
+### Added
+
+- **The `insight` views price each request at API list prices** (HMD-67). `insight.requests` gains `cost_usd`, `context_window`, and `context_fill_percent`, and the totals views gain `cost_usd`, `priced_cost_usd`, and `unpriced_requests`. A request is priced from a dated table the Hub bundles for current Claude and OpenAI models, by the entry in force at the request's time, so a price change never reprices earlier requests. A request whose model has no price is unpriced (null), never free, and a total that includes one says so. Cost is computed when read and never stored. See [Cost](docs/spec.md#cost).
+- **Price overrides in the Hub's configuration.** `[prices] overrides`, `--price-overrides`, or `HEIMDALL_PRICE_OVERRIDES` names a JSON file of entries dated like the bundled ones, which add models or replace a bundled price from a date. See [Cost](docs/spec.md#cost).
