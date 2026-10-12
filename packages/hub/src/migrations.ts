@@ -830,6 +830,26 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 16,
   },
+  {
+    // Every `insight` view is a security barrier, so the insight reader's own
+    // filters run only on the rows a view shows. Without it, the planner can
+    // run a reader's filter on a row the view hides, such as a Session a
+    // delete is deriving again, a parser version that is not current, or a
+    // deleted generation's path, and an error or a function the filter calls
+    // shows that row's values. CREATE OR REPLACE VIEW resets a view's options,
+    // so a later migration that creates or replaces an `insight` view writes
+    // `WITH (security_barrier = true)` each time.
+    sql: `
+      ALTER VIEW insight.sessions SET (security_barrier = true);
+      ALTER VIEW insight.subagents SET (security_barrier = true);
+      ALTER VIEW insight.requests SET (security_barrier = true);
+      ALTER VIEW insight.tool_calls SET (security_barrier = true);
+      ALTER VIEW insight.session_totals SET (security_barrier = true);
+      ALTER VIEW insight.main_conversation_totals SET (security_barrier = true);
+      ALTER VIEW insight.parse_status SET (security_barrier = true);
+    `,
+    version: 17,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

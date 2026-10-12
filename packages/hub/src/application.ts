@@ -7,9 +7,10 @@ import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { date, integer, text, url } from '@loomcli/validators';
 
+import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
 import { serveAction } from './serve.ts';
-import { deleteTranscriptsAction } from './transcript-commands.ts';
+import { deleteTranscriptsAction, showTranscriptAction } from './transcript-commands.ts';
 import { HUB_VERSION, versionPostfix } from './version.ts';
 
 // SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops
@@ -56,6 +57,19 @@ export const serve = new Command('serve', {
     extensions: [configInput({ path: 'prices.overrides' })],
     type: 'string',
     validate: text({ minLength: 1 }),
+  })
+  // The role the provisioner creates to read the insight views, and nothing
+  // else. Unset, serve grants no role anything.
+  .option('insight-reader', {
+    description:
+      'PostgreSQL role to let read the insight views as serve starts. The provisioner creates it.',
+    env: 'HEIMDALL_INSIGHT_READER',
+    extensions: [configInput({ path: 'database.insight_reader' })],
+    type: 'string',
+    validate: text({
+      message: 'Use a lowercase PostgreSQL role name, such as heimdall_insight.',
+      pattern: INSIGHT_READER_ROLE,
+    }),
   })
   .action(serveAction);
 
@@ -108,9 +122,60 @@ export const deleteTranscripts = new Command('delete', {
   .option('database', database)
   .action(deleteTranscriptsAction);
 
+export const showTranscript = new Command('show', {
+  description:
+    "Print raw JSONL transcript lines: a Session's with --session, a request's with --request, or a generation's or the line at a locator with --generation.",
+})
+  .option('system', {
+    description: 'The System the transcript is from. A Session or a request needs it.',
+    type: 'string',
+    validate: text({ message: 'Use a Fleet System name, such as laptop-1.', pattern: SYSTEM_NAME }),
+  })
+  .option('source', {
+    description:
+      'The source the transcript is from, such as claude-code. A Session or a request needs it.',
+    type: 'string',
+    validate: text({ message: 'Use a source name, such as claude-code.', pattern: SOURCE_NAME }),
+  })
+  .option('session', {
+    description: "The Session's id, as the insight views name it. Prints its main conversation.",
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
+  .option('agent', {
+    description: "With --session, prints this subagent's transcript instead.",
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
+  .option('request', {
+    description:
+      "A request's id, as the insight views name it. Prints every line of it, as its Harness's parser reads them.",
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
+  .option('path', {
+    description: 'With --generation, the path within the source the generation must be of.',
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
+  .option('generation', {
+    description: 'The generation a locator names. Alone, prints the whole generation.',
+    type: 'string',
+    validate: integer({ min: 1 }),
+  })
+  .option('offset', {
+    description: "With --generation, the locator's byte offset. Prints the line that starts there.",
+    type: 'string',
+    validate: integer({ min: 0 }),
+  })
+  .option('database', database)
+  .action(showTranscriptAction);
+
 const transcripts = new Command('transcripts', {
   description: 'Manage the archive of agent Session transcripts.',
-}).command(deleteTranscripts);
+})
+  .command(showTranscript)
+  .command(deleteTranscripts);
 
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {

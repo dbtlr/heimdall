@@ -86,12 +86,15 @@ About once an hour, `serve` deletes raw Vitals samples older than 14 days and ro
 
 `GET /api/health` needs no token. It answers `200` with `{"database":"ok","version":"<version>"}` when the database answers a trivial query, and `503` with `{"database":"not answering","version":"<version>"}` when it fails or takes more than 2 seconds. Fleet's health check polls it, and `version` is the release `--version` prints.
 
-| Flag         | Variable                | File key         | Default     |
-| ------------ | ----------------------- | ---------------- | ----------- |
-| `--database` | `HEIMDALL_DATABASE_URL` | `[database] url` | none        |
-| `--host`     | `HEIMDALL_HOST`         | `host`           | `127.0.0.1` |
-| `--port`     | `HEIMDALL_PORT`         | `port`           | `8080`      |
+| Flag               | Variable                  | File key                    | Default     |
+| ------------------ | ------------------------- | --------------------------- | ----------- |
+| `--database`       | `HEIMDALL_DATABASE_URL`   | `[database] url`            | none        |
+| `--host`           | `HEIMDALL_HOST`           | `host`                      | `127.0.0.1` |
+| `--port`           | `HEIMDALL_PORT`           | `port`                      | `8080`      |
+| `--insight-reader` | `HEIMDALL_INSIGHT_READER` | `[database] insight_reader` | none        |
 | `--price-overrides` | `HEIMDALL_PRICE_OVERRIDES` | `[prices] overrides` | none |
+
+`--insight-reader` names a read-only PostgreSQL role, which the provisioner creates, that `serve` lets read the `insight` views and nothing else. [Querying the insight views](docs/insight-reader.md) describes it.
 
 `--price-overrides` names a JSON file of model prices that add to or replace the Hub's bundled API list prices, which `serve` loads as it starts; a relative path resolves from the working directory, not from the configuration file. See [Cost](docs/spec.md#cost) for the file's format. `pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Top-level keys come before the `[database]` table:
 

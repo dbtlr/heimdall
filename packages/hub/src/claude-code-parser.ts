@@ -488,5 +488,13 @@ export const claudeCodeParser: HarnessParser = {
       }
     }
   },
+  // Every line of a response repeats its `message.id`, one per content block.
+  requestIdOf: (line) => {
+    if (!isRecord(line) || line.type !== 'assistant' || !isRecord(line.message)) {
+      return null;
+    }
+    const id = shapedOf(line.message.id, 'id');
+    return id.kind === 'shaped' ? id.value : null;
+  },
   version: CLAUDE_CODE_PARSER_VERSION,
 };

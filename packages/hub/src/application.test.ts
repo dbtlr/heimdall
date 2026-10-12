@@ -2,94 +2,18 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import packageJson from '../package.json' with { type: 'json' };
-import { app } from './application.ts';
 import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
+import { configArgs, configFile, hubConfig, invoke } from './testing/cli.ts';
 import { gzip } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
-
-const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
-
-// Runs the Hub command line in-process and captures what it prints. Once `serve`
-// logs the address it listens on, `whileServing` runs against that address and
-// the run is cancelled; a safety timeout cancels it after a few seconds anyway.
-// HOME is a fresh directory unless `env` names one, so `serve` never rotates a
-// real log.
-const invoke = async (
-  argv: string[],
-  {
-    cwd,
-    env = {},
-    whileServing,
-  }: {
-    cwd?: string;
-    env?: Record<string, string>;
-    whileServing?: (hub: URL) => Promise<void>;
-  } = {},
-) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  const controller = new AbortController();
-  const safety = setTimeout(() => controller.abort(), 5000);
-  const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
-  let logged = '';
-  let serving: Promise<void> | undefined;
-  stdout.on('data', (chunk: Buffer) => {
-    logged += chunk.toString();
-    const url = LISTENING.exec(logged)?.groups?.url;
-    if (url !== undefined && serving === undefined) {
-      serving = (async () => {
-        try {
-          await whileServing?.(new URL(url));
-        } finally {
-          controller.abort();
-        }
-      })();
-    }
-  });
-  const errors = text(stderr);
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  // Bun ignores assigning undefined, so an unset code is restored as 0.
-  const runnerExitCode = process.exitCode;
-  let code: number;
-  try {
-    code = await app.run({
-      host: {
-        argv,
-        env: { HOME: home, ...env },
-        stderr,
-        stdout,
-        ...(cwd === undefined ? {} : { cwd }),
-      },
-      signal: controller.signal,
-    });
-    await serving;
-  } finally {
-    process.exitCode = runnerExitCode ?? 0;
-    clearTimeout(safety);
-    await rm(home, { force: true, recursive: true });
-  }
-  stdout.end();
-  stderr.end();
-  return { code, stderr: await errors, stdout: logged };
-};
-
-// A configuration file in a fresh directory that removes itself when disposed.
-const configFile = async (lines: string[]) => {
-  const dir = await mkdtemp(join(tmpdir(), 'heimdall-hub-'));
-  const path = join(dir, 'hub.toml');
-  await writeFile(path, lines.join('\n'));
-  return { path, [Symbol.asyncDispose]: () => rm(dir, { force: true, recursive: true }) };
-};
 
 test('--version names the Hub release and the Report schema it accepts, and exits 0', async () => {
   const { code, stderr, stdout } = await invoke(['--version']);
@@ -121,12 +45,6 @@ test('a stray argument is a usage error', async () => {
   expect(stderr).toContain('accepts no arguments');
   expect(code).toBe(2);
 });
-
-// The Hub's configuration file for the database `db`, listening on a free port.
-const hubConfig = (db: { url: URL }) =>
-  configFile(['host = "127.0.0.1"', 'port = 0', '[database]', `url = "${db.url.href}"`]);
-
-const configArgs = (config: { path: string }) => ['--config', config.path];
 
 const SHOWN_CODE =
   /Pairing code for (?<system>\S+): (?<code>[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4})\n/u;
