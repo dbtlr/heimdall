@@ -1,1 +1,1 @@
-export { versionLine } from './version.ts';
+export { versionPostfix } from './version.ts';
