@@ -89,7 +89,7 @@ What the Hub derives from the transcripts it holds: each Session and subagent, e
 _Avoid_: analytics, stats, metrics (too broad)
 
 **list-price cost**:
-What a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. Each kind of token, such as input, output, and cache reads and writes, is priced separately, from a dated price table that configuration can override. A Session's list-price cost is the sum over its requests, subagents included. A request whose model has no price for its day is unpriced, never free, and a total that includes one has no list-price cost, only a count of its unpriced requests.
+What a request's tokens would cost at the model's API list prices on the day they were used: an approximation, not what a subscription plan billed. Each kind of token, such as input, output, and cache reads and writes, is priced separately, from a dated price table that configuration can override. A Session's list-price cost is the sum over its requests, subagents included. A request whose model has no price for its day is unpriced, never free, and a total that includes one has no list-price cost, only a count of its unpriced requests and a lower bound, the cost of the requests that are priced.
 _Avoid_: cost (alone, where a subscription's spend could be meant), bill, charge, spend, price (the per-token rate list-price cost is computed from)
 
 **Harness install**:

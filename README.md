@@ -91,8 +91,9 @@ About once an hour, `serve` deletes raw Vitals samples older than 14 days and ro
 | `--database` | `HEIMDALL_DATABASE_URL` | `[database] url` | none        |
 | `--host`     | `HEIMDALL_HOST`         | `host`           | `127.0.0.1` |
 | `--port`     | `HEIMDALL_PORT`         | `port`           | `8080`      |
+| `--price-overrides` | `HEIMDALL_PRICE_OVERRIDES` | `[prices] overrides` | none |
 
-`pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Top-level keys come before the `[database]` table:
+`--price-overrides` names a JSON file of model prices that add to or replace the Hub's bundled API list prices, which `serve` loads as it starts; a relative path resolves from the working directory, not from the configuration file. See [Cost](docs/spec.md#cost) for the file's format. `pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else `.config/heimdall/hub.toml` or `.config/heimdall/hub.json` in the working directory and then the home directory, which is `~/.config/heimdall/hub.toml`. Top-level keys come before the `[database]` table:
 
 ```toml
 host = "127.0.0.1"
