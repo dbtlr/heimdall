@@ -204,6 +204,19 @@ const storeTranscriptSources = async (
     WHERE transcript_sources.sent_at <= excluded.sent_at
        OR transcript_sources.sent_at > ${receivedAt}
   `;
+  // Which Harness each source runs outlasts the set, so the projection can
+  // parse a removed source's transcripts (ADR-0014). The latest Report sent
+  // names it, under the same rule as the set.
+  await sql`
+    INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
+    SELECT ${system}, s->>'name', s->>'harness', ${new Date(sentAt)}
+    FROM jsonb_array_elements(${storableJson(sources)}::text::jsonb) AS s
+    ON CONFLICT (system, source) DO UPDATE SET
+      harness = excluded.harness,
+      sent_at = excluded.sent_at
+    WHERE transcript_source_harnesses.sent_at <= excluded.sent_at
+       OR transcript_source_harnesses.sent_at > ${receivedAt}
+  `;
 };
 
 // Replaces the System's Harness installs with a Report's, unless the Hub holds

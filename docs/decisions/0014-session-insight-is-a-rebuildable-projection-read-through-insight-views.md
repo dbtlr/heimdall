@@ -59,3 +59,7 @@ The read-only role sees which Sessions ran, where, with which models and tools, 
 A price fix that changes the compiled table needs a Hub release. Until then, a configuration override covers it.
 
 A Harness that changes its transcript format needs a parser release before its new Sessions are counted correctly. A parser version bump then rebuilds that Harness's history under the new rules.
+
+## Changelog
+
+- 2026-10-11: Clarification of how the Hub rebuilds. A parser's new version writes its rows beside the current version's, and `current_parsers` switches the views to it in one statement once it has read every generation at least as far as the current version had; only then are the earlier rows deleted. While a rebuild runs only the new parser's code runs, so the current set stays as it was. Versions only move forward: no Hub switches a Harness to an earlier version, and a Hub deletes only rows of versions earlier than both the current version and its own. A generation that cannot be read or stored, or whose parse fails three runs in a row, is recorded failed for its parser version, and the next version tries it again. A delete and the batches being stored never overlap, so nothing derived from a deleted generation outlives it. A Session that deleting a generation touched is hidden from the views until it is derived again, then reappears whole. The decision is unchanged.

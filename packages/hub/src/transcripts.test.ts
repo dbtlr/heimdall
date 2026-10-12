@@ -415,7 +415,82 @@ const generations = async (sql: SQL) => {
   return rows.map((row) => Number(row.id));
 };
 
+// PostgreSQL aborts one side of a deadlock between a delete and the
+// projection's cleanup, which takes no lock the delete knows of.
+const deadlock = () => Object.assign(new Error('deadlock detected'), { errno: '40P01' as const });
+
+// `sql` whose transactions fail with `error` for the first `failures` begins.
+const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
+  let begun = 0;
+  return Object.assign(
+    new Proxy(sql, {
+      get: (target, property) => {
+        if (property === 'begin') {
+          return (...args: Parameters<SQL['begin']>) => {
+            begun += 1;
+            return begun <= failures ? Promise.reject(error()) : target.begin(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }),
+    { begun: () => begun },
+  );
+};
+
 describe('deleting transcripts', () => {
+  test('retries its transaction with a backoff when PostgreSQL aborts it for a deadlock', async () => {
+    await using h = await startHub();
+    await upload(h, NOW);
+    const sql = failingBegins(h.db.sql, 2, deadlock);
+    const waits: number[] = [];
+
+    const removed = await deleteTranscripts(sql, {
+      now: NOW,
+      sleep: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+      system: 'laptop-1',
+    });
+
+    expect(removed.generations).toBe(1);
+    expect(await generations(h.db.sql)).toEqual([]);
+    expect(waits).toEqual([100, 200]);
+  });
+
+  test('gives up with the deadlock after three tries, deleting nothing', async () => {
+    await using h = await startHub();
+    const kept = await upload(h, NOW);
+    const sql = failingBegins(h.db.sql, 10, deadlock);
+
+    const failure = await deleteTranscripts(sql, {
+      now: NOW,
+      sleep: () => Promise.resolve(),
+      system: 'laptop-1',
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ errno: '40P01' });
+    expect(sql.begun()).toBe(3);
+    expect(await generations(h.db.sql)).toEqual([kept]);
+  });
+
+  test('does not retry an error that is not a deadlock', async () => {
+    await using h = await startHub();
+    await upload(h, NOW);
+    const sql = failingBegins(h.db.sql, 10, () => new Error('boom'));
+
+    const failure = await deleteTranscripts(sql, {
+      now: NOW,
+      sleep: () => Promise.resolve(),
+      system: 'laptop-1',
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ message: 'boom' });
+    expect(sql.begun()).toBe(1);
+  });
+
   test("removes a System's generations, whole, and reports what it removed", async () => {
     await using h = await startHub();
     const laptop = await upload(h, NOW);
@@ -618,7 +693,9 @@ describe('deleting transcripts', () => {
     expect(removed.generations).toBe(70_001);
     const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
     expect(left).toEqual({ n: 0 });
-  });
+    // Inserting and then marking 70,000 generations takes about 3.5 seconds on
+    // its own, too close to the default 5 for a loaded machine.
+  }, 30_000);
 
   test('refuses to run without a filter', async () => {
     await using h = await startHub();

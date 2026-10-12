@@ -419,6 +419,299 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 14,
   },
+  {
+    // Session insight: a projection of the transcript archive, rebuilt from it
+    // whenever a Harness's parser version changes (ADR-0014).
+    //
+    // `transcript_source_harnesses` remembers which Harness each System's
+    // source runs, from the latest Report sent that names it, so a source
+    // removed from a Collector's configuration keeps its Harness. It starts
+    // from the sets the Hub holds, and a source no set names whose name is a
+    // Harness's, the default name, runs that Harness.
+    //
+    // Every projected row carries its Harness and the parser version that
+    // wrote it. `current_parsers` names each Harness's current version, the
+    // one the views read; a Harness with no row has no complete set yet. A
+    // rebuild writes the next version's rows beside the current ones, then
+    // switches. `parse_progress` holds, per Harness, version, and generation,
+    // the byte offset the next batch starts from, the generation's `held` when
+    // it was last read, whether the next batch starts inside a line too long
+    // to read, the lines it could not read, whether its path names its owner
+    // by a name shaped as no id, how many attempts in a row to parse it failed, when and why it was recorded failed, and the Session
+    // the file belongs to, null for a file that holds no conversation. Facts
+    // are keyed by the Harness's own ids within a System's source, so content
+    // two generations hold counts once, and `projected_holders` names the
+    // generations that held a fact more than one generation holds.
+    // `rederiving_sessions` names the Sessions a delete touched, hidden from
+    // the views until they are derived again. Requests and tool calls locate
+    // the line they were read from by generation and byte offset in its
+    // uncompressed content.
+    //
+    // The `insight` views are the read model: facts and locators, never
+    // transcript content, and only each Harness's current version.
+    sql: `
+      CREATE TABLE transcript_source_harnesses (
+        system text NOT NULL REFERENCES systems (name),
+        source text NOT NULL,
+        harness text NOT NULL,
+        sent_at timestamptz NOT NULL,
+        PRIMARY KEY (system, source)
+      );
+
+      INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
+      SELECT system, s->>'name', s->>'harness', sent_at
+      FROM transcript_sources, jsonb_array_elements(sources) AS s
+      ON CONFLICT DO NOTHING;
+
+      INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
+      SELECT DISTINCT system, source, source, '-infinity'::timestamptz FROM transcript_generations
+      WHERE source IN ('claude-code', 'codex')
+      ON CONFLICT DO NOTHING;
+
+      CREATE TABLE current_parsers (
+        harness text PRIMARY KEY,
+        version integer NOT NULL
+      );
+
+      CREATE TABLE parse_progress (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        generation bigint NOT NULL REFERENCES transcript_generations (id),
+        session_id text,
+        parsed_through bigint NOT NULL,
+        held_seen bigint NOT NULL,
+        skipping_line boolean NOT NULL DEFAULT false,
+        unreadable_lines bigint NOT NULL DEFAULT 0,
+        misnamed boolean NOT NULL DEFAULT false,
+        failed_attempts integer NOT NULL DEFAULT 0,
+        failed_at timestamptz,
+        failure text,
+        PRIMARY KEY (harness, parser_version, generation)
+      );
+
+      CREATE INDEX parse_progress_by_generation ON parse_progress (generation);
+      CREATE INDEX parse_progress_by_session ON parse_progress (harness, session_id);
+
+      CREATE TABLE projected_sessions (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        path text,
+        started_at timestamptz,
+        ended_at timestamptz,
+        first_cwd text,
+        last_cwd text,
+        first_git_branch text,
+        last_git_branch text,
+        first_harness_version text,
+        last_harness_version text,
+        PRIMARY KEY (harness, parser_version, system, source, session_id)
+      );
+
+      CREATE INDEX projected_sessions_by_session
+        ON projected_sessions (harness, system, source, session_id);
+
+      CREATE TABLE projected_subagents (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        agent_id text NOT NULL,
+        path text,
+        agent_type text,
+        depth integer,
+        parent_agent_id text,
+        tool_use_id text,
+        workflow_run text,
+        workflow_phase text,
+        started_at timestamptz,
+        ended_at timestamptz,
+        PRIMARY KEY (harness, parser_version, system, source, session_id, agent_id)
+      );
+
+      CREATE INDEX projected_subagents_by_session
+        ON projected_subagents (harness, system, source, session_id);
+
+      CREATE TABLE projected_requests (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        agent_id text,
+        request_id text NOT NULL,
+        at timestamptz NOT NULL,
+        model text NOT NULL,
+        input_tokens bigint NOT NULL,
+        output_tokens bigint NOT NULL,
+        reasoning_tokens bigint,
+        cache_read_tokens bigint NOT NULL,
+        cache_write_tokens bigint NOT NULL,
+        cache_write_5m_tokens bigint,
+        cache_write_1h_tokens bigint,
+        stop_reason text,
+        skill text,
+        generation bigint NOT NULL,
+        byte_offset bigint NOT NULL,
+        PRIMARY KEY (harness, parser_version, system, source, request_id)
+      );
+
+      CREATE INDEX projected_requests_by_session
+        ON projected_requests (harness, system, source, session_id);
+
+      CREATE TABLE projected_tool_calls (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        agent_id text,
+        call_id text NOT NULL,
+        request_id text,
+        at timestamptz NOT NULL,
+        kind text NOT NULL,
+        name text NOT NULL,
+        mcp_server text,
+        skill text,
+        generation bigint NOT NULL,
+        byte_offset bigint NOT NULL,
+        PRIMARY KEY (harness, parser_version, system, source, call_id)
+      );
+
+      CREATE INDEX projected_tool_calls_by_session
+        ON projected_tool_calls (harness, system, source, session_id);
+
+      CREATE TABLE projected_holders (
+        harness text NOT NULL,
+        parser_version integer NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        fact_id text NOT NULL,
+        generation bigint NOT NULL REFERENCES transcript_generations (id),
+        PRIMARY KEY (harness, parser_version, system, source, fact_id, generation)
+      );
+
+      CREATE INDEX projected_holders_by_generation ON projected_holders (generation);
+
+      CREATE TABLE rederiving_sessions (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id)
+      );
+
+      CREATE SCHEMA insight;
+
+      CREATE VIEW insight.sessions AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.path, s.started_at, s.ended_at,
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+             s.first_harness_version, s.last_harness_version, s.parser_version
+      FROM projected_sessions s
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.session_id = s.session_id
+      );
+
+      CREATE VIEW insight.subagents AS
+      SELECT a.harness, a.system, a.source, a.session_id, a.agent_id,
+             COALESCE(a.parent_agent_id, spawn.agent_id) AS parent_agent_id,
+             a.agent_type, a.depth, a.tool_use_id, a.workflow_run, a.workflow_phase,
+             a.path, a.started_at, a.ended_at, a.parser_version
+      FROM projected_subagents a
+      JOIN current_parsers c ON c.harness = a.harness AND c.version = a.parser_version
+      LEFT JOIN projected_tool_calls spawn
+        ON spawn.harness = a.harness AND spawn.parser_version = a.parser_version
+       AND spawn.system = a.system AND spawn.source = a.source AND spawn.call_id = a.tool_use_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = a.harness AND x.system = a.system AND x.source = a.source
+          AND x.session_id = a.session_id
+      );
+
+      CREATE VIEW insight.requests AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+             r.cache_write_tokens, r.cache_write_5m_tokens, r.cache_write_1h_tokens,
+             r.input_tokens + r.cache_read_tokens + r.cache_write_tokens AS context_tokens,
+             r.stop_reason, r.skill, g.path, r.generation, r.byte_offset, r.parser_version
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      JOIN transcript_generations g ON g.id = r.generation
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+
+      CREATE VIEW insight.tool_calls AS
+      SELECT t.harness, t.system, t.source, t.session_id, t.agent_id, t.request_id, t.call_id,
+             t.at, t.kind, t.name, t.mcp_server, t.skill, g.path, t.generation, t.byte_offset,
+             t.parser_version
+      FROM projected_tool_calls t
+      JOIN current_parsers c ON c.harness = t.harness AND c.version = t.parser_version
+      JOIN transcript_generations g ON g.id = t.generation
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = t.harness AND x.system = t.system AND x.source = t.source
+          AND x.session_id = t.session_id
+      );
+
+      -- Per-request counts are bounded at parse time, so a bigint sum cannot
+      -- overflow. A count no request recorded sums to null.
+      CREATE VIEW insight.session_totals AS
+      SELECT s.harness, s.system, s.source, s.session_id,
+             count(r.request_id)::bigint AS requests,
+             COALESCE(sum(r.input_tokens), 0)::bigint AS input_tokens,
+             COALESCE(sum(r.output_tokens), 0)::bigint AS output_tokens,
+             sum(r.reasoning_tokens)::bigint AS reasoning_tokens,
+             COALESCE(sum(r.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+             COALESCE(sum(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+             sum(r.cache_write_5m_tokens)::bigint AS cache_write_5m_tokens,
+             sum(r.cache_write_1h_tokens)::bigint AS cache_write_1h_tokens
+      FROM insight.sessions s
+      LEFT JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id
+      GROUP BY s.harness, s.system, s.source, s.session_id;
+
+      CREATE VIEW insight.main_conversation_totals AS
+      SELECT s.harness, s.system, s.source, s.session_id,
+             count(r.request_id)::bigint AS requests,
+             COALESCE(sum(r.input_tokens), 0)::bigint AS input_tokens,
+             COALESCE(sum(r.output_tokens), 0)::bigint AS output_tokens,
+             sum(r.reasoning_tokens)::bigint AS reasoning_tokens,
+             COALESCE(sum(r.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+             COALESCE(sum(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+             sum(r.cache_write_5m_tokens)::bigint AS cache_write_5m_tokens,
+             sum(r.cache_write_1h_tokens)::bigint AS cache_write_1h_tokens
+      FROM insight.sessions s
+      LEFT JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id AND r.agent_id IS NULL
+      GROUP BY s.harness, s.system, s.source, s.session_id;
+
+      -- How well the current version read each source: counts only, never
+      -- what a line or a failure said.
+      CREATE VIEW insight.parse_status AS
+      SELECT p.harness, g.system, g.source, p.parser_version,
+             count(*)::bigint AS generations,
+             count(p.failed_at)::bigint AS failed_generations,
+             sum(p.unreadable_lines)::bigint AS unreadable_lines,
+             count(*) FILTER (WHERE p.misnamed)::bigint AS misnamed_files
+      FROM parse_progress p
+      JOIN current_parsers c ON c.harness = p.harness AND c.version = p.parser_version
+      JOIN transcript_generations g ON g.id = p.generation
+      WHERE g.deleted_at IS NULL
+      GROUP BY p.harness, g.system, g.source, p.parser_version;
+    `,
+    version: 15,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -11,12 +11,17 @@ import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+import { projectionNotes, projectTranscripts } from './projection.ts';
 import { pruneVitals } from './retention.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
+// How often serve parses transcripts. When it keeps up, Session insight trails
+// an upload by about this; a backlog or a rebuild parses at most a budget each
+// time, so it trails further until it catches up.
+const PROJECT_INTERVAL_MS = 15_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -89,10 +94,13 @@ const serveUntilStopped = async ({
       sql,
     });
     const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
-    // Pruning and judging Conditions are routine, so only a failure is logged, and
-    // the next round tries again.
+    // Pruning, judging Conditions, and parsing transcripts are routine, so only
+    // a failure, a parser switch, or a parser left behind is logged, and the
+    // next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
+    let stopProjecting: (() => Promise<void>) | undefined;
+    const outdatedLogged = new Set<string>();
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
@@ -110,13 +118,27 @@ const serveUntilStopped = async ({
         },
         task: () => evaluateConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
       });
+      stopProjecting = every({
+        intervalMs: PROJECT_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(clean(`Could not derive Session insight: ${describeError(error)}`));
+        },
+        task: async () => {
+          const projected = await projectTranscripts(sql);
+          for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
+            // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+            await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
+          }
+        },
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A prune or judgment still running must finish before the database closes.
+      // A prune, judgment, or parse still running must finish before the database closes.
       await stopPruning?.();
       await stopJudging?.();
+      await stopProjecting?.();
       await server.stop();
     }
   } finally {

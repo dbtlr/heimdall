@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
 
 import { MAX_REPORT_BYTES, RecordsReadSchema } from '@heimdall/schema';
 import type {
@@ -13,7 +13,10 @@ import { migrate, MIGRATIONS } from './migrations.ts';
 import { listSystems, storeReport } from './store.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { startTestServer, testDatabase } from './testing/postgres.ts';
+
+// A test run on its own would otherwise pay for `initdb` within its timeout.
+beforeAll(startTestServer, 60_000);
 
 const YEAR = 365 * 24 * 60 * 60 * 1000;
 
