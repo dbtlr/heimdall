@@ -40,8 +40,9 @@
 // - OpenAI: https://developers.openai.com/api/docs/pricing for prices and
 //   https://developers.openai.com/api/docs/models/<model> for context windows.
 //   A prompt over 272K input tokens is priced at 2x input, cache, and cache
-//   write rates and 1.5x output for the whole request, for gpt-6.x, gpt-5.6.x,
-//   gpt-5.5, and gpt-5.4.
+//   write rates and 1.5x output, for gpt-6.x, gpt-5.6.x, gpt-5.5, and gpt-5.4.
+//   The model pages, not the pricing page, say the higher rates apply to the
+//   whole request.
 //
 // Left out, and so unpriced, rather than guessed: Claude models older than
 // Claude Sonnet 4 and Claude Opus 4, OpenAI's specialized models such as

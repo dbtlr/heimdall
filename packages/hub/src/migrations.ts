@@ -727,9 +727,8 @@ export const MIGRATIONS: readonly Migration[] = [
     // one: so a dated row replaces only its own tier. A
     // request with no such row, or with tokens of a kind the row has no price
     // for, has a null cost; it is never free. A cache write the Harness did
-    // not split is priced as a 5-minute write. A request's recorded context
-    // window, when a Harness records one, takes precedence over the row's:
-    // COALESCE it ahead of `price.context_window` below.
+    // not split is priced as a 5-minute write. A request's context window
+    // comes from the row alone.
     sql: `
       CREATE TABLE model_prices (
         model text NOT NULL,

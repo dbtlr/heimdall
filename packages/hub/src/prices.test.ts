@@ -233,14 +233,18 @@ describe('a prompt over a threshold reprices the whole request', () => {
   });
 
   test('the prompt is input, cache reads, and cache writes together', async () => {
-    await using db = await prepared({ bundled: TIERED });
+    // The higher tier doubles the cache prices too, so a prompt counted
+    // without its cache reads or its cache writes lands in the wrong tier.
+    await using db = await prepared({
+      bundled: [BASE_TIER, { ...HIGH_TIER, cacheRead: 1, cacheWrite1h: 20, cacheWrite5m: 10 }],
+    });
     await seed(db.sql, [
       { at: '2026-03-01T00:00:00Z', cacheRead: 50_000, cacheWrite5m: 50_000, id: 'at' },
       { at: '2026-03-01T00:00:00Z', cacheRead: 50_000, cacheWrite1h: 50_001, id: 'over' },
     ]);
 
-    // 50k reads at 0.5 and 50k 5-minute writes at 5; then 50k reads at 0.5 and 50,001 1-hour writes at 10.
-    expect(await costs(db.sql)).toEqual({ at: 0.275, over: 0.525_01 });
+    // 50k reads at 0.5 and 50k 5-minute writes at 5; then 50k reads at 1 and 50,001 1-hour writes at 20.
+    expect(await costs(db.sql)).toEqual({ at: 0.275, over: 1.050_02 });
   });
 
   test('the tier shows in the request context window and fill', async () => {
