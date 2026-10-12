@@ -63,30 +63,36 @@ const clusterOwnedBy = async (pid: number) => {
 };
 
 // Runs under the real temporary directory with real owners, so whatever this
-// test leaves behind if it is itself killed is what the next run sweeps.
-test('a run stops the cluster a killed run left behind, and leaves a live run’s cluster running', async () => {
-  const liveDir = await mkdtemp(join(tmpdir(), 'heimdall-pg-'));
-  const live = await startCluster(liveDir, process.pid);
-  const killed = testRun('hold');
-  try {
-    const reader = killed.stdout.getReader();
-    expect(new TextDecoder().decode((await reader.read()).value)).toContain('started');
-    const killedDir = await clusterOwnedBy(killed.pid);
-    const killedServer = await postmasterPid(killedDir);
-    killed.kill('SIGKILL');
-    await killed.exited;
-    expect(await isRunning(killedServer)).toBe(true);
+// test leaves behind if it is itself killed is what the next run sweeps. It
+// needs `initdb` and `pg_ctl`, which only a System that starts throwaway
+// clusters, and so can leak them, has.
+test.skipIf(Bun.which('initdb') === null || Bun.which('pg_ctl') === null)(
+  'a run stops the cluster a killed run left behind, and leaves a live run’s cluster running',
+  async () => {
+    const liveDir = await mkdtemp(join(tmpdir(), 'heimdall-pg-'));
+    const live = await startCluster(liveDir, process.pid);
+    const killed = testRun('hold');
+    try {
+      const reader = killed.stdout.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('started');
+      const killedDir = await clusterOwnedBy(killed.pid);
+      const killedServer = await postmasterPid(killedDir);
+      killed.kill('SIGKILL');
+      await killed.exited;
+      expect(await isRunning(killedServer)).toBe(true);
 
-    expect(await testRun('stop').exited).toBe(0);
+      expect(await testRun('stop').exited).toBe(0);
 
-    expect(await isRunning(killedServer)).toBe(false);
-    expect(await exists(killedDir)).toBe(false);
-    expect(await isRunning(await postmasterPid(liveDir))).toBe(true);
-  } finally {
-    killed.kill('SIGKILL');
-    await live.stop();
-  }
-}, 60_000);
+      expect(await isRunning(killedServer)).toBe(false);
+      expect(await exists(killedDir)).toBe(false);
+      expect(await isRunning(await postmasterPid(liveDir))).toBe(true);
+    } finally {
+      killed.kill('SIGKILL');
+      await live.stop();
+    }
+  },
+  60_000,
+);
 
 test('the sweep leaves a directory with no owner, and signals no process a stale pid file names', async () => {
   const root = await mkdtemp(join(tmpdir(), 'heimdall-sweep-'));
