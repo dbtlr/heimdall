@@ -10,8 +10,8 @@
     "fix": "vp check --fix",
     "test": "bun test packages",
     "verify": "bun run check && bun run test",
-    "build:collector": "bun build packages/collector/src/main.ts --compile --define '__LOOM_RELEASE__={\"build\":\"distributed\"}' --outfile dist/heimdall-collector",
-    "build:hub": "bun build packages/hub/src/main.ts --compile --define '__LOOM_RELEASE__={\"build\":\"distributed\"}' --outfile dist/heimdall-hub",
+    "build:collector": "bun run --cwd packages/collector loom build --out ../../dist/heimdall-collector",
+    "build:hub": "bun run --cwd packages/hub loom build --out ../../dist/heimdall-hub",
     "release": "bun packages/release/src/main.ts"
   },
   "devDependencies": {
