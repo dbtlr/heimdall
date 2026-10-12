@@ -1,13 +1,14 @@
 import type { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
+import { codexParser } from './codex-parser.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import type { Batch, HarnessParser } from './session-insight.ts';
 import { storable, storableJson } from './storable.ts';
 import { readHeldContent, UnreadableGenerationError } from './transcript-reader.ts';
 
 // The parsers the Hub runs, one per Harness it derives Session insight for.
-export const PARSERS: readonly HarnessParser[] = [claudeCodeParser];
+export const PARSERS: readonly HarnessParser[] = [claudeCodeParser, codexParser];
 
 // How much transcript content one run fetches, across generations, before it
 // starts no more reads. Every chunk a read fetches counts in full: chunks
@@ -53,6 +54,7 @@ type Pending = {
   skipping_line: boolean | null;
   source: string;
   system: string;
+  parser_state: unknown;
 };
 
 type Options = {
@@ -86,7 +88,16 @@ export const projectTranscripts = async (
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-    await parsePending(sql, { budget, failed: projected.failed, parser });
+    const worked = await parsePending(sql, { budget, failed: projected.failed, parser });
+    // oxlint-disable-next-line no-await-in-loop -- retries links for this Harness before switching it.
+    if (parser.harness === 'codex' && (worked || (await needsCodexLinks(sql, parser.version)))) {
+      // oxlint-disable-next-line no-await-in-loop -- links only the version just parsed.
+      await sql.begin(async (tx) => {
+        if (await shareProjection(tx)) {
+          await linkCodexSubagents(tx, parser.version);
+        }
+      });
+    }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     projected.pending += await pendingCount(sql, parser);
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
@@ -99,6 +110,86 @@ export const projectTranscripts = async (
     await dropEarlierVersions(sql, { parser, rows: cleanupRows });
   }
   return projected;
+};
+
+// A failed link leaves new subagents without a depth. Retry even when their
+// byte progress already caught up, so a timeout never freezes a partial tree.
+const needsCodexLinks = async (sql: SQL, version: number): Promise<boolean> => {
+  const [row]: { needed: boolean }[] = await sql`
+    SELECT EXISTS (
+      SELECT 1 FROM projected_subagents
+      WHERE harness = 'codex' AND parser_version = ${version} AND depth IS NULL
+    ) AS needed
+  `;
+  return row?.needed === true;
+};
+
+// Codex names the immediate parent thread, whereas the projection keys every
+// descendant by its root Session. Resolve after reading a run so file upload
+// order cannot split a nested subagent into a second Session. Keep the original
+// parent separately: a later batch or a parent uploaded later can resolve again.
+const linkCodexSubagents = async (sql: SQL, version: number | null = null) => {
+  await sql`
+    WITH RECURSIVE ancestry AS (
+      SELECT a.parser_version, a.system, a.source, a.agent_id,
+             a.parent_thread_id AS session_id, 1 AS depth, ARRAY[a.agent_id] AS trail
+      FROM projected_subagents a
+      WHERE a.harness = 'codex' AND a.parent_thread_id IS NOT NULL
+        AND (${version}::integer IS NULL OR a.parser_version = ${version})
+      UNION ALL
+      SELECT a.parser_version, a.system, a.source, a.agent_id,
+             p.parent_thread_id, a.depth + 1, a.trail || p.agent_id
+      FROM ancestry a JOIN projected_subagents p
+        ON p.harness = 'codex' AND p.parser_version = a.parser_version
+       AND p.system = a.system AND p.source = a.source AND p.agent_id = a.session_id
+      WHERE p.parent_thread_id IS NOT NULL AND NOT p.agent_id = ANY(a.trail) AND a.depth < 1000
+    ), roots AS (
+      SELECT a.* FROM ancestry a
+      WHERE NOT EXISTS (
+        SELECT 1 FROM projected_subagents p
+        WHERE p.harness = 'codex' AND p.parser_version = a.parser_version
+          AND p.system = a.system AND p.source = a.source AND p.agent_id = a.session_id
+      )
+    ), sessions AS (
+      INSERT INTO projected_sessions (harness, parser_version, system, source, session_id)
+      SELECT DISTINCT 'codex', parser_version, system, source, session_id FROM roots
+      ON CONFLICT DO NOTHING
+    ), agents AS (
+      UPDATE projected_subagents a SET session_id = r.session_id, depth = r.depth,
+        parent_agent_id = CASE WHEN r.depth > 1 THEN a.parent_thread_id END
+      FROM roots r
+      WHERE a.harness = 'codex' AND a.parser_version = r.parser_version
+        AND a.system = r.system AND a.source = r.source AND a.agent_id = r.agent_id
+        AND (a.session_id IS DISTINCT FROM r.session_id OR a.depth IS DISTINCT FROM r.depth
+             OR a.parent_agent_id IS DISTINCT FROM CASE WHEN r.depth > 1 THEN a.parent_thread_id END)
+    ), requests AS (
+      UPDATE projected_requests q SET session_id = r.session_id
+      FROM roots r
+      WHERE q.harness = 'codex' AND q.parser_version = r.parser_version
+        AND q.system = r.system AND q.source = r.source AND q.agent_id = r.agent_id
+        AND q.session_id <> r.session_id
+    ), tools AS (
+      UPDATE projected_tool_calls t SET session_id = r.session_id
+      FROM roots r
+      WHERE t.harness = 'codex' AND t.parser_version = r.parser_version
+        AND t.system = r.system AND t.source = r.source AND t.agent_id = r.agent_id
+        AND t.session_id <> r.session_id
+    ), progress AS (
+      UPDATE parse_progress p SET session_id = r.session_id
+      FROM roots r, transcript_generations g
+      WHERE p.harness = 'codex' AND p.parser_version = r.parser_version AND p.generation = g.id
+        AND g.system = r.system AND g.source = r.source
+        AND p.agent_id = r.agent_id AND p.session_id <> r.session_id
+    )
+    DELETE FROM projected_sessions s
+    WHERE s.harness = 'codex' AND s.path IS NULL
+      AND (${version}::integer IS NULL OR s.parser_version = ${version})
+      AND EXISTS (
+        SELECT 1 FROM projected_subagents a
+        WHERE a.harness = s.harness AND a.parser_version = s.parser_version
+          AND a.system = s.system AND a.source = s.source AND a.agent_id = s.session_id
+      )
+  `;
 };
 
 // The lines `serve` logs of a run: each switch, each generation recorded
@@ -153,7 +244,7 @@ const parsePending = async (
     failed,
     parser,
   }: { budget: Budget; failed: Projected['failed']; parser: HarnessParser },
-) => {
+): Promise<boolean> => {
   const work = await pendingGenerations(sql, parser);
   for (const row of work) {
     if (budget.left <= 0) {
@@ -163,6 +254,7 @@ const parsePending = async (
     let progress: Progress = {
       parsedThrough: row.parsed_through === null ? null : Number(row.parsed_through),
       skipping: row.skipping_line === true,
+      state: row.parser_state,
     };
     for (;;) {
       let step: Step;
@@ -184,7 +276,7 @@ const parsePending = async (
         break;
       }
       if (step.kind === 'busy') {
-        return;
+        return true;
       }
       if (step.kind === 'done' || budget.left <= 0) {
         break;
@@ -192,6 +284,7 @@ const parsePending = async (
       progress = step.next;
     }
   }
+  return work.length > 0;
 };
 
 // PostgreSQL's classes of error that storing the same values again repeats:
@@ -311,7 +404,7 @@ const recordAttempt = async (
 // the Hub holds, oldest upload first. A source runs the Harness its System's
 // Reports named for it.
 const pendingGenerations = (sql: SQL, parser: HarnessParser): Promise<Pending[]> => sql`
-  SELECT g.id, g.system, g.source, g.path, g.held, p.parsed_through, p.skipping_line
+  SELECT g.id, g.system, g.source, g.path, g.held, p.parsed_through, p.skipping_line, p.parser_state
   FROM transcript_generations g
   JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
   LEFT JOIN parse_progress p
@@ -342,7 +435,7 @@ const READ_CAP_BYTES = MAX_LINE_BYTES + 1;
 // Where a generation's progress stands: the byte its next batch starts from,
 // null before its first batch, and whether that byte is inside a line too
 // long to read, already counted unreadable.
-type Progress = { parsedThrough: number | null; skipping: boolean };
+type Progress = { parsedThrough: number | null; skipping: boolean; state?: unknown };
 
 // What parsing one batch did: found a delete under way, so stored nothing;
 // stored it, or found the progress moved under the run, and has nothing more
@@ -393,7 +486,7 @@ const parseBatch = async (
       return { kind: 'busy' };
     }
     return stored === 'stored' && heldSeen < held && batch.parsedThrough > from
-      ? { kind: 'more', next: { parsedThrough: batch.parsedThrough, skipping } }
+      ? { kind: 'more', next: { parsedThrough: batch.parsedThrough, skipping, state: batch.state } }
       : { kind: 'done' };
   };
   const holds = parser.holds(path);
@@ -418,7 +511,10 @@ const parseBatch = async (
     if (progress.skipping) {
       const newline = content.indexOf(NEWLINE);
       return newline === -1
-        ? store({ ...EMPTY, parsedThrough: from + read }, { complete, skipping: true })
+        ? store(
+            { ...EMPTY, parsedThrough: from + read, state: progress.state },
+            { complete, skipping: true },
+          )
         : store(
             parser.parse({
               complete,
@@ -426,17 +522,31 @@ const parseBatch = async (
               factLimit: BATCH_FACTS,
               offset: from + newline + 1,
               path,
+              state: progress.state,
             }),
             { complete, skipping: false },
           );
     }
-    const batch = parser.parse({ complete, content, factLimit: BATCH_FACTS, offset: from, path });
+    const batch = parser.parse({
+      complete,
+      content,
+      factLimit: BATCH_FACTS,
+      offset: from,
+      path,
+      state: progress.state,
+    });
     if (batch.parsedThrough > from || complete) {
       return store(batch, { complete, skipping: false });
     }
     if (read > MAX_LINE_BYTES) {
       return store(
-        { ...EMPTY, owner: batch.owner, parsedThrough: from + read, unreadableLines: 1 },
+        {
+          ...EMPTY,
+          owner: batch.owner,
+          parsedThrough: from + read,
+          state: batch.state,
+          unreadableLines: 1,
+        },
         { complete, skipping: true },
       );
     }
@@ -514,7 +624,7 @@ export const holdProjection = async (tx: SQL): Promise<void> => {
 const storeBatch = (
   sql: SQL,
   {
-    batch,
+    batch: parsed,
     expected,
     generation,
     heldSeen,
@@ -535,16 +645,18 @@ const storeBatch = (
     if (!(await shareProjection(tx))) {
       return 'busy';
     }
+    const batch = await linkedCodexBatch(tx, { batch: parsed, generation, parser });
     const progressed: unknown[] =
       expected === null
         ? await tx`
             INSERT INTO parse_progress (
               generation, parser_version, harness, session_id, parsed_through, held_seen,
-              skipping_line, unreadable_lines, misnamed
+              skipping_line, unreadable_lines, misnamed, parser_state, agent_id
             )
             SELECT ${generation.id}::bigint, ${parser.version}, ${parser.harness},
                    ${batch.owner?.sessionId ?? null}, ${batch.parsedThrough}, ${heldSeen},
-                   ${skipping}, ${batch.unreadableLines}, ${misnamed}
+                   ${skipping}, ${batch.unreadableLines}, ${misnamed}, ${storableJson(batch.state ?? null)}::text::jsonb,
+                   ${batch.owner?.agentId ?? null}
             WHERE EXISTS (
               SELECT 1 FROM transcript_generations
               WHERE id = ${generation.id}::bigint AND deleted_at IS NULL
@@ -555,12 +667,14 @@ const storeBatch = (
         : await tx`
             UPDATE parse_progress SET
               session_id = COALESCE(${batch.owner?.sessionId ?? null}, session_id),
+              agent_id = COALESCE(${batch.owner?.agentId ?? null}, agent_id),
               parsed_through = ${batch.parsedThrough},
               held_seen = ${heldSeen},
               skipping_line = ${skipping},
               unreadable_lines = unreadable_lines + ${batch.unreadableLines},
               misnamed = ${misnamed},
-              failed_attempts = 0
+              failed_attempts = 0,
+              parser_state = ${storableJson(batch.state ?? null)}::text::jsonb
             WHERE harness = ${parser.harness} AND parser_version = ${parser.version}
               AND generation = ${generation.id}::bigint AND parsed_through = ${expected}
             RETURNING generation
@@ -571,6 +685,31 @@ const storeBatch = (
     await storeFacts(tx, { batch, generation, parser });
     return 'stored';
   });
+
+// A resumed nested child keeps the Session already resolved for it. Its
+// continuation state still names the original parent, so parsing stays pure.
+const linkedCodexBatch = async (
+  tx: SQL,
+  { batch, generation, parser }: { batch: Batch; generation: Generation; parser: HarnessParser },
+): Promise<Batch> => {
+  if (parser.harness !== 'codex' || batch.owner === null || batch.owner.agentId === null) {
+    return batch;
+  }
+  const { owner } = batch;
+  const [linked]: { session_id: string }[] = await tx`
+    SELECT session_id FROM projected_subagents
+    WHERE harness = 'codex' AND parser_version = ${parser.version}
+      AND system = ${generation.system} AND source = ${generation.source}
+      AND agent_id IN (${owner.agentId}, ${owner.sessionId})
+    ORDER BY (agent_id = ${owner.agentId}) DESC LIMIT 1
+  `;
+  return linked === undefined
+    ? batch
+    : {
+        ...batch,
+        owner: { agentId: owner.agentId, sessionId: linked.session_id },
+      };
+};
 
 const hasFacts = (batch: Batch) =>
   batch.span !== null ||
@@ -638,23 +777,29 @@ const storeFacts = async (
   if (owner.agentId !== null) {
     const span = batch.transcript ? batch.span : null;
     const { agent } = batch;
+    const conflict =
+      parser.harness === 'codex'
+        ? tx`(harness, parser_version, system, source, agent_id) WHERE harness = 'codex'`
+        : tx`(harness, parser_version, system, source, session_id, agent_id)`;
     await tx`
       INSERT INTO projected_subagents (
         parser_version, harness, system, source, session_id, agent_id, path, agent_type, depth,
-        parent_agent_id, tool_use_id, workflow_run, workflow_phase, started_at, ended_at
+        parent_agent_id, tool_use_id, workflow_run, workflow_phase, started_at, ended_at, parent_thread_id
       )
       VALUES (
         ${key.version}, ${key.harness}, ${key.system}, ${key.source}, ${key.session},
         ${owner.agentId}, ${batch.transcript ? generation.path : null},
         ${agent?.agentType ?? null}, ${agent?.depth ?? null}, ${agent?.parentAgentId ?? null},
         ${agent?.toolUseId ?? null}, ${agent?.workflowRun ?? null}, ${agent?.workflowPhase ?? null},
-        ${at(span?.first.at)}, ${at(span?.last.at)}
+        ${at(span?.first.at)}, ${at(span?.last.at)}, ${agent?.parentThreadId ?? null}
       )
-      ON CONFLICT (harness, parser_version, system, source, session_id, agent_id) DO UPDATE SET
+      ON CONFLICT ${conflict} DO UPDATE SET
+        session_id = excluded.session_id,
         path = COALESCE(excluded.path, projected_subagents.path),
         agent_type = COALESCE(excluded.agent_type, projected_subagents.agent_type),
         depth = COALESCE(excluded.depth, projected_subagents.depth),
         parent_agent_id = COALESCE(excluded.parent_agent_id, projected_subagents.parent_agent_id),
+        parent_thread_id = COALESCE(excluded.parent_thread_id, projected_subagents.parent_thread_id),
         tool_use_id = COALESCE(excluded.tool_use_id, projected_subagents.tool_use_id),
         workflow_run = COALESCE(excluded.workflow_run, projected_subagents.workflow_run),
         workflow_phase = COALESCE(excluded.workflow_phase, projected_subagents.workflow_phase),
@@ -686,16 +831,16 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
     INSERT INTO projected_requests (
       parser_version, harness, system, source, session_id, agent_id, request_id, at, model,
       input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens,
-      cache_write_5m_tokens, cache_write_1h_tokens, stop_reason, skill, generation, byte_offset
+      cache_write_5m_tokens, cache_write_1h_tokens, stop_reason, skill, generation, byte_offset, context_window
     )
     SELECT ${key.version}, ${key.harness}, ${key.system}, ${key.source}, ${key.session},
            ${owner.agentId}, r."requestId", to_timestamp(r.at / 1000.0), r.model, r.input, r.output,
            r.reasoning, r."cacheRead", r."cacheWrite", r."cacheWrite5m", r."cacheWrite1h",
-           r."stopReason", r.skill, ${generation.id}::bigint, r."offset"
+           r."stopReason", r.skill, ${generation.id}::bigint, r."offset", r."contextWindow"
     FROM jsonb_to_recordset(${storableJson(requests)}::text::jsonb) AS r(
       "requestId" text, at double precision, model text, input bigint, output bigint,
       reasoning bigint, "cacheRead" bigint, "cacheWrite" bigint, "cacheWrite5m" bigint,
-      "cacheWrite1h" bigint, "stopReason" text, skill text, "offset" bigint
+      "cacheWrite1h" bigint, "stopReason" text, skill text, "offset" bigint, "contextWindow" bigint
     )
     ON CONFLICT (harness, parser_version, system, source, request_id) DO UPDATE SET
       session_id = excluded.session_id,
@@ -712,8 +857,12 @@ const storeRequests = async (tx: SQL, { batch, generation, key, owner }: Facts) 
       stop_reason = excluded.stop_reason,
       skill = excluded.skill,
       generation = excluded.generation,
-      byte_offset = excluded.byte_offset
-    WHERE excluded.stop_reason IS NOT NULL OR projected_requests.stop_reason IS NULL
+      byte_offset = excluded.byte_offset,
+      context_window = excluded.context_window
+    WHERE (excluded.harness <> 'codex'
+           OR (projected_requests.session_id = excluded.session_id
+               AND projected_requests.agent_id IS NOT DISTINCT FROM excluded.agent_id))
+      AND (excluded.stop_reason IS NOT NULL OR projected_requests.stop_reason IS NULL)
   `;
   }
 };
@@ -772,14 +921,14 @@ const storeToolCalls = async (tx: SQL, { batch, generation, key, owner }: Facts)
     await tx`
     INSERT INTO projected_tool_calls (
       parser_version, harness, system, source, session_id, agent_id, call_id, request_id, at,
-      kind, name, mcp_server, skill, generation, byte_offset
+      kind, name, mcp_server, skill, generation, byte_offset, skill_inferred
     )
     SELECT ${key.version}, ${key.harness}, ${key.system}, ${key.source}, ${key.session},
            ${owner.agentId}, t."callId", t."requestId", to_timestamp(t.at / 1000.0), t.kind,
-           t.name, t."mcpServer", t.skill, ${generation.id}::bigint, t."offset"
+           t.name, t."mcpServer", t.skill, ${generation.id}::bigint, t."offset", COALESCE(t."skillInferred", false)
     FROM jsonb_to_recordset(${storableJson(calls)}::text::jsonb) AS t(
       "callId" text, "requestId" text, at double precision, kind text, name text,
-      "mcpServer" text, skill text, "offset" bigint, "lineId" text
+      "mcpServer" text, skill text, "offset" bigint, "lineId" text, "skillInferred" boolean
     )
     WHERE t."lineId" IS NULL OR NOT EXISTS (
       SELECT 1 FROM projected_tool_calls x
@@ -804,7 +953,9 @@ const switchVersion = async (sql: SQL, parser: HarnessParser): Promise<boolean> 
     WITH cur AS (SELECT version FROM current_parsers WHERE harness = ${parser.harness})
     INSERT INTO current_parsers (harness, version)
     SELECT ${parser.harness}, ${parser.version}
-    WHERE NOT EXISTS (
+    WHERE (${parser.harness} <> 'codex' OR EXISTS (SELECT 1 FROM cur) OR EXISTS (
+      SELECT 1 FROM transcript_source_harnesses WHERE harness = ${parser.harness}
+    )) AND NOT EXISTS (
       SELECT 1
       FROM transcript_generations g
       JOIN transcript_source_harnesses h ON h.system = g.system AND h.source = g.source
@@ -884,6 +1035,10 @@ const PROJECTED_TABLES = [
 // version is current and has parsed it again. Answers how many Sessions it
 // touched.
 export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
+  // deleteOnce calls this with its transaction after holdProjection took the
+  // exclusive lock. Relinking every version, deletion, and progress resets
+  // therefore commit or roll back together, with no parse batch overlapping.
+  await linkCodexSubagents(sql);
   const [row]: { touched: number }[] = await sql`
     WITH deleted AS (
       SELECT p.harness, p.generation, g.system, g.source, p.session_id
@@ -916,7 +1071,7 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     reset AS (
       UPDATE parse_progress p SET
         parsed_through = 0, held_seen = 0, skipping_line = false, unreadable_lines = 0,
-        failed_attempts = 0, failed_at = NULL, failure = NULL
+        failed_attempts = 0, failed_at = NULL, failure = NULL, parser_state = NULL, agent_id = NULL
       FROM transcript_generations g
       WHERE g.id = p.generation AND g.deleted_at IS NULL
         AND ((p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched)

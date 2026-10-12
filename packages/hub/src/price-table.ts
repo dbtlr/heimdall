@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { describeError } from './errors.ts';
 import { MIGRATION_LOCK } from './migrations.ts';
 import type { PriceEntry } from './prices.ts';
+import { UNATTRIBUTED_MODEL } from './session-insight.ts';
 
 // The price table the `insight` views read (migration 16): the bundled prices
 // and the ones the Hub's configuration adds, loaded when `serve` starts. The
@@ -23,12 +24,16 @@ const day = z.string().refine((text) => {
 
 const price = z.number().nonnegative().finite();
 
+const RESERVED_MODEL = `The model ${UNATTRIBUTED_MODEL} is reserved for usage a Harness cannot attribute to a model, and is never priced.`;
+
 // A model id as the views match it: without the `-YYYYMMDD` suffix a dated
-// id carries, which the views strip from a request's model.
+// id carries, which the views strip from a request's model, and never the
+// reserved `unknown`.
 const model = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9:_./@+-]*$/u, 'Use a model id.')
-  .refine((id) => !/-\d{8}$/u.test(id), 'Name the model without a date suffix.');
+  .refine((id) => !/-\d{8}$/u.test(id), 'Name the model without a date suffix.')
+  .refine((id) => id !== UNATTRIBUTED_MODEL, RESERVED_MODEL);
 
 const priceEntry = z
   .strictObject({
@@ -107,11 +112,16 @@ export const loadPriceOverrides = async (path: string): Promise<PriceEntry[]> =>
 // in it: where a configured entry and a bundled one share a model, a date, and
 // a prompt tier, the views choose the configured one. The replacement holds the
 // lock migrations take, so Hubs that start together load it one at a time.
-export const syncPrices = (
+// An entry for the reserved `unknown` model, bundled or configured, refuses
+// the load before it touches the table.
+export const syncPrices = async (
   sql: SQL,
   { bundled, configured }: { bundled: readonly PriceEntry[]; configured: readonly PriceEntry[] },
-): Promise<void> =>
-  sql.begin(async (tx) => {
+): Promise<void> => {
+  if ([...bundled, ...configured].some((entry) => entry.model === UNATTRIBUTED_MODEL)) {
+    throw new Error(RESERVED_MODEL);
+  }
+  await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     await tx`DELETE FROM model_prices`;
     const rows = [
@@ -133,3 +143,4 @@ export const syncPrices = (
       `;
     }
   });
+};
