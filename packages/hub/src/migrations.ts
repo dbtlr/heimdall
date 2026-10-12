@@ -915,6 +915,319 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 18,
   },
+  {
+    // Links each stretch of a Session to the Harness process that ran it,
+    // computed in views and never stored, so a link lives exactly as long as
+    // its Session and its process and changes with nothing to rebuild
+    // (ADR-0014). The spec's "Linking Harness processes to Sessions" states the
+    // rule; this is how the views compute it.
+    //
+    // Every time compared is the observed System's own clock: transcript lines,
+    // a process's start, end, and readings, and Vitals samples. The Hub's clock
+    // stamps none of them.
+    //
+    // `harness_process_windows` holds each process's window. It opens 2
+    // seconds before the start, which is to the second. A process surely ran
+    // (`ran_until`) until its end, or while the Hub holds it as running, until
+    // 60 seconds after its last sighting. It may have run (`may_until`) until
+    // its seen end; after a missed end, until the end of the first 5-minute
+    // Vitals bucket after the one holding the last sighting; and while it runs,
+    // or with no Vitals since a missed end, without end.
+    //
+    // For each request, the processes that may have run its Session are those
+    // of its System and Harness, in the Session's first or last directory or
+    // an unknown one, whose windows overlap the Session's requests. The
+    // request's candidates are those whose window holds it, and its stretch is
+    // the Session's requests between the nearest window edges around it, so
+    // the candidates stay the same across the stretch. The first and last
+    // requests of a stretch are found by index, so each request costs a few
+    // lookups however long its Session, and a query costs in proportion to
+    // the time it reads, not to the history held.
+    //
+    // Indexes: each process's stored span, start to end or without end while
+    // running, as a range, so the processes around a time are found by
+    // overlap; each Session's request span as a range; and requests by System
+    // and time, and by Session and time. A span never ends before it starts,
+    // even after a clock step. A process whose end was missed may have run
+    // past its stored span, but it can matter to a time only when no Vitals
+    // bucket ended between its last sighting and that time, so the span lookup
+    // reaches back to the latest such bucket. The range index holds no
+    // System, which would take the btree_gist extension; it finds the
+    // processes of every System around a time, which a fleet keeps few.
+    //
+    // A Session's request span, `first_request_at` to `last_request_at`, runs
+    // from its first request to its last, its subagents' included, so it can
+    // reach past its main transcript's span. A trigger widens it as requests
+    // are stored, since no index can hold an aggregate. It never narrows: a
+    // request moved to another Session or deleted can leave it wider than the
+    // requests, which costs a lookup and changes no row, since the views
+    // compare the requests themselves.
+    //
+    // Every insight view is a security barrier, so a reader's filter cannot
+    // see rows a view hides through an error it raises.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE INDEX harness_processes_by_span ON harness_processes USING gist (
+        tstzrange(started_at, CASE WHEN ended_at IS NULL THEN 'infinity'::timestamptz
+                                   ELSE GREATEST(started_at, ended_at) END, '[]')
+      );
+      ALTER TABLE projected_sessions
+        ADD COLUMN first_request_at timestamptz,
+        ADD COLUMN last_request_at timestamptz;
+      UPDATE projected_sessions s SET first_request_at = r.first_at, last_request_at = r.last_at
+      FROM (
+        SELECT harness, parser_version, system, source, session_id,
+               min(at) AS first_at, max(at) AS last_at
+        FROM projected_requests GROUP BY harness, parser_version, system, source, session_id
+      ) r
+      WHERE (s.harness, s.parser_version, s.system, s.source, s.session_id)
+          = (r.harness, r.parser_version, r.system, r.source, r.session_id);
+
+      CREATE FUNCTION widen_session_request_spans() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        UPDATE projected_sessions s
+        SET first_request_at = LEAST(s.first_request_at, r.first_at),
+            last_request_at = GREATEST(s.last_request_at, r.last_at)
+        FROM (
+          SELECT harness, parser_version, system, source, session_id,
+                 min(at) AS first_at, max(at) AS last_at
+          FROM stored GROUP BY harness, parser_version, system, source, session_id
+        ) r
+        WHERE (s.harness, s.parser_version, s.system, s.source, s.session_id)
+            = (r.harness, r.parser_version, r.system, r.source, r.session_id)
+          AND (s.first_request_at IS NULL OR r.first_at < s.first_request_at
+               OR r.last_at > s.last_request_at);
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER widen_session_request_spans_on_insert AFTER INSERT ON projected_requests
+        REFERENCING NEW TABLE AS stored
+        FOR EACH STATEMENT EXECUTE FUNCTION widen_session_request_spans();
+      CREATE TRIGGER widen_session_request_spans_on_update AFTER UPDATE ON projected_requests
+        REFERENCING NEW TABLE AS stored
+        FOR EACH STATEMENT EXECUTE FUNCTION widen_session_request_spans();
+
+      CREATE INDEX projected_sessions_by_request_span ON projected_sessions USING gist (
+        tstzrange(first_request_at, last_request_at, '[]')
+      ) WHERE first_request_at IS NOT NULL;
+      CREATE INDEX projected_requests_by_time ON projected_requests (system, at);
+      CREATE INDEX projected_requests_by_session_time
+        ON projected_requests (harness, system, source, session_id, at);
+
+      CREATE VIEW harness_process_windows AS
+      SELECT p.id, p.system, p.harness, p.pid, p.started_at, p.ended_at, p.end_missed, p.cwd,
+             p.last_seen_at,
+             tstzrange(p.started_at, CASE WHEN p.ended_at IS NULL THEN 'infinity'::timestamptz
+                                          ELSE GREATEST(p.started_at, p.ended_at) END, '[]') AS span,
+             p.started_at - interval '2 seconds' AS window_from,
+             COALESCE(p.ended_at, p.last_seen_at + interval '60 seconds') AS ran_until,
+             COALESCE(
+               CASE WHEN NOT p.end_missed THEN p.ended_at ELSE (
+                 SELECT min(v.bucket) + interval '5 minutes' FROM vitals_rollups v
+                 WHERE v.system = p.system
+                   AND v.bucket > date_bin('5 minutes', p.ended_at, timestamptz '2000-01-01 00:00:00+00')
+               ) END,
+               'infinity'
+             ) AS may_until
+      FROM harness_processes p;
+
+      CREATE VIEW insight.harness_processes WITH (security_barrier = true) AS
+      SELECT w.system, w.harness, w.id AS process_id, w.pid, w.started_at, w.ended_at,
+             w.end_missed, w.cwd, p.peak_rss_bytes, w.last_seen_at,
+             NULLIF(w.may_until, 'infinity') AS may_have_run_until
+      FROM harness_process_windows w JOIN harness_processes p ON p.id = w.id;
+
+      -- One row per request. \`procs\` holds the processes that may have run
+      -- the Session at some time between its first and last request, once per
+      -- Session; the span filter only narrows them to what the index finds,
+      -- reaching back to the last Vitals bucket before the Session for missed
+      -- ends, and the window conditions after it are the rule. \`near\` holds
+      -- the request's candidates and the window edges around it, \`stretch\`
+      -- the first and last request between those edges, and \`k\` the process
+      -- the stretch is linked to. OFFSET 0 keeps a subquery from being inlined
+      -- where its result is used more than once.
+      CREATE VIEW insight.request_links WITH (security_barrier = true) AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             CASE WHEN near.candidates > 1 THEN 'ambiguous'
+                  WHEN k.process_id IS NOT NULL THEN 'linked'
+                  ELSE 'unmatched' END AS link,
+             k.process_id, k.pid, near.candidates,
+             stretch.first_at AS stretch_started_at, stretch.last_at AS stretch_ended_at
+      FROM insight.requests r
+      CROSS JOIN LATERAL (
+        SELECT x.first_cwd, x.last_cwd FROM insight.sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+        OFFSET 0
+      ) s
+      CROSS JOIN LATERAL (
+        SELECT min(x.at) AS first_at, max(x.at) AS last_at FROM projected_requests x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id AND x.parser_version = r.parser_version
+      ) requests
+      CROSS JOIN LATERAL (
+        SELECT array_agg(w.id) AS ids, array_agg(w.window_from) AS froms,
+               array_agg(w.may_until) AS mays
+        FROM harness_process_windows w
+        WHERE w.span && tstzrange(
+                COALESCE((
+                  SELECT max(v.bucket) FROM vitals_rollups v
+                  WHERE v.system = r.system AND v.bucket < requests.first_at - interval '5 minutes'
+                ), '-infinity'),
+                requests.last_at + interval '2 seconds', '[]')
+          AND w.system = r.system AND w.harness = r.harness
+          AND (w.cwd IS NULL OR w.cwd IN (s.first_cwd, s.last_cwd))
+          AND w.window_from <= requests.last_at AND requests.first_at <= w.may_until
+      ) procs
+      CROSS JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE w.window_from <= r.at AND r.at <= w.may_until) AS candidates,
+               min(w.id) FILTER (WHERE w.window_from <= r.at AND r.at <= w.may_until) AS only_id,
+               max(w.window_from) FILTER (WHERE w.window_from <= r.at) AS opened,
+               max(w.may_until) FILTER (WHERE w.may_until < r.at) AS closed,
+               min(w.window_from) FILTER (WHERE w.window_from > r.at) AS opens,
+               min(w.may_until) FILTER (WHERE w.may_until >= r.at) AS closes
+        FROM unnest(procs.ids, procs.froms, procs.mays) AS w (id, window_from, may_until)
+      ) near
+      CROSS JOIN LATERAL (
+        SELECT (
+                 SELECT x.at FROM projected_requests x
+                 WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+                   AND x.session_id = r.session_id AND x.parser_version = r.parser_version
+                   AND x.at >= COALESCE(near.opened, '-infinity')
+                   AND x.at > COALESCE(near.closed, '-infinity')
+                 ORDER BY x.at LIMIT 1
+               ) AS first_at,
+               (
+                 SELECT x.at FROM projected_requests x
+                 WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+                   AND x.session_id = r.session_id AND x.parser_version = r.parser_version
+                   AND x.at < COALESCE(near.opens, 'infinity')
+                   AND x.at <= COALESCE(near.closes, 'infinity')
+                 ORDER BY x.at DESC LIMIT 1
+               ) AS last_at
+        OFFSET 0
+      ) stretch
+      LEFT JOIN LATERAL (
+        SELECT w.id AS process_id, w.pid FROM harness_process_windows w
+        WHERE near.candidates = 1 AND w.id = near.only_id
+          AND w.cwd IN (s.first_cwd, s.last_cwd)
+          AND stretch.last_at <= w.ran_until
+          AND (w.last_seen_at BETWEEN stretch.first_at AND stretch.last_at
+               OR EXISTS (
+                 SELECT 1 FROM harness_process_samples x
+                 WHERE x.process = w.id AND x.t BETWEEN stretch.first_at AND stretch.last_at
+               )
+               OR EXISTS (
+                 SELECT 1 FROM harness_process_rollups x
+                 WHERE x.process = w.id AND x.bucket >= stretch.first_at
+                   AND x.bucket + interval '5 minutes' <= stretch.last_at
+               ))
+        OFFSET 0
+      ) k ON true;
+
+      -- A stretch is read from its first request, so a filter on \`started_at\`
+      -- reaches the requests' time index.
+      CREATE VIEW insight.session_stretches WITH (security_barrier = true) AS
+      SELECT DISTINCT ON (l.harness, l.system, l.source, l.session_id, l.at)
+             l.harness, l.system, l.source, l.session_id, l.at AS started_at,
+             l.stretch_ended_at AS ended_at,
+             (SELECT count(*) FROM insight.requests x
+              WHERE x.harness = l.harness AND x.system = l.system AND x.source = l.source
+                AND x.session_id = l.session_id
+                AND x.at BETWEEN l.at AND l.stretch_ended_at) AS requests,
+             l.link, l.process_id, l.pid, l.candidates
+      FROM insight.request_links l
+      WHERE l.at = l.stretch_started_at
+      ORDER BY l.harness, l.system, l.source, l.session_id, l.at, l.request_id;
+
+      -- The oldest kept sample covers the 15 seconds before it. \`since\` comes
+      -- from an aggregate, so it stays a plain column that a filter on a
+      -- security barrier view can compare with.
+      CREATE VIEW vitals_intervals AS
+      SELECT v.system, v.t, prev.since
+      FROM vitals_samples v
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(max(x.t), v.t - interval '15 seconds') AS since
+        FROM vitals_samples x WHERE x.system = v.system AND x.t < v.t
+      ) prev;
+
+      CREATE VIEW insight.vitals WITH (security_barrier = true) AS
+      SELECT v.system, v.t, i.since, v.cpu_busy_percent, v.memory_used_bytes,
+             v.memory_total_bytes, v.load_1
+      FROM vitals_samples v JOIN vitals_intervals i ON i.system = v.system AND i.t = v.t;
+
+      -- One row per sample and process. CPU cores are the tree's CPU seconds
+      -- per second between the latest reading in the sample's interval and the
+      -- reading before it.
+      CREATE VIEW insight.vitals_processes WITH (security_barrier = true) AS
+      SELECT i.system, i.t, p.harness, p.id AS process_id, p.pid, p.cwd,
+             p.started_at AS process_started_at,
+             r.t AS read_at, r.cpu_micros, r.rss_bytes,
+             ((r.cpu_micros - prev.cpu_micros) / extract(epoch FROM r.t - prev.t) / 1e6)
+               ::double precision AS cpu_cores
+      FROM vitals_intervals i
+      JOIN harness_processes p
+        ON p.system = i.system
+       AND tstzrange(p.started_at, CASE WHEN p.ended_at IS NULL THEN 'infinity'::timestamptz
+                                        ELSE GREATEST(p.started_at, p.ended_at) END, '[]') @> i.t
+      LEFT JOIN LATERAL (
+        SELECT x.t, x.cpu_micros, x.rss_bytes FROM harness_process_samples x
+        WHERE x.process = p.id AND x.t <= i.t AND x.t > i.since
+        ORDER BY x.t DESC LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT x.t, x.cpu_micros FROM harness_process_samples x
+        WHERE x.process = p.id AND x.t < r.t
+        ORDER BY x.t DESC LIMIT 1
+      ) prev ON true;
+
+      -- One row per sample, process, and Session: the Session's latest request
+      -- at or before the sample opens the stretch that holds it, if any. A
+      -- stretch lies within its Session's request span, which finds the
+      -- Sessions by index; \`insight.request_links\` leaves out a Session a
+      -- delete is deriving again.
+      CREATE VIEW insight.vitals_sessions WITH (security_barrier = true) AS
+      SELECT v.system, v.t, p.harness, p.id AS process_id, p.pid, l.source, l.session_id,
+             l.stretch_started_at, l.stretch_ended_at
+      FROM vitals_samples v
+      JOIN harness_processes p
+        ON p.system = v.system
+       AND tstzrange(p.started_at, CASE WHEN p.ended_at IS NULL THEN 'infinity'::timestamptz
+                                        ELSE GREATEST(p.started_at, p.ended_at) END, '[]') @> v.t
+      JOIN projected_sessions s
+        ON tstzrange(s.first_request_at, s.last_request_at, '[]') @> v.t
+       AND s.first_request_at IS NOT NULL
+       AND s.system = p.system AND s.harness = p.harness AND p.cwd IN (s.first_cwd, s.last_cwd)
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      CROSS JOIN LATERAL (
+        SELECT x.request_id FROM projected_requests x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.session_id = s.session_id AND x.parser_version = s.parser_version AND x.at <= v.t
+        ORDER BY x.at DESC LIMIT 1
+      ) latest
+      CROSS JOIN LATERAL (
+        SELECT x.source, x.session_id, x.process_id, x.stretch_started_at, x.stretch_ended_at
+        FROM insight.request_links x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.request_id = latest.request_id
+        OFFSET 0
+      ) l
+      WHERE l.process_id = p.id AND v.t <= l.stretch_ended_at;
+
+      CREATE VIEW insight.vitals_requests WITH (security_barrier = true) AS
+      SELECT i.system, i.t, l.harness, l.source, l.session_id, l.agent_id, l.request_id, l.at,
+             l.model, l.link, l.process_id, l.pid
+      FROM vitals_intervals i
+      CROSS JOIN LATERAL (
+        SELECT * FROM insight.request_links x
+        WHERE x.system = i.system AND x.at > i.since AND x.at <= i.t
+        OFFSET 0
+      ) l;
+    `,
+    version: 19,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

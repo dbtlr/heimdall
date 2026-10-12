@@ -31,7 +31,7 @@ Each time `serve` starts, after it applies the migrations, it grants the role:
 - `SELECT` on every view in the schema.
 - Default privileges that give the role `SELECT` on every view the Hub's role creates in the schema later.
 
-The views run with their owner's rights, so the role needs no access to the tables beneath them, and it has none. It cannot read transcripts, tokens, Pairing codes, Vitals, or any other table, and it cannot write to any table or view. Each view is a security barrier, so a filter the role writes runs only on rows the view shows, and no error or function in it can surface a row the view hides. Granting again changes nothing.
+The views run with their owner's rights, so the role needs no access to the tables beneath them, and it has none. It cannot read transcripts, tokens, Pairing codes, or any table, it reads Vitals and Harness processes only as the views show them, and it cannot write to any table or view. Each view is a security barrier, so a filter the role writes runs only on rows the view shows, and no error or function in it can surface a row the view hides. Granting again changes nothing.
 
 The grant covers views that later migrations add or replace. A migration that drops a view and creates it again drops its grants, and the default privileges give the role the new view at once. A view created before the role existed is granted when `serve` next tries.
 
@@ -66,9 +66,15 @@ Only a superuser can take away the rest, so it remains unless the provisioner do
 
 ## What the views hold
 
+The reader can query every view in the `insight` schema:
+
+- **Sessions:** `insight.sessions`, `insight.subagents`, `insight.requests`, `insight.tool_calls`, `insight.session_totals`, `insight.main_conversation_totals`, and `insight.parse_status`.
+- **Sessions beside Harness processes and Vitals:** `insight.request_links` and `insight.session_stretches`, which link each stretch of a Session to the Harness process that ran it when only one seen process could have; `insight.harness_processes`; and `insight.vitals`, `insight.vitals_processes`, `insight.vitals_sessions`, and `insight.vitals_requests`, which set each Vitals sample beside the processes, Sessions, and requests of its time. See [Linking Harness processes to Sessions](spec.md#linking-harness-processes-to-sessions).
+
 The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. A few columns are text as the Harness or the Collector wrote it:
 
 - `first_cwd` and `last_cwd`, the working directories, and `first_git_branch` and `last_git_branch`, in `insight.sessions`.
+- `cwd`, a Harness process's working directory, in `insight.harness_processes` and `insight.vitals_processes`.
 - `path`, the path of a transcript file within its source, in the Session, subagent, request, and tool call views.
 
 ## Example queries
@@ -103,6 +109,15 @@ FROM insight.tool_calls
 WHERE system = 'laptop-1' AND session_id = '0b1c2d3e-0000-4000-8000-000000000001'
 GROUP BY name, mcp_server
 ORDER BY calls DESC;
+```
+
+The Sessions each Harness process was running at one Vitals sample, such as a spike in CPU. `insight.vitals_sessions` suits one sample or a short range; for a day or more, read `insight.session_stretches` by `started_at` instead:
+
+```sql
+SELECT pid, harness, session_id, stretch_started_at, stretch_ended_at
+FROM insight.vitals_sessions
+WHERE system = 'laptop-1' AND t = '2026-10-01 12:00:15+00'
+ORDER BY pid, session_id;
 ```
 
 A Session's subagents, with the subagent that spawned each:
