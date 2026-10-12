@@ -66,15 +66,14 @@ jobs:
       - name: Test on the target platform
         run: bun test packages/schema packages/collector packages/release
 
-      # The define bakes Loom's release facts, so a defect shows an operator
-      # "Something went wrong." rather than a development build's diagnostic.
+      # loom build compiles for this runner's platform and bakes Loom's release
+      # facts, so a defect shows an operator "Something went wrong." rather than
+      # a development build's diagnostic.
       - name: Compile
         run: |
-          mkdir -p dist
           for binary in collector hub; do
-            bun build "packages/$binary/src/main.ts" --compile \
-              --define '__LOOM_RELEASE__={"build":"distributed"}' \
-              --outfile "dist/heimdall-$binary-${{ matrix.target }}"
+            bun run --cwd "packages/$binary" loom build \
+              --out "../../dist/heimdall-$binary-${{ matrix.target }}"
           done
 
       - name: Smoke-test the binaries

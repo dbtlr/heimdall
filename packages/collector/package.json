@@ -15,6 +15,7 @@
     "smol-toml": "^1.9.0"
   },
   "devDependencies": {
-    "@heimdall/hub": "workspace:*"
+    "@heimdall/hub": "workspace:*",
+    "@loomcli/loom": "0.10.0"
   }
 }
