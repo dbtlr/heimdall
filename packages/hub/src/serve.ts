@@ -10,6 +10,7 @@ import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
+import { keepInsightReaderGranted } from './insight-reader.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
 import { loadPriceOverrides, syncPrices } from './price-table.ts';
 import { BUNDLED_PRICES } from './prices.ts';
@@ -87,6 +88,7 @@ const serveUntilStopped = async ({
   // the database, since cost would otherwise read at the wrong prices.
   const configuredPrices = await loadConfiguredPrices(options['price-overrides'], log, clean);
   const sql = openDatabase(options.database);
+  let stopGranting: (() => Promise<void>) | undefined;
   try {
     // The Hub does not listen until the migrations apply. A lock another session
     // holds, such as a backup's, is waited out and logged, not a failure.
@@ -114,6 +116,13 @@ const serveUntilStopped = async ({
       (error: unknown) =>
         log.fatal(clean(`Could not load the price table: ${describeError(error)}`)),
     );
+    // The insight reader is granted after the migrations, so it covers every
+    // view they made. Neither a reader not created yet nor a failed grant stops
+    // the Hub; both are tried again while it runs.
+    const reader = options['insight-reader'];
+    if (reader !== undefined) {
+      stopGranting = await keepInsightReaderGranted({ clean, log, reader, sql });
+    }
     const hub = createHub({
       now: Date.now,
       onError: (error) => {
@@ -170,6 +179,7 @@ const serveUntilStopped = async ({
       await server.stop();
     }
   } finally {
+    await stopGranting?.();
     await sql.close();
   }
 };

@@ -727,3 +727,32 @@ describe('a line the database could not store', () => {
     expect(parsed.requests).toEqual([expect.objectContaining({ input: 1e9 })]);
   });
 });
+
+describe('claudeCodeParser.requestIdOf', () => {
+  test("names the response every content block's line belongs to", () => {
+    const blocks = [
+      assistant({ at: T0, block: { kind: 'thinking' }, id: 'msg_1', stop: null }),
+      assistant({ at: T0, block: { id: 'toolu_1', kind: 'tool', name: 'Read' }, id: 'msg_1' }),
+    ];
+
+    expect(blocks.map((line) => claudeCodeParser.requestIdOf(line))).toEqual(['msg_1', 'msg_1']);
+  });
+
+  test('names no request for a line that reports none', () => {
+    const lines: unknown[] = [
+      user({ at: T0 }),
+      costState({ models: {} }),
+      { ...assistant({ at: T0, id: 'msg_1' }), message: { id: 'not an id', model: 'm' } },
+      'a string',
+      null,
+    ];
+
+    expect(lines.map((line) => claudeCodeParser.requestIdOf(line))).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+  });
+});

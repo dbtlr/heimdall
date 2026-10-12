@@ -3,6 +3,8 @@ import { gunzip as gunzipCallback } from 'node:zlib';
 
 import type { SQL } from 'bun';
 
+import { MAX_LINE_BYTES } from './session-insight.ts';
+
 const gunzip = promisify(gunzipCallback);
 
 // A generation whose chunks cannot yield its content: a gap between them, or a
@@ -128,3 +130,313 @@ const chunksAfter = (
           AND offset_bytes > ${after} AND offset_bytes < ${until}
         ORDER BY offset_bytes LIMIT ${CHUNKS_PER_FETCH}
       `;
+
+// A transcript a reader names that the Hub cannot show: an unknown Session,
+// subagent, or generation, one deleted on purpose, or an offset that starts no
+// line it holds. The message says which.
+export class TranscriptNotFoundError extends Error {
+  override name = 'TranscriptNotFoundError';
+}
+
+// A generation the Hub holds, and how many bytes of its content.
+export type HeldGeneration = { generation: number; held: number };
+
+// Where a line is, as the insight views locate it: a generation, and
+// optionally the System, source, and path it must belong to.
+export type Locator = { generation: number; path?: string; source?: string; system?: string };
+
+// The generation `locator` names, which must not be deleted.
+export const locateGeneration = async (sql: SQL, locator: Locator): Promise<HeldGeneration> => {
+  const { generation, path, source, system } = locator;
+  const [row]: {
+    deleted_at: Date | null;
+    held: string;
+    path: string;
+    source: string;
+    system: string;
+  }[] = await sql`
+    SELECT system, source, path, held, deleted_at FROM transcript_generations
+    WHERE id = ${generation}::bigint
+  `;
+  if (
+    row === undefined ||
+    (system !== undefined && row.system !== system) ||
+    (source !== undefined && row.source !== source) ||
+    (path !== undefined && row.path !== path)
+  ) {
+    const of = [
+      source === undefined ? '' : ` of ${source}`,
+      system === undefined ? '' : ` on ${system}`,
+      path === undefined ? '' : ` at ${path}`,
+    ].join('');
+    throw new TranscriptNotFoundError(`No generation ${String(generation)}${of}.`);
+  }
+  if (row.deleted_at !== null) {
+    throw new TranscriptNotFoundError(`Generation ${String(generation)} was deleted.`);
+  }
+  return { generation, held: Number(row.held) };
+};
+
+// The transcript of a Session's main conversation, or of its subagent
+// `agent`, as the insight views name them: the newest generation the Hub
+// holds at its path that was not deleted, which is the file as it stands.
+export const locateSessionTranscript = async (
+  sql: SQL,
+  {
+    agent,
+    session,
+    source,
+    system,
+  }: { agent?: string; session: string; source: string; system: string },
+): Promise<HeldGeneration> => {
+  const named = `Session ${session} of ${source} on ${system}`;
+  const found: { path: string | null }[] =
+    agent === undefined
+      ? await sql`
+          SELECT path FROM insight.sessions
+          WHERE system = ${system} AND source = ${source} AND session_id = ${session}
+        `
+      : await sql`
+          SELECT path FROM insight.subagents
+          WHERE system = ${system} AND source = ${source} AND session_id = ${session}
+            AND agent_id = ${agent}
+        `;
+  if (found.length === 0) {
+    throw new TranscriptNotFoundError(
+      agent === undefined
+        ? `No ${named} is in the insight views.`
+        : `No subagent ${agent} of ${named} is in the insight views.`,
+    );
+  }
+  const path = found[0]?.path ?? null;
+  if (path === null) {
+    throw new TranscriptNotFoundError(
+      agent === undefined
+        ? `The Hub holds no main transcript of ${named}, only its subagents'.`
+        : `The Hub holds no transcript of subagent ${agent} of ${named}.`,
+    );
+  }
+  const [newest]: { held: string; id: string }[] = await sql`
+    SELECT id, held FROM transcript_generations
+    WHERE system = ${system} AND source = ${source} AND md5(path) = md5(${path}) AND path = ${path}
+      AND deleted_at IS NULL
+    ORDER BY opened_at DESC, last_upload_at DESC
+    LIMIT 1
+  `;
+  if (newest === undefined) {
+    throw new TranscriptNotFoundError(`Every generation of ${path} was deleted.`);
+  }
+  return { generation: Number(newest.id), held: Number(newest.held) };
+};
+
+// How much content a show reads at once.
+const SHOW_WINDOW_BYTES = 4 * 2 ** 20;
+
+// A show counts no budget, so it ignores what each read fetched.
+const fetched = () => {};
+
+// The byte that ends a line, `\n`.
+const NEWLINE = 10;
+
+// Writes a generation's content from byte `from`, which must start a line,
+// to `write` a window at a time: to the end of what it holds, or with
+// `oneLine` through the end of the line at `from`.
+export const writeHeldLines = async (
+  sql: SQL,
+  {
+    from,
+    generation,
+    held,
+    oneLine,
+    windowBytes = SHOW_WINDOW_BYTES,
+  }: HeldGeneration & { from: number; oneLine: boolean; windowBytes?: number },
+  write: (bytes: Uint8Array) => Promise<void>,
+): Promise<void> => {
+  if ((from > 0 || oneLine) && from >= held) {
+    throw new TranscriptNotFoundError(
+      `Generation ${String(generation)} holds ${String(held)} bytes, so byte ${String(from)} is past its end.`,
+    );
+  }
+  if (from > 0) {
+    const before = await readHeldContent(sql, {
+      fetched,
+      from: from - 1,
+      generation,
+      held,
+      limitBytes: 1,
+    });
+    if (before.content[0] !== NEWLINE) {
+      throw new TranscriptNotFoundError(
+        `Byte ${String(from)} of generation ${String(generation)} does not start a line.`,
+      );
+    }
+  }
+  let next = from;
+  while (next < held) {
+    // oxlint-disable-next-line no-await-in-loop -- a window at a time bounds memory.
+    const { content } = await readHeldContent(sql, {
+      fetched,
+      from: next,
+      generation,
+      held,
+      limitBytes: windowBytes,
+    });
+    if (content.byteLength === 0) {
+      return;
+    }
+    const end = oneLine ? content.indexOf(NEWLINE) : -1;
+    if (end !== -1) {
+      // oxlint-disable-next-line no-await-in-loop -- the last write.
+      await write(content.subarray(0, end + 1));
+      return;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- in order, as held.
+    await write(content);
+    next += content.byteLength;
+  }
+};
+
+// A request as the insight views hold it: its Harness, and the generations
+// that hold its lines, the one its locator names first.
+export type HeldRequest = { generations: HeldGeneration[]; harness: string };
+
+// The request `request` of `source` on `system`, from the insight views, and
+// every generation that holds it: the one its locator names, and any other
+// that holds it too, which the projection notes in `projected_holders`. A
+// deleted generation is left out.
+export const locateRequest = async (
+  sql: SQL,
+  { request, source, system }: { request: string; source: string; system: string },
+): Promise<HeldRequest> => {
+  const [found]: { generation: string; harness: string; parser_version: number }[] = await sql`
+    SELECT harness, generation, parser_version FROM insight.requests
+    WHERE system = ${system} AND source = ${source} AND request_id = ${request}
+  `;
+  if (found === undefined) {
+    throw new TranscriptNotFoundError(
+      `No request ${request} of ${source} on ${system} is in the insight views.`,
+    );
+  }
+  const generations: { held: string; id: string }[] = await sql`
+    SELECT g.id, g.held FROM transcript_generations g
+    WHERE g.deleted_at IS NULL AND (
+      g.id = ${found.generation}::bigint OR g.id IN (
+        SELECT h.generation FROM projected_holders h
+        WHERE h.harness = ${found.harness} AND h.parser_version = ${found.parser_version}
+          AND h.system = ${system} AND h.source = ${source} AND h.fact_id = ${request}
+      )
+    )
+    ORDER BY g.id = ${found.generation}::bigint DESC, g.opened_at
+  `;
+  return {
+    generations: generations.map((row) => ({ generation: Number(row.id), held: Number(row.held) })),
+    harness: found.harness,
+  };
+};
+
+const lineDecoder = new TextDecoder();
+
+// Joins the pieces of one line.
+const joined = (pieces: Uint8Array[]) => {
+  const line = new Uint8Array(pieces.reduce((sum, piece) => sum + piece.byteLength, 0));
+  let at = 0;
+  for (const piece of pieces) {
+    line.set(piece, at);
+    at += piece.byteLength;
+  }
+  return line;
+};
+
+// Calls `each` with every whole line of a generation's content, its newline
+// included, and the last line without one. A line longer than
+// `MAX_LINE_BYTES` is skipped as it is read, never held whole, as the parsers
+// skip it.
+const eachLine = async (
+  sql: SQL,
+  { generation, held, windowBytes }: HeldGeneration & { windowBytes: number },
+  each: (line: Uint8Array) => Promise<void>,
+) => {
+  let pending: Uint8Array[] = [];
+  let pendingBytes = 0;
+  let skipping = false;
+  let from = 0;
+  while (from < held) {
+    // oxlint-disable-next-line no-await-in-loop -- a window at a time bounds memory.
+    const { content } = await readHeldContent(sql, {
+      fetched,
+      from,
+      generation,
+      held,
+      limitBytes: windowBytes,
+    });
+    if (content.byteLength === 0) {
+      break;
+    }
+    let start = 0;
+    let end = content.indexOf(NEWLINE, start);
+    while (end !== -1) {
+      // A line can cross windows, so its length counts what is pending, and
+      // excludes its newline, as the parsers' limit does.
+      if (!skipping && pendingBytes + (end - start) <= MAX_LINE_BYTES) {
+        // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+        await each(joined([...pending, content.subarray(start, end + 1)]));
+      }
+      pending = [];
+      pendingBytes = 0;
+      skipping = false;
+      start = end + 1;
+      end = content.indexOf(NEWLINE, start);
+    }
+    const rest = content.subarray(start);
+    pendingBytes += rest.byteLength;
+    if (pendingBytes > MAX_LINE_BYTES) {
+      skipping = true;
+      pending = [];
+    } else if (!skipping) {
+      // A copy, so the window it came from can be let go.
+      pending.push(Uint8Array.from(rest));
+    }
+    from += content.byteLength;
+  }
+  if (!skipping && pendingBytes > 0) {
+    await each(joined(pending));
+  }
+};
+
+// Writes to `write` every line of `generations` that `requestIdOf` names as
+// request `request`'s, generation by generation in the order given, and a line
+// that several generations hold only once.
+export const writeRequestLines = async (
+  sql: SQL,
+  {
+    generations,
+    request,
+    requestIdOf,
+    windowBytes = SHOW_WINDOW_BYTES,
+  }: {
+    generations: readonly HeldGeneration[];
+    request: string;
+    requestIdOf: (line: unknown) => string | null;
+    windowBytes?: number;
+  },
+  write: (bytes: Uint8Array) => Promise<void>,
+): Promise<void> => {
+  const written = new Set<string>();
+  for (const held of generations) {
+    // oxlint-disable-next-line no-await-in-loop -- one generation at a time, in order.
+    await eachLine(sql, { ...held, windowBytes }, async (line) => {
+      const text = lineDecoder.decode(line);
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        return;
+      }
+      const key = text.endsWith('\n') ? text : `${text}\n`;
+      if (requestIdOf(value) === request && !written.has(key)) {
+        written.add(key);
+        await write(line);
+      }
+    });
+  }
+};

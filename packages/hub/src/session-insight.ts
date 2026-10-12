@@ -98,8 +98,12 @@ export type FileKind = 'facts' | 'misnamed' | 'other';
 // holds no facts is never read. `parse` reads content from byte
 // `offset` of its generation; `complete` says it reaches the end of what the
 // Hub holds. It stops after the line at which the batch holds `factLimit`
-// requests and tool calls. Bumping
-// `version` rebuilds the Harness's rows (ADR-0014).
+// requests and tool calls. `requestIdOf` names the request a line, already
+// parsed as JSON, belongs to: the `requestId` of the request it reports, or
+// null for a line of none. A request can span several lines, as Claude Code
+// writes one per content block, and `heimdall-hub transcripts show --request`
+// prints every line it names. Bumping `version` rebuilds the Harness's rows
+// (ADR-0014).
 export type HarnessParser = {
   harness: string;
   holds: (path: string) => FileKind;
@@ -110,6 +114,7 @@ export type HarnessParser = {
     offset: number;
     path: string;
   }) => Batch;
+  requestIdOf: (line: unknown) => string | null;
   version: number;
 };
 
