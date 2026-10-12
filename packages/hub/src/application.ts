@@ -49,6 +49,14 @@ export const serve = new Command('serve', {
     type: 'string',
     validate: integer({ max: 65_535, min: 0 }),
   })
+  .option('price-overrides', {
+    description:
+      'JSON file of model prices that add to or replace the bundled list prices, dated like them.',
+    env: 'HEIMDALL_PRICE_OVERRIDES',
+    extensions: [configInput({ path: 'prices.overrides' })],
+    type: 'string',
+    validate: text({ minLength: 1 }),
+  })
   .action(serveAction);
 
 // The System a `pair` or `unpair` names, by Fleet's System name rule.

@@ -11,6 +11,9 @@ import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+import { loadPriceOverrides, syncPrices } from './price-table.ts';
+import { BUNDLED_PRICES } from './prices.ts';
+import type { PriceEntry } from './prices.ts';
 import { projectionNotes, projectTranscripts } from './projection.ts';
 import { pruneVitals } from './retention.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
@@ -52,6 +55,23 @@ export const serveAction: ActionHandler<typeof serve> = async ({
   }
 };
 
+// The prices the configuration adds, none when it names no file. A file that
+// cannot be read is fatal.
+const loadConfiguredPrices = async (
+  path: string | undefined,
+  log: RuntimeLog,
+  clean: (message: string) => string,
+): Promise<PriceEntry[]> => {
+  if (path === undefined) {
+    return [];
+  }
+  try {
+    return await loadPriceOverrides(path);
+  } catch (error) {
+    return log.fatal(clean(describeError(error)));
+  }
+};
+
 const serveUntilStopped = async ({
   clean,
   log,
@@ -63,6 +83,9 @@ const serveUntilStopped = async ({
   options: Parameters<ActionHandler<typeof serve>>[0]['options'];
   signal: AbortSignal;
 }) => {
+  // A price overrides file that cannot be read stops the Hub before it touches
+  // the database, since cost would otherwise read at the wrong prices.
+  const configuredPrices = await loadConfiguredPrices(options['price-overrides'], log, clean);
   const sql = openDatabase(options.database);
   try {
     // The Hub does not listen until the migrations apply. A lock another session
@@ -86,6 +109,7 @@ const serveUntilStopped = async ({
     if (signal.aborted) {
       return;
     }
+    await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: configuredPrices });
     const hub = createHub({
       now: Date.now,
       onError: (error) => {

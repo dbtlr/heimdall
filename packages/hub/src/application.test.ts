@@ -518,6 +518,85 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
   expect(code).toBe(130);
 });
 
+// A price overrides file in a fresh directory that removes itself when disposed.
+const priceFile = async (contents: string) => {
+  const dir = await mkdtemp(join(tmpdir(), 'heimdall-prices-'));
+  const path = join(dir, 'prices.json');
+  await writeFile(path, contents);
+  return { path, [Symbol.asyncDispose]: () => rm(dir, { force: true, recursive: true }) };
+};
+
+const OVERRIDE = JSON.stringify({
+  prices: [
+    { contextWindow: 100_000, input: 1, model: 'my-model', output: 2, validFrom: '2026-07-01' },
+  ],
+});
+
+test('serve loads the bundled prices and the overrides file the configuration names', async () => {
+  await using db = await testDatabase();
+  await using prices = await priceFile(OVERRIDE);
+  await using config = await configFile([
+    'host = "127.0.0.1"',
+    'port = 0',
+    '[database]',
+    `url = "${db.url.href}"`,
+    '[prices]',
+    `overrides = "${prices.path}"`,
+  ]);
+
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  const rows: { n: number; source: string }[] = await db.sql`
+    SELECT source, count(*)::int AS n FROM model_prices GROUP BY source ORDER BY source
+  `;
+  expect(rows.map((row) => row.source)).toEqual(['bundled', 'configured']);
+  expect(rows.find((row) => row.source === 'bundled')?.n).toBeGreaterThan(0);
+  expect(rows.find((row) => row.source === 'configured')?.n).toBe(1);
+  expect(stderr).toBe('');
+  expect(code).toBe(130);
+});
+
+test('serve takes the overrides file from the variable too', async () => {
+  await using db = await testDatabase();
+  await using prices = await priceFile(OVERRIDE);
+  await using config = await hubConfig(db);
+
+  await invoke(serveArgs(config), { env: { HEIMDALL_PRICE_OVERRIDES: prices.path } });
+
+  const [row]: { n: number }[] = await db.sql`
+    SELECT count(*)::int AS n FROM model_prices WHERE source = 'configured'
+  `;
+  expect(row?.n).toBe(1);
+});
+
+test('serve without an overrides file loads the bundled prices alone', async () => {
+  await using db = await testDatabase();
+  await using config = await hubConfig(db);
+
+  await invoke(serveArgs(config));
+
+  const [row]: { n: number }[] = await db.sql`
+    SELECT count(*)::int AS n FROM model_prices WHERE source = 'configured'
+  `;
+  expect(row?.n).toBe(0);
+});
+
+test('serve stops, naming the file, when the overrides file is not valid, before it touches the database', async () => {
+  await using db = await testDatabase();
+  await using prices = await priceFile('{"prices": [{"model": "m"}]}');
+  await using config = await hubConfig(db);
+
+  const { code, stderr } = await invoke(serveArgs(config), {
+    env: { HEIMDALL_PRICE_OVERRIDES: prices.path },
+  });
+
+  expect(stderr).toContain('Could not read the price overrides in');
+  expect(stderr).toContain('prices.json');
+  expect(code).not.toBe(0);
+  const tables = await db.sql`SELECT to_regclass('model_prices') AS found`;
+  expect(tables[0].found).toBeNull();
+});
+
 const TIMESTAMPED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \S/u;
 
 // A fatal line that starts with its time, like every runtime line.
