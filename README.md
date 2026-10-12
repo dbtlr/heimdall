@@ -19,7 +19,7 @@ bun run build:hub        # compile dist/heimdall-hub for this platform
 
 A pull request that changes what ships adds a changelog fragment in [`.changes/`](.changes/README.md). [Releasing](docs/releasing.md) covers fragments, cutting a release, and installing the binaries.
 
-The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. The Collector's end-to-end pairing tests run against the same test Hub. Run `bun test` from the repository root, `packages/hub`, or `packages/collector`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`.
+The Hub's tests need PostgreSQL. They use the server `HEIMDALL_TEST_DATABASE_URL` names, or else start a throwaway cluster with the `initdb` and `pg_ctl` on `PATH`. Each test creates and drops its own database. The Collector's end-to-end pairing tests run against the same test Hub. Run `bun test` from the repository root, `packages/hub`, or `packages/collector`: Bun reads the preload that stops the throwaway cluster only from a directory with a `bunfig.toml`. A run that is killed, or that runs without the preload, leaves its cluster running until the next run that starts a throwaway cluster stops it.
 
 ## Running the Collector
 
