@@ -716,10 +716,15 @@ export const MIGRATIONS: readonly Migration[] = [
     // List-price cost and context fill, computed when read and never stored
     // (ADR-0014). `model_prices` holds the Hub's price table, loaded by
     // `serve` from the bundled prices and the configured ones (prices.ts,
-    // price-table.ts): one row per model, start day, and source, in dollars
-    // per million tokens. A request is priced by the row with the latest
-    // `valid_from` on or before its time, a configured row before a bundled
-    // one of the same day, for its model without a `-YYYYMMDD` suffix. A
+    // price-table.ts): one row per model, start day, prompt tier, and source,
+    // in dollars per million tokens. A model that reprices the whole request
+    // above a prompt size has a row per tier; `min_prompt_tokens` is the
+    // smallest prompt, its input, cache read, and cache write tokens, a tier
+    // applies to, and 0 for a model with one price. A request is priced, for
+    // its model without a `-YYYYMMDD` suffix, by the row in force at its time
+    // (`valid_from` on or before it) of the highest tier its prompt reaches,
+    // then the latest `valid_from`, then a configured row before a bundled
+    // one: so a dated row replaces only its own tier. A
     // request with no such row, or with tokens of a kind the row has no price
     // for, has a null cost; it is never free. A cache write the Harness did
     // not split is priced as a 5-minute write. A request's recorded context
@@ -736,7 +741,8 @@ export const MIGRATIONS: readonly Migration[] = [
         cache_write_5m_per_mtok numeric CHECK (cache_write_5m_per_mtok >= 0),
         cache_write_1h_per_mtok numeric CHECK (cache_write_1h_per_mtok >= 0),
         context_window bigint NOT NULL CHECK (context_window > 0),
-        PRIMARY KEY (model, valid_from, source)
+        min_prompt_tokens bigint NOT NULL DEFAULT 0 CHECK (min_prompt_tokens >= 0),
+        PRIMARY KEY (model, valid_from, min_prompt_tokens, source)
       );
 
       -- Tokens at a price per million tokens. No tokens cost nothing even at no
@@ -756,7 +762,7 @@ export const MIGRATIONS: readonly Migration[] = [
                price_tokens(r.input_tokens, price.input_per_mtok)
                + price_tokens(r.output_tokens, price.output_per_mtok)
                + price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
-               + price_tokens(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0),
+               + price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
                               price.cache_write_5m_per_mtok)
                + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
              END AS cost_usd,
@@ -770,7 +776,8 @@ export const MIGRATIONS: readonly Migration[] = [
         SELECT p.*
         FROM model_prices p
         WHERE p.model = regexp_replace(r.model, '-[0-9]{8}$', '') AND p.valid_from <= r.at
-        ORDER BY p.valid_from DESC, p.source = 'configured' DESC
+          AND p.min_prompt_tokens <= r.input_tokens + r.cache_read_tokens + r.cache_write_tokens
+        ORDER BY p.min_prompt_tokens DESC, p.valid_from DESC, p.source = 'configured' DESC
         LIMIT 1
       ) price ON true
       WHERE NOT EXISTS (
@@ -827,8 +834,9 @@ export const MIGRATIONS: readonly Migration[] = [
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
-// arbitrary; it only has to be the same for every Hub.
-const MIGRATION_LOCK = 'heimdall-migrations';
+// arbitrary; it only has to be the same for every Hub. Loading the price table
+// takes the lock too (price-table.ts).
+export const MIGRATION_LOCK = 'heimdall-migrations';
 
 // How long a migration waits for a lock another session holds before it gives
 // up with lock_not_available (SQLSTATE 55P03). The statement timeout would

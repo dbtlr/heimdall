@@ -603,6 +603,25 @@ const TIMESTAMPED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \S/u;
 const timestampedFatal = (message: string) =>
   new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z [^\\n]*${message}`, 'u');
 
+test('serve stops with a timestamped fatal line, not a raw error, when the price table cannot load', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql`
+    CREATE FUNCTION refuse_insert() RETURNS trigger LANGUAGE plpgsql
+    AS $$ BEGIN RAISE EXCEPTION 'insert refused'; END $$
+  `;
+  await db.sql`
+    CREATE TRIGGER refuse BEFORE INSERT ON model_prices
+    FOR EACH ROW EXECUTE FUNCTION refuse_insert()
+  `;
+  await using config = await hubConfig(db);
+
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  expect(stderr).toMatch(timestampedFatal('Could not load the price table: .*insert refused'));
+  expect(code).not.toBe(0);
+});
+
 test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
   await using db = await databaseWithOldSample();
   await using config = await configFile([

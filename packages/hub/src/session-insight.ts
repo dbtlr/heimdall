@@ -8,7 +8,11 @@ import { storable } from './storable.ts';
 // agent, or one of its subagents.
 export type Owner = { agentId: string | null; sessionId: string };
 
-// One API response. Its token counts are at most `MAX_TOKENS`. `reasoning` is within `output`, and `cacheWrite` is
+// One API response. Its token counts are at most `MAX_TOKENS`. `input` counts the
+// tokens the Harness did not serve from a cache or write to one: it excludes
+// `cacheRead` and `cacheWrite`, as the cost of a request relies on, so a
+// Harness whose own input count includes cached tokens, as Codex's does, stores
+// the rest. `reasoning` is within `output`, and `cacheWrite` is
 // `cacheWrite5m` plus `cacheWrite1h` when the Harness splits it. `requestId`
 // is the Harness's own id for the response, which counts it once however
 // many files or generations hold it. `offset` is the byte offset of the line

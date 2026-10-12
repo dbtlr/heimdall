@@ -129,6 +129,44 @@ describe('a request is priced at list prices', () => {
     expect(await costs(db.sql)).toEqual({ r1: 4 });
   });
 
+  test('only a trailing eight-digit date is a suffix: a model id ending in a version keeps its own entry', async () => {
+    const family = { ...PRICE, input: 1, model: 'claude-opus-4' };
+    const version = { ...PRICE, input: 2, model: 'claude-opus-4-6' };
+    const minor = { ...PRICE, input: 3, model: 'claude-sonnet-4-5' };
+    const base = { ...PRICE, input: 4, model: 'claude-sonnet-4' };
+    await using db = await prepared({ bundled: [family, version, minor, base] });
+    const at = '2026-03-01T00:00:00Z';
+    await seed(db.sql, [
+      { at, id: 'a-version', input: 1_000_000, model: 'claude-opus-4-6' },
+      { at, id: 'b-version-dated', input: 1_000_000, model: 'claude-opus-4-6-20260101' },
+      { at, id: 'c-family-dated', input: 1_000_000, model: 'claude-opus-4-20250514' },
+      { at, id: 'd-minor', input: 1_000_000, model: 'claude-sonnet-4-5' },
+      { at, id: 'e-base-dated', input: 1_000_000, model: 'claude-sonnet-4-20250514' },
+      { at, id: 'f-unknown-version', input: 1_000_000, model: 'claude-opus-4-9' },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({
+      'a-version': 2,
+      'b-version-dated': 2,
+      'c-family-dated': 1,
+      'd-minor': 3,
+      'e-base-dated': 4,
+      'f-unknown-version': null,
+    });
+  });
+
+  test('a 1-hour write count above the cache write total never makes the 5-minute term negative', async () => {
+    await using db = await prepared({ bundled: [PRICE] });
+    await seed(db.sql, [{ at: '2026-03-01T00:00:00Z', id: 'r1' }]);
+    await db.sql`
+      UPDATE projected_requests
+      SET cache_write_tokens = 1000000, cache_write_5m_tokens = 0, cache_write_1h_tokens = 3000000
+    `;
+
+    // Only the 3M 1-hour writes at 10 count; the 5-minute remainder is zero, not -2M at 5.
+    expect(await costs(db.sql)).toEqual({ r1: 30 });
+  });
+
   test('tokens of a kind the model has no price for leave the request unpriced', async () => {
     const { cacheWrite1h: _unpriced, ...withoutLongWrites } = PRICE;
     await using db = await prepared({ bundled: [withoutLongWrites] });
@@ -173,6 +211,110 @@ describe('a price applies from its date', () => {
 
     // 20:00 in New York on 31 May is 00:00 UTC on 1 June.
     expect(await costs(db.sql)).toEqual({ earlier: 4, 'new-york-evening': 1 });
+  });
+});
+
+// A model that reprices the whole request above a prompt size, as Claude Haiku
+// 5.5 does above 100,000 tokens: input at 4, or 8 above the threshold.
+const BASE_TIER: PriceEntry = { ...PRICE, input: 4, output: 20 };
+const HIGH_TIER: PriceEntry = { ...PRICE, input: 8, output: 40, promptOver: 100_000 };
+const TIERED: PriceEntry[] = [BASE_TIER, HIGH_TIER];
+
+describe('a prompt over a threshold reprices the whole request', () => {
+  test('a request at the threshold uses the base prices, and one token over uses the higher ones', async () => {
+    await using db = await prepared({ bundled: TIERED });
+    await seed(db.sql, [
+      { at: '2026-03-01T00:00:00Z', id: 'at', input: 100_000, output: 1_000_000 },
+      { at: '2026-03-01T00:00:00Z', id: 'over', input: 100_001, output: 1_000_000 },
+    ]);
+
+    // The output is repriced too: 20 at the threshold, 40 over it.
+    expect(await costs(db.sql)).toEqual({ at: 20.4, over: 40.800_008 });
+  });
+
+  test('the prompt is input, cache reads, and cache writes together', async () => {
+    await using db = await prepared({ bundled: TIERED });
+    await seed(db.sql, [
+      { at: '2026-03-01T00:00:00Z', cacheRead: 50_000, cacheWrite5m: 50_000, id: 'at' },
+      { at: '2026-03-01T00:00:00Z', cacheRead: 50_000, cacheWrite1h: 50_001, id: 'over' },
+    ]);
+
+    // 50k reads at 0.5 and 50k 5-minute writes at 5; then 50k reads at 0.5 and 50,001 1-hour writes at 10.
+    expect(await costs(db.sql)).toEqual({ at: 0.275, over: 0.525_01 });
+  });
+
+  test('the tier shows in the request context window and fill', async () => {
+    await using db = await prepared({
+      bundled: [
+        { ...PRICE, contextWindow: 200_000 },
+        { ...HIGH_TIER, contextWindow: 1_000_000 },
+      ],
+    });
+    await seed(db.sql, [{ at: '2026-03-01T00:00:00Z', id: 'over', input: 500_000 }]);
+
+    const [row]: Record<string, string>[] = await db.sql`
+      SELECT context_window, context_fill_percent FROM insight.requests
+    `;
+
+    expect([Number(row?.context_window), Number(row?.context_fill_percent)]).toEqual([
+      1_000_000, 50,
+    ]);
+  });
+
+  test('a dated change to one tier leaves the other tier at its own price', async () => {
+    await using db = await prepared({
+      bundled: [...TIERED, { ...BASE_TIER, input: 1, validFrom: '2026-06-01' }],
+    });
+    await seed(db.sql, [
+      { at: '2026-05-31T00:00:00Z', id: 'a-small-before', input: 10_000 },
+      { at: '2026-05-31T00:00:00Z', id: 'b-large-before', input: 200_000 },
+      { at: '2026-06-01T00:00:00Z', id: 'c-small-after', input: 10_000 },
+      { at: '2026-06-01T00:00:00Z', id: 'd-large-after', input: 200_000 },
+    ]);
+
+    // Only the base tier changed on 1 June.
+    expect(await costs(db.sql)).toEqual({
+      'a-small-before': 0.04,
+      'b-large-before': 1.6,
+      'c-small-after': 0.01,
+      'd-large-after': 1.6,
+    });
+  });
+
+  test('a dated change to every tier applies to each from its date', async () => {
+    await using db = await prepared({
+      bundled: [
+        ...TIERED,
+        { ...BASE_TIER, input: 1, validFrom: '2026-06-01' },
+        { ...HIGH_TIER, input: 2, validFrom: '2026-06-01' },
+      ],
+    });
+    await seed(db.sql, [
+      { at: '2026-05-31T00:00:00Z', id: 'a-base-before', input: 10_000 },
+      { at: '2026-05-31T00:00:00Z', id: 'b-high-before', input: 200_000 },
+      { at: '2026-06-01T00:00:00Z', id: 'c-base-after', input: 10_000 },
+      { at: '2026-06-01T00:00:00Z', id: 'd-high-after', input: 200_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({
+      'a-base-before': 0.04,
+      'b-high-before': 1.6,
+      'c-base-after': 0.01,
+      'd-high-after': 0.4,
+    });
+  });
+
+  test('an override replaces a tier of the same model and date, and leaves the other tier', async () => {
+    await using db = await prepared({
+      bundled: TIERED,
+      configured: [{ ...HIGH_TIER, input: 6 }],
+    });
+    await seed(db.sql, [
+      { at: '2026-03-01T00:00:00Z', id: 'a-base', input: 10_000 },
+      { at: '2026-03-01T00:00:00Z', id: 'b-high', input: 200_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({ 'a-base': 0.04, 'b-high': 1.2 });
   });
 });
 
@@ -306,6 +448,24 @@ describe('an unpriced request is never free', () => {
   });
 });
 
+test('the main conversation totals have no cost when a main conversation request is unpriced', async () => {
+  await using db = await prepared({ bundled: [PRICE] });
+  await seed(db.sql, [
+    { at: '2026-03-01T00:00:00Z', id: 'main-priced', input: 1_000_000 },
+    { at: '2026-03-01T00:00:00Z', id: 'main-unpriced', model: 'mystery-model' },
+    { at: '2026-03-01T00:00:00Z', id: 'sub', input: 1_000_000 },
+  ]);
+  await db.sql`UPDATE projected_requests SET agent_id = 'a1' WHERE request_id = 'sub'`;
+
+  const [main]: Record<string, string | null>[] = await db.sql`
+    SELECT cost_usd, priced_cost_usd, unpriced_requests FROM insight.main_conversation_totals
+  `;
+
+  expect(main?.cost_usd).toBeNull();
+  expect(Number(main?.priced_cost_usd)).toBe(4);
+  expect(Number(main?.unpriced_requests)).toBe(1);
+});
+
 describe('context fill', () => {
   test('is the request context as a percentage of the model context window', async () => {
     await using db = await prepared({ bundled: [PRICE] });
@@ -357,7 +517,9 @@ test('no projected table stores a cost or a price', async () => {
 
 describe('the bundled table', () => {
   test('holds one entry per model and date, each with a window and non-negative prices', () => {
-    const keys = BUNDLED_PRICES.map((entry) => `${entry.model}@${entry.validFrom}`);
+    const keys = BUNDLED_PRICES.map(
+      (entry) => `${entry.model}@${entry.validFrom}@${String(entry.promptOver ?? 0)}`,
+    );
     expect(new Set(keys).size).toBe(keys.length);
     for (const entry of BUNDLED_PRICES) {
       expect(entry.validFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
@@ -375,10 +537,89 @@ describe('the bundled table', () => {
     }
   });
 
+  test('gives every tiered model a base entry from the same date, so small requests are priced', () => {
+    for (const tier of BUNDLED_PRICES.filter((entry) => entry.promptOver !== undefined)) {
+      expect(
+        BUNDLED_PRICES.some(
+          (entry) =>
+            entry.model === tier.model &&
+            entry.validFrom === tier.validFrom &&
+            entry.promptOver === undefined,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test('reprices Claude Haiku 5.5 over 100,000 prompt tokens as the pricing page lists', () => {
+    const haiku = BUNDLED_PRICES.filter((entry) => entry.model === 'claude-haiku-5-5');
+
+    expect(haiku.map(({ promptOver, ...prices }) => [promptOver, prices])).toEqual([
+      [
+        undefined,
+        {
+          cacheRead: 0.01,
+          cacheWrite1h: 0.2,
+          cacheWrite5m: 0.125,
+          contextWindow: 1_000_000,
+          input: 0.1,
+          model: 'claude-haiku-5-5',
+          output: 0.5,
+          validFrom: '2026-10-07',
+        },
+      ],
+      [
+        100_000,
+        {
+          cacheRead: 0.05,
+          cacheWrite1h: 1,
+          cacheWrite5m: 0.625,
+          contextWindow: 1_000_000,
+          input: 0.5,
+          model: 'claude-haiku-5-5',
+          output: 2.5,
+          validFrom: '2026-10-07',
+        },
+      ],
+    ]);
+  });
+
+  test('reprices gpt-6.1-sol over 272,000 prompt tokens at twice input, cache, and write and 1.5 times output', () => {
+    const [base, high] = BUNDLED_PRICES.filter((entry) => entry.model === 'gpt-6.1-sol');
+
+    expect([base?.input, base?.cacheRead, base?.cacheWrite5m, base?.output]).toEqual([
+      2, 0.1, 2.5, 10,
+    ]);
+    expect(high?.promptOver).toBe(272_000);
+    expect([high?.input, high?.cacheRead, high?.cacheWrite5m, high?.output]).toEqual([
+      4, 0.2, 5, 15,
+    ]);
+    expect(base?.contextWindow).toBe(1_050_000);
+  });
+
+  test('prices Claude Sonnet 5.5 cache reads at 0.05 times input', () => {
+    expect(BUNDLED_PRICES.find((entry) => entry.model === 'claude-sonnet-5-5')?.cacheRead).toBe(
+      0.1,
+    );
+  });
+
   test('names each model without a date suffix, so a dated id can match it', () => {
     for (const entry of BUNDLED_PRICES) {
       expect(entry.model).not.toMatch(/-\d{8}$/u);
     }
+  });
+
+  test('concurrent loads all succeed and leave one full table', async () => {
+    await using db = await testDatabase();
+    await migrate(db.sql);
+
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        syncPrices(db.sql, { bundled: BUNDLED_PRICES, configured: [{ ...PRICE }] }),
+      ),
+    );
+
+    const [row]: { n: number }[] = await db.sql`SELECT count(*)::int AS n FROM model_prices`;
+    expect(row?.n).toBe(BUNDLED_PRICES.length + 1);
   });
 
   test('loads into a migrated database', async () => {
@@ -419,8 +660,37 @@ describe('a price overrides file', () => {
     ]);
   });
 
+  test('reads a prompt threshold, and keeps two entries that differ only in it', () => {
+    const tiers = JSON.stringify({
+      prices: [
+        { contextWindow: 1, input: 1, model: 'm', output: 1, validFrom: '2026-01-01' },
+        {
+          contextWindow: 1,
+          input: 2,
+          model: 'm',
+          output: 2,
+          promptOver: 100_000,
+          validFrom: '2026-01-01',
+        },
+      ],
+    });
+
+    expect(parsePriceOverrides(tiers).map((entry) => entry.promptOver)).toEqual([
+      undefined,
+      100_000,
+    ]);
+  });
+
   test.each([
     ['text that is not JSON', 'not json'],
+    [
+      'a prompt threshold of zero',
+      '{"prices":[{"model":"m","validFrom":"2026-01-01","input":1,"output":1,"contextWindow":1,"promptOver":0}]}',
+    ],
+    [
+      'two entries for one model, date, and threshold',
+      '{"prices":[{"model":"m","validFrom":"2026-01-01","input":1,"output":1,"contextWindow":1,"promptOver":5},{"model":"m","validFrom":"2026-01-01","input":2,"output":1,"contextWindow":1,"promptOver":5}]}',
+    ],
     ['no prices list', '{}'],
     ['an entry with no date', '{"prices":[{"model":"m","input":1,"output":1,"contextWindow":1}]}'],
     [

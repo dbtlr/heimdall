@@ -109,7 +109,11 @@ const serveUntilStopped = async ({
     if (signal.aborted) {
       return;
     }
-    await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: configuredPrices });
+    // PostgreSQL's messages name the host and role, never the password.
+    await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: configuredPrices }).catch(
+      (error: unknown) =>
+        log.fatal(clean(`Could not load the price table: ${describeError(error)}`)),
+    );
     const hub = createHub({
       now: Date.now,
       onError: (error) => {

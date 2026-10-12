@@ -4,6 +4,7 @@ import type { SQL } from 'bun';
 import { z } from 'zod';
 
 import { describeError } from './errors.ts';
+import { MIGRATION_LOCK } from './migrations.ts';
 import type { PriceEntry } from './prices.ts';
 
 // The price table the `insight` views read (migration 16): the bundled prices
@@ -38,16 +39,18 @@ const priceEntry = z
     input: price,
     model,
     output: price,
+    promptOver: z.number().int().positive().optional(),
     validFrom: day,
   })
   .transform((parsed): PriceEntry => {
     // Optional keys are present only when given, as `PriceEntry` allows.
-    const { cacheRead, cacheWrite1h, cacheWrite5m, ...rest } = parsed;
+    const { cacheRead, cacheWrite1h, cacheWrite5m, promptOver, ...rest } = parsed;
     return {
       ...rest,
       ...(cacheRead === undefined ? {} : { cacheRead }),
       ...(cacheWrite1h === undefined ? {} : { cacheWrite1h }),
       ...(cacheWrite5m === undefined ? {} : { cacheWrite5m }),
+      ...(promptOver === undefined ? {} : { promptOver }),
     };
   });
 
@@ -55,12 +58,12 @@ const overrides = z
   .strictObject({ prices: z.array(priceEntry) })
   .superRefine(({ prices }, context) => {
     const seen = new Set<string>();
-    for (const [index, { model: id, validFrom }] of prices.entries()) {
-      const key = `${id}@${validFrom}`;
+    for (const [index, { model: id, promptOver, validFrom }] of prices.entries()) {
+      const key = `${id}@${validFrom}@${String(promptOver ?? 0)}`;
       if (seen.has(key)) {
         context.addIssue({
           code: 'custom',
-          message: `More than one entry for ${id} from ${validFrom}.`,
+          message: `More than one entry for ${id} from ${validFrom} over ${String(promptOver ?? 0)} prompt tokens.`,
           path: ['prices', index],
         });
       }
@@ -101,13 +104,15 @@ export const loadPriceOverrides = async (path: string): Promise<PriceEntry[]> =>
 };
 
 // Replaces the price table with `bundled` and `configured` entries. Both stay
-// in it: where a configured entry and a bundled one share a model and a date,
-// the views choose the configured one.
+// in it: where a configured entry and a bundled one share a model, a date, and
+// a prompt tier, the views choose the configured one. The replacement holds the
+// lock migrations take, so Hubs that start together load it one at a time.
 export const syncPrices = (
   sql: SQL,
   { bundled, configured }: { bundled: readonly PriceEntry[]; configured: readonly PriceEntry[] },
 ): Promise<void> =>
   sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     await tx`DELETE FROM model_prices`;
     const rows = [
       ...bundled.map((p) => ({ price: p, source: 'bundled' })),
@@ -118,12 +123,12 @@ export const syncPrices = (
       await tx`
         INSERT INTO model_prices (
           model, valid_from, source, input_per_mtok, output_per_mtok, cache_read_per_mtok,
-          cache_write_5m_per_mtok, cache_write_1h_per_mtok, context_window
+          cache_write_5m_per_mtok, cache_write_1h_per_mtok, context_window, min_prompt_tokens
         )
         VALUES (
           ${p.model}, ${`${p.validFrom}T00:00:00Z`}::timestamptz, ${source}, ${p.input},
           ${p.output}, ${p.cacheRead ?? null}, ${p.cacheWrite5m ?? null},
-          ${p.cacheWrite1h ?? null}, ${p.contextWindow}
+          ${p.cacheWrite1h ?? null}, ${p.contextWindow}, ${(p.promptOver ?? -1) + 1}
         )
       `;
     }
