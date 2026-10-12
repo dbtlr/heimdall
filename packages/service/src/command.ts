@@ -348,6 +348,7 @@ export const serviceCommand = (
     binary === 'hub'
       ? new Command('status', { description: statusDescription })
           .option('host', {
+            description: "The host serve listens on, read to probe the Hub's health.",
             env: 'HEIMDALL_HOST',
             extensions: [configInput({ path: 'host' })],
             hidden: true,
@@ -356,6 +357,7 @@ export const serviceCommand = (
           })
           .option('port', {
             default: '8080',
+            description: "The port serve listens on, read to probe the Hub's health.",
             env: 'HEIMDALL_PORT',
             extensions: [configInput({ path: 'port' })],
             hidden: true,
@@ -367,6 +369,7 @@ export const serviceCommand = (
           )
       : new Command('status', { description: statusDescription })
           .option('hub', {
+            description: 'The Hub run pushes to, compared with the one this System paired with.',
             env: 'HEIMDALL_HUB',
             extensions: [configInput({ path: 'hub' })],
             hidden: true,
@@ -374,6 +377,8 @@ export const serviceCommand = (
             validate: asGiven,
           })
           .option('state-dir', {
+            description:
+              'The state directory run uses, read for the paired System, queue, and spool.',
             env: 'HEIMDALL_STATE_DIR',
             extensions: [configInput({ path: 'stateDir' })],
             hidden: true,

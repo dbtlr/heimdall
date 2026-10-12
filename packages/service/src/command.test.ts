@@ -60,6 +60,7 @@ const invoke = async (
   },
 ) => {
   const app = new Application(`heimdall-${spec.binary}`, {
+    description: `The ${spec.binary} service command under test.`,
     plugins: [config({ file: `.config/heimdall/${spec.binary}.{toml,json}` })],
   }).command(
     serviceCommand(spec, {
