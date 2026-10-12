@@ -49,7 +49,7 @@ The service that receives Reports and transcripts, stores them in PostgreSQL, de
 _Avoid_: server, backend
 
 **dashboard**:
-The web app that shows the fleet: every System's Vitals, records, and Conditions, and its agent Sessions. It runs on the Hub's System and reads the Hub's database; until it shows everything, the Hub's own page remains.
+The web app that serves every read of the fleet: pages that show every System's Vitals, records, and Conditions, and its agent Sessions, and the read API. It runs on the Hub's System and reads the Hub's database, which it never writes; the Hub ingests. Until it shows everything, the Hub's own page remains.
 _Avoid_: UI, frontend, console
 
 **Report**:
