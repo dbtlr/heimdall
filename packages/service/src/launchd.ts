@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { readIfPresent } from './files.ts';
-import { isServiceNotLoaded, readPrintedService } from './launchctl.ts';
+import { isDomainMissing, isServiceNotLoaded, readPrintedService } from './launchctl.ts';
 import type { PrintedService } from './launchctl.ts';
 import { launchdPlistPath } from './names.ts';
 import { renderLaunchdPlist } from './plist.ts';
@@ -12,11 +12,10 @@ import type { Supervisor, UnitStatus } from './supervisor.ts';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// The exit codes launchctl gives for a `bootout` or a domain `print` of
-// something that is not there: 113, and 3 "No such process" from some releases'
-// bootout. Neither prints the "Could not find service" message that `print` of
-// a service does, so they are judged by code alone; `print` of the service goes
-// through `isServiceNotLoaded`, which also needs the message.
+// The exit codes launchctl gives for a `bootout` of something that is not
+// there: 113, and 3 "No such process" from some releases. They are judged by
+// code alone; `print` goes through `isServiceNotLoaded` and `isDomainMissing`,
+// which also need launchctl's message.
 const NOT_LOADED_CODES = new Set([3, 113]);
 
 // `bootout` can return, or report 36 "Operation now in progress", before
@@ -162,7 +161,7 @@ export const launchdSupervisor = ({
   const sessionNotes = async () => {
     try {
       const result = await attempt(['print', domain]);
-      return NOT_LOADED_CODES.has(result.code) ? [NO_SESSION_NOTE] : [];
+      return isDomainMissing(result) ? [NO_SESSION_NOTE] : [];
     } catch {
       return [];
     }

@@ -2,10 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { NO_GUI_DOMAIN, NOT_FOUND_IN_GUI, RUNNING_AGENT } from './launchctl-captures.ts';
 import type { ServiceDefinition } from './names.ts';
 import type { CommandResult } from './runner.ts';
 import { UnitNotInstalledError } from './supervisor.ts';
 import type { Supervisor, UnitStatus } from './supervisor.ts';
+
+export * from './launchctl-captures.ts';
 
 // A fresh directory to stand in for home, removed when disposed:
 // `await using home = await tempHome()`.
@@ -88,44 +91,28 @@ export const fakeClock = (start = 0) => {
 
 const launchctlOk = (stdout = ''): CommandResult => ({ code: 0, stderr: '', stdout });
 
-// `launchctl print gui/<uid>/<label>` for a loaded agent, trimmed to the shape
-// that matters: the agent's properties one tab in, nested blocks deeper.
+// `launchctl print gui/501/<label>` for a loaded agent: the captured output of
+// a running agent, with the label, state, and pid swapped in. Without a pid, the
+// agent has no process.
 export const launchctlPrint = (label: string, state: string, pid?: number): CommandResult =>
-  launchctlOk(`gui/501/${label} = {
-\tactive count = ${pid === undefined ? '0' : '1'}
-\tpath = /Users/operator/Library/LaunchAgents/${label}.plist
-\ttype = LaunchAgent
-\tstate = ${state}
+  launchctlOk(
+    RUNNING_AGENT.replaceAll('com.dbtlr.heimdall.collector', label)
+      .replace('\tstate = running\n', `\tstate = ${state}\n`)
+      .replace(/\tpid = \d+\n/u, pid === undefined ? '' : `\tpid = ${String(pid)}\n`),
+  );
 
-\tprogram = /opt/heimdall/bin/heimdall-collector
-\targuments = {
-\t\t/opt/heimdall/bin/heimdall-collector
-\t\trun
-\t}
-
-\tdefault environment = {
-\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin
-\t}
-
-\tdomain = gui/501 [100005]
-\truns = 2
-${pid === undefined ? '' : `\tpid = ${String(pid)}\n`}\tlast exit code = 1
-\tproperties = keepalive | runatload
-}
-`);
-
-// What launchctl answers about a service or domain that is not there.
-export const launchctlNotFound = (target: string): CommandResult => ({
+// What launchctl answers about a service the GUI domain does not have.
+export const launchctlNotFound = (label: string): CommandResult => ({
   code: 113,
-  stderr: `Could not find service "${target}" in domain for user gui: 501\n`,
+  stderr: NOT_FOUND_IN_GUI.replace('com.example.heimdall.nonexistent', label),
   stdout: '',
 });
 
 // What launchctl answers about anything in a GUI domain that does not exist,
 // as when the user has no GUI login session: it names the domain, not a service.
-export const launchctlNoDomain = (target: string): CommandResult => ({
-  code: 113,
-  stderr: `Bad request.\nCould not find domain for user gui: 501 (while printing ${target})\n`,
+export const launchctlNoDomain = (): CommandResult => ({
+  code: 112,
+  stderr: NO_GUI_DOMAIN.replace('4242424', '501'),
   stdout: '',
 });
 
@@ -150,16 +137,14 @@ export const fakeLaunchd = ({
 } = {}) => {
   const state = { lingering: 0, loaded };
   // Without the GUI domain, launchctl names the domain, not the service.
-  const notLoaded = (target: string) =>
-    domain ? launchctlNotFound(target) : launchctlNoDomain(target);
+  const notLoaded = () => (domain ? launchctlNotFound(label) : launchctlNoDomain());
   const calls: string[] = [];
   const scripted = (verb: string) => answers[verb]?.shift();
   const answer = (argv: readonly string[]): CommandResult => {
     const [, verb = '', target = ''] = argv;
     if (verb === 'print' && target === 'gui/501') {
       return (
-        scripted('print-domain') ??
-        (domain ? launchctlOk('gui/501 = {\n}\n') : launchctlNoDomain(target))
+        scripted('print-domain') ?? (domain ? launchctlOk('gui/501 = {\n}\n') : launchctlNoDomain())
       );
     }
     if (verb === 'print') {
@@ -168,13 +153,12 @@ export const fakeLaunchd = ({
         return launchctlPrint(label, 'running', 4182);
       }
       return (
-        scripted('print') ??
-        (state.loaded ? launchctlPrint(label, 'running', 4182) : notLoaded(target))
+        scripted('print') ?? (state.loaded ? launchctlPrint(label, 'running', 4182) : notLoaded())
       );
     }
     if (verb === 'bootout') {
       const result =
-        scripted('bootout') ?? (state.loaded ? launchctlOk() : launchctlNotFound(target));
+        scripted('bootout') ?? (state.loaded ? launchctlOk() : launchctlNotFound(label));
       if (state.loaded && (result.code === 0 || result.code === 36)) {
         Object.assign(state, { lingering: lingerPrints, loaded: false });
       }

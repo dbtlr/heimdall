@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { NO_GUI_DOMAIN } from './launchctl-captures.ts';
 import { launchdSupervisor } from './launchd.ts';
 import { serviceDefinition } from './names.ts';
 import { renderLaunchdPlist } from './plist.ts';
@@ -411,9 +412,10 @@ test('status reads an agent with a pid as running, whatever state launchd names'
 
 test.each([
   [
-    'exit 113 for something other than a service',
-    failed(113, 'Could not find domain for user gui: 501'),
+    'exit 112 for the domain, when the domain is there when asked',
+    failed(112, NO_GUI_DOMAIN.replace('4242424', '501')),
   ],
+  ['exit 113 for something other than a service', failed(113, 'Bad request.\n')],
   ['exit 3, which only bootout gives', failed(3, 'Could not find service "x" in domain')],
 ])(
   'status of an agent whose print gives %s is state unknown, not not loaded',
@@ -453,6 +455,18 @@ test('status notes when the user has no GUI login session for the agent to load 
   const status = await supervisorIn(home.path, launchd).status();
 
   expect(status).toMatchObject({ notes: [NO_SESSION], summary: 'not loaded, stopped' });
+});
+
+test('status adds no session note for exit 113 about the domain, which launchctl does not give', async () => {
+  await using home = await tempHome();
+  await withPlist(home.path);
+  const launchd = fakeLaunchd({
+    answers: {
+      'print-domain': [failed(113, 'Bad request.\nCould not find domain for user gui: 501')],
+    },
+  });
+
+  expect((await supervisorIn(home.path, launchd).status()).notes).toEqual([]);
 });
 
 test('status adds no session note when the domain cannot be asked', async () => {
