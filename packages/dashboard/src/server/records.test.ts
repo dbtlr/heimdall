@@ -21,6 +21,7 @@ import type {
   ServiceRecord,
 } from '@heimdall/schema';
 
+import { Route } from '../routes/api.v1.records.ts';
 import { readFleetOverview } from './fleet-overview.ts';
 import { recordsAnswer } from './records.ts';
 
@@ -937,6 +938,19 @@ describe('reading the records', () => {
     await using h = await startHub();
 
     expect(await read(h)).toEqual([]);
+  });
+
+  test("the route hands its request's query to the answer", async () => {
+    const get = Route.options.server?.handlers;
+    const handler = typeof get === 'object' ? get.GET : undefined;
+    const request = new Request('http://dashboard.test/api/v1/records?unpaired=INCLUDE');
+
+    // The 400 comes before the database is opened, so none is needed.
+    const response = await (handler as (ctx: { request: Request }) => Promise<Response>)({
+      request,
+    });
+
+    expect(response.status).toBe(400);
   });
 
   test('answers 503 when the database cannot be opened, and reports why', async () => {

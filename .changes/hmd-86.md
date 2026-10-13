@@ -4,4 +4,4 @@
 
 ### Fixed
 
-- **The dashboard's API routes answer 405 to any method but GET** (HMD-86). `POST /api/health` and the like rendered the dashboard's page with 200.
+- **The dashboard's API routes answer 405 to any method but GET and HEAD** (HMD-86). `POST /api/health` and the like rendered the dashboard's page with 200.

@@ -124,7 +124,7 @@ SIGTERM or SIGINT stops the Hub with exit status 143 or 130.
 
 ## Running the dashboard
 
-`heimdall-dashboard serve` serves the dashboard, a web app that reads the Hub's database and never writes to it ([ADR-0015](docs/decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)). It answers `GET /api/health` like the Hub, with `200` when the Hub's database answers within 2 seconds and `503` when it does not or no database URL is configured, and serves the records read, `GET /api/v1/records` ([Reading the records back](docs/spec.md#reading-the-records-back)). Both answer any other method with `405`.
+`heimdall-dashboard serve` serves the dashboard, a web app that reads the Hub's database and never writes to it ([ADR-0015](docs/decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)). It answers `GET /api/health` like the Hub, with `200` when the Hub's database answers within 2 seconds and `503` when it does not or no database URL is configured, and serves the records read, `GET /api/v1/records` ([Reading the records back](docs/spec.md#reading-the-records-back)). Both answer any method but GET and HEAD with `405`.
 
 | Flag     | Variable                 | File key | Default     |
 | -------- | ------------------------ | -------- | ----------- |

@@ -28,7 +28,7 @@ Run these from the repository root, after `bun install`.
 
 ## Settings
 
-`heimdall-dashboard serve` serves the pages, the server functions, `GET /api/health`, and the records read, `GET /api/v1/records` ([Reading the records back](../../docs/spec.md#reading-the-records-back)). Both API routes answer any other method with 405. Each setting comes from its flag, then its environment variable, then `~/.config/heimdall/dashboard.toml`:
+`heimdall-dashboard serve` serves the pages, the server functions, `GET /api/health`, and the records read, `GET /api/v1/records` ([Reading the records back](../../docs/spec.md#reading-the-records-back)). Both API routes answer any method but GET and HEAD with 405. Each setting comes from its flag, then its environment variable, then `~/.config/heimdall/dashboard.toml`:
 
 | Flag     | Variable                  | File key | Default     |
 | -------- | ------------------------- | -------- | ----------- |

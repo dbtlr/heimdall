@@ -188,6 +188,13 @@ The dashboard serves the records read at its own address: `GET /api/v1/records` 
 
 ```json
 {"systems": [
+  {"system": "build-1", "paired": true, "timeZone": "UTC",
+   "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
+   "overBudget": {"bytes": 9437184},
+   "checks": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"files": {"bytes": 1310720}},
+              "services": [{"service": "builder", "check": "supervisor", "state": "up", "detail": "ActiveState=active", "since": "2026-10-09T21:00:00.000Z"}]},
+   "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
+  {"system": "laptop-1", "paired": true, "timeZone": null, "records": null, "checks": null, "runs": null},
   {"system": "web-1", "paired": true, "timeZone": "America/New_York",
    "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:01.250Z",
    "records": [{"kind": "job", "name": "nightly-backup", "record": {"name": "nightly-backup", "scheduler": "systemd-timer", "unit": "nightly-backup.timer", "schedule": [{"hour": 3, "minute": 30}]}}],
@@ -202,14 +209,7 @@ The dashboard serves the records read at its own address: `GET /api/v1/records` 
                       "latestRun": {"started": "2026-10-10T07:30:00Z", "finished": "2026-10-10T07:30:09Z", "exitStatus": 1},
                       "latestSuccess": {"started": "2026-10-09T07:30:00Z", "finished": "2026-10-09T07:42:17Z", "exitStatus": 0,
                                         "output": {"file": "backup-2026-10-09.tar.gz", "sizeBytes": 73400320}}}],
-            "unreadable": []}},
-  {"system": "build-1", "paired": true, "timeZone": "UTC",
-   "sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z",
-   "overBudget": {"bytes": 9437184},
-   "checks": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"files": {"bytes": 1310720}},
-              "services": [{"service": "builder", "check": "supervisor", "state": "up", "detail": "ActiveState=active", "since": "2026-10-09T21:00:00.000Z"}]},
-   "runs": {"sentAt": "2026-10-10T08:00:00.000Z", "receivedAt": "2026-10-10T08:00:00.900Z", "overBudget": {"bytes": 1310720}}},
-  {"system": "laptop-1", "paired": true, "timeZone": null, "records": null, "checks": null, "runs": null}
+            "unreadable": []}}
 ]}
 ```
 
