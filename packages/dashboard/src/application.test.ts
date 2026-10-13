@@ -160,3 +160,19 @@ test('serve logs a warning for a request it answers with a server error, but not
     expect(stdout).not.toContain('/api/health');
   });
 });
+
+test('serve on a port already in use says which address it could not listen on, and exits 1', async () => {
+  await withHome(async (home) => {
+    const taken = Bun.serve({ fetch: () => new Response(), hostname: '127.0.0.1', port: 0 });
+    try {
+      const { code, stderr } = await invoke(['serve', '--port', String(taken.port)], { home });
+
+      expect(stderr).toMatch(
+        new RegExp(`\\S+Z Could not listen on 127\\.0\\.0\\.1:${String(taken.port)}: `, 'u'),
+      );
+      expect(code).toBe(1);
+    } finally {
+      await taken.stop();
+    }
+  });
+});
