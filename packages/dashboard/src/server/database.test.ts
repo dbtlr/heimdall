@@ -16,7 +16,11 @@ test('opens again after a failed open, once the database URL is there', async ()
   try {
     delete process.env.HEIMDALL_DATABASE_URL;
     process.env.HOME = home;
-    await expect(database()).rejects.toThrow('No database URL');
+    const failure = await database().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(String(failure)).toContain('No database URL');
 
     process.env.HEIMDALL_DATABASE_URL = 'postgres://db.test/heimdall';
     const sql = await database();
