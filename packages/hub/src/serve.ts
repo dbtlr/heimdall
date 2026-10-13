@@ -1,6 +1,13 @@
 import { once } from 'node:events';
 
-import { every, homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimdall/service';
+import {
+  every,
+  homeOf,
+  keepLogRotated,
+  listenOrFail,
+  runtimeLog,
+  servicePaths,
+} from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
@@ -130,7 +137,12 @@ const serveUntilStopped = async ({
       },
       sql,
     });
-    const server = Bun.serve({ fetch: hub.fetch, hostname: options.host, port: options.port });
+    const server = listenOrFail({
+      fail: (message) => log.fatal(clean(message)),
+      fetch: hub.fetch,
+      hostname: options.host,
+      port: options.port,
+    });
     // Pruning, judging Conditions, and parsing transcripts are routine, so only
     // a failure, a parser switch, or a parser left behind is logged, and the
     // next round tries again.

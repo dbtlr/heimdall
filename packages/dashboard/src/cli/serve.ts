@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 
-import { homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimdall/service';
+import { homeOf, keepLogRotated, listenOrFail, runtimeLog, servicePaths } from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { Command, escapeControlCharacters } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
@@ -26,26 +26,6 @@ const answeringWith =
     }
     return response;
   };
-
-// The server listening on `hostname`:`port`, or a fatal line that names the
-// address, such as a port another process holds, rather than a bare exception.
-const listenOrFail = ({
-  fail,
-  fetch,
-  hostname,
-  port,
-}: {
-  fail: (message: string) => never;
-  fetch: (request: Request) => Promise<Response>;
-  hostname: string;
-  port: number;
-}) => {
-  try {
-    return Bun.serve({ fetch, hostname, port });
-  } catch (error) {
-    return fail(`Could not listen on ${hostname}:${String(port)}: ${describeError(error)}`);
-  }
-};
 
 // `heimdall-dashboard serve`: serves the built app until systemd or a terminal
 // stops it. Each setting comes from its flag, then its variable, then

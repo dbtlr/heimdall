@@ -123,6 +123,27 @@ test('serve counts the paired Systems as it starts', async () => {
   expect(stdout).toMatch(/Listening on http:\/\/127\.0\.0\.1:\d+\/ for 2 Systems\.\n/u);
 });
 
+test('serve on a port already in use says which address it could not listen on, and exits 1', async () => {
+  await using db = await testDatabase();
+  await using config = await hubConfig(db);
+  const taken = Bun.serve({ fetch: () => new Response(), hostname: '127.0.0.1', port: 0 });
+  try {
+    const { code, stderr } = await invoke([
+      'serve',
+      ...configArgs(config),
+      '--port',
+      String(taken.port),
+    ]);
+
+    expect(stderr).toMatch(
+      new RegExp(`\\S+Z Could not listen on 127\\.0\\.0\\.1:${String(taken.port)}: \\S`, 'u'),
+    );
+    expect(code).toBe(1);
+  } finally {
+    await taken.stop();
+  }
+});
+
 test('pair for a System that is paired says its token works until the new code is redeemed', async () => {
   await using db = await testDatabase();
   await migrate(db.sql);

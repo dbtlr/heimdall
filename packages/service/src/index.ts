@@ -11,6 +11,7 @@ export type {
 } from './http-get.ts';
 export { isServiceNotLoaded, readPrintedService } from './launchctl.ts';
 export type { PrintedService } from './launchctl.ts';
+export { listenOrFail } from './listen.ts';
 export { runtimeLog, timestamped } from './log.ts';
 export type { RuntimeLog } from './log.ts';
 export { homeOf, servicePaths } from './names.ts';
