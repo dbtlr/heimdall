@@ -397,7 +397,7 @@ describe('readSessionView', () => {
     expect(points[1]?.cores).toBeCloseTo(2, 5);
   });
 
-  test('reads the cores of a process whose readings were pruned from its rollups', async () => {
+  test('draws no cores for a process with only rollups when the raw Vitals need buckets narrower than 5 minutes', async () => {
     await using h = await start();
     await hear(h, -10_800, 0);
     await addProcess(h.db.sql, {
@@ -418,11 +418,7 @@ describe('readSessionView', () => {
 
     const { processes } = await view(h);
 
-    const points = processes[0]?.points ?? [];
-    expect(points.length).toBeGreaterThan(1);
-    // 19 intervals of 15 seconds between the first and last of a full bucket's
-    // 20 readings, at 2 cores, over the bucket's 300 seconds.
-    expect(points[1]?.cores).toBeCloseTo((2 * 285) / 300, 5);
+    expect(processes).toEqual([]);
   });
 
   test('averages the System CPU over the span in buckets as wide as the span needs', async () => {

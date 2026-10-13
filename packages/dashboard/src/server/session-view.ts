@@ -269,7 +269,8 @@ const readCpu = async (
 // System detail computes them, else from its 5-minute rollups binned to
 // `widthMs`. Rollups keep no reading times, so a bucket's cores are the CPU
 // time it saw over its whole width. A process whose readings are gone while
-// the Vitals' are not reads its rollups too.
+// the Vitals' are not reads its rollups too, unless the buckets are narrower
+// than 5 minutes, which its rollups cannot line up with.
 const readCores = async (
   sql: SQL,
   {
@@ -300,7 +301,7 @@ const readCores = async (
       WHERE p.id = ${processId}
       ORDER BY r.bucket
     `;
-    if (rows.length > 0) {
+    if (rows.length > 0 || widthMs < BUCKET_MS) {
       return rows;
     }
   }

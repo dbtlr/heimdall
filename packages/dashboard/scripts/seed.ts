@@ -858,6 +858,7 @@ const TABLES = [
   'projected_sessions',
   'projected_subagents',
   'projected_requests',
+  'projected_tool_calls',
   'current_parsers',
   'model_prices',
 ];
