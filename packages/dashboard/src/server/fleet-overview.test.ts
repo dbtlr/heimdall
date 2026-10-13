@@ -1,10 +1,20 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
+import {
+  issue,
+  NOW,
+  openGeneration,
+  push,
+  redeem,
+  report,
+  startHub,
+  timeline,
+  unpair,
+} from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
 import type { Range } from './fleet-overview-types.ts';
-import { findGaps, parseRangeInput, readFleetOverview } from './fleet-overview.ts';
+import { findGaps, parseOverviewInput, readFleetOverview } from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -20,8 +30,8 @@ const HOUR = 12 * BUCKET;
 const { addCondition, addProcess, addSession } = timeline(NOW);
 const seconds = (ms: number) => ms / 1000;
 
-const overview = (h: Hub, range: Range = '24h', now = NOW) =>
-  readFleetOverview(h.db.sql, { now, range, timeZone: 'UTC' });
+const overview = (h: Hub, range: Range = '24h', now = NOW, unpaired = false) =>
+  readFleetOverview(h.db.sql, { now, range, timeZone: 'UTC', unpaired });
 
 // The lane of `name`, which the test has paired.
 const lane = async (h: Hub, name: string, now = NOW, range: Range = '24h') => {
@@ -60,16 +70,22 @@ const hear = async (
   expect(response.status).toBe(200);
 };
 
-describe('parseRangeInput', () => {
+describe('parseOverviewInput', () => {
   test('takes the range of the input, and 24h when it names none', () => {
-    expect(parseRangeInput({ range: '7d' })).toBe('7d');
-    expect(parseRangeInput({})).toBe('24h');
-    expect(parseRangeInput(undefined)).toBe('24h');
+    expect(parseOverviewInput({ range: '7d' }).range).toBe('7d');
+    expect(parseOverviewInput({}).range).toBe('24h');
+    expect(parseOverviewInput(undefined).range).toBe('24h');
   });
 
   test('refuses a range that is not offered', () => {
-    expect(() => parseRangeInput({ range: '3d' })).toThrow('3d');
-    expect(() => parseRangeInput({ range: 24 })).toThrow('24');
+    expect(() => parseOverviewInput({ range: '3d' })).toThrow('3d');
+    expect(() => parseOverviewInput({ range: 24 })).toThrow('24');
+  });
+
+  test('asks for unpaired Systems only when the input says so', () => {
+    expect(parseOverviewInput({ unpaired: true }).unpaired).toBe(true);
+    expect(parseOverviewInput({ unpaired: false }).unpaired).toBe(false);
+    expect(parseOverviewInput({}).unpaired).toBe(false);
   });
 });
 
@@ -398,6 +414,7 @@ describe('open', () => {
         reason: 'backup failed',
         subject: 'backup',
         system: 'server-1',
+        unpaired: false,
       },
       {
         kind: 'low_disk',
@@ -405,6 +422,7 @@ describe('open', () => {
         reason: 'disk 95% full',
         subject: '',
         system: 'laptop-1',
+        unpaired: false,
       },
     ]);
   });
@@ -416,5 +434,169 @@ describe('open', () => {
     await unpair(h.db.sql, 'server-1');
 
     expect((await overview(h)).open).toEqual([]);
+  });
+});
+
+// `laptop-1` has reported and has an open Condition, then is unpaired.
+const unpairedLaptop = async (h: Hub) => {
+  await hear(h, 'server-1');
+  await hear(h, 'laptop-1', { cpu: [42], times: [NOW - 10 * MINUTE] });
+  await addCondition(h.db.sql, {
+    kind: 'low_disk',
+    raisedAt: -3600,
+    reason: 'disk 95% full',
+    subject: '/',
+    system: 'laptop-1',
+  });
+  await unpair(h.db.sql, 'laptop-1');
+};
+
+describe('unpaired Systems', () => {
+  test('are counted but left out of the lanes and Open now until asked for', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+
+    const found = await overview(h);
+
+    expect(found.lanes.map(({ name }) => name)).toEqual(['server-1']);
+    expect(found.unpairedLanes).toEqual([]);
+    expect(found.unpairedCount).toBe(1);
+    expect(found.open).toEqual([]);
+  });
+
+  test('keep their history and show as Unpaired, with their open Conditions, when asked for', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+
+    const found = await overview(h, '24h', NOW, true);
+
+    expect(found.lanes.map(({ name }) => name)).toEqual(['server-1']);
+    expect(found.unpairedLanes).toMatchObject([
+      {
+        buckets: [{ average: 42, t: NOW - 10 * MINUTE }],
+        lastSeenAt: NOW,
+        latest: { cpuBusyPercent: 42, t: NOW - 10 * MINUTE },
+        name: 'laptop-1',
+        status: 'unpaired',
+      },
+    ]);
+    expect(found.unpairedCount).toBe(1);
+    expect(found.open).toEqual([
+      {
+        kind: 'low_disk',
+        raisedAt: NOW - 3600_000,
+        reason: 'disk 95% full',
+        subject: '/',
+        system: 'laptop-1',
+        unpaired: true,
+      },
+    ]);
+  });
+
+  test('put their Conditions after the paired Systems, each group newest raised first', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+    await addCondition(h.db.sql, { kind: 'drift', raisedAt: -7200, system: 'server-1' });
+    await addCondition(h.db.sql, { kind: 'drift', raisedAt: -60, system: 'laptop-1' });
+
+    const { open } = await overview(h, '24h', NOW, true);
+
+    expect(open.map(({ system, unpaired }) => [system, unpaired])).toEqual([
+      ['server-1', false],
+      ['laptop-1', true],
+      ['laptop-1', true],
+    ]);
+    expect(open.map(({ raisedAt }) => NOW - raisedAt)).toEqual([7200_000, 60_000, 3600_000]);
+  });
+
+  test('do not include a paired System that was never seen', async () => {
+    await using h = await startHub();
+
+    const found = await overview(h, '24h', NOW, true);
+
+    expect(found.unpairedCount).toBe(0);
+    expect(found.unpairedLanes).toEqual([]);
+    expect(found.lanes.map(({ name, status }) => [name, status])).toEqual([
+      ['laptop-1', 'never_seen'],
+      ['server-1', 'never_seen'],
+    ]);
+  });
+
+  test('count every System, and keep the lanes empty when none is paired', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+    await unpair(h.db.sql, 'server-1');
+
+    const found = await overview(h, '24h', NOW, true);
+
+    expect(found.lanes).toEqual([]);
+    expect(found.unpairedCount).toBe(2);
+    expect(found.unpairedLanes.map(({ name }) => name)).toEqual(['laptop-1', 'server-1']);
+  });
+
+  test('are paired again by redeeming a new code, and not before', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+
+    const code = await issue(h, 'laptop-1');
+    expect((await overview(h)).lanes.map(({ name }) => name)).toEqual(['server-1']);
+
+    expect((await redeem(h.hub, { code })).status).toBe(200);
+    const found = await overview(h);
+    expect(found.lanes.map(({ name }) => name)).toEqual(['laptop-1', 'server-1']);
+    expect(found.unpairedCount).toBe(0);
+  });
+});
+
+describe('last seen', () => {
+  test('moves on a Report the Hub rejects', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+
+    h.clock.now = NOW + 12 * MINUTE;
+    expect((await push(h.hub, { system: 'laptop-1' }, { token: 'laptop-token' })).status).toBe(422);
+
+    expect((await lane(h, 'laptop-1')).lastSeenAt).toBe(NOW + 12 * MINUTE);
+  });
+
+  test('moves on a transcript upload, even from a System that has sent no Report', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + MINUTE;
+
+    const opened = await openGeneration(
+      h.hub,
+      { path: 'my-project/0b1c.jsonl', source: 'claude-code' },
+      { token: 'laptop-token' },
+    );
+    expect(opened.status).toBe(201);
+
+    expect((await lane(h, 'laptop-1')).lastSeenAt).toBe(NOW + MINUTE);
+  });
+
+  test('moves on an upload the Hub refuses', async () => {
+    await using h = await startHub();
+    h.clock.now = NOW + MINUTE;
+
+    await openGeneration(h.hub, '{', { token: 'laptop-token' });
+
+    expect((await lane(h, 'laptop-1')).lastSeenAt).toBe(NOW + MINUTE);
+  });
+
+  test('moves on a Report of samples the Hub already holds', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+
+    await hear(h, 'laptop-1', { receivedAt: NOW + 60 * MINUTE, times: [NOW] });
+
+    expect((await lane(h, 'laptop-1', NOW + 60 * MINUTE)).lastSeenAt).toBe(NOW + 60 * MINUTE);
+  });
+
+  test('does not move back for a Report the Hub clock places earlier', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+
+    await hear(h, 'laptop-1', { receivedAt: NOW - 60 * MINUTE, times: [NOW + 15_000] });
+
+    expect((await lane(h, 'laptop-1')).lastSeenAt).toBe(NOW);
   });
 });

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
+import { NOW, push, report, startHub, storeToken, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { filesRecordDigest } from '@heimdall/schema';
 
@@ -91,7 +91,7 @@ describe('parseSampleInput', () => {
 });
 
 describe('readSystemDetail', () => {
-  test('answers nothing for a System that is not paired', async () => {
+  test('answers nothing for a name that is no System at all', async () => {
     await using h = await startHub();
 
     expect(
@@ -120,8 +120,8 @@ describe('readSystemDetail', () => {
 
     expect(found).toMatchObject({
       harnesses: [
-        { harness: 'claude-code', version: '2.4.1' },
-        { harness: 'codex', version: '0.163.0' },
+        { harness: 'claude-code', location: 'native', version: '2.4.1' },
+        { harness: 'codex', location: 'npm', version: '0.163.0' },
       ],
       lastSeenAt: NOW,
       latest: {
@@ -136,6 +136,54 @@ describe('readSystemDetail', () => {
       status: 'up',
     });
     expect(found.from).toBe(NOW - 12 * HOUR);
+  });
+
+  test('carries the facts the Collector reported: its version, load, disks, and Harness installs with their location', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', {
+      harnesses: {
+        installs: [
+          { harness: 'codex', location: 'npm', version: '0.163.0' },
+          { harness: 'claude-code', location: 'native', version: '2.4.1' },
+        ],
+      },
+    });
+
+    const found = await detail(h);
+
+    expect(found.collectorVersion).toBe('0.1.0');
+    expect(found.latest).toMatchObject({
+      disks: [
+        { mount: '/System/Volumes/Data', totalBytes: 994_662_584_320, usedBytes: 412_316_860_416 },
+      ],
+      load: [1.2, 0.9, 0.7],
+    });
+    expect(found.harnesses).toEqual([
+      { harness: 'claude-code', location: 'native', version: '2.4.1' },
+      { harness: 'codex', location: 'npm', version: '0.163.0' },
+    ]);
+  });
+
+  test('tells a Collector that reported no Harnesses from one that never reported them', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { harnesses: { installs: [] } });
+    await hear(h, 'laptop-1');
+
+    expect((await detail(h, 'server-1')).harnesses).toEqual([]);
+    expect((await detail(h, 'laptop-1')).harnesses).toBeUndefined();
+  });
+
+  test('has no facts for a System the Hub has not heard from', async () => {
+    await using h = await startHub();
+
+    const found = await detail(h, 'laptop-1');
+
+    expect(found).toMatchObject({
+      collectorVersion: undefined,
+      harnesses: undefined,
+      paired: true,
+    });
+    expect(found.latest).toBeUndefined();
   });
 
   test('carries CPU and memory per 5-minute bucket, and the buckets with no Vitals', async () => {
@@ -349,6 +397,67 @@ const inspect = async (h: Hub, at: number | undefined) => {
   }
   return found;
 };
+
+describe('an unpaired System', () => {
+  test('keeps its history and reads as Unpaired, with the Conditions it left open', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1', { times: [NOW - 10 * MINUTE, NOW - 9 * MINUTE] });
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      raisedAt: -3600,
+      reason: 'disk 95% full',
+      subject: '/',
+      system: 'laptop-1',
+    });
+    await unpair(h.db.sql, 'laptop-1');
+
+    const found = await detail(h, 'laptop-1');
+
+    expect(found).toMatchObject({
+      collectorVersion: '0.1.0',
+      lastSeenAt: NOW,
+      latest: { t: NOW - 9 * MINUTE },
+      name: 'laptop-1',
+      paired: false,
+      platform: { arch: 'arm64', os: 'darwin' },
+      status: 'unpaired',
+    });
+    expect(found.cpu).toHaveLength(1);
+    expect(found.conditions).toEqual([
+      { clearedAt: undefined, kind: 'low_disk', raisedAt: NOW - 3600_000, subject: '/' },
+    ]);
+  });
+
+  test('keeps its Timeline', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+    await addCondition(h.db.sql, {
+      clearedAt: -600,
+      kind: 'system_stale',
+      raisedAt: -1800,
+      reason: 'Not heard from.',
+      system: 'laptop-1',
+    });
+    await unpair(h.db.sql, 'laptop-1');
+
+    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+
+    expect(entries.map(({ kind, reason }) => [kind, reason])).toEqual([
+      ['system_stale', 'Not heard from.'],
+    ]);
+  });
+
+  test('is paired again once a new code is redeemed', async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+    await unpair(h.db.sql, 'laptop-1');
+    expect((await detail(h, 'laptop-1')).paired).toBe(false);
+
+    await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
+
+    expect(await detail(h, 'laptop-1')).toMatchObject({ paired: true, status: 'up' });
+  });
+});
 
 describe('readSample', () => {
   test('snaps to the sample nearest the time asked for, and the newest when none is', async () => {

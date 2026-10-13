@@ -58,17 +58,33 @@ const STATUS_WORDS: Record<LaneStatus, string> = {
   asleep: 'Asleep',
   needs_you: 'Needs you',
   never_seen: 'Never seen',
+  unpaired: 'Unpaired',
   up: 'Up',
 };
 
 export const statusWord = (status: LaneStatus): string => STATUS_WORDS[status];
 
+const vitalsText = ({
+  cpuBusyPercent,
+  memoryUsedPercent,
+}: {
+  cpuBusyPercent: number;
+  memoryUsedPercent: number;
+}) =>
+  `CPU ${String(Math.round(cpuBusyPercent))}%, memory ${String(Math.round(memoryUsedPercent))}%`;
+
 // The line under a lane's status: its newest CPU and memory, or since when it
-// has been asleep or silent, so old Vitals never read as current.
+// has been asleep or silent, so old Vitals never read as current. An unpaired
+// System sends no more, so its line dates its last Vitals.
 export const nowLine = (
   lane: Lane,
   { now, timeZone }: { now: number; timeZone: string },
 ): string => {
+  if (lane.status === 'unpaired') {
+    return lane.latest === undefined
+      ? 'no Vitals'
+      : `last Vitals ${formatWhen(lane.latest.t, now, timeZone)}, ${vitalsText(lane.latest)}`;
+  }
   if (lane.status === 'never_seen') {
     return 'never seen';
   }
@@ -80,9 +96,7 @@ export const nowLine = (
   if (lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS) {
     return `silent since ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
   }
-  return lane.latest === undefined
-    ? 'no Vitals'
-    : `CPU ${String(Math.round(lane.latest.cpuBusyPercent))}%, memory ${String(Math.round(lane.latest.memoryUsedPercent))}%`;
+  return lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest);
 };
 
 const HARNESS_NAMES: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };

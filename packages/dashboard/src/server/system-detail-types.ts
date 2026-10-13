@@ -39,18 +39,31 @@ export type SessionRow = {
   stretches: { endedAt: number; link: Link; startedAt: number }[];
 };
 
+// One mount of the newest Vitals sample.
+export type Disk = { mount: string; totalBytes: number; usedBytes: number };
+
+// One install of a Harness: which, its version, and the kind of place the
+// Collector found it in, such as npm or native.
+export type HarnessInstall = { harness: string; location: string; version: string };
+
 export type SystemDetail = {
+  // The Collector's version, undefined until a Report from it is stored.
+  collectorVersion: string | undefined;
   conditions: ConditionMark[];
   cpu: CpuBucket[];
   from: number;
   gaps: Gap[];
-  // Each installed Harness and its version, as the Collector last found them.
-  harnesses: { harness: string; version: string }[];
+  // Each installed Harness, as the Collector last found them: empty for a
+  // Collector that found none, undefined for one that never said.
+  harnesses: HarnessInstall[] | undefined;
   lastSeenAt: number | undefined;
   // The newest Vitals sample, undefined for a System that never sent one.
   latest:
     | {
         cpuBusyPercent: number;
+        disks: Disk[];
+        // Load averages over 1, 5, and 15 minutes.
+        load: [number, number, number];
         memoryTotalBytes: number;
         memoryUsedBytes: number;
         t: number;
@@ -60,6 +73,9 @@ export type SystemDetail = {
   memory: MemoryBucket[];
   name: string;
   now: number;
+  // Whether the System still holds a token. An unpaired System keeps its
+  // history, and its page is read-only.
+  paired: boolean;
   // The Collector's operating system and architecture, such as linux and x64.
   platform: { arch: string; os: string } | undefined;
   processes: ProcessSeries[];

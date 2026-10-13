@@ -15,17 +15,17 @@ import type {
   Stretch,
 } from './fleet-overview-types.ts';
 
-// The range a request asks for: the `range` of an object, 24h when it names none.
-export const parseRangeInput = (input: unknown): Range => {
-  const asked =
-    typeof input === 'object' && input !== null && 'range' in input ? input.range : undefined;
-  if (asked === undefined) {
-    return '24h';
-  }
-  if (!isRange(asked)) {
+const field = (input: unknown, key: string): unknown =>
+  typeof input === 'object' && input !== null ? Reflect.get(input, key) : undefined;
+
+// What an overview request asks for: its `range`, 24h when it names none, and
+// whether it wants the unpaired Systems too.
+export const parseOverviewInput = (input: unknown): { range: Range; unpaired: boolean } => {
+  const asked = field(input, 'range');
+  if (asked !== undefined && !isRange(asked)) {
     throw new Error(`The range ${JSON.stringify(asked)} is not one of ${RANGES.join(', ')}.`);
   }
-  return asked;
+  return { range: asked ?? '24h', unpaired: field(input, 'unpaired') === true };
 };
 
 const MINUTE_MS = 60_000;
@@ -98,13 +98,18 @@ export const laneStatus = ({
   hasOpenCondition,
   lastSeenAt,
   now,
+  paired,
   sleeps,
 }: {
   hasOpenCondition: boolean;
   lastSeenAt: number | undefined;
   now: number;
+  paired: boolean;
   sleeps: boolean;
 }): LaneStatus => {
+  if (!paired) {
+    return 'unpaired';
+  }
   if (lastSeenAt === undefined) {
     return 'never_seen';
   }
@@ -114,7 +119,12 @@ export const laneStatus = ({
   return sleeps && now - lastSeenAt > QUIET_AFTER_MS ? 'asleep' : 'up';
 };
 
-type SystemRow = { last_seen_at: Date | null; name: string; sleeps: boolean | null };
+type SystemRow = {
+  last_seen_at: Date | null;
+  name: string;
+  paired: boolean;
+  sleeps: boolean | null;
+};
 
 export type BucketRow = {
   bucket: Date;
@@ -197,22 +207,44 @@ const bySystem = <Row extends { system: string }>(rows: readonly Row[]) => {
 };
 
 // Every paired System as a lane on one time axis, over the `range` that ends
-// at `now`, and the Conditions open now. Read-only.
+// at `now`, and the Conditions open now. The Systems no longer paired are
+// counted, and get lanes and Conditions of their own only when `unpaired`
+// asks for them. Read-only.
 export const readFleetOverview = async (
   sql: SQL,
-  { now, range, timeZone }: { now: number; range: Range; timeZone: string },
+  {
+    now,
+    range,
+    timeZone,
+    unpaired = false,
+  }: { now: number; range: Range; timeZone: string; unpaired?: boolean },
 ): Promise<FleetOverview> => {
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
-  const systems: SystemRow[] = await sql`
-    SELECT p.system AS name, s.last_seen_at, s.sleeps
+  // A paired System the Hub has not heard from has no `systems` row; an
+  // unpaired one keeps its row, and so its history.
+  const held: SystemRow[] = await sql`
+    SELECT coalesce(p.system, s.name) AS name, s.last_seen_at, s.sleeps,
+           p.system IS NOT NULL AS paired
     FROM paired_systems p
-    LEFT JOIN systems s ON s.name = p.system
-    ORDER BY p.system
+    FULL JOIN systems s ON s.name = p.system
+    ORDER BY 1
   `;
+  const unpairedCount = held.filter(({ paired }) => !paired).length;
+  const systems = held.filter(({ paired }) => paired || unpaired);
   const names = systems.map(({ name }) => name);
   if (names.length === 0) {
-    return { from, lanes: [], now, open: [], range, timeZone, to: now };
+    return {
+      from,
+      lanes: [],
+      now,
+      open: [],
+      range,
+      timeZone,
+      to: now,
+      unpairedCount,
+      unpairedLanes: [],
+    };
   }
   const [buckets, latest, stretches, marks, open]: [
     BucketRow[],
@@ -231,17 +263,17 @@ export const readFleetOverview = async (
     `,
     // One newest sample per System, read through the (system, t) key.
     sql`
-      SELECT p.system, v.t, v.cpu_busy_percent, v.memory_used_percent
-      FROM paired_systems p
+      SELECT s.name AS system, v.t, v.cpu_busy_percent, v.memory_used_percent
+      FROM systems s
       CROSS JOIN LATERAL (
         SELECT t, cpu_busy_percent,
                memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
         FROM vitals_samples
-        WHERE system = p.system
+        WHERE system = s.name
         ORDER BY t DESC
         LIMIT 1
       ) v
-      WHERE p.system IN ${sql(names)}
+      WHERE s.name IN ${sql(names)}
     `,
     // Stretches name their System and a range of `started_at`, which keeps the
     // view cheap (docs/spec.md, the insight views). A stretch that started over
@@ -286,7 +318,7 @@ export const readFleetOverview = async (
   const stretchesOf = bySystem(stretches);
   const marksOf = bySystem(marks);
   const openOf = bySystem(open);
-  const lanes = systems.map((system): Lane => {
+  const laneOf = (system: SystemRow): Lane => {
     const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
     const newest = latestOf.get(system.name)?.[0];
     const lastSeenAt = system.last_seen_at?.getTime();
@@ -313,17 +345,31 @@ export const readFleetOverview = async (
         hasOpenCondition: openOf.has(system.name),
         lastSeenAt,
         now,
+        paired: system.paired,
         sleeps,
       }),
       stretches: (stretchesOf.get(system.name) ?? []).map(toStretch),
     };
-  });
+  };
+  const pairedNames = new Set(systems.filter(({ paired }) => paired).map(({ name }) => name));
   const openConditions = open.map((row): OpenCondition => ({
     kind: conditionKind(row.kind),
     raisedAt: row.raised_at.getTime(),
     reason: row.latest_reason,
     subject: row.subject,
     system: row.system,
+    unpaired: !pairedNames.has(row.system),
   }));
-  return { from, lanes, now, open: openConditions, range, timeZone, to: now };
+  return {
+    from,
+    lanes: systems.filter(({ paired }) => paired).map(laneOf),
+    now,
+    // The sort is stable, so each group stays newest raised first.
+    open: openConditions.toSorted((a, b) => Number(a.unpaired) - Number(b.unpaired)),
+    range,
+    timeZone,
+    to: now,
+    unpairedCount,
+    unpairedLanes: systems.filter(({ paired }) => !paired).map(laneOf),
+  };
 };

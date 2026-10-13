@@ -14,8 +14,10 @@ import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
 import { SampleInspector } from '../components/sample-inspector.tsx';
 import { SessionRows } from '../components/session-rows.tsx';
+import { SystemFacts } from '../components/system-facts.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
+import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, headerLine } from '../lib/detail.ts';
 import { statusWord } from '../lib/lane.ts';
@@ -51,7 +53,7 @@ export const Route = createFileRoute('/systems/$name')({
     <>
       <AppHeader />
       <main className="mx-auto max-w-[1200px] px-3.5 py-6 sm:px-[22px]">
-        <p>No paired System has that name.</p>
+        <p>No System has that name.</p>
       </main>
     </>
   ),
@@ -136,6 +138,8 @@ function SystemPage() {
           </h1>
           <p className="text-muted-foreground">{headerLine(detail, { now, timeZone })}</p>
         </div>
+        {!detail.paired && <UnpairedBanner name={detail.name} />}
+        <SystemFacts detail={detail} timeZone={timeZone} />
         <div className="grid gap-x-[18px] lg:grid-cols-[1fr_290px]">
           <DetailAxis onSelect={select} selected={sample?.t} window={window}>
             <div className="min-w-0">

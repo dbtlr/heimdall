@@ -1,9 +1,10 @@
 import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
 import { formatWhen } from '../lib/time.ts';
+import { cn } from '../lib/utils.ts';
 import type { OpenCondition } from '../server/fleet-overview-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
 
-// Every Condition open now, newest raised first.
+// Every Condition open now, newest raised first, those on unpaired Systems last and tagged.
 export function OpenConditions({
   now,
   open,
@@ -22,13 +23,21 @@ export function OpenConditions({
         <ul>
           {open.map((condition) => (
             <li
-              className="flex items-baseline gap-2.5 py-[5px]"
+              className={cn(
+                'flex items-baseline gap-2.5 py-[5px]',
+                condition.unpaired && 'opacity-70',
+              )}
               key={`${condition.system}-${condition.kind}-${condition.subject}`}
             >
               <ConditionGlyph kind={SEVERITY[condition.kind]} />
               <span className="min-w-0 flex-1">
-                <b className="font-semibold">{KIND_NAMES[condition.kind]}</b> on {condition.system},{' '}
-                {condition.subject}. {condition.reason}
+                <b className="font-semibold">{KIND_NAMES[condition.kind]}</b> on {condition.system}
+                {condition.subject === '' ? '' : `, ${condition.subject}`}. {condition.reason}
+                {condition.unpaired && (
+                  <em className="ml-1 rounded border px-[5px] text-xs text-muted-foreground not-italic">
+                    unpaired
+                  </em>
+                )}
               </span>
               <time className="shrink-0 text-muted-foreground">
                 {formatWhen(condition.raisedAt, now, timeZone)}

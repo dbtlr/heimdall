@@ -7,25 +7,31 @@ import { FleetLegend } from '../components/fleet-legend.tsx';
 import { OpenConditions } from '../components/open-conditions.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
+import { UnpairedLanes, UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { axisTicks } from '../lib/axis.ts';
 import { rangeFromSearch, rangeTitle } from '../lib/range.ts';
+import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
 import { getFleetOverview } from '../server/fleet-overview-fn.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 
 export const Route = createFileRoute('/')({
   component: Fleet,
   // Annotated, because Router infers `deps` only from a `loaderDeps` written first, which key order forbids.
-  loader: ({ deps }: { deps: { range: Range } }) =>
-    getFleetOverview({ data: { range: deps.range } }),
-  loaderDeps: ({ search }) => ({ range: search.range }),
-  validateSearch: (search: { range?: unknown } & SearchSchemaInput) => ({
+  loader: ({ deps }: { deps: { range: Range; unpaired: boolean } }) =>
+    getFleetOverview({ data: deps }),
+  loaderDeps: ({ search }) => ({ range: search.range, unpaired: search.unpaired === true }),
+  // `unpaired` is true or absent, so a URL without it is the plain overview.
+  validateSearch: (search: { range?: unknown; unpaired?: unknown } & SearchSchemaInput) => ({
     range: rangeFromSearch(search),
+    unpaired: unpairedFromSearch(search) || undefined,
   }),
 });
 
 function Fleet() {
   const overview = Route.useLoaderData();
+  const showUnpaired = Route.useSearch().unpaired === true;
   const { now, range, timeZone } = overview;
+  const empty = emptyFleetText(overview.lanes);
   const window = { from: overview.from, to: overview.to };
   return (
     <>
@@ -39,13 +45,22 @@ function Fleet() {
           </h1>
           <FleetLegend />
         </div>
-        {overview.lanes.length === 0 ? (
-          <p className="border-t py-3 text-muted-foreground">No System is paired.</p>
-        ) : (
+        {empty === undefined ? (
           overview.lanes.map((lane) => (
             <FleetLane key={lane.name} lane={lane} now={now} timeZone={timeZone} window={window} />
           ))
+        ) : (
+          <p className="border-t py-3 text-muted-foreground">{empty}</p>
         )}
+        {showUnpaired && (
+          <UnpairedLanes
+            lanes={overview.unpairedLanes}
+            now={now}
+            timeZone={timeZone}
+            window={window}
+          />
+        )}
+        <UnpairedLink count={overview.unpairedCount} shown={showUnpaired} />
         <TimeAxis ticks={axisTicks(range, window, timeZone)} window={window} />
         <OpenConditions now={now} open={overview.open} timeZone={timeZone} />
       </main>

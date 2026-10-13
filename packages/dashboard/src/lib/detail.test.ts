@@ -41,18 +41,15 @@ describe('formatGiB', () => {
 
 describe('headerLine', () => {
   const detail = {
-    harnesses: [
-      { harness: 'claude-code', version: '2.4.1' },
-      { harness: 'codex', version: '0.163.0' },
-    ],
+    collectorVersion: '0.6.0',
     lastSeenAt: NOW - 4 * SECOND,
     latest: { t: NOW - 4 * SECOND, uptimeSeconds: 6 * 86_400 + 3600 },
     platform: { arch: 'x64', os: 'linux' },
   };
 
-  test('names the platform, uptime, last Report, and installed Harnesses', () => {
+  test('names the platform, Collector version, uptime, and last Report', () => {
     expect(headerLine(detail, at)).toBe(
-      'Linux x64, up 6 d 1 h, last Report 4 s ago. Claude Code 2.4.1 and Codex 0.163.0.',
+      'Linux x64, Collector 0.6.0, up 6 d 1 h, last Report 4 s ago.',
     );
   });
 
@@ -60,7 +57,7 @@ describe('headerLine', () => {
     expect(
       headerLine(
         {
-          harnesses: [],
+          collectorVersion: undefined,
           lastSeenAt: NOW - 3 * DAY,
           latest: undefined,
           platform: { arch: 'arm64', os: 'darwin' },
@@ -70,10 +67,24 @@ describe('headerLine', () => {
     ).toBe('macOS arm64, last Report Sat 16:00.');
     expect(
       headerLine(
-        { harnesses: [], lastSeenAt: undefined, latest: undefined, platform: undefined },
+        {
+          collectorVersion: undefined,
+          lastSeenAt: undefined,
+          latest: undefined,
+          platform: undefined,
+        },
         at,
       ),
     ).toBe('Never heard from.');
+  });
+
+  test('opens on the Collector version when the platform is unknown', () => {
+    expect(
+      headerLine(
+        { ...detail, lastSeenAt: NOW - 2 * MINUTE, latest: undefined, platform: undefined },
+        at,
+      ),
+    ).toBe('Collector 0.6.0, last Report 2 min ago.');
   });
 
   test('gives no uptime from a sample that is no longer current', () => {
@@ -81,13 +92,12 @@ describe('headerLine', () => {
       headerLine(
         {
           ...detail,
-          harnesses: [],
           lastSeenAt: NOW - HOUR,
           latest: { t: NOW - HOUR, uptimeSeconds: 60 },
         },
         at,
       ),
-    ).toBe('Linux x64, last Report 1 h ago.');
+    ).toBe('Linux x64, Collector 0.6.0, last Report 1 h ago.');
   });
 });
 

@@ -1,0 +1,5 @@
+### Added
+
+- **The dashboard shows what the Hub's page shows** (HMD-91). The Fleet overview ends with "Show N unpaired Systems", which adds the unpaired Systems below the paired lanes, greyed and marked Unpaired, with their open Conditions in Open now tagged "unpaired". The choice lives in the URL as `?unpaired`. An unpaired System's page opens read-only under a banner that says its history is kept. With nothing to draw, the overview says "No System is paired." or "No System has reported yet."
+- **A facts card on each System's page** (HMD-91). Beside the platform, the header line now gives the Collector's version, and a card above the plots gives the load averages, the use of each disk with a bar that turns orange below 10% free, as the low disk Condition does, and each installed Harness with where it was found, or "None installed" when the Collector looked and found none.
+- **The dashboard refreshes itself** (HMD-91). Every page reads its data again every 15 seconds while its tab is visible, and at once when the tab comes back.
