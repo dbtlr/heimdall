@@ -1,38 +1,49 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { relativeTime } from '../lib/relative-time.ts';
-import { getPairedSystems } from '../server/paired-systems.ts';
+import { AppHeader } from '../components/app-header.tsx';
+import { FleetLane } from '../components/fleet-lane.tsx';
+import { FleetLegend } from '../components/fleet-legend.tsx';
+import { OpenConditions } from '../components/open-conditions.tsx';
+import { RangePicker } from '../components/range-picker.tsx';
+import { TimeAxis } from '../components/time-axis.tsx';
+import { rangeFromSearch, rangeTitle } from '../lib/range.ts';
+import { getFleetOverview } from '../server/fleet-overview-fn.ts';
+import type { Range } from '../server/fleet-overview-types.ts';
 
 export const Route = createFileRoute('/')({
-  component: Systems,
-  loader: () => getPairedSystems(),
+  component: Fleet,
+  // Annotated, because Router infers `deps` only from a `loaderDeps` written first, which key order forbids.
+  loader: ({ deps }: { deps: { range: Range } }) =>
+    getFleetOverview({ data: { range: deps.range } }),
+  loaderDeps: ({ search }) => ({ range: search.range }),
+  validateSearch: (search: Record<string, unknown>) => ({ range: rangeFromSearch(search) }),
 });
 
-function Systems() {
-  const { now, systems } = Route.useLoaderData();
+function Fleet() {
+  const overview = Route.useLoaderData();
+  const { now, range, timeZone } = overview;
+  const window = { from: overview.from, to: overview.to };
   return (
     <>
-      <header className="border-b bg-card">
-        <h1 className="mx-auto max-w-3xl px-4 py-3 text-xl font-bold tracking-wide">Heimdall</h1>
-      </header>
-      <main className="mx-auto max-w-3xl px-4 py-6">
-        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Systems</h2>
-        {systems.length === 0 ? (
-          <p className="text-muted-foreground">No System is paired.</p>
+      <AppHeader>
+        <RangePicker current={range} />
+      </AppHeader>
+      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 pt-3.5 pb-2 sm:pt-[18px] sm:pb-2.5">
+          <h1 className="text-[19px] font-semibold sm:text-[22px]">
+            {rangeTitle(range, overview.to, timeZone)}
+          </h1>
+          <FleetLegend />
+        </div>
+        {overview.lanes.length === 0 ? (
+          <p className="border-t py-3 text-muted-foreground">No System is paired.</p>
         ) : (
-          <ul className="divide-y overflow-hidden rounded-lg border bg-card">
-            {systems.map((system) => (
-              <li className="flex items-baseline justify-between gap-4 px-4 py-3" key={system.name}>
-                <span className="min-w-0 truncate font-medium">{system.name}</span>
-                <span className="shrink-0 text-sm text-muted-foreground">
-                  {system.lastSeenAt === undefined
-                    ? 'never seen'
-                    : relativeTime(system.lastSeenAt, now)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          overview.lanes.map((lane) => (
+            <FleetLane key={lane.name} lane={lane} now={now} timeZone={timeZone} window={window} />
+          ))
         )}
+        <TimeAxis range={range} timeZone={timeZone} window={window} />
+        <OpenConditions now={now} open={overview.open} timeZone={timeZone} />
       </main>
     </>
   );

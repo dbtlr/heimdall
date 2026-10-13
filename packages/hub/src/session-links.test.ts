@@ -4,190 +4,25 @@ import type { SQL } from 'bun';
 
 import { MIGRATIONS, migrate } from './migrations.ts';
 import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { CWD, timeline } from './testing/timeline.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
 
 // Times are seconds after T0, so a fixture reads as a timeline.
 const T0 = Date.parse('2026-10-01T12:00:00Z');
-const at = (seconds: number) => new Date(T0 + seconds * 1000);
-
-const CWD = '/home/someone/work/my-project';
+const { addProcess, addSession, addVitals, at } = timeline(T0);
 
 type Db = { sql: SQL } & AsyncDisposable;
 
-// A migrated database with two Systems and a current Claude Code parser, so
-// projected Sessions show in the views.
+// A migrated database with two Systems.
 const database = async (): Promise<Db> => {
   const db = await testDatabase();
   await migrate(db.sql);
   await db.sql`
     INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now()), ('server-1', now())
   `;
-  await db.sql`INSERT INTO current_parsers (harness, version) VALUES ('claude-code', 1)`;
   return db;
-};
-
-let generations = 0;
-
-type SessionFixture = {
-  firstCwd?: string;
-  harness?: string;
-  id: string;
-  lastCwd?: string;
-  // The times of its requests, in seconds; its span runs from the first to the last.
-  requests: number[];
-  // The times of its subagent's requests; the subagent's span runs from the first to the last.
-  subagentRequests?: number[];
-  system?: string;
-};
-
-// Adds a Session whose main transcript spans its requests, and the requests,
-// and a subagent's when it has one.
-const addSession = async (
-  sql: SQL,
-  {
-    firstCwd = CWD,
-    harness = 'claude-code',
-    id,
-    lastCwd,
-    requests,
-    subagentRequests = [],
-    system = 'laptop-1',
-  }: SessionFixture,
-) => {
-  await sql`
-    INSERT INTO projected_sessions (
-      harness, parser_version, system, source, session_id, path, started_at, ended_at,
-      first_cwd, last_cwd
-    )
-    VALUES (${harness}, 1, ${system}, 'claude-code', ${id}, ${`projects/p/${id}.jsonl`},
-            ${at(Math.min(...requests))}, ${at(Math.max(...requests))}, ${firstCwd},
-            ${lastCwd ?? firstCwd})
-  `;
-  generations += 1;
-  const generation = generations;
-  await sql`
-    INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at)
-    VALUES (${generation}, ${system}, 'claude-code', ${`projects/p/${id}.jsonl`}, now(), now())
-  `;
-  for (const [index, seconds] of requests.entries()) {
-    // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
-    await sql`
-      INSERT INTO projected_requests (
-        harness, parser_version, system, source, session_id, request_id, at, model,
-        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation, byte_offset
-      )
-      VALUES (${harness}, 1, ${system}, 'claude-code', ${id}, ${`${id}-${String(index)}`},
-              ${at(seconds)}, 'claude-opus-4-1', 1, 2, 0, 0, ${generation}, ${index})
-    `;
-  }
-  if (subagentRequests.length === 0) {
-    return;
-  }
-  await sql`
-    INSERT INTO projected_subagents (
-      harness, parser_version, system, source, session_id, agent_id, started_at, ended_at
-    )
-    VALUES (${harness}, 1, ${system}, 'claude-code', ${id}, 'a1',
-            ${at(Math.min(...subagentRequests))}, ${at(Math.max(...subagentRequests))})
-  `;
-  for (const [index, seconds] of subagentRequests.entries()) {
-    // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
-    await sql`
-      INSERT INTO projected_requests (
-        harness, parser_version, system, source, session_id, agent_id, request_id, at, model,
-        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation, byte_offset
-      )
-      VALUES (${harness}, 1, ${system}, 'claude-code', ${id}, 'a1', ${`${id}-a1-${String(index)}`},
-              ${at(seconds)}, 'claude-opus-4-1', 1, 2, 0, 0, ${generation}, ${1000 + index})
-    `;
-  }
-};
-
-type ProcessFixture = {
-  cwd?: string | null;
-  // Seconds. A seen end, or with `endMissed` the last sighting; undefined while running.
-  end?: number;
-  endMissed?: boolean;
-  harness?: string;
-  pid: number;
-  // Readings are every 15 seconds from `seenFrom` and at `seenTo`, the last
-  // sighting; they default to the process's life, or 100,000 s while running.
-  // `rollupsOnly` keeps their 5-minute rollups and not the samples, as after
-  // samples are pruned.
-  rollupsOnly?: boolean;
-  seenFrom?: number;
-  seenTo?: number;
-  start: number;
-  system?: string;
-};
-
-// Adds a Harness process as the Hub holds it, with its readings, and answers
-// its id. A missed end is stored as the Hub stores one: at the last sighting.
-const addProcess = async (
-  sql: SQL,
-  {
-    cwd = CWD,
-    end,
-    endMissed = false,
-    harness = 'claude-code',
-    pid,
-    rollupsOnly = false,
-    seenFrom,
-    seenTo,
-    start,
-    system = 'laptop-1',
-  }: ProcessFixture,
-): Promise<number> => {
-  const from = seenFrom ?? start;
-  const to = seenTo ?? end ?? 100_000;
-  const [row]: { id: string }[] = await sql`
-    INSERT INTO harness_processes (
-      system, harness, pid, started_at, ended_at, end_missed, cwd, peak_rss_bytes,
-      last_seen_at, sent_at
-    )
-    VALUES (${system}, ${harness}, ${pid}, ${at(start)}, ${end === undefined ? null : at(end)},
-            ${endMissed}, ${cwd}, 0, ${at(to)}, ${at(to)})
-    RETURNING id
-  `;
-  const id = Number(row?.id);
-  await sql`
-    INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
-    SELECT ${id}, ${at(0)}::timestamptz + s * interval '1 second', 0, 0
-    FROM (SELECT generate_series(${from}::numeric, ${to}::numeric, 15) UNION SELECT ${to}::numeric) AS g (s)
-  `;
-  if (rollupsOnly) {
-    await sql`
-      INSERT INTO harness_process_rollups
-        (process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max)
-      SELECT process, date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00'), count(*),
-             0, 0, 0, 0, 0
-      FROM harness_process_samples WHERE process = ${id} GROUP BY 1, 2
-    `;
-    await sql`DELETE FROM harness_process_samples WHERE process = ${id}`;
-  }
-  return id;
-};
-
-const addVitals = async (sql: SQL, system: string, t: number, cpuBusyPercent = 10) => {
-  await sql`
-    INSERT INTO vitals_samples (
-      system, t, cpu_busy_percent, memory_total_bytes, memory_used_bytes, load_1, load_5,
-      load_15, uptime_seconds, disks, collector_cpu_percent, collector_rss_bytes
-    )
-    VALUES (${system}, ${at(t)}, ${cpuBusyPercent}, 1000, 500, 1, 1, 1, 100, '[]', 0, 0)
-  `;
-  await sql`
-    INSERT INTO vitals_rollups (
-      system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max, memory_used_min,
-      memory_used_sum, memory_used_max, memory_total_max, load_1_min, load_1_sum, load_1_max,
-      uptime_min, collector_cpu_sum, collector_cpu_max, collector_rss_sum, collector_rss_max
-    )
-    VALUES (${system}, date_bin('5 minutes', ${at(t)}::timestamptz, timestamptz '2000-01-01 00:00:00+00'),
-            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    ON CONFLICT DO NOTHING
-  `;
 };
 
 // Each stretch as one line: Session, its first and last request in seconds,
@@ -632,7 +467,6 @@ test('a Session stored before its request span was kept shows in the Vitals once
     MIGRATIONS.filter((m) => m.version <= 17),
   );
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
-  await db.sql`INSERT INTO current_parsers (harness, version) VALUES ('claude-code', 1)`;
   await addProcess(db.sql, { end: 1000, pid: 100, start: 0 });
   await addSession(db.sql, { id: 's1', requests: [5, 100], subagentRequests: [150, 250] });
   await addVitals(db.sql, 'laptop-1', 200);

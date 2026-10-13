@@ -6,6 +6,7 @@
   "scripts": {
     "build": "bun --bun vite build",
     "dev": "bun --bun vite dev",
+    "seed": "bun scripts/seed.ts",
     "start": "bun .output/server/index.mjs"
   },
   "dependencies": {
