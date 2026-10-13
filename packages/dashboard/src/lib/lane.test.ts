@@ -35,8 +35,17 @@ test('a gap between buckets breaks the line', () => {
     { average: 20, band: [15, 25], t: BUCKET / 2 },
     { average: 30, band: [25, 35], t: 1.5 * BUCKET },
     { average: null, band: null, t: 2 * BUCKET },
-    { average: 40, band: [35, 45], t: 4.5 * BUCKET },
+    { average: 40, band: [35, 45], t: 4 * BUCKET },
+    { average: 40, band: [35, 45], t: 5 * BUCKET },
     { average: null, band: null, t: 5 * BUCKET },
+  ]);
+});
+
+test('a lone bucket draws across its 5 minutes, since one point draws nothing', () => {
+  expect(cpuSeries([bucket(2 * BUCKET, 20)])).toEqual([
+    { average: 20, band: [15, 25], t: 2 * BUCKET },
+    { average: 20, band: [15, 25], t: 3 * BUCKET },
+    { average: null, band: null, t: 3 * BUCKET },
   ]);
 });
 
@@ -79,12 +88,24 @@ const lane = (overrides: Partial<Lane>): Lane => ({
 test('the now line says what each status knows', () => {
   const context = { now: NOW, timeZone: 'UTC' };
   expect(
-    nowLine(lane({ latest: { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW } }), context),
+    nowLine(
+      lane({
+        lastSeenAt: NOW - MINUTE,
+        latest: { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW },
+      }),
+      context,
+    ),
   ).toBe('CPU 12%, memory 58%');
   expect(
     nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 12, 48), status: 'asleep' }), context),
   ).toBe('asleep since 12:48');
   expect(nowLine(lane({ status: 'never_seen' }), context)).toBe('never seen');
+});
+
+test('the now line of a System silent over 2 minutes says since when, not old Vitals', () => {
+  const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW - 6 * 60 * MINUTE };
+  const silent = lane({ lastSeenAt: NOW - 6 * 60 * MINUTE, latest, status: 'needs_you' });
+  expect(nowLine(silent, { now: NOW, timeZone: 'UTC' })).toBe('silent since 10:00');
 });
 
 test('a status reads as a word', () => {

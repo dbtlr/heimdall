@@ -27,7 +27,7 @@ function BucketTooltip({
 }) {
   const bucket =
     typeof label === 'number'
-      ? buckets.find((found) => found.t + BUCKET_MS / 2 === label)
+      ? buckets.find((found) => found.t <= label && label <= found.t + BUCKET_MS)
       : undefined;
   if (active !== true || bucket === undefined) {
     return null;

@@ -6,9 +6,12 @@ export type Range = (typeof RANGES)[number];
 
 export const isRange = (value: unknown): value is Range => RANGES.some((range) => range === value);
 
+// A System not heard from for longer than this is quiet: asleep, if it sleeps,
+// and its newest Vitals are no longer shown as current.
+export const QUIET_AFTER_MS = 2 * 60_000;
+
 // How a lane's status word is decided, first match wins: never heard from;
-// any open Condition; a System that sleeps and has been silent over 2 minutes;
-// otherwise up.
+// any open Condition; a System that sleeps and is quiet; otherwise up.
 export type LaneStatus = 'never_seen' | 'needs_you' | 'asleep' | 'up';
 
 // One 5-minute Vitals rollup bucket, starting at `t`: CPU busy average, low,

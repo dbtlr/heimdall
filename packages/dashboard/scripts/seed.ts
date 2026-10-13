@@ -120,7 +120,9 @@ const sendVitals = async (sql: SQL, profile: Profile, now: number) => {
     sent.collector = { ...sent.collector, platform: profile.platform };
     sent.sentAt = chunk.at(-1) ?? now;
     for (const sample of sent.samples) {
-      const busy = profile.cpu(sample.t) + 5 * random();
+      // Noise, and now and then a burst, so a bucket's low and high spread.
+      const burst = random() < 0.05 ? 40 * random() : 0;
+      const busy = profile.cpu(sample.t) + 5 * random() + burst;
       sample.cpu = { busyPercent: Math.min(100, Math.max(0.5, busy)) };
       sample.memory = {
         totalBytes: profile.memoryTotalBytes,
@@ -303,16 +305,27 @@ const TABLES = [
   'model_prices',
 ];
 
-// The seed replaces what a scratch database holds, so it refuses a database
-// with a System it did not seed.
-const reset = async (sql: SQL) => {
+// The seed replaces what a scratch database holds, so before it creates or
+// empties anything it refuses a database that holds tables but is no Hub's,
+// and a Hub's database with a System it did not seed.
+const refuseUnlessScratch = async (sql: SQL) => {
+  const [schema]: { hub: boolean; tables: number }[] = await sql`
+    SELECT count(*)::int AS tables, to_regclass('public.systems') IS NOT NULL AS hub
+    FROM pg_tables WHERE schemaname = 'public'
+  `;
+  const { hub = false, tables = 0 } = schema ?? {};
+  if (tables > 0 && !hub) {
+    throw new Error('Refusing to seed a database that holds tables but no Hub schema.');
+  }
+  if (!hub) {
+    return;
+  }
   const seeded = new Set(PROFILES.map(({ name }) => name));
   const rows: { name: string }[] = await sql`SELECT name FROM systems`;
   const others = rows.map(({ name }) => name).filter((name) => !seeded.has(name));
   if (others.length > 0) {
     throw new Error(`Refusing to reset a database that holds other Systems: ${others.join(', ')}.`);
   }
-  await sql.unsafe(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
 };
 
 const seed = async (url: URL) => {
@@ -329,8 +342,9 @@ const seed = async (url: URL) => {
 
 const fill = async (sql: SQL) => {
   const now = Date.now();
+  await refuseUnlessScratch(sql);
   await migrate(sql);
-  await reset(sql);
+  await sql.unsafe(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: [] });
   for (const { name } of PROFILES) {
     // oxlint-disable-next-line no-await-in-loop -- four Systems.

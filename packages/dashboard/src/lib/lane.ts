@@ -6,6 +6,7 @@ import type {
   LaneStatus,
   Stretch,
 } from '../server/fleet-overview-types.ts';
+import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import { KIND_NAMES } from './conditions.ts';
 import { formatClock, formatCost, formatWhen, spanBox } from './time.ts';
 import type { Window } from './time.ts';
@@ -18,18 +19,24 @@ export type CpuPoint = { average: number | null; band: [number, number] | null; 
 
 // The CPU plot's points, one per bucket at its middle. A bucket with no
 // neighbor after it, where the next one is more than 5 minutes on, gets a null
-// point after it, so the line and band do not bridge a gap.
+// point after it, so the line and band do not bridge a gap. A bucket with no
+// neighbor on either side spans its 5 minutes instead, since a lone point
+// draws nothing.
 export const cpuSeries = (buckets: readonly CpuBucket[]): CpuPoint[] =>
   buckets.flatMap((bucket, index): CpuPoint[] => {
-    const point: CpuPoint = {
-      average: bucket.average,
-      band: [bucket.low, bucket.high],
-      t: bucket.t + BUCKET_MS / 2,
-    };
+    const values = { average: bucket.average, band: [bucket.low, bucket.high] as [number, number] };
+    const previous = buckets[index - 1];
     const next = buckets[index + 1];
-    return next !== undefined && next.t - bucket.t <= BUCKET_MS
-      ? [point]
-      : [point, { average: null, band: null, t: bucket.t + BUCKET_MS }];
+    const joinsPrevious = previous !== undefined && bucket.t - previous.t <= BUCKET_MS;
+    const joinsNext = next !== undefined && next.t - bucket.t <= BUCKET_MS;
+    const points: CpuPoint[] =
+      joinsPrevious || joinsNext
+        ? [{ ...values, t: bucket.t + BUCKET_MS / 2 }]
+        : [
+            { ...values, t: bucket.t },
+            { ...values, t: bucket.t + BUCKET_MS },
+          ];
+    return joinsNext ? points : [...points, { average: null, band: null, t: bucket.t + BUCKET_MS }];
   });
 
 // A gap's label needs about this much of the window to fit.
@@ -57,7 +64,7 @@ const STATUS_WORDS: Record<LaneStatus, string> = {
 export const statusWord = (status: LaneStatus): string => STATUS_WORDS[status];
 
 // The line under a lane's status: its newest CPU and memory, or since when it
-// has been asleep.
+// has been asleep or silent, so old Vitals never read as current.
 export const nowLine = (
   lane: Lane,
   { now, timeZone }: { now: number; timeZone: string },
@@ -69,6 +76,9 @@ export const nowLine = (
     return lane.lastSeenAt === undefined
       ? 'asleep'
       : `asleep since ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
+  }
+  if (lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS) {
+    return `silent since ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
   }
   return lane.latest === undefined
     ? 'no Vitals'

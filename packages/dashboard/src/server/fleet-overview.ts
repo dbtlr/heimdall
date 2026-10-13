@@ -1,6 +1,6 @@
 import type { SQL } from 'bun';
 
-import { isRange, RANGES } from './fleet-overview-types.ts';
+import { isRange, QUIET_AFTER_MS, RANGES } from './fleet-overview-types.ts';
 import type {
   ConditionKind,
   ConditionMark,
@@ -31,8 +31,6 @@ export const parseRangeInput = (input: unknown): Range => {
 const MINUTE_MS = 60_000;
 const BUCKET_MS = 5 * MINUTE_MS;
 const DAY_MS = 24 * 60 * MINUTE_MS;
-// A System that sleeps and has been silent this long is asleep, not down.
-const ASLEEP_AFTER_MS = 2 * MINUTE_MS;
 const RANGE_MS: Record<Range, number> = {
   '12h': DAY_MS / 2,
   '24h': DAY_MS,
@@ -113,7 +111,7 @@ export const laneStatus = ({
   if (hasOpenCondition) {
     return 'needs_you';
   }
-  return sleeps && now - lastSeenAt > ASLEEP_AFTER_MS ? 'asleep' : 'up';
+  return sleeps && now - lastSeenAt > QUIET_AFTER_MS ? 'asleep' : 'up';
 };
 
 type SystemRow = { last_seen_at: Date | null; name: string; sleeps: boolean | null };
@@ -231,12 +229,19 @@ export const readFleetOverview = async (
         AND bucket < ${toAt}
       ORDER BY system, bucket
     `,
+    // One newest sample per System, read through the (system, t) key.
     sql`
-      SELECT DISTINCT ON (system) system, t, cpu_busy_percent,
-             memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
-      FROM vitals_samples
-      WHERE system IN ${sql(names)}
-      ORDER BY system, t DESC
+      SELECT p.system, v.t, v.cpu_busy_percent, v.memory_used_percent
+      FROM paired_systems p
+      CROSS JOIN LATERAL (
+        SELECT t, cpu_busy_percent,
+               memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
+        FROM vitals_samples
+        WHERE system = p.system
+        ORDER BY t DESC
+        LIMIT 1
+      ) v
+      WHERE p.system IN ${sql(names)}
     `,
     // Stretches name their System and a range of `started_at`, which keeps the
     // view cheap (docs/spec.md, the insight views). A stretch that started over
@@ -248,9 +253,15 @@ export const readFleetOverview = async (
       JOIN insight.sessions s
         ON (s.harness, s.system, s.source, s.session_id)
          = (st.harness, st.system, st.source, st.session_id)
-      JOIN insight.session_totals t
-        ON (t.harness, t.system, t.source, t.session_id)
-         = (st.harness, st.system, st.source, st.session_id)
+      -- OFFSET 0 keeps this a lookup per stretch. Without it PostgreSQL
+      -- flattens the subquery into a join that totals every Session kept.
+      CROSS JOIN LATERAL (
+        SELECT x.cost_usd
+        FROM insight.session_totals x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (st.harness, st.system, st.source, st.session_id)
+        OFFSET 0
+      ) t
       WHERE st.system IN ${sql(names)}
         AND st.started_at BETWEEN ${new Date(from - DAY_MS)} AND ${toAt}
         AND st.ended_at >= ${fromAt}
