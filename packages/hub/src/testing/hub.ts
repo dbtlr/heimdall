@@ -15,6 +15,17 @@ import { testDatabase } from './postgres.ts';
 // Revokes a System's token, as `heimdall-hub unpair` does.
 export { unpair } from '../pairing.ts';
 
+// Seeds Sessions, Harness processes, Vitals, and Conditions at times on a timeline.
+export { CWD, timeline } from './timeline.ts';
+
+// What the dashboard's dev seed uses to fill a scratch database the way a Hub
+// would: migrate it, pair Systems, store Reports, and load the price table.
+export { migrate } from '../migrations.ts';
+export { BUNDLED_PRICES } from '../prices.ts';
+export { syncPrices } from '../price-table.ts';
+export { storeReport } from '../store.ts';
+export { storeToken } from '../tokens.ts';
+
 // gzip, as the Collector packs a chunk.
 export const gzip = promisify(gzipCallback);
 

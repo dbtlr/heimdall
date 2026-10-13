@@ -3,3 +3,6 @@ node_modules/
 dist/
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Playwright MCP screenshots and snapshots
+.playwright-mcp/
