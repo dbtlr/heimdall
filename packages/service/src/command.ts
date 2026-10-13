@@ -10,7 +10,7 @@ import { integer } from '@loomcli/validators';
 import { runsCompiled } from './compiled.ts';
 import { httpGet } from './http-get.ts';
 import type { HttpGet } from './http-get.ts';
-import { displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts';
+import { TITLE, displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts';
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
 import { setPort } from './settings.ts';
@@ -28,11 +28,12 @@ import type { Supervisor, UnitStatus } from './supervisor.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-// What differs between the two binaries' `service` commands. The Collector's
-// status names its paired System and counts its queue and spool, which only the
-// Collector knows how to read.
+// What differs between the binaries' `service` commands. The Hub and the
+// dashboard listen on a port, which install can store and status asks for
+// health. The Collector's status names its paired System and counts its queue
+// and spool, which only the Collector knows how to read.
 export type ServiceSpec =
-  | { binary: 'hub'; version: string }
+  | { binary: 'dashboard' | 'hub'; version: string }
   | {
       binary: 'collector';
       defaultStateDir: (place: { env: Env; home: string; platform: NodeJS.Platform }) => string;
@@ -75,6 +76,18 @@ const defaultEnvironment = (): ServiceEnvironment => ({
     });
   },
 });
+
+// Where each listening binary's `serve` listens unless told otherwise, and the
+// variables that tell it. The dashboard's are its own, so a shell set up for a
+// hand-run Hub does not move it.
+const LISTENING = {
+  dashboard: {
+    defaultPort: '3000',
+    hostEnv: 'HEIMDALL_DASHBOARD_HOST',
+    portEnv: 'HEIMDALL_DASHBOARD_PORT',
+  },
+  hub: { defaultPort: '8080', hostEnv: 'HEIMDALL_HOST', portEnv: 'HEIMDALL_PORT' },
+} as const;
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -121,9 +134,9 @@ const io = ({ host, out, style }: Context) => {
   };
 };
 
-// `heimdall-hub service …` or `heimdall-collector service …`: install, remove,
-// drive, and report this binary's own Service (ADR-0007). `environment`
-// replaces what the commands reach outside the process, for tests.
+// `heimdall-<binary> service …`: install, remove, drive, and report this
+// binary's own Service (ADR-0007). `environment` replaces what the commands
+// reach outside the process, for tests.
 export const serviceCommand = (
   spec: ServiceSpec,
   environment: Partial<ServiceEnvironment> = {},
@@ -185,20 +198,19 @@ export const serviceCommand = (
   };
 
   const installCommand =
-    binary === 'hub'
+    binary === 'collector'
       ? new Command('install', {
-          description:
-            'Install the Hub as a user Service and restart it. --port first stores the port in hub.toml.',
+          description: 'Install the Collector as a user Service and restart it.',
+        }).action((context) => install(context, undefined))
+      : new Command('install', {
+          description: `Install the ${TITLE[binary]} as a user Service and restart it. --port first stores the port in ${binary}.toml.`,
         })
           .option('port', {
-            description: 'Store this port in hub.toml, unless the file already holds it.',
+            description: `Store this port in ${binary}.toml, unless the file already holds it.`,
             type: 'string',
             validate: integer({ max: 65_535, min: 1 }),
           })
-          .action((context) => install(context, context.options.port))
-      : new Command('install', {
-          description: 'Install the Collector as a user Service and restart it.',
-        }).action((context) => install(context, undefined));
+          .action((context) => install(context, context.options.port));
 
   const uninstallCommand = new Command('uninstall', {
     description: 'Stop and remove the user Service, keeping the config file and log.',
@@ -264,7 +276,7 @@ export const serviceCommand = (
   };
 
   // Asked of a running unit, and of one whose state is unknown, which may be running.
-  const hubHealth = async (
+  const listenerHealth = async (
     unit: { running: boolean; stateKnown: boolean },
     { host, port: portSetting }: { host?: unknown; port?: unknown },
   ) => {
@@ -321,7 +333,9 @@ export const serviceCommand = (
     try {
       const unit = await unitStatus(place, paths.label);
       const details =
-        binary === 'hub' ? await hubHealth(unit, setting) : await collectorDetails(place, setting);
+        binary === 'collector'
+          ? await collectorDetails(place, setting)
+          : await listenerHealth(unit, setting);
       await place.print(
         renderStatus({
           details,
@@ -345,29 +359,8 @@ export const serviceCommand = (
   // Status reads the settings `serve` and `run` read, from the same flag,
   // variable, and file key, so it asks the running binary where it listens.
   const statusCommand =
-    binary === 'hub'
+    binary === 'collector'
       ? new Command('status', { description: statusDescription })
-          .option('host', {
-            description: "The host serve listens on, read to probe the Hub's health.",
-            env: 'HEIMDALL_HOST',
-            extensions: [configInput({ path: 'host' })],
-            hidden: true,
-            type: 'string',
-            validate: asGiven,
-          })
-          .option('port', {
-            default: '8080',
-            description: "The port serve listens on, read to probe the Hub's health.",
-            env: 'HEIMDALL_PORT',
-            extensions: [configInput({ path: 'port' })],
-            hidden: true,
-            type: 'string',
-            validate: asGiven,
-          })
-          .action((context) =>
-            status(context, { host: context.options.host, port: context.options.port }),
-          )
-      : new Command('status', { description: statusDescription })
           .option('hub', {
             description: 'The Hub run pushes to, compared with the one this System paired with.',
             env: 'HEIMDALL_HUB',
@@ -390,6 +383,27 @@ export const serviceCommand = (
               hub: context.options.hub,
               stateDir: context.options['state-dir'],
             }),
+          )
+      : new Command('status', { description: statusDescription })
+          .option('host', {
+            description: `The host serve listens on, read to probe the ${TITLE[binary]}'s health.`,
+            env: LISTENING[binary].hostEnv,
+            extensions: [configInput({ path: 'host' })],
+            hidden: true,
+            type: 'string',
+            validate: asGiven,
+          })
+          .option('port', {
+            default: LISTENING[binary].defaultPort,
+            description: `The port serve listens on, read to probe the ${TITLE[binary]}'s health.`,
+            env: LISTENING[binary].portEnv,
+            extensions: [configInput({ path: 'port' })],
+            hidden: true,
+            type: 'string',
+            validate: asGiven,
+          })
+          .action((context) =>
+            status(context, { host: context.options.host, port: context.options.port }),
           );
 
   return new Command('service', {
