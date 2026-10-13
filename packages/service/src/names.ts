@@ -1,13 +1,18 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-// The two binaries that supervise themselves, by the name their files carry.
-export type Binary = 'collector' | 'hub';
+// The binaries that supervise themselves, by the name their files carry.
+export type Binary = 'collector' | 'dashboard' | 'hub';
 
 // What each binary's unit runs: the command, with no flags (ADR-0007).
-const RUN_COMMAND: Record<Binary, string> = { collector: 'run', hub: 'serve' };
+const RUN_COMMAND: Record<Binary, string> = { collector: 'run', dashboard: 'serve', hub: 'serve' };
 
-const TITLE: Record<Binary, string> = { collector: 'Collector', hub: 'Hub' };
+// Each binary as the glossary names it.
+export const TITLE: Record<Binary, string> = {
+  collector: 'Collector',
+  dashboard: 'dashboard',
+  hub: 'Hub',
+};
 
 // The files a binary's Service involves on every platform, absolute under
 // `home`. The log path is the same whoever installs, so one Fleet declaration

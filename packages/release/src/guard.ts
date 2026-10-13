@@ -26,6 +26,7 @@ const CUT_FILES = new Set([
   'CHANGELOG.md',
   'bun.lock',
   'packages/collector/package.json',
+  'packages/dashboard/package.json',
   'packages/hub/package.json',
 ]);
 

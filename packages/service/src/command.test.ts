@@ -14,6 +14,7 @@ import { platformSupervisor } from './platform.ts';
 import { fakeLaunchd, fakeSupervisor, tempHome } from './testing.ts';
 
 const HUB: ServiceSpec = { binary: 'hub', version: '0.2.0' };
+const DASHBOARD: ServiceSpec = { binary: 'dashboard', version: '0.2.0' };
 const EXECUTABLE = '/opt/heimdall/bin/heimdall-hub';
 
 // The state directories the Collector's status asked to count, in order.
@@ -181,6 +182,73 @@ test('the Collector unit runs run', async () => {
   expect(fake.state.definition?.log).toBe(
     join(home.path, '.local', 'state', 'heimdall', 'collector.log'),
   );
+});
+
+test('the dashboard unit runs serve and logs to its own file', async () => {
+  await using home = await tempHome();
+  const fake = fakeSupervisor();
+
+  const result = await invoke(DASHBOARD, ['service', 'install'], { fake, home: home.path });
+
+  expect(result.code).toBe(0);
+  expect(fake.state.definition).toEqual({
+    arguments: ['serve'],
+    description: 'Heimdall dashboard (com.dbtlr.heimdall.dashboard)',
+    executable: EXECUTABLE,
+    label: 'com.dbtlr.heimdall.dashboard',
+    log: join(home.path, '.local', 'state', 'heimdall', 'dashboard.log'),
+    workingDirectory: home.path,
+  });
+});
+
+test('dashboard install --port writes the port into dashboard.toml', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(DASHBOARD, ['service', 'install', '--port', '3100'], {
+    home: home.path,
+  });
+
+  expect(result.code).toBe(0);
+  expect(await readFile(join(home.path, '.config', 'heimdall', 'dashboard.toml'), 'utf8')).toBe(
+    'port = 3100\n',
+  );
+  expect(await Bun.file(join(home.path, '.config', 'heimdall', 'hub.toml')).exists()).toBe(false);
+});
+
+test('status of a running dashboard asks its health on port 3000 and shows its paths', async () => {
+  await using home = await tempHome();
+  const seen: string[] = [];
+
+  const result = await invoke(DASHBOARD, ['service', 'status'], {
+    environment: healthy('0.2.0', seen),
+    fake: fakeSupervisor({ installed: true, unit: join(home.path, 'unit.service') }),
+    home: home.path,
+  });
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(`com.dbtlr.heimdall.dashboard: loaded, running (pid 4182)
+  health   ok, v0.2.0 (http://127.0.0.1:3000/api/health)
+  unit     ~/unit.service
+  log      ~/.local/state/heimdall/dashboard.log
+  config   ~/.config/heimdall/dashboard.toml
+`);
+  expect(seen).toEqual(['http://127.0.0.1:3000/api/health']);
+});
+
+test('dashboard status asks for health on the port in dashboard.toml, not hub.toml', async () => {
+  await using home = await tempHome();
+  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+  await writeFile(join(home.path, '.config', 'heimdall', 'hub.toml'), 'port = 9191\n');
+  await writeFile(join(home.path, '.config', 'heimdall', 'dashboard.toml'), 'port = 3300\n');
+  const seen: string[] = [];
+
+  await invoke(DASHBOARD, ['service', 'status'], {
+    environment: healthy('0.2.0', seen),
+    fake: fakeSupervisor({ installed: true }),
+    home: home.path,
+  });
+
+  expect(seen).toEqual(['http://127.0.0.1:3300/api/health']);
 });
 
 test('install --port writes the port into hub.toml before installing', async () => {

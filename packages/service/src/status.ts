@@ -2,14 +2,14 @@ import { tcpTargetOf } from './http-get.ts';
 import type { HttpGet } from './http-get.ts';
 import { displayPath } from './names.ts';
 
-// How long `service status` waits for the Hub's health answer.
+// How long `service status` waits for the Hub's or the dashboard's health answer.
 const HEALTH_TIMEOUT_MS = 2000;
 
-// The Hub's health answer is a few dozen bytes; anything past this is not it.
+// A health answer is a few dozen bytes; anything past this is not it.
 const MAX_HEALTH_BODY_BYTES = 4096;
 
 // What `GET /api/health` told `service status`. Any answer but a 200 or 503
-// with the Hub's JSON body is no answer.
+// with the JSON body the Hub and the dashboard both send is no answer.
 export type HealthAnswer =
   | { database: 'not answering' | 'ok'; kind: 'answered'; version: string }
   | { kind: 'no answer' };
@@ -24,8 +24,8 @@ const isHealthBody = (
   'version' in body &&
   typeof body.version === 'string';
 
-// Asks the Hub for its health with `get`, which ignores any proxy in the
-// environment, so the request goes to the address the Hub listens on.
+// Asks the Hub or the dashboard for its health with `get`, which ignores any
+// proxy in the environment, so the request goes to the address it listens on.
 export const probeHealth = async ({
   get,
   timeoutMs = HEALTH_TIMEOUT_MS,
@@ -53,7 +53,7 @@ export const probeHealth = async ({
 
 const WILDCARDS = new Set(['', '0.0.0.0', '::', '[::]']);
 
-// Where to ask the Hub for its health: the address it listens on, or loopback
+// Where to ask for health: the address the binary listens on, or loopback
 // when it listens on every address or names none. An IPv6 address is bracketed.
 export const healthUrl = (host: unknown, port: number): string => {
   const address = typeof host === 'string' && !WILDCARDS.has(host) ? host : '127.0.0.1';
