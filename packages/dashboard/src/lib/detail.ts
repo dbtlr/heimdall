@@ -26,10 +26,10 @@ export const formatGiB = (bytes: number): string => (bytes / GIB).toFixed(1);
 const joinAnd = (words: readonly string[]) =>
   words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words.at(-1) ?? ''}`;
 
-// The line under a System's name: its platform, how long it has been up while
-// its Vitals are current, when it last reported, and its installed Harnesses.
+// The line under a System's name: its platform, its Collector's version, how
+// long it has been up while its Vitals are current, and when it last reported.
 export const headerLine = (
-  detail: Pick<SystemDetail, 'harnesses' | 'lastSeenAt' | 'platform'> & {
+  detail: Pick<SystemDetail, 'collectorVersion' | 'lastSeenAt' | 'platform'> & {
     latest: { t: number; uptimeSeconds: number } | undefined;
   },
   { now, timeZone }: At,
@@ -41,6 +41,9 @@ export const headerLine = (
   if (detail.platform !== undefined) {
     facts.push(`${OS_NAMES[detail.platform.os] ?? detail.platform.os} ${detail.platform.arch}`);
   }
+  if (detail.collectorVersion !== undefined) {
+    facts.push(`Collector ${detail.collectorVersion}`);
+  }
   if (detail.latest !== undefined && now - detail.latest.t <= QUIET_AFTER_MS) {
     facts.push(`up ${formatSpan(detail.latest.uptimeSeconds * 1000)}`);
   }
@@ -48,14 +51,9 @@ export const headerLine = (
   facts.push(
     `last Report ${ago < DAY_MS ? `${formatSpan(ago)} ago` : formatWhen(detail.lastSeenAt, now, timeZone)}`,
   );
-  const harnesses = detail.harnesses.map(
-    ({ harness, version }) => `${harnessName(harness)} ${version}`,
-  );
   const joined = facts.join(', ');
   // Without a platform the sentence opens on "up" or "last Report".
-  const first =
-    detail.platform === undefined ? `${joined.charAt(0).toUpperCase()}${joined.slice(1)}` : joined;
-  return harnesses.length === 0 ? `${first}.` : `${first}. ${joinAnd(harnesses)}.`;
+  return `${detail.platform === undefined ? `${joined.charAt(0).toUpperCase()}${joined.slice(1)}` : joined}.`;
 };
 
 // When a Condition on the Timeline was raised and cleared, and for how long.

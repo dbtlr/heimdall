@@ -8,12 +8,13 @@ import {
   storeToken,
   syncPrices,
   timeline,
+  unpair,
 } from '@heimdall/hub/testing';
 import type { RequestFixture, SubagentFixture, ToolCallFixture } from '@heimdall/hub/testing';
-// Fills a scratch Hub database with four paired Systems, a week of Vitals, agent
-// Sessions, the records, runs, checks, and Harness installs a provisioner and
-// Collector would report for two of them, and Conditions, so the dashboard has a
-// fleet to show during development. It writes through the Hub's own ingest and migration code, so
+// Fills a scratch Hub database with four paired Systems and one unpaired, a week
+// of Vitals, agent Sessions, the records, runs, checks, and Harness installs a
+// provisioner and Collector would report for some of them, and Conditions, so
+// the dashboard has a fleet to show during development. It writes through the Hub's own ingest and migration code, so
 // the rollups and views are the ones a real Hub keeps. Run it again to reset.
 //
 //   HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packages/dashboard seed
@@ -29,10 +30,13 @@ const DAY = 24 * HOUR;
 const SAMPLE_EVERY_MS = 30 * SECOND;
 const GIB = 1024 ** 3;
 
+// The seeded System that is unpaired after it reports, with its history kept.
+const UNPAIRED_SYSTEM = 'build-2';
+
 type Profile = {
   // How busy the System is at a time, in percent, before noise.
   cpu: (t: number) => number;
-  diskUsedFraction: number;
+  disks: { mount: string; totalGib: number; usedFraction: number }[];
   memoryTotalBytes: number;
   name: string;
   platform: 'darwin' | 'linux';
@@ -58,7 +62,7 @@ const PROFILES: Profile[] = [
   {
     // A nightly backup keeps the CPU busy at 02:00 UTC.
     cpu: (t) => (hourOfDay(t) >= 2 && hourOfDay(t) < 2.5 ? 70 : 12),
-    diskUsedFraction: 0.55,
+    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.55 }],
     memoryTotalBytes: 64 * GIB,
     name: 'server-1',
     platform: 'linux',
@@ -67,7 +71,12 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: (t) => (isWorkHour(t) ? 38 + 20 * Math.sin(t / (20 * MINUTE)) : 6),
-    diskUsedFraction: 0.62,
+    // `/backup` is nearly full, so the facts card shows a mount in orange.
+    disks: [
+      { mount: '/', totalGib: 500, usedFraction: 0.62 },
+      { mount: '/data', totalGib: 3600, usedFraction: 0.58 },
+      { mount: '/backup', totalGib: 4000, usedFraction: 0.97 },
+    ],
     memoryTotalBytes: 32 * GIB,
     name: 'workstation-1',
     platform: 'linux',
@@ -76,7 +85,7 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: (t) => 14 + 10 * Math.sin(t / (45 * MINUTE)),
-    diskUsedFraction: 0.48,
+    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.48 }],
     memoryTotalBytes: 16 * GIB,
     name: 'laptop-1',
     platform: 'darwin',
@@ -85,11 +94,21 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: () => 4,
-    diskUsedFraction: 0.94,
+    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.94 }],
     memoryTotalBytes: 4 * GIB,
     name: 'gateway-1',
     platform: 'linux',
     sleeps: [],
+    sleepsFlag: false,
+  },
+  {
+    cpu: (t) => 18 + 6 * Math.sin(t / (30 * MINUTE)),
+    disks: [{ mount: '/', totalGib: 250, usedFraction: 0.52 }],
+    memoryTotalBytes: 8 * GIB,
+    name: UNPAIRED_SYSTEM,
+    platform: 'linux',
+    // Sends nothing for the last 9 hours: the seed unpairs it.
+    sleeps: [[9 * HOUR, 0]],
     sleepsFlag: false,
   },
 ];
@@ -139,13 +158,11 @@ const sendVitals = async (
         totalBytes: profile.memoryTotalBytes,
         usedBytes: Math.round(profile.memoryTotalBytes * (0.45 + 0.1 * random())),
       };
-      sample.disks = [
-        {
-          mount: '/',
-          totalBytes: 500 * GIB,
-          usedBytes: Math.round(500 * GIB * profile.diskUsedFraction),
-        },
-      ];
+      sample.disks = profile.disks.map(({ mount, totalGib, usedFraction }) => ({
+        mount,
+        totalBytes: totalGib * GIB,
+        usedBytes: Math.round(totalGib * GIB * usedFraction),
+      }));
       sample.uptimeSeconds = (sample.t - (now - 7 * DAY)) / SECOND;
     }
     const isLast = from + chunk.length >= times.length;
@@ -453,6 +470,13 @@ const provisionedBySystem = async (now: number) => {
   return new Map<string, Provisioned>([
     [SYSTEM, await workstationSections(now, scenario)],
     ['server-1', await serverSections(now, scenario)],
+    // A Collector that looked for Harnesses and found none, unlike laptop-1's,
+    // which never says.
+    ['gateway-1', { harnesses: { installs: [] } }],
+    [
+      UNPAIRED_SYSTEM,
+      { harnesses: { installs: [{ harness: 'codex', location: 'npm', version: '0.57.0' }] } },
+    ],
   ]);
 };
 
@@ -844,6 +868,29 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: '/',
     system: 'gateway-1',
   });
+  conditions.push({
+    kind: 'low_disk',
+    raisedAt: -hours(3),
+    reason: '120.0 GiB free of 4000.0 GiB (3.0%).',
+    subject: '/backup',
+    system: SYSTEM,
+  });
+  // The unpaired System keeps the Conditions it left open, and its history.
+  conditions.push({
+    clearedAt: -(3 * DAY) / SECOND,
+    kind: 'low_disk',
+    raisedAt: -(4 * DAY) / SECOND,
+    reason: '20.0 GiB free of 250.0 GiB (8.0%).',
+    subject: '/',
+    system: UNPAIRED_SYSTEM,
+  });
+  conditions.push({
+    kind: 'job_overdue',
+    raisedAt: -hours(30),
+    reason: `Scheduled for ${utcMinute(Math.floor((now - 30 * HOUR) / HOUR) * HOUR)}; no successful run since.`,
+    subject: 'nightly-image',
+    system: UNPAIRED_SYSTEM,
+  });
   // Oldest raised first, the order a Hub receives them, which orders the Timeline.
   for (const condition of conditions.toSorted((a, b) => a.raisedAt - b.raisedAt)) {
     // oxlint-disable-next-line no-await-in-loop -- a handful of rows, in order.
@@ -905,7 +952,7 @@ const fill = async (sql: SQL) => {
   await sql.unsafe(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: [] });
   for (const { name } of PROFILES) {
-    // oxlint-disable-next-line no-await-in-loop -- four Systems.
+    // oxlint-disable-next-line no-await-in-loop -- five Systems.
     await storeToken(sql, { pairedAt: now - 8 * DAY, system: name, token: `seed-token-${name}` });
   }
   const provisioned = await provisionedBySystem(now);
@@ -915,8 +962,14 @@ const fill = async (sql: SQL) => {
   await seedConditions(sql, now);
   await seedSessions(sql, now);
   await seedWorkSession(sql, now);
-  const overview = await readFleetOverview(sql, { now, range: '24h', timeZone: 'UTC' });
-  for (const lane of overview.lanes) {
+  await unpair(sql, UNPAIRED_SYSTEM);
+  const overview = await readFleetOverview(sql, {
+    now,
+    range: '24h',
+    timeZone: 'UTC',
+    unpaired: true,
+  });
+  for (const lane of [...overview.lanes, ...overview.unpairedLanes]) {
     console.log(
       `${lane.name}: ${lane.status}, ${lane.buckets.length} buckets, ${lane.gaps.length} gaps, ${lane.stretches.length} stretches, ${lane.conditions.length} Condition marks`,
     );

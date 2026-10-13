@@ -13,6 +13,8 @@ export const STATUS_COLOR: Record<LaneStatus, string> = {
   asleep: 'text-muted-foreground',
   needs_you: 'text-[color-mix(in_srgb,var(--status-serious)_70%,white)]',
   never_seen: 'text-muted-foreground',
+  unpaired:
+    'rounded-[10px] border border-dashed border-muted-foreground px-[7px] text-muted-foreground',
   up: 'text-[color-mix(in_srgb,var(--status-good)_60%,white)]',
 };
 
@@ -44,7 +46,9 @@ export function FleetLane({
     >
       <div className="flex flex-wrap items-baseline gap-x-2.5 sm:block">
         <p className="text-base font-semibold">{lane.name}</p>
-        <p className={cn('text-[13px]', STATUS_COLOR[lane.status])}>{statusWord(lane.status)}</p>
+        <p className={cn('w-fit text-[13px]', STATUS_COLOR[lane.status])}>
+          {statusWord(lane.status)}
+        </p>
         <p className="text-[12.5px] text-muted-foreground">{nowLine(lane, { now, timeZone })}</p>
       </div>
       <div className="relative min-w-0 group-hover:bg-white/[0.025]">

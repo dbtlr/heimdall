@@ -16,7 +16,9 @@ import {
 } from './fleet-overview.ts';
 import type { BucketRow, ConditionRow } from './fleet-overview.ts';
 import type {
+  Disk,
   FileIssue,
+  HarnessInstall,
   JobRun,
   MemoryBucket,
   ProcessSeries,
@@ -77,12 +79,18 @@ export const parseSampleInput = (input: unknown): { at: number | undefined; name
 type SystemRow = {
   collector_arch: string | null;
   collector_platform: string | null;
+  collector_version: string | null;
   last_seen_at: Date | null;
+  paired: boolean;
   sleeps: boolean | null;
 };
 
 type LatestRow = {
   cpu_busy_percent: number;
+  disks: Disk[];
+  load_1: number;
+  load_5: number;
+  load_15: number;
   memory_total_bytes: number;
   memory_used_bytes: number;
   t: Date;
@@ -182,18 +190,20 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
   return [...sessions.values()];
 };
 
-// One paired System over the `range` that ends at `now`: its facts, Vitals,
-// Harness processes, Sessions, and Conditions, on one time axis. Undefined for
-// a System that is not paired. Read-only.
+// One System over the `range` that ends at `now`: its facts, Vitals, Harness
+// processes, Sessions, and Conditions, on one time axis. A System that is no
+// longer paired keeps its history and reads as unpaired. Undefined for a name
+// that is no System. Read-only.
 export const readSystemDetail = async (
   sql: SQL,
   { name, now, range, timeZone }: { name: string; now: number; range: Range; timeZone: string },
 ): Promise<SystemDetail | undefined> => {
   const [system]: SystemRow[] = await sql`
-    SELECT s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch
+    SELECT s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch, s.collector_version,
+           p.system IS NOT NULL AS paired
     FROM paired_systems p
-    LEFT JOIN systems s ON s.name = p.system
-    WHERE p.system = ${name}
+    FULL JOIN systems s ON s.name = p.system
+    WHERE coalesce(p.system, s.name) = ${name}
   `;
   if (system === undefined) {
     return undefined;
@@ -202,7 +212,7 @@ export const readSystemDetail = async (
   const [fromAt, toAt] = [new Date(from), new Date(now)];
   const firstBucket = new Date(bucketStart(from));
   const [installs, latest, buckets, memory, cores, stretches, marks, open]: [
-    { installs: { harness: string; version: string }[] }[],
+    { installs: HarnessInstall[] }[],
     LatestRow[],
     BucketRow[],
     MemoryRow[],
@@ -214,7 +224,8 @@ export const readSystemDetail = async (
     sql`SELECT installs FROM harness_installs WHERE system = ${name}`,
     sql`
       SELECT t, cpu_busy_percent, memory_total_bytes::float8 AS memory_total_bytes,
-             memory_used_bytes::float8 AS memory_used_bytes, uptime_seconds
+             memory_used_bytes::float8 AS memory_used_bytes, uptime_seconds,
+             load_1, load_5, load_15, disks
       FROM vitals_samples WHERE system = ${name}
       ORDER BY t DESC LIMIT 1
     `,
@@ -288,6 +299,7 @@ export const readSystemDetail = async (
   const lastSeenAt = system.last_seen_at?.getTime();
   const sleeps = system.sleeps === true;
   return {
+    collectorVersion: system.collector_version ?? undefined,
     conditions: marks.map(toMark),
     cpu,
     from,
@@ -295,8 +307,8 @@ export const readSystemDetail = async (
       cpu.map(({ t }) => t),
       { from, now },
     ),
-    harnesses: (installs[0]?.installs ?? [])
-      .map(({ harness, version }) => ({ harness, version }))
+    harnesses: installs[0]?.installs
+      .map(({ harness, location, version }): HarnessInstall => ({ harness, location, version }))
       .toSorted((a, b) => a.harness.localeCompare(b.harness)),
     lastSeenAt,
     latest:
@@ -304,6 +316,12 @@ export const readSystemDetail = async (
         ? undefined
         : {
             cpuBusyPercent: newest.cpu_busy_percent,
+            disks: newest.disks.map(({ mount, totalBytes, usedBytes }) => ({
+              mount,
+              totalBytes,
+              usedBytes,
+            })),
+            load: [newest.load_1, newest.load_5, newest.load_15],
             memoryTotalBytes: newest.memory_total_bytes,
             memoryUsedBytes: newest.memory_used_bytes,
             t: newest.t.getTime(),
@@ -316,6 +334,7 @@ export const readSystemDetail = async (
     })),
     name,
     now,
+    paired: system.paired,
     platform:
       system.collector_platform === null || system.collector_arch === null
         ? undefined
@@ -324,7 +343,13 @@ export const readSystemDetail = async (
     range,
     sessions: toSessions(stretches),
     sleeps,
-    status: laneStatus({ hasOpenCondition: (open[0]?.n ?? 0) > 0, lastSeenAt, now, sleeps }),
+    status: laneStatus({
+      hasOpenCondition: (open[0]?.n ?? 0) > 0,
+      lastSeenAt,
+      now,
+      paired: system.paired,
+      sleeps,
+    }),
     timeZone,
     to: now,
   };

@@ -1,5 +1,6 @@
 // The data the Fleet overview renders: every paired System as a lane on one
-// time axis, and the Conditions open now. Times are epoch milliseconds.
+// time axis, the unpaired Systems when asked for, and the Conditions open now.
+// Times are epoch milliseconds.
 
 export const RANGES = ['6h', '12h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];
@@ -10,9 +11,10 @@ export const isRange = (value: unknown): value is Range => RANGES.some((range) =
 // and its newest Vitals are no longer shown as current.
 export const QUIET_AFTER_MS = 2 * 60_000;
 
-// How a lane's status word is decided, first match wins: never heard from;
-// any open Condition; a System that sleeps and is quiet; otherwise up.
-export type LaneStatus = 'never_seen' | 'needs_you' | 'asleep' | 'up';
+// How a lane's status word is decided, first match wins: no longer paired;
+// never heard from; any open Condition; a System that sleeps and is quiet;
+// otherwise up.
+export type LaneStatus = 'unpaired' | 'never_seen' | 'needs_you' | 'asleep' | 'up';
 
 // One 5-minute Vitals rollup bucket, starting at `t`: CPU busy average, low,
 // and high, in percent.
@@ -75,16 +77,23 @@ export type OpenCondition = {
   reason: string;
   subject: string;
   system: string;
+  // Whether the System it is on is no longer paired.
+  unpaired: boolean;
 };
 
 export type FleetOverview = {
   from: number;
   lanes: Lane[];
   now: number;
-  // Open Conditions on paired Systems, newest raised first.
+  // Open Conditions on paired Systems, newest raised first, then those on
+  // unpaired Systems in the same order when they were asked for.
   open: OpenCondition[];
   range: Range;
   // The server's IANA time zone, so the server and the browser format alike.
   timeZone: string;
   to: number;
+  // How many Systems the Hub holds that are no longer paired, asked for or not.
+  unpairedCount: number;
+  // The unpaired Systems' lanes, empty unless they were asked for.
+  unpairedLanes: Lane[];
 };

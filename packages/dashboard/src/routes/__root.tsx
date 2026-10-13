@@ -1,10 +1,17 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
+import { AutoRefresh } from '../components/auto-refresh.tsx';
+
 import appCss from '../styles.css?url';
 
 export const Route = createRootRoute({
-  component: () => <Outlet />,
+  component: () => (
+    <>
+      <AutoRefresh />
+      <Outlet />
+    </>
+  ),
   head: () => ({
     // No favicon yet; an empty one keeps the browser from asking for one.
     links: [

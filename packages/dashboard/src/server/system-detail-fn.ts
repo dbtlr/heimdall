@@ -12,7 +12,8 @@ import {
 
 // One System's detail over `range` (12h when none is given) with what its
 // provisioner recorded and its Timeline, read at the server's clock and in the
-// server's time zone. Not found for a System that is not paired.
+// server's time zone. An unpaired System opens as it was left; not found for a
+// name that is no System.
 export const getSystemDetail = createServerFn({ method: 'GET' })
   .validator(parseDetailInput)
   .handler(async ({ data: { name, range } }) => {

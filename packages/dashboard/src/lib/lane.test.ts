@@ -102,6 +102,29 @@ test('the now line says what each status knows', () => {
   expect(nowLine(lane({ status: 'never_seen' }), context)).toBe('never seen');
 });
 
+test('the now line of an unpaired System leads with when it was last seen, then its Vitals', () => {
+  const context = { now: NOW, timeZone: 'UTC' };
+  const latest = {
+    cpuBusyPercent: 17.6,
+    memoryUsedPercent: 41.2,
+    t: Date.UTC(2026, 9, 13, 4, 35),
+  };
+  expect(
+    nowLine(
+      lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), latest, status: 'unpaired' }),
+      context,
+    ),
+  ).toBe('last seen 04:36, CPU 18%, memory 41%');
+});
+
+test('the now line of an unpaired System seen without a sample still has its date', () => {
+  const context = { now: NOW, timeZone: 'UTC' };
+  expect(
+    nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), status: 'unpaired' }), context),
+  ).toBe('last seen 04:36, no Vitals');
+  expect(nowLine(lane({ status: 'unpaired' }), context)).toBe('never seen');
+});
+
 test('the now line of a System silent over 2 minutes says since when, not old Vitals', () => {
   const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW - 6 * 60 * MINUTE };
   const silent = lane({ lastSeenAt: NOW - 6 * 60 * MINUTE, latest, status: 'needs_you' });
@@ -111,6 +134,7 @@ test('the now line of a System silent over 2 minutes says since when, not old Vi
 test('a status reads as a word', () => {
   expect(statusWord('needs_you')).toBe('Needs you');
   expect(statusWord('never_seen')).toBe('Never seen');
+  expect(statusWord('unpaired')).toBe('Unpaired');
 });
 
 const stretch: Stretch = {
