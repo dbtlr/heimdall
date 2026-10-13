@@ -8,7 +8,7 @@ Heimdall gives one view of a personal fleet and the agent work done on it: wheth
 
 ## Shape of v1
 
-- A Collector on every System pushes Reports to the Hub, which stores them in its own PostgreSQL database and serves a web dashboard inside the tailnet that works on a phone.
+- A Collector on every System pushes Reports to the Hub, which stores them in its own PostgreSQL database. A web dashboard, its own app reading that database, serves the fleet inside the tailnet and works on a phone.
 - Any provisioner records what it installed with `heimdall-collector record`. Heimdall compares those records with what the Collector observes and stores no provisioner's declarations ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
 - The Hub archives agent Session transcripts, content included, as the durable record of agent work ([ADR-0012](decisions/0012-hub-archives-agent-session-transcripts.md)).
 - Vitals are CPU, memory, disk, load, and uptime, sampled every 15 seconds. Raw samples are kept for 14 days and 5-minute min/avg/max rollups for a year.

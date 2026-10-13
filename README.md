@@ -1,6 +1,6 @@
 # Heimdall
 
-Cheap observability for a personal fleet and the agent work done on it. A Collector on each machine reports host vitals and the Services and jobs its provisioner recorded, and uploads agent Session transcripts, to a Hub, which archives them and serves a dashboard inside the tailnet. Heimdall works with any provisioner; the [spec](docs/spec.md) describes what one follows.
+Cheap observability for a personal fleet and the agent work done on it. A Collector on each machine reports host vitals and the Services and jobs its provisioner recorded, and uploads agent Session transcripts, to a Hub, which archives them; a dashboard reads the Hub's database and serves the fleet's pages inside the tailnet. Heimdall works with any provisioner; the [spec](docs/spec.md) describes what one follows.
 
 Status: M1 (walking skeleton), M2 (Fleet rollout), and M3 (Session archive) are complete; M4 (Fleet state) shipped in v0.4.0 and awaits its live proof; M5 (Session insight) is next. See [docs/roadmap.md](docs/roadmap.md).
 
