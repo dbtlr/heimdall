@@ -136,7 +136,7 @@ test('serve on a port already in use says which address it could not listen on, 
     ]);
 
     expect(stderr).toMatch(
-      new RegExp(`\\S+Z Could not listen on 127\\.0\\.0\\.1:${String(taken.port)}: `, 'u'),
+      new RegExp(`\\S+Z Could not listen on 127\\.0\\.0\\.1:${String(taken.port)}: \\S`, 'u'),
     );
     expect(code).toBe(1);
   } finally {
