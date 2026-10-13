@@ -216,13 +216,15 @@ const plain = (status: number, body: string) =>
 
 // `GET /api/v1/records`: the records read as JSON. `?unpaired=include`, given
 // any number of times, adds the Systems that were unpaired; any other value is
-// a 400. A database that cannot be opened or read is a 503; the server's log
-// line for a 5xx answer is what reports it.
+// a 400. A database that cannot be opened or read is a 503, and `onError`
+// hears why.
 export const recordsAnswer = async ({
   database,
+  onError,
   url,
 }: {
   database: () => Promise<SQL>;
+  onError: (error: unknown) => void;
   url: URL;
 }): Promise<Response> => {
   const unpaired = url.searchParams.getAll('unpaired');
@@ -232,7 +234,8 @@ export const recordsAnswer = async ({
   try {
     const systems = await readRecords(await database(), { includeUnpaired: unpaired.length > 0 });
     return Response.json({ systems });
-  } catch {
+  } catch (error) {
+    onError(error);
     return plain(503, UNAVAILABLE);
   }
 };

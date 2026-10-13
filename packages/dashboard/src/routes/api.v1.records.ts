@@ -10,7 +10,15 @@ export const Route = createFileRoute('/api/v1/records')({
   server: {
     handlers: {
       ANY: onlyGet,
-      GET: ({ request }) => recordsAnswer({ database, url: new URL(request.url) }),
+      GET: ({ request }) =>
+        recordsAnswer({
+          database,
+          // To stderr, which the Service appends to its log beside the 503 line.
+          onError: (error) => {
+            console.error('The records read failed:', error);
+          },
+          url: new URL(request.url),
+        }),
     },
   },
 });

@@ -21,6 +21,7 @@ import type {
   ServiceRecord,
 } from '@heimdall/schema';
 
+import { readFleetOverview } from './fleet-overview.ts';
 import { recordsAnswer } from './records.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -119,9 +120,10 @@ const send = async (
 };
 
 // `GET /api/v1/records` over the test Hub's database.
-const ask = (h: Hub, query = '') =>
+const ask = (h: Hub, query = '', onError: (error: unknown) => void = () => undefined) =>
   recordsAnswer({
     database: () => Promise.resolve(h.db.sql),
+    onError,
     url: new URL(`http://dashboard.test/api/v1/records${query}`),
   });
 
@@ -911,19 +913,24 @@ describe('reading the records', () => {
     expect((await read(h)).map((entry) => entry.system)).toEqual(['laptop-1', 'server-1']);
   });
 
-  test('lists Systems in the order the dashboard does, whatever the collation', async () => {
+  test('lists Systems in the order the fleet overview does, whatever the collation', async () => {
     await using h = await startHub();
+    // Every paired System reports, since the overview also lists one that never has.
+    await send(h, {});
+    await send(h, { system: 'server-1' });
     await Promise.all(
-      ['a-c', 'ab', 'a-b', 'B', 'a_b'].map((system) =>
-        storeReport(h.db.sql, { receivedAt: NOW, report: report(system, [NOW]) }),
-      ),
+      ['a-c', 'ab', 'a-b', 'B', 'a_b'].map(async (system) => {
+        await storeReport(h.db.sql, { receivedAt: NOW, report: report(system, [NOW]) });
+        await storeToken(h.db.sql, { pairedAt: NOW, system, token: `${system}-token` });
+      }),
     );
 
-    expect((await read(h, '?unpaired=include')).map((entry) => entry.system)).toEqual(
-      (await h.db.sql`SELECT name FROM systems ORDER BY name`).map(
-        (system: { name: string }) => system.name,
-      ),
-    );
+    const { lanes } = await readFleetOverview(h.db.sql, {
+      now: NOW,
+      range: '24h',
+      timeZone: 'UTC',
+    });
+    expect((await read(h)).map((entry) => entry.system)).toEqual(lanes.map((lane) => lane.name));
   });
 
   test('answers an empty list when no System has reported', async () => {
@@ -932,24 +939,30 @@ describe('reading the records', () => {
     expect(await read(h)).toEqual([]);
   });
 
-  test('answers 503 when the database cannot be opened', async () => {
+  test('answers 503 when the database cannot be opened, and reports why', async () => {
+    const errors: unknown[] = [];
     const response = await recordsAnswer({
       database: () => Promise.reject(new Error('No database URL')),
+      onError: (error) => errors.push(error),
       url: new URL('http://dashboard.test/api/v1/records'),
     });
 
     expect(response.status).toBe(503);
     expect(response.headers.get('content-type')).toContain('text/plain');
     expect(await response.text()).toBe('The dashboard cannot answer right now; try again later.');
+    expect(errors).toEqual([new Error('No database URL')]);
   });
 
   test('answers 503 when the database cannot answer', async () => {
     const h = await startHub();
     await h.db.sql.close();
 
-    const response = await ask(h);
+    const errors: unknown[] = [];
+
+    const response = await ask(h, '', (error) => errors.push(error));
 
     expect(response.status).toBe(503);
+    expect(errors).toHaveLength(1);
     await h.db[Symbol.asyncDispose]().catch(() => undefined);
   });
 });
@@ -1002,11 +1015,10 @@ describe('the paired and unpaired Systems', () => {
     await using h = await startHub();
     await unpairedLaptop(h);
 
-    const paired: { system: string }[] = await h.db.sql`SELECT system FROM paired_systems`;
+    const paired: { system: string }[] = await h.db
+      .sql`SELECT system FROM paired_systems ORDER BY system`;
 
-    expect((await read(h)).map((s) => s.system)).toEqual(
-      paired.map((row) => row.system).toSorted(),
-    );
+    expect((await read(h)).map((s) => s.system)).toEqual(paired.map((row) => row.system));
   });
 
   test.each([
