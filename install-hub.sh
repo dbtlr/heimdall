@@ -58,7 +58,7 @@ fi
 
 mkdir -p "$install_dir"
 # Download next to the destination so the final rename replaces the binary in
-# one step, even while a running Collector or Hub holds the old one open.
+# one step, even while a running binary holds the old one open.
 download="$install_dir/.$binary.download.$$"
 sums="$install_dir/.$binary.SHA256SUMS.$$"
 trap 'rm -f "$download" "$sums"' EXIT

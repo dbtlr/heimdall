@@ -1,7 +1,7 @@
 name: Release
 
-# A `vX.Y.Z` tag builds the Collector and Hub binaries on each platform's native
-# runner and publishes them on a GitHub Release with SHA256SUMS and the notes
+# A `vX.Y.Z` tag builds the Collector, Hub, and dashboard binaries on each
+# platform's native runner and publishes them on a GitHub Release with SHA256SUMS and the notes
 # from CHANGELOG.md. A tag with a hyphen (`v0.2.0-rc.1`) publishes a
 # prerelease, which Fleet's stable channel skips. Pull requests that touch the
 # build run the same build without publishing, so the release path is proven
@@ -66,12 +66,17 @@ jobs:
       - name: Test on the target platform
         run: bun test packages/schema packages/collector packages/release
 
+      # The dashboard's pages, server functions, and assets build into one
+      # handler that its binary compiles in.
+      - name: Build the dashboard app
+        run: bun run --cwd packages/dashboard build
+
       # loom build compiles for this runner's platform and bakes Loom's release
       # facts, so a defect shows an operator "Something went wrong." rather than
       # a development build's diagnostic.
       - name: Compile
         run: |
-          for binary in collector hub; do
+          for binary in collector dashboard hub; do
             bun run --cwd "packages/$binary" loom build \
               --out "../../dist/heimdall-$binary-${{ matrix.target }}"
           done
@@ -79,7 +84,7 @@ jobs:
       - name: Smoke-test the binaries
         run: |
           version=$(bun run --silent release version)
-          for binary in collector hub; do
+          for binary in collector dashboard hub; do
             line=$("./dist/heimdall-$binary-${{ matrix.target }}" --version)
             echo "$line"
             case "$line" in
@@ -126,7 +131,7 @@ jobs:
         run: |
           sha256sum heimdall-* > SHA256SUMS
           cat SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 6
+          test "$(wc -l < SHA256SUMS)" -eq 9
 
       - name: Release notes
         run: bun run --silent release changelog notes --version "${TAG#v}" > release-notes.md
@@ -153,7 +158,7 @@ jobs:
           mkdir uploaded
           gh release download "$TAG" --dir uploaded
           (cd uploaded && sha256sum --check --strict SHA256SUMS)
-          test "$(find uploaded -type f | wc -l)" -eq 7
+          test "$(find uploaded -type f | wc -l)" -eq 10
 
           gh release edit "$TAG" --draft=false
 
@@ -178,7 +183,7 @@ jobs:
           HEIMDALL_VERSION: ${{ github.ref_name }}
           HEIMDALL_INSTALL_DIR: ${{ runner.temp }}/heimdall
         run: |
-          for binary in collector hub; do
+          for binary in collector dashboard hub; do
             curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/$HEIMDALL_VERSION/install-$binary.sh" | sh
             "$HEIMDALL_INSTALL_DIR/heimdall-$binary" --version | awk '{ print $2 }' | grep -Fx "$HEIMDALL_VERSION"
           done

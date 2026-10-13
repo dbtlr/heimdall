@@ -6,7 +6,7 @@ Status: M1 (walking skeleton), M2 (Fleet rollout), and M3 (Session archive) are 
 
 ## Development
 
-Heimdall is a Bun workspace with five packages: `packages/schema` (the Report wire schema), `packages/collector`, `packages/hub`, `packages/service` (the `service` commands, runtime log lines, and log rotation both binaries share), and `packages/release` (the release tooling). Tool versions are pinned in `mise.toml`.
+Heimdall is a Bun workspace with six packages: `packages/schema` (the Report wire schema), `packages/collector`, `packages/hub`, `packages/dashboard` (the web app, [its own binary](packages/dashboard/README.md)), `packages/service` (the `service` commands, runtime log lines, and log rotation the three binaries share), and `packages/release` (the release tooling). Tool versions are pinned in `mise.toml`.
 
 ```sh
 mise install
@@ -15,6 +15,7 @@ bun run verify           # format, lint, typecheck (vp check), then bun test
 bun run fix              # apply formatting and lint fixes
 bun run build:collector  # compile dist/heimdall-collector for this platform
 bun run build:hub        # compile dist/heimdall-hub for this platform
+bun run build:dashboard  # build the dashboard app, then compile dist/heimdall-dashboard
 ```
 
 A pull request that changes what ships adds a changelog fragment in [`.changes/`](.changes/README.md). [Releasing](docs/releasing.md) covers fragments, cutting a release, and installing the binaries.
@@ -121,20 +122,32 @@ The ingest endpoint answers 200 with the number of samples stored and skipped, 4
 
 SIGTERM or SIGINT stops the Hub with exit status 143 or 130.
 
+## Running the dashboard
+
+`heimdall-dashboard serve` serves the dashboard, a web app that reads the Hub's database and never writes to it ([ADR-0015](docs/decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)). It answers `GET /api/health` like the Hub, with `200` when the Hub's database answers within 2 seconds and `503` when it does not or no database URL is configured.
+
+| Flag     | Variable                 | File key | Default     |
+| -------- | ------------------------ | -------- | ----------- |
+| `--host` | `HEIMDALL_DASHBOARD_HOST` | `host`   | `127.0.0.1` |
+| `--port` | `HEIMDALL_DASHBOARD_PORT` | `port`   | `3000`      |
+
+The configuration file is `~/.config/heimdall/dashboard.toml`, and `--port 0` picks a free port. The database URL is not a dashboard setting: the app reads the Hub's, from `HEIMDALL_DATABASE_URL` or else `[database] url` in `hub.toml`, on its first request. The [dashboard package](packages/dashboard/README.md) describes the app.
+
 ## Running as a Service
 
-Each binary installs and supervises itself as a systemd user unit on Linux and a launchd user agent on macOS ([ADR-0007](docs/decisions/0007-binaries-own-their-service-config-file-holds-settings.md)). The commands are the same for both binaries and both platforms, `heimdall-hub service <command>` and `heimdall-collector service <command>`, and so is the log path.
+Each binary installs and supervises itself as a systemd user unit on Linux and a launchd user agent on macOS ([ADR-0007](docs/decisions/0007-binaries-own-their-service-config-file-holds-settings.md)). The commands are the same for all three binaries and both platforms, `heimdall-hub service <command>`, `heimdall-dashboard service <command>`, and `heimdall-collector service <command>`, and so is the log path.
 
 | Binary               | Unit                           | Runs    | Log                                     | Config file                         |
 | -------------------- | ------------------------------ | ------- | --------------------------------------- | ----------------------------------- |
 | `heimdall-hub`       | `com.dbtlr.heimdall.hub`       | `serve` | `~/.local/state/heimdall/hub.log`       | `~/.config/heimdall/hub.toml`       |
+| `heimdall-dashboard` | `com.dbtlr.heimdall.dashboard` | `serve` | `~/.local/state/heimdall/dashboard.log` | `~/.config/heimdall/dashboard.toml` |
 | `heimdall-collector` | `com.dbtlr.heimdall.collector` | `run`   | `~/.local/state/heimdall/collector.log` | `~/.config/heimdall/collector.toml` |
 
 - `install` creates the log directory and, on Linux, writes `~/.config/systemd/user/<unit>.service`, but only when its content changed, and then reloads the user manager. It enables the unit and always restarts it, which is how a new binary or a changed config file takes effect. Running it again with nothing changed rewrites nothing and restarts.
-- `heimdall-hub service install --port N` first stores `port = N` in `~/.config/heimdall/hub.toml`, creating the file if it is missing. A file that already holds that port is left exactly as it is, and `install` refuses to create `hub.toml` beside an existing `hub.json`, which the new file would hide, so a file Fleet rendered stays as Fleet rendered it. No other setting goes through `install`.
+- `heimdall-hub service install --port N` and `heimdall-dashboard service install --port N` first store `port = N` in the binary's config file, `hub.toml` or `dashboard.toml`, creating the file if it is missing. A file that already holds that port is left exactly as it is, and `install` refuses to create `hub.toml` beside an existing `hub.json`, which the new file would hide, so a file Fleet rendered stays as Fleet rendered it. No other setting goes through `install`.
 - On Linux, `uninstall` stops and disables the unit, deletes its file, and reloads the user manager. The config file, the log, and the Collector's queue and spool stay.
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
-- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's adds its health from `GET http://<host>:<port>/api/health`, with the host and port the Hub reads from its config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
+- `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's and the dashboard's add their health from `GET http://<host>:<port>/api/health`, with the host and port each reads from its own config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
 The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; exit status 143 or 130, after SIGTERM or SIGINT, counts as a clean stop.
 
@@ -145,8 +158,8 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 - `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue and spool stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
 
-[Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run both binaries.
+[Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run the three binaries.
 
-Only a compiled binary may `install` or `uninstall`, and there is no opt-in. A run from source, such as a test, refuses before it touches the user manager. To try the real supervisor during development, compile first with `bun run build:hub` or `bun run build:collector` and run the binary from `dist/`.
+Only a compiled binary may `install` or `uninstall`, and there is no opt-in. A run from source, such as a test, refuses before it touches the user manager. To try the real supervisor during development, compile first with `bun run build:hub`, `bun run build:dashboard`, or `bun run build:collector` and run the binary from `dist/`.
 
 `serve` and `run` write their runtime lines to stdout, each starting with an ISO 8601 UTC time, and the unit appends both output streams to the log. Fatal startup lines on stderr carry the time too. The binary rotates its own log before it writes its first line and about once a day after: when the first line is 90 days old or the log reaches 10 MB, it copies the log to `<log>.1`, replacing the previous copy, and empties the log in place.

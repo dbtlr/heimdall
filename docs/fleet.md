@@ -1,19 +1,20 @@
 ---
-description: "Running Heimdall with Fleet, one provisioner: Application Units for both binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, and the asks Fleet has not yet met."
+description: "Running Heimdall with Fleet, one provisioner: Application Units for the three binaries, config templates with one 1Password secret, native Service Units, the one-time pairing of each System, the operations Fleet runs, and the asks Fleet has not yet met."
 ---
 
 # Running Heimdall with Fleet
 
-Fleet is one provisioner, and it installs and operates Heimdall. Heimdall depends on no provisioner: the [spec](spec.md) describes what any provisioner follows, and this document is how Fleet does it. Fleet declares the Hub and the Collector the same way it declares Mimir. This document holds everything the Fleet repository needs: the Application Units, the config templates, the native Service Units, and the one step an operator takes to pair each System. Each section follows Fleet's `docs/specs/units.md`, and the declarations are modeled on Mimir's under `apps/mimir/` and `services/mimir/`.
+Fleet is one provisioner, and it installs and operates Heimdall. Heimdall depends on no provisioner: the [spec](spec.md) describes what any provisioner follows, and this document is how Fleet does it. Fleet declares the Hub, the dashboard, and the Collector the same way it declares Mimir. This document holds everything the Fleet repository needs: the Application Units, the config templates, the native Service Units, and the one step an operator takes to pair each System. Each section follows Fleet's `docs/specs/units.md`, and the declarations are modeled on Mimir's under `apps/mimir/` and `services/mimir/`.
 
 The example System names are `laptop-1` and `server-1`. `server-1` is the System that hosts the Hub. Replace them with the names in Fleet's own repository.
 
-Heimdall ships two binaries, and each is its own Application:
+Heimdall ships three binaries, and each is its own Application:
 
-| Application          | Binary               | Runs on                      | Fleet Service        |
-| -------------------- | -------------------- | ---------------------------- | -------------------- |
-| `heimdall`           | `heimdall-hub`       | the System that hosts the Hub | `heimdall`           |
-| `heimdall-collector` | `heimdall-collector` | every System                 | `heimdall-collector` |
+| Application           | Binary                | Runs on                       | Fleet Service         |
+| --------------------- | --------------------- | ----------------------------- | --------------------- |
+| `heimdall`            | `heimdall-hub`        | the System that hosts the Hub | `heimdall`            |
+| `heimdall-dashboard`  | `heimdall-dashboard`  | the System that hosts the Hub | `heimdall-dashboard`  |
+| `heimdall-collector`  | `heimdall-collector`  | every System                  | `heimdall-collector`  |
 
 [ADR-0007](decisions/0007-binaries-own-their-service-config-file-holds-settings.md) records why each binary installs and supervises its own Service and why Fleet renders every setting. [ADR-0009](decisions/0009-collectors-pair-with-the-hub.md) records why no per-System secret is rendered.
 
@@ -41,7 +42,7 @@ command = ["sh", "-c", "curl -fsSL \"https://raw.githubusercontent.com/dbtlr/hei
 version_args = ["{version}"]
 ```
 
-The Hub's declaration, `apps/heimdall/app.toml`, differs in its targets, which name only the System that hosts the Hub, and in its script: `install-hub.sh` in place of `install-collector.sh`, and `heimdall-hub` in place of `heimdall-collector`.
+The Hub's declaration, `apps/heimdall/app.toml`, differs in its targets, which name only the System that hosts the Hub, and in its script: `install-hub.sh` in place of `install-collector.sh`, and `heimdall-hub` in place of `heimdall-collector`. The dashboard's declaration, `apps/heimdall-dashboard/app.toml`, differs from the Collector's in the same way: its targets name only the System that hosts the Hub, its script is `install-dashboard.sh`, and its binary is `heimdall-dashboard`.
 
 The version line is `heimdall-collector v0.2.0 (Report schema v1)`. The version command prints its second word, and Fleet ignores the leading `v` when it compares that word with the tag. [Releasing](releasing.md) covers what a release publishes and the install scripts.
 
@@ -49,9 +50,9 @@ Each Application also declares its `[[configs]]`, described next.
 
 ## Config templates
 
-Heimdall reads one file per binary, `~/.config/heimdall/hub.toml` and `~/.config/heimdall/collector.toml`. Fleet renders every setting into these files from a template, and it passes none to `service install`. Heimdall never modifies a rendered file: `service install` writes a setting only when its value changes, and Fleet gives it none, so `service install` never causes Drift in a `files` record Fleet makes for the file.
+Heimdall reads one file per binary: `~/.config/heimdall/hub.toml`, `~/.config/heimdall/dashboard.toml`, and `~/.config/heimdall/collector.toml`. Fleet renders every setting into these files from a template, and it passes none to `service install`. Heimdall never modifies a rendered file: `service install` writes a setting only when its value changes, and Fleet gives it none, so `service install` never causes Drift in a `files` record Fleet makes for the file.
 
-The only secret in either file is the Hub's database URL. A System's name and token are not settings: each Collector receives them when the operator pairs the System, and keeps them in `identity.json` in its state directory ([Pairing a System](#pairing-a-system)).
+The only secret in any of the files is the Hub's database URL. A System's name and token are not settings: each Collector receives them when the operator pairs the System, and keeps them in `identity.json` in its state directory ([Pairing a System](#pairing-a-system)).
 
 Fleet resolves each `op://` reference on the Center, replaces the placeholder `{{ secret "<key>" }}` with the value as a quoted TOML string, and ships the file with its declared mode.
 
@@ -84,6 +85,28 @@ url = {{ secret "database_url" }}
 - `host` stays on loopback. Tailscale ingress reaches the Hub through Fleet's Service Unit, not through the listener's address.
 - `port` must equal `port` in the Hub's per-System Service file, which the health check and the ingress use. Both files hold the literal number, on the one System that hosts the Hub.
 - The file holds no token. The Hub keeps only hashes of the tokens it issues, in its database.
+
+### Dashboard
+
+In `apps/heimdall-dashboard/app.toml`:
+
+```toml
+[[configs]]
+source = "config/dashboard.toml.tmpl"
+target = ".config/heimdall/dashboard.toml"
+mode = "0600"
+```
+
+The template, `apps/heimdall-dashboard/config/dashboard.toml.tmpl`, holds no secret:
+
+```toml
+host = "127.0.0.1"
+port = 3000
+```
+
+- The file holds no database URL. The dashboard reads the Hub's, `[database] url` in `hub.toml` on the same System, with the same role ([ADR-0015](decisions/0015-dashboard-is-its-own-app-reading-the-hubs-database.md)), so the secret reaches the System in one file only.
+- `host` stays on loopback. Tailscale ingress reaches the dashboard through Fleet's Service Unit, not through the listener's address.
+- `port` must equal `port` in the dashboard's per-System Service file, which the health check and the ingress use. Both files hold the literal number, on the one System that hosts the Hub.
 
 ### Collector
 
@@ -163,6 +186,62 @@ tailnet_port = 8080
 
 `GET /api/health` answers 200 with `{"database":"ok","version":"<version>"}` when the database answers and 503 when it does not. Fleet polls the URL until it returns 200, so a Hub that cannot reach its database fails `install` and `restart`.
 
+### Dashboard
+
+`services/heimdall-dashboard/service.toml`:
+
+```toml
+description = "Heimdall dashboard"
+supervisor = "native"
+
+[targets]
+systems = ["server-1"]
+
+[binary]
+app = "heimdall-dashboard"
+
+[native]
+install = ["{home}/.local/bin/heimdall-dashboard", "service", "install"]
+restart = ["{home}/.local/bin/heimdall-dashboard", "service", "restart"]
+status = ["{home}/.local/bin/heimdall-dashboard", "service", "status"]
+log = "{home}/.local/state/heimdall/dashboard.log"
+
+[ingress]
+tailnet_port = "{tailnet_port}"
+port = "{port}"
+
+[health]
+url = "http://127.0.0.1:{port}/api/health"
+
+[[requires]]
+path = "{home}/.local/bin/heimdall-dashboard"
+kind = "executable"
+
+[[requires]]
+path = "{home}/.config/heimdall/dashboard.toml"
+kind = "file"
+mode = "0600"
+owner = "{package_user}"
+
+[[requires]]
+path = "{home}/.config/heimdall/hub.toml"
+kind = "file"
+mode = "0600"
+owner = "{package_user}"
+```
+
+The dashboard requires `hub.toml` as well as its own file, because it reads the database URL from there. The per-System file, `services/heimdall-dashboard/server-1.toml`, holds the values for that System:
+
+```toml
+home = "/home/example"
+port = 3000
+tailnet_port = 3000
+```
+
+`port` here and `port` in `dashboard.toml` are two literals on the one System that hosts the Hub, and they must match.
+
+`GET /api/health` answers 200 with `{"database":"ok","version":"<version>"}` when the Hub's database answers within 2 seconds, and 503 when it does not or when no database URL is configured. Fleet polls the URL until it returns 200, so a dashboard that cannot reach the database fails `install` and `restart`.
+
 ### Collector
 
 `services/heimdall-collector/service.toml`:
@@ -237,8 +316,9 @@ Fleet need not render or store a token, and no 1Password item exists per System.
 - **Pass no settings to `service install`.** Fleet renders every setting, and `install` then leaves the rendered file untouched. `install` always restarts the Service, so run it again, or `restart`, after an update or a new config file.
 - **Never edit `identity.json`.** It belongs to the Collector, in its state directory, and Fleet neither renders nor captures it.
 - **Add a System without restarting the Hub.** Pairing takes effect at once, so a new System needs no Hub restart.
-- **Show `status` verbatim.** `service status` always exits 0, whatever it finds, because Fleet aborts on any other exit code. A stopped or missing unit appears in the text, not in the exit code. The Hub's status adds its health and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it paired as, the Hub it paired with, and its queue.
+- **Show `status` verbatim.** `service status` always exits 0, whatever it finds, because Fleet aborts on any other exit code. A stopped or missing unit appears in the text, not in the exit code. The Hub's and the dashboard's status add their health and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it paired as, the Hub it paired with, and its queue.
 - **Install a release binary.** A binary built from source refuses `service install` and `uninstall`. The release binaries Fleet installs are compiled.
+- **Install the Hub before the dashboard.** On the System that hosts the Hub, the dashboard reads `hub.toml` and the schema the Hub migrated. The dashboard never writes to the database or migrates it.
 - **Linger must be on for the package user.** The user unit starts at boot and survives logout only with linger. Fleet enables it at `install`, and `status` notes when it is off.
 - **Leave log rotation to Heimdall.** Each binary rotates its own log under `~/.local/state/heimdall/` after 90 days or 10 MB, so Fleet needs no `logrotate` entry.
 
@@ -251,6 +331,7 @@ These are the gaps between Heimdall's needs and what Fleet's documents and rende
 - **Record what Fleet installs (M4).** After a command that installs or updates an Application, a Service, or a Backup Job succeeds, Fleet records it with `heimdall-collector record` as the Collector's account, and removing the installed thing runs `heimdall-collector forget`. After a Push or Apply, Fleet records the files it wrote, if it wants Drift reported.
 - **Report job runs (M4).** Each Backup Job's runner reports every run with `heimdall-collector record run <job>`, and ignores a failure to record so a broken Collector never fails a backup.
 - **Check declarations against records (M4).** Fleet compares what it declares with the records the Hub mirrors, which `GET /api/v1/records` returns ([Reading the records back](spec.md#reading-the-records-back)), in a command of its own such as `fleet doctor`. Heimdall stores none of Fleet's declarations.
+- **Declare the dashboard (A11).** Fleet adds the `heimdall-dashboard` Application, its config template, and its native Service on the System that hosts the Hub, as this document describes, with Tailscale ingress for its port. This is the ask written for Fleet's `docs/specs/heimdall-asks.md`.
 - **Automated pairing (optional, later).** Fleet could run `heimdall-hub pair <system>` and `heimdall-collector pair <code>` for a System that is not paired. Fleet has no cross-System imperative step today, and a System pairs only once, so the manual step stands until the effort pays.
 
 Ask A3, per-System secrets and plain values in one template, is no longer needed. Pairing replaced the per-System token and System name, and the Hub's `port` and `tailnet_port` stay literals on the one System that hosts the Hub.

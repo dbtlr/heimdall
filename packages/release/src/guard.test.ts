@@ -70,6 +70,7 @@ describe('judgeChanges', () => {
     const cut = [
       modified('CHANGELOG.md'),
       modified('packages/collector/package.json'),
+      modified('packages/dashboard/package.json'),
       modified('packages/hub/package.json'),
       modified('bun.lock'),
       deleted('.changes/hmd-1.md'),
@@ -84,6 +85,7 @@ describe('judgeChanges', () => {
   test('passes the prerelease cut: only the version moved', () => {
     const cut = [
       modified('packages/collector/package.json'),
+      modified('packages/dashboard/package.json'),
       modified('packages/hub/package.json'),
       modified('bun.lock'),
     ];

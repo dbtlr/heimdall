@@ -5,7 +5,7 @@ import type { Change } from './guard.ts';
 
 // The packages a release ships as binaries. They carry one shared version,
 // which each binary prints and which the release tag must match.
-export const RELEASED_PACKAGES = ['collector', 'hub'] as const;
+export const RELEASED_PACKAGES = ['collector', 'dashboard', 'hub'] as const;
 
 export const CHANGES_DIR = '.changes';
 export const CHANGELOG = 'CHANGELOG.md';

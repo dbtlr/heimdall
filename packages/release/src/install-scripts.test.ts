@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..', '..', '..');
-const SCRIPTS = { collector: 'install-collector.sh', hub: 'install-hub.sh' } as const;
+const SCRIPTS = {
+  collector: 'install-collector.sh',
+  dashboard: 'install-dashboard.sh',
+  hub: 'install-hub.sh',
+} as const;
 
 const assetFor = (binary: string) =>
   `${binary}-${process.platform}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
@@ -76,13 +80,16 @@ const install = async (script: string) => {
 // Normalizes the one thing the scripts may differ in: which binary they name.
 const normalized = async (script: string) =>
   (await readFile(join(ROOT, script), 'utf8')).replaceAll(
-    /heimdall-(?:collector|hub)|install-(?:collector|hub)\.sh|Collector|Hub/gu,
+    /heimdall-(?:collector|dashboard|hub)|install-(?:collector|dashboard|hub)\.sh|Collector|Hub|dashboard/gu,
     'X',
   );
 
-test('the Collector and Hub install scripts differ only in the binary they name', async () => {
-  expect(await normalized(SCRIPTS.hub)).toBe(await normalized(SCRIPTS.collector));
-});
+test.each([SCRIPTS.dashboard, SCRIPTS.hub])(
+  '%s differs from the Collector script only in the binary it names',
+  async (script) => {
+    expect(await normalized(script)).toBe(await normalized(SCRIPTS.collector));
+  },
+);
 
 test.each(Object.entries(SCRIPTS))(
   'the %s script installs the verified binary for this platform',

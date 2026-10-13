@@ -1,10 +1,10 @@
 ---
-description: "How to cut a Heimdall release, what a release publishes, and where Fleet's declarations that install and update the Collector and the Hub live."
+description: "How to cut a Heimdall release, what a release publishes, and where Fleet's declarations that install and update the Collector, the Hub, and the dashboard live."
 ---
 
 # Releasing
 
-A release publishes the Collector and Hub binaries for darwin-arm64, linux-x64, and linux-arm64 on a GitHub Release, with `SHA256SUMS` and notes from [`CHANGELOG.md`](../CHANGELOG.md). [ADR-0006](decisions/0006-releases-ship-both-binaries-installed-by-script.md) records why releases take this shape.
+A release publishes the Collector, Hub, and dashboard binaries for darwin-arm64, linux-x64, and linux-arm64 on a GitHub Release, with `SHA256SUMS` and notes from [`CHANGELOG.md`](../CHANGELOG.md). [ADR-0006](decisions/0006-releases-ship-both-binaries-installed-by-script.md) records why releases take this shape.
 
 ## Changelog fragments
 
@@ -22,7 +22,7 @@ bun run release changelog check
    bun run release changelog write --version 0.2.0
    ```
 
-   This writes the `## v0.2.0` section into `CHANGELOG.md`, deletes the compiled fragments, and sets the version of the Collector and the Hub in their `package.json` files and in `bun.lock`. It refuses to run, and changes nothing, when a fragment fails to parse, when no fragment is pending, when a released package has no version, or when `CHANGELOG.md` already holds the version. If it fails after it starts writing, restore the checkout with `git restore .` and run it again.
+   This writes the `## v0.2.0` section into `CHANGELOG.md`, deletes the compiled fragments, and sets the version of the Collector, the Hub, and the dashboard in their `package.json` files and in `bun.lock`. It refuses to run, and changes nothing, when a fragment fails to parse, when no fragment is pending, when a released package has no version, or when `CHANGELOG.md` already holds the version. If it fails after it starts writing, restore the checkout with `git restore .` and run it again.
 
 2. Open a pull request with the result and merge it once CI passes.
 
@@ -37,7 +37,7 @@ bun run release changelog check
 The release workflow then:
 
 1. Checks that the tag matches the packaged version.
-2. Builds and tests on each platform.
+2. Builds the dashboard app, then compiles the three binaries and tests them on each platform.
 3. Publishes the release as a draft, uploads the binaries and `SHA256SUMS`, and verifies the uploads.
 4. Makes the release public.
 5. Installs each binary through its install script on every platform. This runs once the release is public, so a failure reports a broken release rather than stopping it.
@@ -55,8 +55,8 @@ curl -fsSL https://raw.githubusercontent.com/dbtlr/heimdall/v0.2.0/install-colle
   | HEIMDALL_VERSION=v0.2.0 sh
 ```
 
-`install-hub.sh` installs the Hub the same way. Each script installs into `~/.local/bin`, or into `HEIMDALL_INSTALL_DIR` when set. Without `HEIMDALL_VERSION`, it installs the latest release. It refuses a binary whose checksum `SHA256SUMS` does not list or does not match, and a binary that does not run on the System, and in both cases keeps the binary already installed.
+`install-hub.sh` installs the Hub and `install-dashboard.sh` installs the dashboard the same way. Each script installs into `~/.local/bin`, or into `HEIMDALL_INSTALL_DIR` when set. Without `HEIMDALL_VERSION`, it installs the latest release. It refuses a binary whose checksum `SHA256SUMS` does not list or does not match, and a binary that does not run on the System, and in both cases keeps the binary already installed.
 
 ## Fleet's declarations
 
-Fleet's Application declarations for both binaries, their config templates, and their native Services are in [How Fleet declares Heimdall](fleet.md).
+Fleet's Application declarations for the three binaries, their config templates, and their native Services are in [How Fleet declares Heimdall](fleet.md).

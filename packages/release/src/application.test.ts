@@ -53,11 +53,11 @@ const commitFragment = async (index: number, name: string, content: string) => {
 // version, a changelog, and fragments committed in the order listed.
 const fixture = async ({
   fragments = [],
-  versions = { collector: '0.1.0', hub: '0.1.0' },
+  versions = { collector: '0.1.0', dashboard: '0.1.0', hub: '0.1.0' },
   changelog = HEADER,
 }: {
   fragments?: [name: string, content: string][];
-  versions?: { collector: string; hub: string };
+  versions?: { collector: string; dashboard: string; hub: string };
   changelog?: string;
 } = {}) => {
   repo = await mkdtemp(join(tmpdir(), 'heimdall-release-'));
@@ -107,12 +107,12 @@ const invoke = async (argv: string[]) => {
 };
 
 test('version prints the release version the Collector and Hub share', async () => {
-  await fixture({ versions: { collector: '0.3.1', hub: '0.3.1' } });
+  await fixture({ versions: { collector: '0.3.1', dashboard: '0.3.1', hub: '0.3.1' } });
   expect(await invoke(['version'])).toEqual({ code: 0, stderr: '', stdout: '0.3.1\n' });
 });
 
 test('version fails when the Collector and Hub disagree', async () => {
-  await fixture({ versions: { collector: '0.3.1', hub: '0.3.0' } });
+  await fixture({ versions: { collector: '0.3.1', dashboard: '0.3.1', hub: '0.3.0' } });
   const { code, stderr, stdout } = await invoke(['version']);
   expect(stdout).toBe('');
   expect(stderr).toContain('collector is 0.3.1');
@@ -180,6 +180,7 @@ test('changelog write cuts a release from the pending fragments in landing order
     `${HEADER}\n## v0.2.0 - 2026-10-06\n\n### Added\n\n- New.\n\n### Fixed\n\n- Z.\n- A.\n\n## v0.1.0 - 2026-10-01\n\n### Added\n\n- First.\n`,
   );
   expect(await versionOf('collector')).toBe('0.2.0');
+  expect(await versionOf('dashboard')).toBe('0.2.0');
   expect(await versionOf('hub')).toBe('0.2.0');
   expect(await read('bun.lock')).toContain('"version": "0.2.0"');
   expect(await Bun.file(join(repo, '.changes/z.md')).exists()).toBe(false);
@@ -250,6 +251,7 @@ test('changelog write for a prerelease sets the version and leaves the fragments
 
   expect(stdout).toBe('Set v0.2.0-rc.1; 1 fragment stays pending for the release.\n');
   expect(await versionOf('collector')).toBe('0.2.0-rc.1');
+  expect(await versionOf('dashboard')).toBe('0.2.0-rc.1');
   expect(await versionOf('hub')).toBe('0.2.0-rc.1');
   expect(await read('CHANGELOG.md')).toBe(HEADER);
   expect(await Bun.file(join(repo, '.changes/a.md')).exists()).toBe(true);
@@ -259,7 +261,7 @@ test('changelog write for a prerelease sets the version and leaves the fragments
 test('a release after its prerelease compiles the fragments the prerelease left', async () => {
   await fixture({
     fragments: [['a.md', '### Fixed\n\n- A.\n']],
-    versions: { collector: '0.2.0-rc.1', hub: '0.2.0-rc.1' },
+    versions: { collector: '0.2.0-rc.1', dashboard: '0.2.0-rc.1', hub: '0.2.0-rc.1' },
   });
 
   const { code } = await invoke([
