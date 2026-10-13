@@ -8,6 +8,33 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.6.0 - 2026-10-13
+
+### Added
+
+- **The dashboard ships in each release and runs as its own Service** (HMD-83). `heimdall-dashboard` installs through `install-dashboard.sh` like the Collector and the Hub, and `heimdall-dashboard service install` runs it as a user Service on the Hub's System. It reads the Hub's database URL from `hub.toml`, takes its `host` and `port` from `~/.config/heimdall/dashboard.toml` (port 3000 by default), and answers `GET /api/health` in the Hub's shape. [Running Heimdall with Fleet](docs/fleet.md) shows how a provisioner declares it.
+- **Fleet overview** (HMD-81). The dashboard's front page shows every System as a lane on one time axis over 6 h, 12 h, 24 h, or 7 d: CPU low and high, agent Sessions by Harness and how they were linked, Conditions raised and cleared, gaps while a System was silent, each System's status in words, and the Conditions open now.
+- **System detail** (HMD-82). Each System's page stacks its Vitals, its Harness processes, and its Sessions on one axis, inspects any single sample, and lists what its provisioner recorded beside its 7-day Timeline.
+- **Session page** (HMD-88). Each Session row on a System's page opens the Session at `/systems/<name>/sessions/<harness>/<source>/<session id>`, under a header with its place, span, and totals, in three tabs that link to each other.
+  - **Timeline:** a lane per agent, with request marks by model, over the System's CPU, its Harness processes' cores, and the process link, and an inspector for any request.
+  - **Cost:** what the list-price cost paid for by token kind, how it ran up for the main conversation and subagents, and the main conversation's context fill, then the cost by agent, model, skill, and tool.
+  - **Trace:** every main-conversation request with its tool calls, with subagents folded, waits, skills, commands, and process links between them.
+- **Cost by token kind in `insight.requests`** (HMD-88). `input_cost_usd`, `output_cost_usd`, `cache_read_cost_usd`, and `cache_write_cost_usd` split each priced request's `cost_usd` by the tokens it paid for, as described in [the spec](docs/spec.md#cost).
+- **The dashboard shows what the Hub's page shows** (HMD-91). The Fleet overview ends with "Show N unpaired Systems", which adds the unpaired Systems below the paired lanes, greyed and marked Unpaired, with their open Conditions in Open now tagged "unpaired". The choice lives in the URL as `?unpaired`. An unpaired System's page opens under a banner that says its history is kept and no new Reports arrive. With no paired System the overview says "No System is paired."; when paired Systems have yet to report, it keeps their Never seen lanes under "No System has reported yet."
+- **A facts card on each System's page** (HMD-91). Beside the platform, the header line now gives the Collector's version, and a card above the plots gives the load averages, the use of each disk with a bar that turns orange below 10% free, where the low disk Condition is raised (it clears only above 15%), and each installed Harness with where it was found, or "None installed" when the Collector looked and found none.
+- **The dashboard refreshes itself** (HMD-91). Every page but the Session page reads its data again every 15 seconds while its tab is visible, and at once when the tab comes back.
+
+### Changed
+
+- **The dashboard serves `GET /api/v1/records`, and the Hub no longer does** (HMD-86). The answer is unchanged, `?unpaired=include` and its 400s included, but it is served at the dashboard's address, and the Hub answers 404. A provisioner that reads the records points at the dashboard when it upgrades the Hub; Fleet's doctor takes the address with `--hub`. See [Reading the records back](docs/spec.md#reading-the-records-back).
+- **The Hub no longer serves a page** (HMD-92). `GET /` and `/?unpaired` on the Hub answer 404; the dashboard shows everything the page showed. Point the Hub's public web name at the dashboard (Fleet ask A13 in `docs/fleet.md`). Upgrade only once the dashboard is declared (A11) and the web name points at it (A13); until then the web name answers 404.
+
+### Fixed
+
+- **`service status` on macOS notes a missing GUI login session** (HMD-87). launchctl answers 112, not 113, for a GUI domain that does not exist, so the "no GUI login session" note never appeared on a real Mac. The launchd tests now run against output captured from macOS.
+- **`heimdall-hub serve` on a port in use says which address it could not listen on** (HMD-89). It logs `Could not listen on <host>:<port>: <cause>` as a fatal line and exits 1, as the dashboard does, where a release build showed only "Something went wrong." while systemd restarted the unit.
+- **The dashboard's API routes answer 405 to any method but GET and HEAD** (HMD-86). `POST /api/health` and the like rendered the dashboard's page with 200.
+
 ## v0.5.0 - 2026-10-12
 
 ### Added
