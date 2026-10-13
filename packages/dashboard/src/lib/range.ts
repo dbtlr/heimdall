@@ -16,9 +16,17 @@ const RANGE_NAMES: Record<Range, string> = {
   '7d': '7 days',
 };
 
-// The range a URL's `range` search parameter names, 24h when it names none.
-export const rangeFromSearch = (search: Record<string, unknown>): Range =>
-  isRange(search.range) ? search.range : '24h';
+// The range a URL's `range` search parameter names, `fallback` (24h unless
+// given) when it names none.
+export const rangeFromSearch = (search: Record<string, unknown>, fallback: Range = '24h'): Range =>
+  isRange(search.range) ? search.range : fallback;
+
+// The time a URL's `at` search parameter names, in epoch milliseconds, or
+// undefined when it names none.
+export const atFromSearch = (search: Record<string, unknown>): number | undefined => {
+  const at = typeof search.at === 'string' ? Number(search.at) : search.at;
+  return typeof at === 'number' && Number.isFinite(at) ? Math.round(at) : undefined;
+};
 
 // The page title, "Last 24 hours, to 16:00".
 export const rangeTitle = (range: Range, to: number, timeZone: string): string =>

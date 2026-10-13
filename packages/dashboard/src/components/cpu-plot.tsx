@@ -49,11 +49,13 @@ function BucketTooltip({
 // gap in the Vitals is a break in the line.
 export function CpuPlot({
   buckets,
+  height = 46,
   label,
   timeZone,
   window,
 }: {
   buckets: readonly CpuBucket[];
+  height?: number;
   label: string;
   timeZone: string;
   window: Window;
@@ -61,10 +63,11 @@ export function CpuPlot({
   return (
     <ChartContainer
       aria-label={label}
-      className="aspect-auto h-[46px] w-full"
+      className="aspect-auto w-full"
       config={CONFIG}
-      initialDimension={{ height: 46, width: 1000 }}
+      initialDimension={{ height, width: 1000 }}
       role="img"
+      style={{ height }}
     >
       <ComposedChart data={cpuSeries(buckets)} margin={NO_MARGIN}>
         <XAxis allowDataOverflow dataKey="t" domain={[window.from, window.to]} hide type="number" />

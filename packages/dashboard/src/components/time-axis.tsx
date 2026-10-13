@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { axisTicks } from '../lib/axis.ts';
 import { xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
@@ -7,13 +9,15 @@ import { LANE_GRID } from './fleet-lane.tsx';
 
 const ALIGN = { end: '-translate-x-full', middle: '-translate-x-1/2', start: '' } as const;
 
-// The labels under the lanes, at round local times. A narrow screen drops the
-// minor ones.
+// The labels under the lanes, at round local times, with any `children` over
+// them. A narrow screen drops the minor ones.
 export function TimeAxis({
+  children,
   range,
   timeZone,
   window,
 }: {
+  children?: ReactNode;
   range: Range;
   timeZone: string;
   window: Window;
@@ -31,6 +35,7 @@ export function TimeAxis({
             {tick.label}
           </span>
         ))}
+        {children}
       </div>
     </div>
   );

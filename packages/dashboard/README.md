@@ -29,7 +29,7 @@ The built server listens on port 3000. Set `PORT` to change it; the dev server t
 
 ## Seed a scratch database
 
-`scripts/seed.ts` fills a scratch Hub database with four paired Systems, a week of Vitals, agent Sessions, and Conditions, through the Hub's own migration and ingest code. It resets what it wrote, so run it again for a fresh fleet, and it refuses a database that holds a System it did not seed. Point it at a scratch database, never a real Hub's:
+`scripts/seed.ts` fills a scratch Hub database with four paired Systems, a week of Vitals, agent Sessions with their processes' CPU and memory, the records, job runs, checks, and Harness installs that `workstation-1` and `server-1` report (`server-1` has a stopped Service, a failing job, and a drifted file), and Conditions that name them, through the Hub's own migration and ingest code. It resets what it wrote, so run it again for a fresh fleet, and it refuses a database that holds a System it did not seed. Point it at a scratch database, never a real Hub's:
 
 ```sh
 HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packages/dashboard seed
