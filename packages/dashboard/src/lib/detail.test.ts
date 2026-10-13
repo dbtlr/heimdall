@@ -243,4 +243,10 @@ describe('costPlacement', () => {
       right: 30,
     });
   });
+
+  test('puts it over the first stretch when the Session spans the window, leaving no room', () => {
+    expect(costPlacement({ stretches: [stretch(-500, 400), stretch(600, 1000)] }, window)).toEqual({
+      over: 0,
+    });
+  });
 });

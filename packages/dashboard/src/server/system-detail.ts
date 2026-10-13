@@ -363,9 +363,16 @@ type UnlinkedRow = {
   last_git_branch: string | null;
   link: string;
   session_id: string;
+  source: string;
 };
 
-type RequestCountRow = { process_id: number | null; requests: number; session_id: string };
+type RequestCountRow = {
+  harness: string;
+  process_id: number | null;
+  requests: number;
+  session_id: string;
+  source: string;
+};
 
 // The raw Vitals sample of System `name` nearest `at`, or its newest when `at`
 // is undefined, with the Harness processes running then, the Sessions they ran,
@@ -442,7 +449,7 @@ export const readSample = async (
       ORDER BY x.process_id, s.started_at, x.session_id
     `,
     sql`
-      SELECT st.harness, st.session_id, st.link, st.candidates::int AS candidates,
+      SELECT st.harness, st.source, st.session_id, st.link, st.candidates::int AS candidates,
              s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch
       FROM insight.session_stretches st
       JOIN insight.sessions s
@@ -455,10 +462,11 @@ export const readSample = async (
       ORDER BY st.started_at
     `,
     sql`
-      SELECT process_id::float8 AS process_id, session_id, count(*)::int AS requests
+      SELECT process_id::float8 AS process_id, harness, source, session_id,
+             count(*)::int AS requests
       FROM insight.vitals_requests
       WHERE system = ${name} AND t = ${t}
-      GROUP BY process_id, session_id
+      GROUP BY process_id, harness, source, session_id
     `,
   ]);
   const bucket = buckets[0];
@@ -499,7 +507,11 @@ export const readSample = async (
         link,
         project,
         requests: answeredBy(
-          (request) => request.process_id === null && request.session_id === row.session_id,
+          (request) =>
+            request.process_id === null &&
+            request.harness === row.harness &&
+            request.source === row.source &&
+            request.session_id === row.session_id,
         ),
         sessionId: row.session_id,
       };

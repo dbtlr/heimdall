@@ -30,6 +30,14 @@ const span = (session: SessionRow, timeZone: string, window: Window) => {
   return `${formatClock(first, timeZone)} to ${last >= window.to - 60_000 ? 'now' : formatClock(last, timeZone)}`;
 };
 
+// Where a Session's cost sits, from where `costPlacement` puts it.
+const costStyle = (place: ReturnType<typeof costPlacement>, top: number) => {
+  if ('right' in place) {
+    return { right: `calc(${String(place.right)}% + 6px)`, top };
+  }
+  return { left: `calc(${String('over' in place ? place.over : place.left)}% + 6px)`, top };
+};
+
 const what = (session: SessionRow) =>
   session.project ?? session.branch ?? `${harnessName(session.harness)} Session`;
 
@@ -91,12 +99,11 @@ export function SessionRows({
                   );
                 })}
                 <span
-                  className="absolute hidden text-xs whitespace-nowrap text-muted-foreground sm:block"
-                  style={
-                    'right' in place
-                      ? { right: `calc(${String(place.right)}% + 6px)`, top }
-                      : { left: `calc(${String(place.left)}% + 6px)`, top }
-                  }
+                  className={cn(
+                    'absolute hidden text-xs whitespace-nowrap text-muted-foreground sm:block',
+                    'over' in place && 'rounded-[3px] bg-background px-1',
+                  )}
+                  style={costStyle(place, top)}
                 >
                   {formatCost(session.costUsd)}
                 </span>

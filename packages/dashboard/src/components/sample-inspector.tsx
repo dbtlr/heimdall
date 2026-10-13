@@ -46,16 +46,22 @@ function Entry({
 // bucket, memory and load, the Harness processes running then with their
 // Sessions, and the Sessions no single process is linked to.
 export function SampleInspector({
+  failed,
   sample,
   timeZone,
 }: {
+  failed: boolean;
   sample: SampleInspection | null;
   timeZone: string;
 }) {
   return (
     <aside className="mt-2.5 self-start rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5">
       {sample === null ? (
-        <p className="text-muted-foreground">No Vitals sample to inspect.</p>
+        <p className="text-muted-foreground">
+          {failed
+            ? 'The sample could not be read. Select a time to try again.'
+            : 'No Vitals sample to inspect.'}
+        </p>
       ) : (
         <>
           <p className="mb-2 text-[12.5px] text-muted-foreground">

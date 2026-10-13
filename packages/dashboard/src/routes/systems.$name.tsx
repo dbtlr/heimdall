@@ -60,16 +60,17 @@ export const Route = createFileRoute('/systems/$name')({
   }),
 });
 
-// The sample at `at`: the one the loader read, until `at` moves off it.
+// The sample at `at`: the one the loader read, until `at` moves off it, and
+// whether reading the one asked for failed.
 const useSample = (
   name: string,
   at: number | undefined,
   loadedAt: number | undefined,
   loadedSample: SampleInspection | null,
 ) => {
-  const [shown, setShown] = useState({ at: loadedAt, sample: loadedSample });
+  const [shown, setShown] = useState({ at: loadedAt, failed: false, sample: loadedSample });
   useEffect(() => {
-    setShown({ at: loadedAt, sample: loadedSample });
+    setShown({ at: loadedAt, failed: false, sample: loadedSample });
   }, [loadedAt, loadedSample]);
   useEffect(() => {
     if (at === shown.at) {
@@ -77,9 +78,15 @@ const useSample = (
     }
     let current = true;
     const read = async () => {
-      const sample = await getSample({ data: { at, name } });
-      if (current) {
-        setShown({ at, sample });
+      try {
+        const sample = await getSample({ data: { at, name } });
+        if (current) {
+          setShown({ at, failed: false, sample });
+        }
+      } catch {
+        if (current) {
+          setShown({ at, failed: true, sample: null });
+        }
       }
     };
     void read();
@@ -87,14 +94,14 @@ const useSample = (
       current = false;
     };
   }, [at, name, shown.at]);
-  return shown.sample;
+  return { failed: shown.failed, sample: shown.sample };
 };
 
 function SystemPage() {
   const { at, detail, records, sample: loadedSample } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const sample = useSample(detail.name, search.at, at, loadedSample);
+  const { failed, sample } = useSample(detail.name, search.at, at, loadedSample);
   const { latest, now, timeZone } = detail;
   const window = { from: detail.from, to: detail.to };
   const select = (t: number) => {
@@ -173,7 +180,7 @@ function SystemPage() {
               </TimeAxis>
             </div>
           </DetailAxis>
-          <SampleInspector sample={sample} timeZone={timeZone} />
+          <SampleInspector failed={failed} sample={sample} timeZone={timeZone} />
         </div>
         <div className="grid gap-x-[18px] lg:grid-cols-[1.35fr_1fr]">
           <RecordedPanel now={now} recorded={records.recorded} timeZone={timeZone} />

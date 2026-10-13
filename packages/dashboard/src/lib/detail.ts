@@ -151,17 +151,21 @@ export const processRows = (
 };
 
 // A label beside a Session's bars: after its last stretch, or before its
-// first when the last ends too near the right edge to leave room. In percent
-// of the window from the left edge, or from the right edge for `right`.
+// first when the last ends too near the right edge to leave room, or over its
+// first when neither side has room. In percent of the window from the left
+// edge, or from the right edge for `right`.
 export const costPlacement = (
   session: Pick<SessionRow, 'stretches'>,
   window: Window,
-): { left: number } | { right: number } => {
+): { left: number } | { over: number } | { right: number } => {
   const first = session.stretches[0];
   const last = session.stretches.at(-1);
   if (first === undefined || last === undefined) {
     return { left: 0 };
   }
   const { left, width } = spanBox({ end: last.endedAt, start: first.startedAt }, window);
-  return left + width > 85 ? { right: 100 - left } : { left: left + width };
+  if (left + width <= 85) {
+    return { left: left + width };
+  }
+  return left >= 15 ? { right: 100 - left } : { over: left };
 };
