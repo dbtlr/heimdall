@@ -37,6 +37,9 @@ Run these from the repository root, after `bun install`.
 
 A port of 0 picks a free one. The file holds no secret, and the database URL is not one of its settings: it comes from the section above.
 
+The dashboard's HTTP idle timeout is 60 seconds, allowing slow page queries to finish before the connection closes.
+The database statement timeout remains 30 seconds. The Hub retains its 10-second HTTP idle timeout.
+
 `GET /api/health` answers 200 with `{"database":"ok","version":"<version>"}` when the Hub's database answers within 2 seconds, and 503 with `{"database":"not answering","version":"<version>"}` when it does not or no URL is configured.
 
 ## Run as a Service

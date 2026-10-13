@@ -36,7 +36,7 @@ const invoke = async (
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const controller = new AbortController();
-  const safety = setTimeout(() => controller.abort(), 5000);
+  const safety = setTimeout(() => controller.abort(), 35_000);
   let logged = '';
   let serving: Promise<void> | undefined;
   stdout.on('data', (chunk: Buffer) => {
@@ -127,6 +127,35 @@ test('serve listens on the port in dashboard.toml and answers with the built app
     expect(code).toBe(130);
   });
 });
+
+test('serve keeps a slow page request open beyond the default HTTP idle timeout', async () => {
+  await withHome(async (home) => {
+    let body: string | undefined;
+    let failure: string | undefined;
+    const slow: BuiltServer = {
+      fetch: async () => {
+        await Bun.sleep(21_000);
+        return new Response('served slow overview');
+      },
+    };
+
+    const { code } = await invoke(['serve', '--port', '0'], {
+      home,
+      loadServer: () => Promise.resolve(slow),
+      whileServing: async (url) => {
+        try {
+          body = await (await fetch(url, { signal: AbortSignal.timeout(30_000) })).text();
+        } catch (error) {
+          failure = error instanceof Error ? error.message : String(error);
+        }
+      },
+    });
+
+    expect(failure).toBeUndefined();
+    expect(body).toBe('served slow overview');
+    expect(code).toBe(130);
+  });
+}, 35_000);
 
 test('serve without a built app says how to build it, and exits 1', async () => {
   await withHome(async (home) => {

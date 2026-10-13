@@ -75,6 +75,9 @@ export const serveCommand = (loadServer: () => Promise<BuiltServer>) =>
           fail: (message) => log.fatal(clean(message)),
           fetch: answeringWith(app, log, clean),
           hostname: options.host,
+          // Page queries allow 30 seconds before they time out, then rendering
+          // still has to send the response instead of losing the connection.
+          idleTimeout: 60,
           port: options.port,
         });
         try {
