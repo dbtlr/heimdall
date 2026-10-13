@@ -2,123 +2,39 @@ import { describe, expect, test } from 'bun:test';
 
 import type { ServiceRecord } from '@heimdall/schema';
 import { httpGet } from '@heimdall/service';
+import {
+  NO_GUI_DOMAIN,
+  NOT_FOUND_IN_GUI,
+  NOT_FOUND_IN_SYSTEM,
+  NOT_RUNNING_AGENT,
+  RUNNING_AGENT,
+  SYSTEM_DAEMON,
+} from '@heimdall/service/testing';
 
 import type { CommandResult } from '../subprocess.ts';
 import { checkService } from './services.ts';
 
-const WEB: ServiceRecord = { label: 'com.example.web', name: 'web', supervisor: 'launchd' };
+const WEB: ServiceRecord = {
+  label: 'com.dbtlr.heimdall.collector',
+  name: 'collector',
+  supervisor: 'launchd',
+};
 const UID = 501;
 
-// The fixtures below are hand-written from the documented shape of `launchctl
-// print`: the fields of the service one tab in, nested blocks two tabs in. They
-// are to be replaced with output captured on a Mac during the milestone's live
-// proof.
-//
-// `launchctl print` for a launchd agent that is running.
-const RUNNING = `gui/501/com.example.web = {
-\tactive count = 1
-\tpath = /Users/example/Library/LaunchAgents/com.example.web.plist
-\ttype = LaunchAgent
-\tstate = running
-
-\tprogram = /usr/local/bin/web
-\targuments = {
-\t\t/usr/local/bin/web
-\t\t--port
-\t\t8080
-\t}
-
-\tdefault environment = {
-\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin
-\t}
-
-\tenvironment = {
-\t\tXPC_SERVICE_NAME => com.example.web
-\t}
-
-\tdomain = gui/501 [100001]
-\tasid = 100001
-\tminimum runtime = 10
-\texit timeout = 5
-\truns = 1
-\tpid = 12345
-\timmediate reason = inefficient
-\tforks = 0
-\texecs = 1
-\tinitialized = 1
-\ttrampolined = 1
-\tstarted suspended = 0
-\tproxy started suspended = 0
-\tlast exit code = (never exited)
-
-\tresource coalition = {
-\t\tID = 2048
-\t\ttype = resource
-\t\tstate = active
-\t\tactive count = 1
-\t\tname = com.example.web
-\t}
-
-\tjetsam coalition = {
-\t\tID = 2049
-\t\ttype = jetsam
-\t\tstate = active
-\t\tactive count = 1
-\t\tname = com.example.web
-\t}
-
-\tevent triggers = {
-\t}
-
-\tproperties = keepalive | runatload | inferred program
-}
-`;
-
-// The same agent loaded but with no process: it exited with status 78.
-const LOADED_NOT_RUNNING = `gui/501/com.example.web = {
-\tactive count = 0
-\tpath = /Users/example/Library/LaunchAgents/com.example.web.plist
-\ttype = LaunchAgent
-\tstate = not running
-
-\tprogram = /usr/local/bin/web
-\tdomain = gui/501 [100001]
-\tasid = 100001
-\tminimum runtime = 10
-\texit timeout = 5
-\truns = 3
-\tlast exit code = 78
-
-\tproperties = runatload | inferred program
-}
-`;
+// The fixtures are captured from macOS on 2026-10-13, environment blocks
+// redacted and paths generalized: `RUNNING` is a running agent, `LOADED_NOT_RUNNING`
+// a loaded agent with no process, and `DAEMON` a system daemon. A few tests
+// change one line of a capture, for cases the capture does not cover.
+const RUNNING = RUNNING_AGENT;
+const LOADED_NOT_RUNNING = NOT_RUNNING_AGENT;
+const DAEMON = SYSTEM_DAEMON;
 
 // An agent that is not running whose coalition blocks, nested inside it, have a
-// state and a last exit code of their own that are not the agent's.
-const NESTED_FIELDS_ONLY = `gui/501/com.example.web = {
-\ttype = LaunchAgent
-\tstate = not running
-
-\tresource coalition = {
-\t\tID = 2048
-\t\tstate = active
-\t\tlast exit code = 99
-\t}
-
-\tjetsam coalition = {
-\t\tID = 2049
-\t\tstate = running
-\t\tpid = 999
-\t}
-
-\tlast exit code = 1
-}
-`;
-
-const NOT_FOUND_GUI =
-  'Bad request.\nCould not find service "com.example.web" in domain for user gui: 501\n';
-const NOT_FOUND_SYSTEM =
-  'Bad request.\nCould not find service "com.example.web" in domain for system\n';
+// state, a pid, and a last exit code of their own that are not the agent's.
+const NESTED_FIELDS_ONLY = LOADED_NOT_RUNNING.replaceAll(
+  '\t\tstate = active\n',
+  '\t\tstate = running\n\t\tpid = 999\n\t\tlast exit code = 99\n',
+);
 
 const printed = (stdout: string): CommandResult => ({
   exitCode: 0,
@@ -134,7 +50,7 @@ const failed = (exitCode: number, stderr: string): CommandResult => ({
 });
 const TIMED_OUT: CommandResult = { kind: 'timed out' };
 const notFoundIn = (domain: 'gui' | 'system') =>
-  failed(113, domain === 'gui' ? NOT_FOUND_GUI : NOT_FOUND_SYSTEM);
+  failed(113, domain === 'gui' ? NOT_FOUND_IN_GUI : NOT_FOUND_IN_SYSTEM);
 
 // Checks `record` with a fake launchctl that answers per domain target, and
 // answers what the check found and the commands it ran. A target the test gives
@@ -157,8 +73,8 @@ const check = async (
   return { outcomes, ran };
 };
 
-const GUI = 'gui/501/com.example.web';
-const SYSTEM = 'system/com.example.web';
+const GUI = 'gui/501/com.dbtlr.heimdall.collector';
+const SYSTEM = 'system/com.dbtlr.heimdall.collector';
 
 describe('a launchd Service', () => {
   test('is up when its agent has a running process in the account domain', async () => {
@@ -182,7 +98,7 @@ describe('a launchd Service', () => {
     expect(outcomes).toEqual([
       {
         check: 'supervisor',
-        detail: 'state = not running, last exit code = 78',
+        detail: 'state = not running, last exit code = 0',
         state: 'stopped',
       },
     ]);
@@ -190,7 +106,7 @@ describe('a launchd Service', () => {
 
   test('is stopped without an exit code when launchctl prints none', async () => {
     const { outcomes } = await check({
-      [GUI]: printed(LOADED_NOT_RUNNING.replace('\tlast exit code = 78\n', '')),
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\tlast exit code = 0\n', '')),
     });
 
     expect(outcomes).toEqual([
@@ -204,7 +120,7 @@ describe('a launchd Service', () => {
     expect(outcomes).toEqual([
       {
         check: 'supervisor',
-        detail: 'state = not running, last exit code = 1',
+        detail: 'state = not running, last exit code = 0',
         state: 'stopped',
       },
     ]);
@@ -213,7 +129,7 @@ describe('a launchd Service', () => {
   test('is looked up in the system domain when the account domain does not have it, and is up there', async () => {
     const { outcomes, ran } = await check({
       [GUI]: notFoundIn('gui'),
-      [SYSTEM]: printed(RUNNING.replace('gui/501/', 'system/')),
+      [SYSTEM]: printed(DAEMON),
     });
 
     expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
@@ -241,7 +157,7 @@ describe('a launchd Service', () => {
   test('asks the gui domain of the account the Collector runs as', async () => {
     const { ran } = await check({}, { uid: 1000 });
 
-    expect(ran[0]).toEqual(['/bin/launchctl', 'print', 'gui/1000/com.example.web']);
+    expect(ran[0]).toEqual(['/bin/launchctl', 'print', 'gui/1000/com.dbtlr.heimdall.collector']);
   });
 
   test('does not ask the system domain once the account domain answered', async () => {
@@ -267,7 +183,7 @@ describe('a launchd Service', () => {
     ['exits 0 with output it does not know', printed('launchctl 9000 says hello\n')],
     [
       'prints a service block without a state',
-      printed('gui/501/com.example.web = {\n\ttype = LaunchAgent\n}\n'),
+      printed('gui/501/com.dbtlr.heimdall.collector = {\n\ttype = LaunchAgent\n}\n'),
     ],
     ['times out', TIMED_OUT],
     ['cannot run, as when launchctl is not installed', new Error('ENOENT')],
@@ -302,7 +218,7 @@ describe('a launchd Service', () => {
     const { outcomes } = await check({
       [GUI]: printed(
         LOADED_NOT_RUNNING.replace(
-          '\tlast exit code = 78\n',
+          '\tlast exit code = 0\n',
           '\tlast exit code = (never exited)\n\tlast terminating signal = Killed: 9\n',
         ),
       ),
@@ -320,7 +236,7 @@ describe('a launchd Service', () => {
 
   test('does not count a pid that is not made of digits', async () => {
     const { outcomes } = await check({
-      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 3', '\truns = 3\n\tpid = (none)')),
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 4', '\truns = 4\n\tpid = (none)')),
     });
 
     expect(outcomes).toMatchObject([{ state: 'stopped' }]);
@@ -328,14 +244,14 @@ describe('a launchd Service', () => {
 
   test('does not count a pid that only starts with digits', async () => {
     const { outcomes } = await check({
-      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 3', '\truns = 3\n\tpid = 12abc')),
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 4', '\truns = 4\n\tpid = 12abc')),
     });
 
     expect(outcomes).toMatchObject([{ state: 'stopped' }]);
   });
 
   test('is up when its state is running even if launchctl prints no pid', async () => {
-    const { outcomes } = await check({ [GUI]: printed(RUNNING.replace('\tpid = 12345\n', '')) });
+    const { outcomes } = await check({ [GUI]: printed(RUNNING.replace('\tpid = 59099\n', '')) });
 
     expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
   });
@@ -343,12 +259,12 @@ describe('a launchd Service', () => {
   test('takes root as an account like any other, asking gui/0', async () => {
     const { ran } = await check({}, { uid: 0 });
 
-    expect(ran[0]).toEqual(['/bin/launchctl', 'print', 'gui/0/com.example.web']);
+    expect(ran[0]).toEqual(['/bin/launchctl', 'print', 'gui/0/com.dbtlr.heimdall.collector']);
   });
 
   test.each([
-    ['on stdout alone', { ...failed(113, ''), stdout: NOT_FOUND_GUI }],
-    ['in capitals', failed(113, NOT_FOUND_GUI.toUpperCase())],
+    ['on stdout alone', { ...failed(113, ''), stdout: NOT_FOUND_IN_GUI }],
+    ['in capitals', failed(113, NOT_FOUND_IN_GUI.toUpperCase())],
   ])(
     'is not loaded when launchctl says it could not find the service %s',
     async (_name, answer) => {
@@ -359,8 +275,8 @@ describe('a launchd Service', () => {
   );
 
   test.each([
-    ['exits 1 with the not found message', failed(1, NOT_FOUND_GUI)],
-    ['exits 113 about a domain', failed(113, 'Could not find domain for user gui: 501\n')],
+    ['exits 1 with the not found message', failed(1, NOT_FOUND_IN_GUI)],
+    ['exits 113 about a domain', failed(113, NO_GUI_DOMAIN)],
     [
       'exits non-zero with output that looks like a service',
       { ...failed(1, 'oops'), stdout: LOADED_NOT_RUNNING },
@@ -373,6 +289,20 @@ describe('a launchd Service', () => {
     const { outcomes } = await check({ [GUI]: answer });
 
     expect(outcomes).toMatchObject([{ state: 'unknown' }]);
+  });
+
+  test('is unknown, without asking the system domain, when the account has no GUI domain', async () => {
+    const noDomain = failed(112, NO_GUI_DOMAIN);
+
+    const { outcomes, ran } = await check(
+      { 'gui/4242424/com.dbtlr.heimdall.collector': noDomain, [SYSTEM]: printed(DAEMON) },
+      { uid: 4_242_424 },
+    );
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'launchctl exited 112', state: 'unknown' },
+    ]);
+    expect(ran).toEqual([['/bin/launchctl', 'print', 'gui/4242424/com.dbtlr.heimdall.collector']]);
   });
 
   test('cuts a long detail to what the Hub takes', async () => {

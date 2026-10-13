@@ -11,6 +11,16 @@ const NOT_FOUND_CODE = 113;
 export const isServiceNotLoaded = ({ code, stderr, stdout }: CommandResult) =>
   code === NOT_FOUND_CODE && /could not find service/iu.test(`${stderr}\n${stdout}`);
 
+// launchctl's exit status for a GUI domain that does not exist.
+const NO_DOMAIN_CODE = 112;
+
+// Whether `launchctl print` said the domain itself is missing, as a GUI domain
+// is when the user has no login session. Like `isServiceNotLoaded`, it needs
+// both the exit status 112 and launchctl's "Could not find domain" message, on
+// either stream and in any case.
+export const isDomainMissing = ({ code, stderr, stdout }: CommandResult) =>
+  code === NO_DOMAIN_CODE && /could not find domain/iu.test(`${stderr}\n${stdout}`);
+
 // The service's own properties from `launchctl print`: the lines one tab in,
 // `key = value`. Nested blocks sit deeper and are skipped, so the state or pid
 // of an endpoint or a coalition inside the service is never taken for its own.
