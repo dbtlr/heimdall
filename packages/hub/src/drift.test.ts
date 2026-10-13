@@ -5,8 +5,7 @@ import type { FilesRecord } from '@heimdall/schema';
 
 import { evaluateDrift } from './drift.ts';
 import { unpair } from './pairing.ts';
-import { listSystems } from './store.ts';
-import { page, push, report, startHub } from './testing/hub.ts';
+import { listSystems, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 // Times are on 10 October 2026.
@@ -91,7 +90,7 @@ const driftedAndEvaluated = async (h: Hub) => {
 const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 
 describe('Drift', () => {
-  test('stays open on an unpaired System and shows in the unpaired view', async () => {
+  test('stays open on an unpaired System', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
 
@@ -99,10 +98,7 @@ describe('Drift', () => {
     const { open } = await evaluate(h, '09:10:00');
 
     expect(subjects(open)).toEqual([CONF]);
-    expect(await page(h.hub)).not.toContain('laptop-1');
-    const html = await page(h.hub, '/?unpaired');
-    expect(html).toContain('<strong>Unpaired</strong>');
-    expect(html).toContain('<strong>Drift</strong>');
+    expect((await listSystems(h.db.sql)).find((s) => s.name === 'laptop-1')?.paired).toBe(false);
   });
 
   test('is raised for a file whose content no longer matches, with the path as its subject', async () => {
@@ -638,14 +634,4 @@ test('a System that cannot be judged does not stop the others, and the failure n
   expect(failure).toMatchObject({ message: expect.stringContaining('laptop-1: refused') });
   const server = (await listSystems(h.db.sql)).find((s) => s.name === 'server-1');
   expect(server?.conditions).toEqual([expect.objectContaining({ kind: 'drift', subject: CONF })]);
-});
-
-test('the page names the file and the state in the Condition and the Timeline', async () => {
-  await using h = await startHub();
-  await driftedAndEvaluated(h);
-
-  const html = await page(h.hub);
-
-  expect(html).toContain(`<strong>Drift</strong> <code>${CONF}</code> since`);
-  expect(html).toContain(`Drift <code>${CONF}</code>: <span class="reason">Changed:`);
 });

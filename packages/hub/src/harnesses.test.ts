@@ -2,8 +2,7 @@ import { expect, test } from 'bun:test';
 
 import type { HarnessesSection } from '@heimdall/schema';
 
-import { listSystems } from './store.ts';
-import { NOW, page, push, report, startHub } from './testing/hub.ts';
+import { listSystems, NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 const CLAUDE = { harness: 'claude-code', location: 'mise', version: '2.1.296' };
@@ -114,40 +113,4 @@ test('installs claiming a time after the Hub received them give way to a correct
   });
 
   expect(await installsOf(h, 'laptop-1')).toEqual([CLAUDE]);
-});
-
-test("the page shows each System's Harnesses and their versions", async () => {
-  await using h = await startHub();
-  await pushInstalls(h, 'laptop-1', { harnesses: { installs: [CLAUDE, CODEX] } });
-  await pushInstalls(h, 'server-1', { harnesses: { installs: [] } });
-
-  const html = await page(h.hub);
-
-  expect(html).toContain('<th>Harnesses</th>');
-  expect(html).toContain('claude-code 2.1.296 (mise)<br>codex 0.162.1 (npm)');
-  expect(html).toContain('None installed');
-});
-
-test('the page shows an unknown version as unknown, and escapes what Collectors report', async () => {
-  await using h = await startHub();
-  await pushInstalls(h, 'laptop-1', {
-    harnesses: {
-      installs: [{ harness: '<b>x</b>', location: '<i>y</i>', version: 'unknown' }],
-    },
-  });
-
-  const html = await page(h.hub);
-
-  expect(html).toContain('&lt;b&gt;x&lt;/b&gt; unknown (&lt;i&gt;y&lt;/i&gt;)');
-  expect(html).not.toContain('<b>x</b>');
-  expect(html).not.toContain('<i>y</i>');
-});
-
-test('the page shows a dash for a System that never sent the section', async () => {
-  await using h = await startHub();
-  await pushInstalls(h, 'laptop-1', {});
-
-  const row = (await page(h.hub)).split('<tr>').find((r) => r.includes('laptop-1')) ?? '';
-
-  expect(row).toMatch(/<td>—<\/td><\/tr>/u);
 });

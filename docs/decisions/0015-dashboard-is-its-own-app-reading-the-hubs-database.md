@@ -11,7 +11,7 @@ modified: 2026-10-13
 
 ## Context
 
-The Hub renders one plain page as HTML strings (`packages/hub/src/page.ts`). M6 replaces it with the full dashboard chosen from static mocks: every System as a lane on a shared time axis with its CPU, agent Sessions, and Conditions, and a System detail page that stacks Vitals, Harness processes, and Sessions on one axis and inspects a single sample. That design needs synchronized charts, hover and selection across them, and range changes, which string-rendered HTML handles poorly.
+The Hub rendered one plain page as HTML strings (`packages/hub/src/page.ts`). M6 replaced it with the full dashboard chosen from static mocks: every System as a lane on a shared time axis with its CPU, agent Sessions, and Conditions, and a System detail page that stacks Vitals, Harness processes, and Sessions on one axis and inspects a single sample. That design needs synchronized charts, hover and selection across them, and range changes, which string-rendered HTML handles poorly.
 
 The Hub's HTTP API mixes two directions. Collectors write to it: Reports, transcript uploads, and pairing. Provisioners read from it: `GET /api/v1/records`. Reads written in the Hub and again in a dashboard would give one question two implementations.
 
@@ -25,7 +25,7 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 - **The dashboard app serves every read.** Its pages and the read API, `GET /api/v1/records` and any later read endpoint, are TanStack Start routes in the same app, sharing their queries. The records read moved there whole; the Hub no longer serves it.
 - **It runs as its own Service on the Hub's System** and ships in each release beside the Collector and Hub binaries.
 - **Its type is Barlow Semi Condensed**, from Fontsource, served by the app itself.
-- **The Hub's page stays** until the dashboard shows everything it shows.
+- **The Hub serves no page.** The dashboard shows everything the Hub's page showed, so the page is gone.
 
 ## Considered Options
 
@@ -45,3 +45,4 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 
 - 2026-10-13: Amended before any code relied on it. The Hub's HTTP API no longer stays whole: the Hub keeps ingestion, and the dashboard app serves every read, the records read included.
 - 2026-10-13: The records read moved to the app in one change, with no period in which the Hub also served it, so its query has one implementation (HMD-86). A provisioner switches to the app's address when it upgrades the Hub.
+- 2026-10-13: The Hub's page is gone; the Hub answers 404 at `/`, and the dashboard serves every page (HMD-92).

@@ -31,7 +31,7 @@ One Collector reports Vitals to a running Hub, end to end.
 - Bun monorepo with `packages/schema`, `packages/collector`, and `packages/hub` ([ADR-0003](decisions/0003-typescript-on-bun-for-collector-and-hub.md)).
 - Report schema v1: System identity, Collector version, Vitals samples, and the Collector's own footprint.
 - The Collector samples Vitals on macOS and Linux, queues locally, and Pushes batches to the ingest endpoint with a per-System token.
-- The Hub authenticates the token, writes Reports to PostgreSQL through versioned migrations, and serves a plain page listing Systems with last-seen time and current Vitals.
+- The Hub authenticates the token, writes Reports to PostgreSQL through versioned migrations. Its plain page, which listed Systems with last-seen time and current Vitals, carried the project until M6's dashboard showed everything it showed, and is gone.
 - A rejected Report still counts as seeing its System and raises the first Condition, Reports rejected; each System's Timeline records Conditions raised and cleared ([ADR-0005](decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
 - Proven on a macOS System reporting to a Hub on another System: every Vital sampled, and no sample lost across a Hub outage.
 
@@ -100,7 +100,7 @@ The full UI, designed before it is built, as its own app that reads the Hub's da
 - Session views: what each Session did and cost, mocked in a second round in the same direction.
 - Readable on a phone.
 
-Size: large. M1's plain page carries the project until the dashboard shows everything it shows. Session facts come from M5's `insight` views.
+Size: large. M1's plain page carried the project until the dashboard showed everything it showed, and the Hub no longer serves a page. Session facts come from M5's `insight` views.
 
 ## Later
 

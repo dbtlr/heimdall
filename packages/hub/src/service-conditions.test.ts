@@ -3,8 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ServiceRecord } from '@heimdall/schema';
 
 import { evaluateServiceConditions } from './service-conditions.ts';
-import { listSystems } from './store.ts';
-import { page, push, report, sampleTimes, startHub } from './testing/hub.ts';
+import { listSystems, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 // Times are on 10 October 2026.
@@ -775,17 +774,4 @@ describe('Service down for a health check', () => {
 
     expect(open).toEqual([]);
   });
-});
-
-test('the page and the Timeline name the Condition and the Service', async () => {
-  await using h = await startHub();
-  await downAndEvaluated(h);
-
-  const html = await page(h.hub);
-  expect(html).toContain('<strong>Service down</strong> <code>web</code> since');
-  expect(html).toContain('Stopped: ActiveState=failed.');
-
-  await send(h, '08:04:00', { checks: { services: [check('web', 'up', at('08:03:30'))] } });
-  await evaluate(h, '08:05:00');
-  expect(await page(h.hub)).toContain('Service down cleared <code>web</code>');
 });

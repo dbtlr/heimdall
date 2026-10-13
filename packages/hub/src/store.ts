@@ -1,20 +1,17 @@
 import { mirrorChecks, mirrorRecords, mirrorRuns } from '@heimdall/schema';
 import type {
   ChecksSection,
-  HarnessInstall,
   HarnessesSection,
   RecordRef,
   RecordsSection,
   Report,
   RunsSection,
   TranscriptsSection,
-  VitalsSample,
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { storeHarnessProcesses } from './harness-processes.ts';
 import { storable, storableJson } from './storable.ts';
-import { pairedSystems } from './tokens.ts';
 
 export type StoreResult = { skipped: number; stored: number };
 
@@ -418,181 +415,4 @@ export const recordRejection = (
         latest_at = excluded.latest_at,
         latest_reason = excluded.latest_reason
     `;
-  });
-
-// A Condition that is raised now, with what it is about, when it was raised,
-// and its latest reason. The subject is empty for a Condition about the System.
-export type OpenCondition = {
-  kind: ConditionKind;
-  raisedAt: number;
-  reason: string;
-  subject: string;
-};
-
-// One line of a System's Timeline: a Condition raised, with the reason it was
-// raised for, or cleared.
-export type TimelineEntry =
-  | { at: number; condition: ConditionKind; kind: 'raised'; reason: string; subject: string }
-  | { at: number; condition: ConditionKind; kind: 'cleared'; subject: string };
-
-// One System as the page shows it: when the Hub last heard from it, undefined
-// for a paired System it never has, its open Conditions and its Timeline,
-// newest Condition first, and, once a Report from it is stored, the Collector
-// build that sent it and its newest Vitals sample. A System is paired while it
-// holds a token; one that does not keeps its history and is hidden from the
-// page's normal view.
-export type SystemSummary = {
-  conditions: OpenCondition[];
-  // The Harness installs from the System's latest Report that carried them, or
-  // undefined while none has.
-  harnesses: HarnessInstall[] | undefined;
-  lastSeenAt: number | undefined;
-  name: string;
-  paired: boolean;
-  reported: { collector: Report['collector']; latest: VitalsSample } | undefined;
-  timeline: TimelineEntry[];
-};
-
-// How many of each System's most recent Conditions its Timeline shows.
-export const TIMELINE_CONDITIONS = 10;
-
-type SystemRow = {
-  collector_arch: string | null;
-  collector_cpu_percent: number;
-  collector_platform: Report['collector']['platform'] | null;
-  collector_rss_bytes: string;
-  collector_version: string | null;
-  cpu_busy_percent: number;
-  disks: VitalsSample['disks'];
-  last_seen_at: Date | null;
-  load_1: number;
-  load_5: number;
-  load_15: number;
-  memory_total_bytes: string;
-  memory_used_bytes: string;
-  name: string;
-  // Null when no sample from the System is stored.
-  t: Date | null;
-  uptime_seconds: number;
-};
-
-type ConditionRow = {
-  cleared_at: Date | null;
-  kind: ConditionKind;
-  raised_at: Date;
-  raised_reason: string;
-  subject: string;
-  system: string;
-};
-
-type OpenRow = {
-  kind: ConditionKind;
-  latest_reason: string;
-  raised_at: Date;
-  subject: string;
-  system: string;
-};
-
-// The Collector build and newest sample of a System with a stored Report.
-const reportedOf = (row: SystemRow): SystemSummary['reported'] => {
-  const { collector_arch: arch, collector_platform: platform, collector_version: version } = row;
-  if (row.t === null || arch === null || platform === null || version === null) {
-    return undefined;
-  }
-  return {
-    collector: { arch, platform, version },
-    latest: {
-      collector: {
-        cpuPercent: row.collector_cpu_percent,
-        rssBytes: Number(row.collector_rss_bytes),
-      },
-      cpu: { busyPercent: row.cpu_busy_percent },
-      disks: row.disks,
-      load: [row.load_1, row.load_5, row.load_15],
-      memory: {
-        totalBytes: Number(row.memory_total_bytes),
-        usedBytes: Number(row.memory_used_bytes),
-      },
-      t: row.t.getTime(),
-      uptimeSeconds: row.uptime_seconds,
-    },
-  };
-};
-
-// A Condition's lines on the Timeline, newest first.
-const timelineOf = (row: ConditionRow): TimelineEntry[] => {
-  const raised: TimelineEntry = {
-    at: row.raised_at.getTime(),
-    condition: row.kind,
-    kind: 'raised',
-    reason: row.raised_reason,
-    subject: row.subject,
-  };
-  return row.cleared_at === null
-    ? [raised]
-    : [
-        {
-          at: row.cleared_at.getTime(),
-          condition: row.kind,
-          kind: 'cleared',
-          subject: row.subject,
-        },
-        raised,
-      ];
-};
-
-// Every System the Hub holds, paired or not, by name: those it has heard from,
-// and paired ones it has a Condition about but never heard from. One read-only snapshot keeps
-// last seen, status, and Timeline consistent with each other.
-export const listSystems = (sql: SQL): Promise<SystemSummary[]> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
-    const systems: SystemRow[] = await tx`
-      SELECT s.name, s.last_seen_at, s.collector_version, s.collector_platform, s.collector_arch,
-             v.t, v.cpu_busy_percent, v.memory_total_bytes, v.memory_used_bytes,
-             v.load_1, v.load_5, v.load_15, v.uptime_seconds, v.disks,
-             v.collector_cpu_percent, v.collector_rss_bytes
-      FROM systems s
-      LEFT JOIN LATERAL (
-        SELECT * FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
-      ) v ON true
-      ORDER BY s.name
-    `;
-    const paired = await pairedSystems(tx);
-    // Status reads every open Condition, however far back the Timeline's cap reaches.
-    const open: OpenRow[] = await tx`
-      SELECT system, kind, subject, raised_at, latest_reason FROM conditions
-      WHERE cleared_at IS NULL
-      ORDER BY raised_at, id
-    `;
-    // Latest by arrival: ids are assigned under the System's row lock, so
-    // they order Conditions even when the Hub clock steps back.
-    const recent: ConditionRow[] = await tx`
-      SELECT system, kind, subject, raised_at, raised_reason, cleared_at
-      FROM (
-        SELECT *, row_number() OVER (PARTITION BY system ORDER BY id DESC) AS n
-        FROM conditions
-      ) c
-      WHERE n <= ${TIMELINE_CONDITIONS}
-      ORDER BY id DESC
-    `;
-    const installed: { installs: HarnessInstall[]; system: string }[] = await tx`
-      SELECT system, installs FROM harness_installs
-    `;
-    return systems.map((row) => ({
-      conditions: open
-        .filter((c) => c.system === row.name)
-        .map((c) => ({
-          kind: c.kind,
-          raisedAt: c.raised_at.getTime(),
-          reason: c.latest_reason,
-          subject: c.subject,
-        })),
-      harnesses: installed.find((h) => h.system === row.name)?.installs,
-      lastSeenAt: row.last_seen_at?.getTime(),
-      name: row.name,
-      paired: paired.has(row.name),
-      reported: reportedOf(row),
-      // Each Condition's lines stay together, the newest Condition first.
-      timeline: recent.filter((c) => c.system === row.name).flatMap(timelineOf),
-    }));
   });

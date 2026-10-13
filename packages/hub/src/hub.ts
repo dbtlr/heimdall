@@ -15,9 +15,8 @@ import { z } from 'zod';
 
 import { failureCap } from './failure-cap.ts';
 import type { CapSlot } from './failure-cap.ts';
-import { renderPage } from './page.ts';
 import { readCode, redeemCode } from './pairing.ts';
-import { listSystems, recordRejection, seeSystem, storeReport } from './store.ts';
+import { recordRejection, seeSystem, storeReport } from './store.ts';
 import { systemForToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
 import { HUB_VERSION } from './version.ts';
@@ -320,7 +319,7 @@ const route = async (
   deps: HubDependencies,
   pairFailures: ReturnType<typeof failureCap>,
 ) => {
-  const { pathname, searchParams } = new URL(request.url);
+  const { pathname } = new URL(request.url);
   if (pathname === '/api/v1/reports' && request.method === 'POST') {
     return ingest(request, deps);
   }
@@ -336,14 +335,6 @@ const route = async (
   }
   if (pathname === '/api/health' && request.method === 'GET') {
     return health(deps);
-  }
-  if (pathname === '/' && request.method === 'GET') {
-    const html = renderPage({
-      now: deps.now(),
-      systems: await listSystems(deps.sql),
-      view: searchParams.has('unpaired') ? 'unpaired' : 'paired',
-    });
-    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
   return answer(404, 'Not found.');
 };

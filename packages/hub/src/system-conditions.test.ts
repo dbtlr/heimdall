@@ -4,14 +4,13 @@ import { sample } from '@heimdall/schema/testing';
 
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { unpair } from './pairing.ts';
-import { listSystems } from './store.ts';
 import {
   evaluateSystem,
   evaluateSystemConditions,
   SYSTEM_CONDITION_THRESHOLDS,
 } from './system-conditions.ts';
 import type { SystemConditionThresholds } from './system-conditions.ts';
-import { NOW, openGeneration, page, push, report, startHub } from './testing/hub.ts';
+import { listSystems, NOW, openGeneration, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
@@ -190,7 +189,7 @@ describe('stale System', () => {
     expect(timeline).toHaveLength(3);
   });
 
-  test('a paired System never seen counts from pairing, and is shown as never seen', async () => {
+  test('a paired System never seen counts from pairing, and has no last seen', async () => {
     await using h = await startHub();
 
     await evaluate(h, NOW + 10 * MINUTE);
@@ -206,9 +205,6 @@ describe('stale System', () => {
           'Not heard from since it was paired at 2026-10-06 12:00 UTC, more than 10 minutes ago.',
       }),
     ]);
-    const html = await page(h.hub);
-    expect(html).toContain('System stale');
-    expect(html).toContain('Never seen');
   });
 
   test('a System that was never seen gets its real Last seen from its first Report', async () => {
@@ -561,22 +557,6 @@ describe('low disk', () => {
 
     expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
   });
-});
-
-test('the page and the Timeline name the Condition and the mount', async () => {
-  await using h = await startHub();
-  await send(h, NOW, { disks: [disk('/data', 2)] });
-  await evaluate(h, NOW + 11 * MINUTE);
-
-  const html = await page(h.hub);
-
-  expect(html).toContain('<strong>System stale</strong> since');
-  expect(html).toContain('<strong>Low disk</strong> <code>/data</code> since');
-  expect(html).toContain('Low disk <code>/data</code>:');
-
-  await send(h, NOW + 12 * MINUTE, { disks: [disk('/data', 50)] });
-  await evaluate(h, NOW + 13 * MINUTE);
-  expect(await page(h.hub)).toContain('Low disk cleared <code>/data</code>');
 });
 
 test('a System that cannot be judged does not stop the others, and the failure names it', async () => {

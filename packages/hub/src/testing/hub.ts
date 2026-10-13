@@ -1,4 +1,3 @@
-import { expect } from 'bun:test';
 import { promisify } from 'node:util';
 import { gzip as gzipCallback } from 'node:zlib';
 
@@ -26,6 +25,9 @@ export { BUNDLED_PRICES } from '../prices.ts';
 export { syncPrices } from '../price-table.ts';
 export { storeReport } from '../store.ts';
 export { storeToken } from '../tokens.ts';
+
+// Reads back what the Hub derived about each System.
+export { listSystems } from './systems.ts';
 
 // gzip, as the Collector packs a chunk.
 export const gzip = promisify(gzipCallback);
@@ -136,14 +138,6 @@ export const redeem = (hub: ReturnType<typeof createHub>, body: unknown) =>
       method: 'POST',
     }),
   );
-
-// Fetches the page, or another view of it such as `/?unpaired`, and checks it is HTML.
-export const page = async (hub: ReturnType<typeof createHub>, path = '/') => {
-  const response = await hub.fetch(new Request(`http://hub.test${path}`));
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-type')).toContain('text/html');
-  return response.text();
-};
 
 // A TCP server on a free port that accepts connections and never replies.
 export const silentServer = () => {

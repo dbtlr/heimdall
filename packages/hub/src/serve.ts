@@ -37,7 +37,7 @@ const PROJECT_INTERVAL_MS = 15_000;
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
 // `heimdall-hub serve`: brings the database to the latest schema, then accepts
-// Reports and serves the page until systemd or a terminal stops it. Its runtime
+// Reports and transcripts until systemd or a terminal stops it. Its runtime
 // lines, fatal ones included, start with their time. It rotates its supervised
 // log before writing its first line, then about once a day.
 export const serveAction: ActionHandler<typeof serve> = async ({

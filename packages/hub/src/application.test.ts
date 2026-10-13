@@ -73,7 +73,6 @@ test('a System paired with pair redeems its code from serve, and its token inges
   const shown = SHOWN_CODE.exec(issued.stdout)?.groups?.code ?? '';
   let paired: { system?: string; token?: string } = {};
   let ingested = 0;
-  let html = '';
 
   const { code, stderr, stdout } = await invoke(['serve', ...configArgs(config)], {
     whileServing: async (hub) => {
@@ -98,13 +97,13 @@ test('a System paired with pair redeems its code from serve, and its token inges
         method: 'POST',
       });
       ingested = response.status;
-      html = await (await fetch(hub)).text();
     },
   });
 
   expect(paired.system).toBe('laptop-1');
   expect(ingested).toBe(200);
-  expect(html).toContain('laptop-1');
+  const stored: { system: string }[] = await db.sql`SELECT system FROM vitals_samples`;
+  expect(stored).toEqual([{ system: 'laptop-1' }]);
   expect(stdout).toContain('for 0 Systems.');
   expect(stdout).not.toContain(paired.token ?? 'no token');
   expect(stderr).toBe('');
@@ -444,16 +443,16 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
     '[database]',
     `url = "${db.url.href}"`,
   ]);
-  let html = '';
+  let health = 0;
 
   const { code, stdout } = await invoke(serveArgs(config), {
     whileServing: async (hub) => {
-      html = await (await fetch(hub)).text();
+      health = (await fetch(new URL('api/health', hub))).status;
     },
   });
 
   expect(stdout.match(/Could not prune old Vitals: .*delete refused/gu)).toHaveLength(1);
-  expect(html).toContain('Heimdall');
+  expect(health).toBe(200);
   expect(code).toBe(130);
 });
 
@@ -630,17 +629,17 @@ test('serve finds the configuration file under ~/.config/heimdall/ when --config
       join(home, '.config', 'heimdall', 'hub.toml'),
       ['host = "127.0.0.1"', 'port = 0', '[database]', `url = "${db.url.href}"`].join('\n'),
     );
-    let html = '';
+    let health = 0;
 
     const { code } = await invoke(['serve'], {
       cwd: elsewhere,
       env: { HOME: home },
       whileServing: async (hub) => {
-        html = await (await fetch(hub)).text();
+        health = (await fetch(new URL('api/health', hub))).status;
       },
     });
 
-    expect(html).toContain('Heimdall');
+    expect(health).toBe(200);
     expect(code).toBe(130);
   } finally {
     await rm(home, { force: true, recursive: true });
