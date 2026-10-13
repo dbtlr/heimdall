@@ -311,7 +311,7 @@ test('a process whose end was missed could have made a request up to 2 seconds b
 
 test('after its samples are pruned, a stretch stays linked through a whole 5-minute rollup or the last sighting inside it', async () => {
   await using db = await database();
-  await addProcess(db.sql, { end: 1500, pid: 100, rollupsOnly: true, start: 0 });
+  await addProcess(db.sql, { end: 1500, pid: 100, readings: 'rollups', start: 0 });
   // Buckets start every 300 s from T0.
   await addSession(db.sql, { id: 'whole-bucket', requests: [290, 610] });
   await addSession(db.sql, { id: 'part-bucket', requests: [310, 590] });

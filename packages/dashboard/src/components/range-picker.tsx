@@ -5,7 +5,7 @@ import { cn } from '../lib/utils.ts';
 import { RANGES } from '../server/fleet-overview-types.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 
-// The segmented control that picks how far back the overview looks. The range
+// The segmented control that picks how far back the page looks. The range
 // lives in the URL, so a link to a range shares it.
 export function RangePicker({ current }: { current: Range }) {
   return (
@@ -22,8 +22,8 @@ export function RangePicker({ current }: { current: Range }) {
           )}
           key={range}
           resetScroll={false}
-          search={{ range }}
-          to="/"
+          search={(previous) => ({ ...previous, range })}
+          to="."
         >
           {RANGE_LABELS[range]}
         </Link>

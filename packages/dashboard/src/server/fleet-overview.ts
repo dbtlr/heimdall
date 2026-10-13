@@ -31,7 +31,7 @@ export const parseRangeInput = (input: unknown): Range => {
 const MINUTE_MS = 60_000;
 const BUCKET_MS = 5 * MINUTE_MS;
 const DAY_MS = 24 * 60 * MINUTE_MS;
-const RANGE_MS: Record<Range, number> = {
+export const RANGE_MS: Record<Range, number> = {
   '12h': DAY_MS / 2,
   '24h': DAY_MS,
   '6h': DAY_MS / 4,
@@ -41,7 +41,7 @@ const RANGE_MS: Record<Range, number> = {
 // The start of the 5-minute bucket holding `t`. The Hub aligns buckets to
 // 2000-01-01 UTC, a whole number of 5 minutes after the epoch, so the epoch
 // aligns them too.
-const bucketStart = (t: number) => Math.floor(t / BUCKET_MS) * BUCKET_MS;
+export const bucketStart = (t: number) => Math.floor(t / BUCKET_MS) * BUCKET_MS;
 
 // The runs of 5-minute buckets with no Vitals, from the bucket holding `from`
 // up to, not including, the one holding `now`: that one is still filling, so
@@ -78,10 +78,10 @@ const CONDITION_KINDS: Record<ConditionKind, true> = {
 
 const isConditionKind = (kind: string): kind is ConditionKind => kind in CONDITION_KINDS;
 
-const isLink = (link: string): link is Link =>
+export const isLink = (link: string): link is Link =>
   link === 'linked' || link === 'ambiguous' || link === 'unmatched';
 
-const conditionKind = (kind: string): ConditionKind => {
+export const conditionKind = (kind: string): ConditionKind => {
   if (!isConditionKind(kind)) {
     throw new Error(
       `The Hub holds a Condition of kind ${kind}, which the dashboard does not know.`,
@@ -91,7 +91,7 @@ const conditionKind = (kind: string): ConditionKind => {
 };
 
 // The last directory name of a working directory.
-const projectOf = (cwd: string | null) => cwd?.split('/').findLast((part) => part !== '');
+export const projectOf = (cwd: string | null) => cwd?.split('/').findLast((part) => part !== '');
 
 // A lane's status word, first match wins (see LaneStatus).
 export const laneStatus = ({
@@ -116,7 +116,7 @@ export const laneStatus = ({
 
 type SystemRow = { last_seen_at: Date | null; name: string; sleeps: boolean | null };
 
-type BucketRow = {
+export type BucketRow = {
   bucket: Date;
   cpu_busy_max: number;
   cpu_busy_min: number;
@@ -146,7 +146,7 @@ type StretchRow = {
   system: string;
 };
 
-type ConditionRow = {
+export type ConditionRow = {
   cleared_at: Date | null;
   kind: string;
   latest_reason: string;
@@ -155,7 +155,7 @@ type ConditionRow = {
   system: string;
 };
 
-const toBucket = (row: BucketRow): CpuBucket => ({
+export const toBucket = (row: BucketRow): CpuBucket => ({
   average: row.cpu_busy_sum / row.samples,
   high: row.cpu_busy_max,
   low: row.cpu_busy_min,
@@ -180,7 +180,7 @@ const toStretch = (row: StretchRow): Stretch => {
   };
 };
 
-const toMark = (row: ConditionRow): ConditionMark => ({
+export const toMark = (row: ConditionRow): ConditionMark => ({
   clearedAt: row.cleared_at?.getTime(),
   kind: conditionKind(row.kind),
   raisedAt: row.raised_at.getTime(),

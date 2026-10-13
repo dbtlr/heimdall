@@ -48,6 +48,7 @@
       },
       "devDependencies": {
         "@heimdall/hub": "workspace:*",
+        "@heimdall/schema": "workspace:*",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
       },

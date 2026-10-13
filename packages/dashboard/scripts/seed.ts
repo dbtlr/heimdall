@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   BUNDLED_PRICES,
   migrate,
@@ -8,11 +10,13 @@ import {
   timeline,
 } from '@heimdall/hub/testing';
 // Fills a scratch Hub database with four paired Systems, a week of Vitals, agent
-// Sessions, and Conditions, so the dashboard has a fleet to show during
-// development. It writes through the Hub's own ingest and migration code, so
+// Sessions, the records, runs, checks, and Harness installs a provisioner and
+// Collector would report for two of them, and Conditions, so the dashboard has a
+// fleet to show during development. It writes through the Hub's own ingest and migration code, so
 // the rollups and views are the ones a real Hub keeps. Run it again to reset.
 //
 //   HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packages/dashboard seed
+import { filesRecordDigest } from '@heimdall/schema';
 import { SQL } from 'bun';
 
 import { readFleetOverview } from '../src/server/fleet-overview.ts';
@@ -111,7 +115,13 @@ const sampleTimes = (profile: Profile, now: number) => {
 };
 
 // Sends the System's week of Reports, a day of samples each, as its Collector would.
-const sendVitals = async (sql: SQL, profile: Profile, now: number) => {
+// The last Report carries `provisioned`, the sections a Collector sends beside its Vitals.
+const sendVitals = async (
+  sql: SQL,
+  profile: Profile,
+  now: number,
+  provisioned: Provisioned | undefined,
+) => {
   const random = noise(profile.name.length * 7919);
   const times = sampleTimes(profile, now);
   for (let from = 0; from < times.length; from += DAY / SAMPLE_EVERY_MS) {
@@ -137,10 +147,16 @@ const sendVitals = async (sql: SQL, profile: Profile, now: number) => {
       ];
       sample.uptimeSeconds = (sample.t - (now - 7 * DAY)) / SECOND;
     }
+    const isLast = from + chunk.length >= times.length;
     // oxlint-disable-next-line no-await-in-loop -- a week of Reports, in order.
     await storeReport(sql, {
       receivedAt: sent.sentAt,
-      report: { ...sent, sleeps: profile.sleepsFlag, timeZone: 'UTC' },
+      report: {
+        ...sent,
+        ...(isLast ? provisioned : {}),
+        sleeps: profile.sleepsFlag,
+        timeZone: 'UTC',
+      },
     });
   }
 };
@@ -154,6 +170,290 @@ const requestTimes = (fromSeconds: number, toSeconds: number) =>
 
 const SYSTEM = 'workstation-1';
 const hours = (n: number) => n * 3600;
+
+type Report = ReturnType<typeof report>;
+
+// The sections a Collector sends beside Vitals: what its provisioner recorded,
+// the runs of its jobs, what it observed against both, and the Harnesses installed.
+type Provisioned = Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs'>;
+
+const PROVENANCE = { by: 'fleet', revision: 'a1b2c3d' };
+const HOME = '/home/dev';
+
+const sha256Hex = (text: string) => createHash('sha256').update(text).digest('hex');
+
+// A files record whose files each hash to their own path, so the hashes are stable.
+const filesRecord = (name: string, paths: string[]) => ({
+  files: paths.map((path) => ({ path, sha256: sha256Hex(path) })),
+  name,
+  provenance: PROVENANCE,
+});
+
+// A time as the whole-second UTC text a run carries.
+const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/u, 'Z');
+
+// `2026-10-06 12:00 UTC`, as the Hub's reasons write a time.
+const utcMinute = (ms: number) =>
+  `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+const supervisorCheck = (service: string, state: string, detail: string, since: number) => ({
+  check: 'supervisor',
+  detail,
+  service,
+  since,
+  state,
+});
+
+// A run that started at `started` (epoch milliseconds) and took `minutes`, or
+// until `now` if it is still within that span.
+const runOf = (
+  {
+    exitStatus,
+    minutes,
+    now,
+    started,
+  }: Record<'exitStatus' | 'minutes' | 'now' | 'started', number>,
+  output: { file: string; sizeBytes: number } | undefined,
+) => ({
+  exitStatus,
+  finished: iso(Math.min(started + minutes * MINUTE, now)),
+  ...(output === undefined ? {} : { output }),
+  started: iso(started),
+});
+
+// When the seeded jobs last ran, and what they found, as milliseconds. The
+// Conditions and the Reports both read these, so each failing run has its Condition.
+const scenarioOf = (now: number) => {
+  const borgStarted = Math.floor((now - 1.5 * HOUR) / DAY) * DAY + 1.5 * HOUR;
+  const nightlyStarted = Math.floor((now - 2 * HOUR) / DAY) * DAY + 2 * HOUR;
+  return {
+    borgFinished: Math.min(borgStarted + 12 * MINUTE, now),
+    borgStarted,
+    dotfilesStarted: Math.floor(now / HOUR) * HOUR,
+    driftSince: now - 26 * HOUR,
+    nightlyFinished: Math.min(nightlyStarted + 30 * MINUTE, now),
+    nightlyStarted,
+    ollamaUpSince: now - 8.5 * HOUR,
+  };
+};
+type Scenario = ReturnType<typeof scenarioOf>;
+
+const WORKSTATION_DOTFILES = [
+  '.bashrc',
+  '.config/git/ignore',
+  '.config/mise/config.toml',
+  '.config/nvim/init.lua',
+  '.config/starship.toml',
+  '.gitconfig',
+  '.inputrc',
+  '.local/bin/backup-notes',
+  '.tmux.conf',
+  '.zshrc',
+].map((path) => `${HOME}/${path}`);
+const DRIFTED_DOTFILE = `${HOME}/.zshrc`;
+const UNREADABLE_SYNCTHING_FILE = `${HOME}/.local/state/syncthing/config.xml`;
+
+// Everything the workstation's provisioner recorded and its Collector observed:
+// three Services, two jobs with their runs, four files records (one drifted
+// path, one unreadable), six applications, and two Harness installs.
+const workstationSections = async (now: number, scenario: Scenario) => {
+  const dotfiles = filesRecord('dotfiles', WORKSTATION_DOTFILES);
+  const sshConfig = filesRecord('ssh-config', [
+    `${HOME}/.ssh/config`,
+    `${HOME}/.ssh/allowed_signers`,
+  ]);
+  const userUnits = filesRecord(
+    'systemd-user-units',
+    ['dotfiles-pull.service', 'dotfiles-pull.timer', 'syncthing.service'].map(
+      (unit) => `${HOME}/.config/systemd/user/${unit}`,
+    ),
+  );
+  const syncthingConfig = filesRecord('syncthing-config', [UNREADABLE_SYNCTHING_FILE]);
+  const filesRecords = [dotfiles, sshConfig, userUnits, syncthingConfig];
+
+  const application = (name: string, version: string, source: string) => ({
+    kind: 'application',
+    name,
+    record: { name, provenance: PROVENANCE, source, version },
+  });
+  const sent = [
+    application('git', '2.51.0', 'apt'),
+    application('neovim', '0.11.4', 'mise'),
+    application('node', '24.9.0', 'mise'),
+    application('ollama', '0.12.3', 'Docker image ollama/ollama'),
+    application('ripgrep', '14.1.1', 'apt'),
+    application('syncthing', '1.30.0', 'apt'),
+    ...[
+      {
+        container: 'ollama',
+        name: 'ollama',
+        port: 11_434,
+        provenance: PROVENANCE,
+        supervisor: 'docker',
+      },
+      {
+        health: 'http://127.0.0.1:8384/rest/noauth/health',
+        name: 'syncthing',
+        port: 8384,
+        provenance: PROVENANCE,
+        supervisor: 'systemd-user',
+        unit: 'syncthing.service',
+      },
+      {
+        name: 'heimdall-collector',
+        provenance: PROVENANCE,
+        supervisor: 'systemd-user',
+        unit: 'heimdall-collector.service',
+      },
+    ].map((record) => ({ kind: 'service', name: record.name, record })),
+    ...[
+      {
+        name: 'dotfiles-pull',
+        provenance: PROVENANCE,
+        schedule: [{ minute: 0 }],
+        scheduler: 'systemd-timer',
+        unit: 'dotfiles-pull.timer',
+      },
+      {
+        name: 'borg-home',
+        provenance: PROVENANCE,
+        schedule: [{ hour: 1, minute: 30 }],
+        scheduler: 'systemd-timer',
+        unit: 'borg-home.timer',
+      },
+    ].map((record) => ({ kind: 'job', name: record.name, record })),
+    ...filesRecords.map((record) => ({ kind: 'files', name: record.name, record })),
+  ];
+
+  const dotfilesRun = runOf(
+    { exitStatus: 0, minutes: 0.1, now, started: scenario.dotfilesStarted },
+    undefined,
+  );
+  const borgSucceeded = runOf(
+    { exitStatus: 0, minutes: 14, now, started: scenario.borgStarted - DAY },
+    { file: 'borg-home-previous.log', sizeBytes: 4096 },
+  );
+  const borgFailed = runOf(
+    { exitStatus: 2, minutes: 12, now, started: scenario.borgStarted },
+    { file: 'borg-home-latest.log', sizeBytes: 1800 },
+  );
+
+  return {
+    checks: {
+      fileRecords: await Promise.all(
+        filesRecords.map(async (record) => ({
+          digest: await filesRecordDigest(record),
+          record: record.name,
+        })),
+      ),
+      files: [
+        {
+          path: DRIFTED_DOTFILE,
+          record: 'dotfiles',
+          since: scenario.driftSince,
+          state: 'drifted',
+        },
+        {
+          path: UNREADABLE_SYNCTHING_FILE,
+          record: 'syncthing-config',
+          since: now - 3 * DAY,
+          state: 'unreadable',
+        },
+      ],
+      services: [
+        supervisorCheck('ollama', 'up', 'status running', scenario.ollamaUpSince),
+        supervisorCheck('syncthing', 'up', 'ActiveState=active', now - 4 * DAY),
+        {
+          check: 'health',
+          detail: 'HTTP 200',
+          service: 'syncthing',
+          since: now - 4 * DAY,
+          state: 'up',
+        },
+        supervisorCheck('heimdall-collector', 'up', 'ActiveState=active', now - 6 * DAY),
+      ],
+    },
+    harnesses: {
+      installs: [
+        { harness: 'claude-code', location: 'native', version: '2.1.14' },
+        { harness: 'codex', location: 'npm', version: '0.58.0' },
+      ],
+    },
+    records: { records: sent, unreadable: [] },
+    runs: {
+      jobs: [
+        { job: 'dotfiles-pull', latestRun: dotfilesRun, latestSuccess: dotfilesRun },
+        { job: 'borg-home', latestRun: borgFailed, latestSuccess: borgSucceeded },
+      ],
+      unreadable: [],
+    },
+  } satisfies Provisioned;
+};
+
+// The server's recorded database container, stopped; its nightly backup, failing;
+// and its config file, changed.
+const serverSections = async (now: number, scenario: Scenario) => {
+  const appConfig = filesRecord('app-config', ['/etc/app/config.toml', '/etc/app/secrets.env']);
+  const succeeded = runOf(
+    { exitStatus: 0, minutes: 28, now, started: scenario.nightlyStarted - DAY },
+    undefined,
+  );
+  const failed = runOf(
+    { exitStatus: 1, minutes: 30, now, started: scenario.nightlyStarted },
+    undefined,
+  );
+  const devDb = {
+    container: 'dev-db',
+    name: 'dev-db',
+    provenance: PROVENANCE,
+    supervisor: 'docker',
+  };
+  const nightly = {
+    name: 'nightly-backup',
+    provenance: PROVENANCE,
+    schedule: [{ hour: 2, minute: 0 }],
+    scheduler: 'systemd-timer',
+    unit: 'nightly-backup.timer',
+  };
+
+  return {
+    checks: {
+      fileRecords: [{ digest: await filesRecordDigest(appConfig), record: appConfig.name }],
+      files: [
+        {
+          path: '/etc/app/config.toml',
+          record: appConfig.name,
+          since: scenario.driftSince,
+          state: 'drifted',
+        },
+      ],
+      services: [
+        supervisorCheck('dev-db', 'stopped', 'status exited, exit code 137', now - 2 * HOUR),
+      ],
+    },
+    records: {
+      records: [
+        { kind: 'service', name: devDb.name, record: devDb },
+        { kind: 'job', name: nightly.name, record: nightly },
+        { kind: 'files', name: appConfig.name, record: appConfig },
+      ],
+      unreadable: [],
+    },
+    runs: {
+      jobs: [{ job: nightly.name, latestRun: failed, latestSuccess: succeeded }],
+      unreadable: [],
+    },
+  } satisfies Provisioned;
+};
+
+// The sections each System's last Report carries, by System name.
+const provisionedBySystem = async (now: number) => {
+  const scenario = scenarioOf(now);
+  return new Map<string, Provisioned>([
+    [SYSTEM, await workstationSections(now, scenario)],
+    ['server-1', await serverSections(now, scenario)],
+  ]);
+};
 
 // The workstation's Harness processes and Sessions in the last day: some
 // Sessions the Hub links to one process, one it cannot tell between two, and
@@ -169,10 +469,13 @@ const seedSessions = async (sql: SQL, now: number) => {
   const docs = '/home/dev/projects/docs';
 
   await addProcess(sql, {
+    cpuCores: 1.2,
     cwd: api,
     end: -hours(7),
     harness: 'claude-code',
     pid: 4101,
+    readings: 'both',
+    rssBytes: Math.round(2.4 * GIB),
     start: -hours(10),
     system: SYSTEM,
   });
@@ -187,10 +490,13 @@ const seedSessions = async (sql: SQL, now: number) => {
   });
 
   await addProcess(sql, {
+    cpuCores: 0.6,
     cwd: web,
     end: -hours(3.5),
     harness: 'claude-code',
     pid: 4102,
+    readings: 'both',
+    rssBytes: Math.round(1.1 * GIB),
     start: -hours(5),
     system: SYSTEM,
   });
@@ -205,10 +511,13 @@ const seedSessions = async (sql: SQL, now: number) => {
   });
 
   await addProcess(sql, {
+    cpuCores: 0.9,
     cwd: infra,
     end: -hours(4),
     harness: 'codex',
     pid: 4201,
+    readings: 'both',
+    rssBytes: Math.round(1.6 * GIB),
     start: -hours(6),
     system: SYSTEM,
   });
@@ -224,18 +533,24 @@ const seedSessions = async (sql: SQL, now: number) => {
 
   // Two Claude Code processes in one directory at once: the Hub cannot say which ran the Session.
   await addProcess(sql, {
+    cpuCores: 0.3,
     cwd: docs,
     end: -hours(1),
     harness: 'claude-code',
     pid: 4103,
+    readings: 'both',
+    rssBytes: Math.round(0.8 * GIB),
     start: -hours(2),
     system: SYSTEM,
   });
   await addProcess(sql, {
+    cpuCores: 0.2,
     cwd: docs,
     end: -hours(1),
     harness: 'claude-code',
     pid: 4104,
+    readings: 'both',
+    rssBytes: Math.round(0.5 * GIB),
     start: -hours(2),
     system: SYSTEM,
   });
@@ -261,29 +576,85 @@ const seedSessions = async (sql: SQL, now: number) => {
   });
 };
 
+// How the Hub's reason names a run that failed, up to its exit status.
+const failedRun = (started: number) => `The run started ${iso(started)} exited with status`;
+
+// The Conditions the Hub would hold for the seeded records and runs, with the
+// reasons it writes, and a few cleared ones spread over the week so a Timeline
+// has entries. Times are seconds before `now`.
 const seedConditions = async (sql: SQL, now: number) => {
   const { addCondition } = timeline(now);
+  const scenario = scenarioOf(now);
+  const secondsFromNow = (ms: number) => (ms - now) / SECOND;
+
   await addCondition(sql, {
     kind: 'job_failing',
-    raisedAt: -hours(3),
-    reason: 'nightly-backup failed 3 runs in a row (exit 1)',
-    subject: 'nightly-backup',
-    system: 'server-1',
+    raisedAt: secondsFromNow(scenario.borgFinished),
+    reason: `${failedRun(scenario.borgStarted)} 2.`,
+    subject: 'borg-home',
+    system: SYSTEM,
   });
   await addCondition(sql, {
     kind: 'drift',
-    raisedAt: -hours(26),
-    reason: '/etc/app/config.toml differs from what was recorded',
-    subject: '/etc/app/config.toml',
-    system: 'server-1',
+    raisedAt: secondsFromNow(scenario.driftSince + 5 * MINUTE),
+    reason: 'Changed: its content no longer matches the hash recorded in dotfiles.',
+    subject: DRIFTED_DOTFILE,
+    system: SYSTEM,
   });
   await addCondition(sql, {
     clearedAt: -hours(8.5),
     kind: 'service_down',
     raisedAt: -hours(9),
-    reason: 'dev-db is not running',
-    subject: 'dev-db',
+    reason: 'Stopped: status exited, exit code 137.',
+    subject: 'ollama',
     system: SYSTEM,
+  });
+  await addCondition(sql, {
+    clearedAt: -(4.8 * DAY) / SECOND,
+    kind: 'low_disk',
+    raisedAt: -(5 * DAY) / SECOND,
+    reason: '45.0 GiB free of 500.0 GiB (9.0%).',
+    subject: '/',
+    system: SYSTEM,
+  });
+  const overdueScheduled = Math.floor((now - 3.2 * DAY) / HOUR) * HOUR;
+  await addCondition(sql, {
+    clearedAt: secondsFromNow(overdueScheduled + HOUR + 20 * MINUTE),
+    kind: 'job_overdue',
+    raisedAt: secondsFromNow(overdueScheduled + HOUR),
+    reason: `Scheduled for ${utcMinute(overdueScheduled)}; no successful run since.`,
+    subject: 'dotfiles-pull',
+    system: SYSTEM,
+  });
+  const staleRaised = now - 2.4 * DAY;
+  await addCondition(sql, {
+    clearedAt: secondsFromNow(staleRaised + 25 * MINUTE),
+    kind: 'system_stale',
+    raisedAt: secondsFromNow(staleRaised),
+    reason: `Not heard from since ${utcMinute(staleRaised - 11 * MINUTE)}, more than 10 minutes ago.`,
+    system: SYSTEM,
+  });
+
+  await addCondition(sql, {
+    kind: 'job_failing',
+    raisedAt: secondsFromNow(scenario.nightlyFinished),
+    reason: `${failedRun(scenario.nightlyStarted)} 1.`,
+    subject: 'nightly-backup',
+    system: 'server-1',
+  });
+  await addCondition(sql, {
+    kind: 'drift',
+    raisedAt: secondsFromNow(scenario.driftSince + 5 * MINUTE),
+    reason: 'Changed: its content no longer matches the hash recorded in app-config.',
+    subject: '/etc/app/config.toml',
+    system: 'server-1',
+  });
+  await addCondition(sql, {
+    kind: 'service_down',
+    raisedAt: -hours(1.9),
+    reason: 'Stopped: status exited, exit code 137.',
+    subject: 'dev-db',
+    system: 'server-1',
   });
   await addCondition(sql, {
     kind: 'low_disk',
@@ -350,7 +721,10 @@ const fill = async (sql: SQL) => {
     // oxlint-disable-next-line no-await-in-loop -- four Systems.
     await storeToken(sql, { pairedAt: now - 8 * DAY, system: name, token: `seed-token-${name}` });
   }
-  await Promise.all(PROFILES.map((profile) => sendVitals(sql, profile, now)));
+  const provisioned = await provisionedBySystem(now);
+  await Promise.all(
+    PROFILES.map((profile) => sendVitals(sql, profile, now, provisioned.get(profile.name))),
+  );
   await seedConditions(sql, now);
   await seedSessions(sql, now);
   const overview = await readFleetOverview(sql, { now, range: '24h', timeZone: 'UTC' });

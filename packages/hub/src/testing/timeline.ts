@@ -20,6 +20,8 @@ export type SessionFixture = {
 };
 
 export type ProcessFixture = {
+  // The CPU cores the process tree keeps busy, steadily from its start.
+  cpuCores?: number;
   cwd?: string | null;
   // Seconds. A seen end, or with `endMissed` the last sighting; undefined while running.
   end?: number;
@@ -28,9 +30,10 @@ export type ProcessFixture = {
   pid: number;
   // Readings are every 15 seconds from `seenFrom` and at `seenTo`, the last
   // sighting; they default to the process's life, or 100,000 s while running.
-  // `rollupsOnly` keeps their 5-minute rollups and not the samples, as after
-  // samples are pruned.
-  rollupsOnly?: boolean;
+  // The Hub keeps them as samples, as 5-minute rollups, or both; rollups alone
+  // are what is left after samples are pruned.
+  readings?: 'both' | 'rollups' | 'samples';
+  rssBytes?: number;
   seenFrom?: number;
   seenTo?: number;
   start: number;
@@ -137,12 +140,14 @@ export const timeline = (origin: number) => {
   const addProcess = async (
     sql: SQL,
     {
+      cpuCores = 0,
       cwd = CWD,
       end,
       endMissed = false,
       harness = 'claude-code',
       pid,
-      rollupsOnly = false,
+      readings = 'samples',
+      rssBytes = 0,
       seenFrom,
       seenTo,
       start,
@@ -157,23 +162,26 @@ export const timeline = (origin: number) => {
         last_seen_at, sent_at
       )
       VALUES (${system}, ${harness}, ${pid}, ${at(start)}, ${end === undefined ? null : at(end)},
-              ${endMissed}, ${cwd}, 0, ${at(to)}, ${at(to)})
+              ${endMissed}, ${cwd}, ${rssBytes}, ${at(to)}, ${at(to)})
       RETURNING id
     `;
     const id = Number(row?.id);
     await sql`
       INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
-      SELECT ${id}, ${at(0)}::timestamptz + s * interval '1 second', 0, 0
+      SELECT ${id}, ${at(0)}::timestamptz + s * interval '1 second',
+             round((s - ${start}) * ${cpuCores} * 1e6), ${rssBytes}
       FROM (SELECT generate_series(${from}::numeric, ${to}::numeric, 15) UNION SELECT ${to}::numeric) AS g (s)
     `;
-    if (rollupsOnly) {
+    if (readings !== 'samples') {
       await sql`
         INSERT INTO harness_process_rollups
           (process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max)
         SELECT process, date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00'), count(*),
-               0, 0, 0, 0, 0
+               min(cpu_micros), max(cpu_micros), min(rss_bytes), sum(rss_bytes), max(rss_bytes)
         FROM harness_process_samples WHERE process = ${id} GROUP BY 1, 2
       `;
+    }
+    if (readings === 'rollups') {
       await sql`DELETE FROM harness_process_samples WHERE process = ${id}`;
     }
     return id;

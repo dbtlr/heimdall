@@ -52,6 +52,32 @@ export const formatWhen = (t: number, now: number, timeZone: string): string =>
     ? formatClock(t, timeZone)
     : `${formatWeekday(t, timeZone)} ${formatClock(t, timeZone)}`;
 
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+// "7 h 33 min", or "7 h" when the smaller unit is zero.
+const pair = (big: number, bigUnit: string, small: number, smallUnit: string) =>
+  small === 0
+    ? `${String(big)} ${bigUnit}`
+    : `${String(big)} ${bigUnit} ${String(small)} ${smallUnit}`;
+
+// A length of time in its largest two units, the smaller dropped when zero:
+// "20 s", "4 min", "7 h 33 min", "1 d 2 h".
+export const formatSpan = (ms: number): string => {
+  if (ms < MINUTE_MS) {
+    return `${String(Math.round(ms / SECOND_MS))} s`;
+  }
+  if (ms < HOUR_MS) {
+    return `${String(Math.floor(ms / MINUTE_MS))} min`;
+  }
+  if (ms < DAY_MS) {
+    return pair(Math.floor(ms / HOUR_MS), 'h', Math.floor((ms % HOUR_MS) / MINUTE_MS), 'min');
+  }
+  return pair(Math.floor(ms / DAY_MS), 'd', Math.floor((ms % DAY_MS) / HOUR_MS), 'h');
+};
+
 // A cost as "$4.05", or "cost unknown" when a request was unpriced.
 export const formatCost = (costUsd: number | undefined): string =>
   costUsd === undefined ? 'cost unknown' : `$${costUsd.toFixed(2)}`;

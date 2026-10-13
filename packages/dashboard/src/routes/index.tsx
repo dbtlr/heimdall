@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import type { SearchSchemaInput } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { FleetLane } from '../components/fleet-lane.tsx';
@@ -16,7 +17,9 @@ export const Route = createFileRoute('/')({
   loader: ({ deps }: { deps: { range: Range } }) =>
     getFleetOverview({ data: { range: deps.range } }),
   loaderDeps: ({ search }) => ({ range: search.range }),
-  validateSearch: (search: Record<string, unknown>) => ({ range: rangeFromSearch(search) }),
+  validateSearch: (search: { range?: unknown } & SearchSchemaInput) => ({
+    range: rangeFromSearch(search),
+  }),
 });
 
 function Fleet() {
