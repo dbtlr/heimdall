@@ -149,18 +149,21 @@ describe('jobLine', () => {
 
 describe('filesLine', () => {
   test('says how many files match when all do', () => {
-    expect(filesLine({ count: 6, issues: [], name: 'units' }, at)).toEqual({
+    expect(filesLine({ checked: true, count: 6, issues: [], name: 'units' }, at)).toEqual({
       issues: [],
       rest: '6 files match.',
       state: 'good',
     });
-    expect(filesLine({ count: 1, issues: [], name: 'units' }, at).rest).toBe('1 file matches.');
+    expect(filesLine({ checked: true, count: 1, issues: [], name: 'units' }, at).rest).toBe(
+      '1 file matches.',
+    );
   });
 
   test('names each file that does not match, since when, and how many others match', () => {
     expect(
       filesLine(
         {
+          checked: true,
           count: 38,
           issues: [{ path: '/home/someone/.gitconfig', since: NOW - 7 * HOUR, state: 'drifted' }],
           name: 'dotfiles',
@@ -168,16 +171,31 @@ describe('filesLine', () => {
         at,
       ),
     ).toEqual({
-      issues: [{ path: '/home/someone/.gitconfig', text: 'changed since 09:00' }],
+      issues: [{ path: '/home/someone/.gitconfig', text: 'drifted since 09:00' }],
       rest: '37 other files match.',
       state: 'warning',
     });
+  });
+
+  test('is unknown, with nothing listed, while the Collector has not checked this version of the record', () => {
+    expect(
+      filesLine(
+        {
+          checked: false,
+          count: 3,
+          issues: [{ path: '/etc/a', since: NOW - HOUR, state: 'drifted' }],
+          name: 'dotfiles',
+        },
+        at,
+      ),
+    ).toEqual({ issues: [], rest: 'Not checked yet.', state: 'unknown' });
   });
 
   test('is unknown when a file only cannot be read', () => {
     expect(
       filesLine(
         {
+          checked: true,
           count: 1,
           issues: [{ path: '/etc/app.xml', since: NOW - 2 * DAY, state: 'unreadable' }],
           name: 'app',

@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 
 import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
+import { filesRecordDigest } from '@heimdall/schema';
 
 import {
   parseDetailInput,
@@ -376,14 +377,14 @@ describe('readSample', () => {
       // Its requests at -2500 and -2490 fall in the sample's 15 seconds.
       requests: 2,
       rssBytes: GIB,
-      session: { branch: 'main', project: 'api' },
+      sessions: [{ branch: 'main', project: 'api' }],
     });
     expect(processes[0]?.cores).toBeCloseTo(2, 5);
     expect(processes[1]).toMatchObject({
       pid: 20,
       project: 'web',
       requests: 0,
-      session: undefined,
+      sessions: [],
     });
   });
 
@@ -404,6 +405,60 @@ describe('readSample', () => {
         sessionId: 's2',
       },
     ]);
+  });
+
+  test('names the Session a process answered requests for in the sample after its last one', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, { cwd: '/srv/work/api', pid: 10, start: -4000, system: 'server-1' });
+    await addSession(h.db.sql, {
+      gitBranch: 'main',
+      id: 's1',
+      lastCwd: '/srv/work/api',
+      requests: [-40, -20],
+      system: 'server-1',
+    });
+
+    const { processes } = await inspect(h, undefined);
+
+    expect(processes[0]).toMatchObject({
+      requests: 1,
+      sessions: [{ branch: 'main', project: 'api' }],
+    });
+  });
+
+  test('names every Session a process ran at the sample', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, { cwd: '/srv/work/api', pid: 10, start: -4000, system: 'server-1' });
+    await addSession(h.db.sql, {
+      gitBranch: 'a',
+      id: 's1',
+      lastCwd: '/srv/work/api',
+      requests: [-3000, -2000],
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      gitBranch: 'b',
+      id: 's2',
+      lastCwd: '/srv/work/api',
+      requests: [-2800, -2200],
+      system: 'server-1',
+    });
+
+    const { processes } = await inspect(h, NOW - 2490_000);
+
+    expect(processes[0]?.sessions.map(({ branch }) => branch).toSorted()).toEqual(['a', 'b']);
+  });
+
+  test('counts the requests of an unlinked stretch that ended within the sample', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addSession(h.db.sql, { id: 's3', requests: [-1210, -1205], system: 'server-1' });
+
+    const { unlinked } = await inspect(h, NOW - 1200_000);
+
+    expect(unlinked).toMatchObject([{ link: 'unmatched', requests: 2, sessionId: 's3' }]);
   });
 
   test('leaves out processes that had ended and Sessions that were idle', async () => {
@@ -541,6 +596,7 @@ describe('readSystemRecords', () => {
     await using h = await startHub();
     await hear(h, 'server-1', {
       checks: {
+        fileRecords: [{ digest: await filesRecordDigest(DOTFILES), record: 'dotfiles' }],
         files: [
           { path: '/home/someone/.zshrc', record: 'dotfiles', since: NOW - HOUR, state: 'drifted' },
           { path: '/elsewhere', record: 'other', since: NOW - HOUR, state: 'missing' },
@@ -553,11 +609,27 @@ describe('readSystemRecords', () => {
 
     expect(recorded.files).toEqual([
       {
+        checked: true,
         count: 3,
         issues: [{ path: '/home/someone/.zshrc', since: NOW - HOUR, state: 'drifted' }],
         name: 'dotfiles',
       },
     ]);
+  });
+
+  test('has not checked a files record the Collector hashed in another version, or not at all', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', {
+      checks: { fileRecords: [{ digest: 'f'.repeat(64), record: 'dotfiles' }], files: [] },
+      records,
+    });
+
+    const stale = (await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW })).recorded;
+    expect(stale.files[0]?.checked).toBe(false);
+
+    await h.db.sql`DELETE FROM check_sets`;
+    const unchecked = (await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW })).recorded;
+    expect(unchecked.files[0]?.checked).toBe(false);
   });
 
   test('reads each application with its version, source, and who recorded it', async () => {
@@ -588,16 +660,15 @@ describe('readSystemRecords', () => {
     });
   });
 
-  test('puts on the Timeline the Conditions of the last 7 days, open first, then newest raised', async () => {
+  test('puts on the Timeline the Conditions of the last 7 days and those still open, newest received first', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await hear(h, 'laptop-1');
     await addCondition(h.db.sql, {
-      clearedAt: -3 * 86_400,
-      kind: 'low_disk',
-      raisedAt: -3 * 86_400 - 600,
-      reason: 'disk',
-      subject: '/',
+      kind: 'drift',
+      raisedAt: -10 * 86_400,
+      reason: 'drifted',
+      subject: '/etc/a',
       system: 'server-1',
     });
     await addCondition(h.db.sql, {
@@ -608,11 +679,13 @@ describe('readSystemRecords', () => {
       subject: 'web',
       system: 'server-1',
     });
+    // Received last, though the Hub's clock had stepped back to stamp it earlier.
     await addCondition(h.db.sql, {
-      kind: 'drift',
-      raisedAt: -10 * 86_400,
-      reason: 'changed',
-      subject: '/etc/a',
+      clearedAt: -3 * 86_400,
+      kind: 'low_disk',
+      raisedAt: -3 * 86_400 - 600,
+      reason: 'disk',
+      subject: '/',
       system: 'server-1',
     });
     await addCondition(h.db.sql, {
@@ -626,28 +699,13 @@ describe('readSystemRecords', () => {
 
     const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
 
-    expect(entries).toEqual([
-      {
-        clearedAt: undefined,
-        kind: 'drift',
-        raisedAt: NOW - 10 * DAY,
-        reason: 'changed',
-        subject: '/etc/a',
-      },
-      {
-        clearedAt: NOW - 600_000,
-        kind: 'service_down',
-        raisedAt: NOW - 900_000,
-        reason: 'down',
-        subject: 'web',
-      },
-      {
-        clearedAt: NOW - 3 * DAY,
-        kind: 'low_disk',
-        raisedAt: NOW - 3 * DAY - 600_000,
-        reason: 'disk',
-        subject: '/',
-      },
-    ]);
+    expect(entries.map(({ kind }) => kind)).toEqual(['low_disk', 'service_down', 'drift']);
+    expect(entries[2]).toEqual({
+      clearedAt: undefined,
+      kind: 'drift',
+      raisedAt: NOW - 10 * DAY,
+      reason: 'drifted',
+      subject: '/etc/a',
+    });
   });
 });

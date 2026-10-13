@@ -586,22 +586,23 @@ const seedConditions = async (sql: SQL, now: number) => {
   const { addCondition } = timeline(now);
   const scenario = scenarioOf(now);
   const secondsFromNow = (ms: number) => (ms - now) / SECOND;
+  const conditions: Parameters<typeof addCondition>[1][] = [];
 
-  await addCondition(sql, {
+  conditions.push({
     kind: 'job_failing',
     raisedAt: secondsFromNow(scenario.borgFinished),
     reason: `${failedRun(scenario.borgStarted)} 2.`,
     subject: 'borg-home',
     system: SYSTEM,
   });
-  await addCondition(sql, {
+  conditions.push({
     kind: 'drift',
     raisedAt: secondsFromNow(scenario.driftSince + 5 * MINUTE),
     reason: 'Changed: its content no longer matches the hash recorded in dotfiles.',
     subject: DRIFTED_DOTFILE,
     system: SYSTEM,
   });
-  await addCondition(sql, {
+  conditions.push({
     clearedAt: -hours(8.5),
     kind: 'service_down',
     raisedAt: -hours(9),
@@ -609,7 +610,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: 'ollama',
     system: SYSTEM,
   });
-  await addCondition(sql, {
+  conditions.push({
     clearedAt: -(4.8 * DAY) / SECOND,
     kind: 'low_disk',
     raisedAt: -(5 * DAY) / SECOND,
@@ -618,7 +619,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: SYSTEM,
   });
   const overdueScheduled = Math.floor((now - 3.2 * DAY) / HOUR) * HOUR;
-  await addCondition(sql, {
+  conditions.push({
     clearedAt: secondsFromNow(overdueScheduled + HOUR + 20 * MINUTE),
     kind: 'job_overdue',
     raisedAt: secondsFromNow(overdueScheduled + HOUR),
@@ -627,7 +628,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: SYSTEM,
   });
   const staleRaised = now - 2.4 * DAY;
-  await addCondition(sql, {
+  conditions.push({
     clearedAt: secondsFromNow(staleRaised + 25 * MINUTE),
     kind: 'system_stale',
     raisedAt: secondsFromNow(staleRaised),
@@ -635,34 +636,39 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: SYSTEM,
   });
 
-  await addCondition(sql, {
+  conditions.push({
     kind: 'job_failing',
     raisedAt: secondsFromNow(scenario.nightlyFinished),
     reason: `${failedRun(scenario.nightlyStarted)} 1.`,
     subject: 'nightly-backup',
     system: 'server-1',
   });
-  await addCondition(sql, {
+  conditions.push({
     kind: 'drift',
     raisedAt: secondsFromNow(scenario.driftSince + 5 * MINUTE),
     reason: 'Changed: its content no longer matches the hash recorded in app-config.',
     subject: '/etc/app/config.toml',
     system: 'server-1',
   });
-  await addCondition(sql, {
+  conditions.push({
     kind: 'service_down',
     raisedAt: -hours(1.9),
     reason: 'Stopped: status exited, exit code 137.',
     subject: 'dev-db',
     system: 'server-1',
   });
-  await addCondition(sql, {
+  conditions.push({
     kind: 'low_disk',
     raisedAt: -hours(5),
     reason: '/ is 94% full',
     subject: '/',
     system: 'gateway-1',
   });
+  // Oldest raised first, the order a Hub receives them, which orders the Timeline.
+  for (const condition of conditions.toSorted((a, b) => a.raisedAt - b.raisedAt)) {
+    // oxlint-disable-next-line no-await-in-loop -- a handful of rows, in order.
+    await addCondition(sql, condition);
+  }
 };
 
 // Every table the seed writes. Truncating `systems` cascades to the rest.

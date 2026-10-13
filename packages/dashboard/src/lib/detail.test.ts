@@ -114,7 +114,7 @@ describe('the inspector', () => {
     project: 'heimdall',
     requests: 6,
     rssBytes: 9.8 * GIB,
-    session: { branch: 'hmd-78-mocks', project: 'heimdall' },
+    sessions: [{ branch: 'hmd-78-mocks', project: 'heimdall' }],
   };
 
   test('describes a process, its Session, and the requests it answered', () => {
@@ -131,9 +131,22 @@ describe('the inspector', () => {
         cores: undefined,
         requests: 0,
         rssBytes: undefined,
-        session: undefined,
+        sessions: [],
       }),
     ).toEqual({ detail: 'In heimdall, no Session linked.', title: 'Claude Code pid 48211' });
+  });
+
+  test('names every Session a process ran', () => {
+    expect(
+      sampleProcessLine({
+        ...process,
+        requests: 0,
+        sessions: [
+          { branch: 'a', project: 'heimdall' },
+          { branch: 'b', project: 'heimdall' },
+        ],
+      }).detail,
+    ).toBe('heimdall on a and heimdall on b, linked.');
   });
 
   test('describes a Session no single process is linked to', () => {
@@ -152,8 +165,11 @@ describe('the inspector', () => {
         'dotfiles on main, ambiguous: 2 processes share its directory. 1 request answered in this sample.',
       title: 'Claude Code Session',
     });
-    expect(unlinkedLine({ ...session, link: 'unmatched', requests: 0 }).detail).toBe(
+    expect(unlinkedLine({ ...session, candidates: 0, link: 'unmatched', requests: 0 }).detail).toBe(
       'dotfiles on main, unmatched: no process ran in its directory.',
+    );
+    expect(unlinkedLine({ ...session, candidates: 1, link: 'unmatched', requests: 0 }).detail).toBe(
+      'dotfiles on main, unmatched: one process may have run it, but the link is unconfirmed.',
     );
   });
 });

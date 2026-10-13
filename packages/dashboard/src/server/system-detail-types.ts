@@ -70,8 +70,8 @@ export type SystemDetail = {
   to: number;
 };
 
-// A Harness process running at the inspected sample, with the Session it ran
-// then, when the Hub links one, and the requests it answered in the sample.
+// A Harness process running at the inspected sample, with the Sessions the Hub
+// links to it then, and the requests it answered in the sample.
 export type SampleProcess = {
   // CPU cores the process tree kept busy since its reading before.
   cores: number | undefined;
@@ -81,7 +81,7 @@ export type SampleProcess = {
   project: string | undefined;
   requests: number;
   rssBytes: number | undefined;
-  session: { branch: string | undefined; project: string | undefined } | undefined;
+  sessions: { branch: string | undefined; project: string | undefined }[];
 };
 
 // A Session working at the sample that the Hub could not link to one process.
@@ -144,7 +144,14 @@ export type RecordedJob = {
 // A recorded file the Collector found not matching its record.
 export type FileIssue = { path: string; since: number; state: string };
 
-export type RecordedFiles = { count: number; issues: FileIssue[]; name: string };
+export type RecordedFiles = {
+  // Whether the latest checks judged the version of the record the Hub
+  // mirrors; until they do, its files are neither matching nor Drift.
+  checked: boolean;
+  count: number;
+  issues: FileIssue[];
+  name: string;
+};
 
 export type RecordedApplication = {
   name: string;

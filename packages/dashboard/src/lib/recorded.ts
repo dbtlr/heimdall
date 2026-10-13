@@ -131,7 +131,7 @@ export const jobLine = (
 };
 
 const ISSUE_WORDS: Record<string, string> = {
-  drifted: 'changed',
+  drifted: 'drifted',
   missing: 'missing',
   unreadable: 'cannot be read',
 };
@@ -140,12 +140,15 @@ const files = (count: number) =>
   count === 1 ? '1 file matches.' : `${String(count)} files match.`;
 
 // A files record's state: each file that does not match, since when, and how
-// many others match. A warning when a file changed or went missing, unknown
-// when files only cannot be read.
+// many others match. A warning for Drift, unknown when files only cannot be
+// read or the Collector has not checked this version of the record.
 export const filesLine = (
   record: RecordedFiles,
   { now, timeZone }: At,
 ): { issues: { path: string; text: string }[]; rest: string; state: RecordState } => {
+  if (!record.checked) {
+    return { issues: [], rest: 'Not checked yet.', state: 'unknown' };
+  }
   const others = record.count - record.issues.length;
   let rest = '';
   if (record.issues.length === 0) {

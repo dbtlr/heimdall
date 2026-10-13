@@ -78,8 +78,8 @@ const answered = (requests: number) =>
     ? ''
     : ` ${String(requests)} ${requests === 1 ? 'request' : 'requests'} answered in this sample.`;
 
-// A Harness process in the inspector: what it is and used, then the Session it
-// ran and the requests it answered.
+// A Harness process in the inspector: what it is and used, then the Sessions
+// it ran and the requests it answered.
 export const sampleProcessLine = (process: SampleProcess): { detail: string; title: string } => {
   const title = [
     `${harnessName(process.harness)} pid ${String(process.pid)}`,
@@ -87,8 +87,8 @@ export const sampleProcessLine = (process: SampleProcess): { detail: string; tit
     ...(process.rssBytes === undefined ? [] : [`${formatGiB(process.rssBytes)} GiB`]),
   ].join(', ');
   let where = 'No Session linked.';
-  if (process.session !== undefined) {
-    where = `${place(process.session)}, linked.`;
+  if (process.sessions.length > 0) {
+    where = `${joinAnd(process.sessions.map(place))}, linked.`;
   } else if (process.project !== undefined) {
     where = `In ${process.project}, no Session linked.`;
   }
@@ -97,10 +97,12 @@ export const sampleProcessLine = (process: SampleProcess): { detail: string; tit
 
 // A Session in the inspector that no single process is linked to, and why.
 export const unlinkedLine = (session: UnlinkedSession): { detail: string; title: string } => {
-  const why =
-    session.link === 'ambiguous'
-      ? `ambiguous: ${String(session.candidates)} processes share its directory.`
-      : 'unmatched: no process ran in its directory.';
+  let why = 'unmatched: no process ran in its directory.';
+  if (session.link === 'ambiguous') {
+    why = `ambiguous: ${String(session.candidates)} processes share its directory.`;
+  } else if (session.candidates > 0) {
+    why = 'unmatched: one process may have run it, but the link is unconfirmed.';
+  }
   return {
     detail: `${place(session)}, ${why}${answered(session.requests)}`,
     title: `${harnessName(session.harness)} Session`,

@@ -1,3 +1,4 @@
+import { filesRecordDigest } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { isRange, RANGES } from './fleet-overview-types.ts';
@@ -328,6 +329,7 @@ export const readSystemDetail = async (
 
 type SampleRow = {
   cpu_busy_percent: number;
+  since: Date;
   load_1: number;
   memory_total_bytes: number;
   memory_used_bytes: number;
@@ -345,6 +347,7 @@ type SampleProcessRow = {
 
 type SampleSessionRow = {
   first_cwd: string | null;
+  session_id: string;
   first_git_branch: string | null;
   last_cwd: string | null;
   last_git_branch: string | null;
@@ -390,19 +393,22 @@ export const readSample = async (
   if (t === undefined) {
     return undefined;
   }
-  const [samples, buckets, processes, sessions, unlinked, requests]: [
-    SampleRow[],
+  // `since` is the sample before: the sample covers the time after it.
+  const [sample]: SampleRow[] = await sql`
+    SELECT t, since, cpu_busy_percent, memory_total_bytes::float8 AS memory_total_bytes,
+           memory_used_bytes::float8 AS memory_used_bytes, load_1
+    FROM insight.vitals WHERE system = ${name} AND t = ${t}
+  `;
+  if (sample === undefined) {
+    return undefined;
+  }
+  const [buckets, processes, sessions, unlinked, requests]: [
     BucketRow[],
     SampleProcessRow[],
     SampleSessionRow[],
     UnlinkedRow[],
     RequestCountRow[],
   ] = await Promise.all([
-    sql`
-      SELECT t, cpu_busy_percent, memory_total_bytes::float8 AS memory_total_bytes,
-             memory_used_bytes::float8 AS memory_used_bytes, load_1
-      FROM vitals_samples WHERE system = ${name} AND t = ${t}
-    `,
     sql`
       SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
       FROM vitals_rollups
@@ -416,14 +422,24 @@ export const readSample = async (
       WHERE system = ${name} AND t = ${t}
       ORDER BY pid, process_id
     `,
+    // A process's Sessions: those whose stretch holds the sample, and those it
+    // answered requests for in the sample, which takes in the sample after a
+    // stretch's last request.
     sql`
-      SELECT v.process_id::float8 AS process_id, s.first_cwd, s.last_cwd,
+      SELECT x.process_id::float8 AS process_id, x.session_id, s.first_cwd, s.last_cwd,
              s.first_git_branch, s.last_git_branch
-      FROM insight.vitals_sessions v
+      FROM (
+        SELECT process_id, harness, system, source, session_id
+        FROM insight.vitals_sessions WHERE system = ${name} AND t = ${t}
+        UNION
+        SELECT process_id, harness, system, source, session_id
+        FROM insight.vitals_requests
+        WHERE system = ${name} AND t = ${t} AND process_id IS NOT NULL
+      ) x
       JOIN insight.sessions s
         ON (s.harness, s.system, s.source, s.session_id)
-         = (v.harness, v.system, v.source, v.session_id)
-      WHERE v.system = ${name} AND v.t = ${t}
+         = (x.harness, x.system, x.source, x.session_id)
+      ORDER BY x.process_id, s.started_at, x.session_id
     `,
     sql`
       SELECT st.harness, st.session_id, st.link, st.candidates::int AS candidates,
@@ -434,7 +450,7 @@ export const readSample = async (
          = (st.harness, st.system, st.source, st.session_id)
       WHERE st.system = ${name}
         AND st.started_at BETWEEN ${new Date(t.getTime() - DAY_MS)} AND ${t}
-        AND st.ended_at >= ${t}
+        AND st.ended_at > ${sample.since}
         AND st.link <> 'linked'
       ORDER BY st.started_at
     `,
@@ -445,12 +461,9 @@ export const readSample = async (
       GROUP BY process_id, session_id
     `,
   ]);
-  const sample = samples[0];
-  if (sample === undefined) {
-    return undefined;
-  }
   const bucket = buckets[0];
-  const sessionOf = new Map(sessions.map((row) => [row.process_id, sessionPlace(row)]));
+  const sessionsOf = (processId: number) =>
+    sessions.filter((row) => row.process_id === processId).map(sessionPlace);
   const answeredBy = (match: (row: RequestCountRow) => boolean) =>
     requests.filter(match).reduce((total, row) => total + row.requests, 0);
   return {
@@ -470,7 +483,7 @@ export const readSample = async (
       project: projectOf(row.cwd),
       requests: answeredBy((request) => request.process_id === row.process_id),
       rssBytes: row.rss_bytes ?? undefined,
-      session: sessionOf.get(row.process_id),
+      sessions: sessionsOf(row.process_id),
     })),
     t: t.getTime(),
     unlinked: unlinked.map((row): UnlinkedSession => {
@@ -497,6 +510,7 @@ export const readSample = async (
 type RecordRow = { kind: string; name: string; record: Record<string, unknown> };
 
 type ChecksRow = {
+  file_records: { digest: string; record: string }[] | null;
   files: { path: string; record: string; since: number; state: string }[] | null;
   services: (ServiceCheck & { service: string })[] | null;
 };
@@ -527,6 +541,16 @@ const scheduleOf = (schedule: unknown): ScheduleEntry[] =>
       })
     : [];
 
+// A files record's files, each with its path and hash.
+const filesOf = (files: unknown): { path: string; sha256: string }[] =>
+  Array.isArray(files)
+    ? files.flatMap((entry: unknown) => {
+        const path = field(entry, 'path');
+        const sha256 = field(entry, 'sha256');
+        return typeof path === 'string' && typeof sha256 === 'string' ? [{ path, sha256 }] : [];
+      })
+    : [];
+
 const toRun = (run: RunRow['latest_run']): JobRun => ({
   exitStatus: run.exitStatus,
   finished: Date.parse(run.finished),
@@ -543,7 +567,7 @@ const isJobCondition = (kind: string): kind is RecordedJob['open'][number] =>
 
 // What System `name`'s provisioner recorded, with the latest checks and runs,
 // and its Timeline: every Condition of the last 7 days before `now` and every
-// one still open, open first, then newest raised. Read-only.
+// one still open, newest received first. Read-only.
 export const readSystemRecords = async (
   sql: SQL,
   { name, now }: { name: string; now: number },
@@ -551,19 +575,42 @@ export const readSystemRecords = async (
   const [records, checks, runs, conditions]: [RecordRow[], ChecksRow[], RunRow[], ConditionRow[]] =
     await Promise.all([
       sql`SELECT kind, name, record FROM mirrored_records WHERE system = ${name} ORDER BY kind, name`,
-      sql`SELECT services, files FROM check_sets WHERE system = ${name}`,
+      sql`SELECT services, files, file_records FROM check_sets WHERE system = ${name}`,
       sql`SELECT job, latest_run FROM mirrored_runs WHERE system = ${name}`,
       sql`
       SELECT system, kind, subject, raised_at, cleared_at, latest_reason
       FROM conditions
       WHERE system = ${name}
         AND (cleared_at IS NULL OR cleared_at >= ${new Date(now - TIMELINE_MS)})
-      ORDER BY cleared_at IS NULL DESC, raised_at DESC, id DESC
+      -- Newest received first (ADR-0005), so a step back in the Hub's clock
+      -- cannot reorder the Timeline.
+      ORDER BY id DESC
     `,
     ]);
   const of = (kind: string) => records.filter((row) => row.kind === kind);
   const serviceChecks = checks[0]?.services ?? [];
   const fileChecks = checks[0]?.files ?? [];
+  // As in the Hub's Drift rule: the checks speak for a files record only when
+  // their files part names it with the digest of the record the Hub mirrors.
+  const judged = new Map((checks[0]?.file_records ?? []).map((row) => [row.record, row.digest]));
+  const files = await Promise.all(
+    of('files').map(async ({ name: record, record: body }): Promise<RecordedFiles> => {
+      const listed = filesOf(body.files);
+      const checked =
+        checks[0]?.files != null &&
+        judged.get(record) === (await filesRecordDigest({ files: listed }));
+      return {
+        checked,
+        count: listed.length,
+        issues: checked
+          ? fileChecks
+              .filter((check) => check.record === record)
+              .map(({ path, since, state }): FileIssue => ({ path, since, state }))
+          : [],
+        name: record,
+      };
+    }),
+  );
   const runOf = new Map(runs.map((row) => [row.job, toRun(row.latest_run)]));
   const openJobConditions = conditions.filter(
     (row) => row.cleared_at === null && isJobCondition(row.kind),
@@ -589,13 +636,7 @@ export const readSystemRecords = async (
           version: text(record.version) ?? '',
         };
       }),
-      files: of('files').map(({ name: files, record }): RecordedFiles => ({
-        count: Array.isArray(record.files) ? record.files.length : 0,
-        issues: fileChecks
-          .filter((check) => check.record === files)
-          .map(({ path, since, state }): FileIssue => ({ path, since, state })),
-        name: files,
-      })),
+      files,
       jobs: of('job').map(({ name: job, record }): RecordedJob => ({
         latestRun: runOf.get(job),
         name: job,
