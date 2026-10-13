@@ -8,8 +8,14 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { compareCodeUnits } from './compare.ts';
-import { pairedSystems } from './tokens.ts';
+// Orders text by UTF-16 code unit, the same in every locale, as the Hub orders
+// the records it mirrors.
+const compareCodeUnits = (a: string, b: string): number => {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+};
 
 type SetRow = {
   // `since` is in epoch milliseconds, as the Hub stores it.
@@ -188,7 +194,8 @@ export const readRecords = (
     `;
     const recordsBySystem = Map.groupBy(rows, (row) => row.system);
     const runsBySystem = Map.groupBy(runRows, (row) => row.system);
-    const paired = await pairedSystems(tx);
+    const pairedRows: { system: string }[] = await tx`SELECT system FROM paired_systems`;
+    const paired = new Set(pairedRows.map((row) => row.system));
     return sets
       .filter((row) => includeUnpaired || paired.has(row.name))
       .map((row) =>
@@ -199,3 +206,33 @@ export const readRecords = (
         }),
       );
   });
+
+const REFUSED_UNPAIRED = 'The only value for unpaired is include: ?unpaired=include.';
+
+const UNAVAILABLE = 'The dashboard cannot answer right now; try again later.';
+
+const plain = (status: number, body: string) =>
+  new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' }, status });
+
+// `GET /api/v1/records`: the records read as JSON. `?unpaired=include`, given
+// any number of times, adds the Systems that were unpaired; any other value is
+// a 400. A database that cannot be opened or read is a 503; the server's log
+// line for a 5xx answer is what reports it.
+export const recordsAnswer = async ({
+  database,
+  url,
+}: {
+  database: () => Promise<SQL>;
+  url: URL;
+}): Promise<Response> => {
+  const unpaired = url.searchParams.getAll('unpaired');
+  if (unpaired.some((value) => value !== 'include')) {
+    return plain(400, REFUSED_UNPAIRED);
+  }
+  try {
+    const systems = await readRecords(await database(), { includeUnpaired: unpaired.length > 0 });
+    return Response.json({ systems });
+  } catch {
+    return plain(503, UNAVAILABLE);
+  }
+};

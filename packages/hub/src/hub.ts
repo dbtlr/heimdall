@@ -17,7 +17,6 @@ import { failureCap } from './failure-cap.ts';
 import type { CapSlot } from './failure-cap.ts';
 import { renderPage } from './page.ts';
 import { readCode, redeemCode } from './pairing.ts';
-import { readRecords } from './records.ts';
 import { listSystems, recordRejection, seeSystem, storeReport } from './store.ts';
 import { systemForToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
@@ -337,15 +336,6 @@ const route = async (
   }
   if (pathname === '/api/health' && request.method === 'GET') {
     return health(deps);
-  }
-  if (pathname === '/api/v1/records' && request.method === 'GET') {
-    const unpaired = searchParams.getAll('unpaired');
-    if (unpaired.some((value) => value !== 'include')) {
-      return answer(400, 'The only value for unpaired is include: ?unpaired=include.');
-    }
-    return Response.json({
-      systems: await readRecords(deps.sql, { includeUnpaired: unpaired.length > 0 }),
-    });
   }
   if (pathname === '/' && request.method === 'GET') {
     const html = renderPage({

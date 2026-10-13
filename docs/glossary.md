@@ -45,7 +45,7 @@ The process that runs on each System, observes it, holds its records, and sends 
 _Avoid_: agent (reserved for the AI driving a Harness), exporter, daemon
 
 **Hub**:
-The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, and derives Session insight from transcripts. Until the dashboard shows everything, the Hub also serves its own page and the records read.
+The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, and derives Session insight from transcripts. Until the dashboard shows everything, the Hub also serves its own page.
 _Avoid_: server, backend
 
 **dashboard**:

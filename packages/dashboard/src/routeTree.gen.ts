@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
+import { Route as ApiV1RecordsRouteImport } from './routes/api.v1.records'
 import { Route as SystemsNameSessionsHarnessSourceSessionIdRouteImport } from './routes/systems.$name_.sessions.$harness.$source.$sessionId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +30,11 @@ const SystemsNameRoute = SystemsNameRouteImport.update({
   path: '/systems/$name',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1RecordsRoute = ApiV1RecordsRouteImport.update({
+  id: '/api/v1/records',
+  path: '/api/v1/records',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SystemsNameSessionsHarnessSourceSessionIdRoute =
   SystemsNameSessionsHarnessSourceSessionIdRouteImport.update({
     id: '/systems/$name_/sessions/$harness/$source/$sessionId',
@@ -40,12 +46,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/api/v1/records': typeof ApiV1RecordsRoute
   '/systems/$name/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/api/v1/records': typeof ApiV1RecordsRoute
   '/systems/$name/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRoutesById {
@@ -53,6 +61,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/api/v1/records': typeof ApiV1RecordsRoute
   '/systems/$name_/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRouteTypes {
@@ -61,18 +70,21 @@ export interface FileRouteTypes {
     | '/'
     | '/api/health'
     | '/systems/$name'
+    | '/api/v1/records'
     | '/systems/$name/sessions/$harness/$source/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/api/health'
     | '/systems/$name'
+    | '/api/v1/records'
     | '/systems/$name/sessions/$harness/$source/$sessionId'
   id:
     | '__root__'
     | '/'
     | '/api/health'
     | '/systems/$name'
+    | '/api/v1/records'
     | '/systems/$name_/sessions/$harness/$source/$sessionId'
   fileRoutesById: FileRoutesById
 }
@@ -80,6 +92,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiHealthRoute: typeof ApiHealthRoute
   SystemsNameRoute: typeof SystemsNameRoute
+  ApiV1RecordsRoute: typeof ApiV1RecordsRoute
   SystemsNameSessionsHarnessSourceSessionIdRoute: typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 
@@ -106,6 +119,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SystemsNameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/records': {
+      id: '/api/v1/records'
+      path: '/api/v1/records'
+      fullPath: '/api/v1/records'
+      preLoaderRoute: typeof ApiV1RecordsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/systems/$name_/sessions/$harness/$source/$sessionId': {
       id: '/systems/$name_/sessions/$harness/$source/$sessionId'
       path: '/systems/$name/sessions/$harness/$source/$sessionId'
@@ -120,6 +140,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiHealthRoute: ApiHealthRoute,
   SystemsNameRoute: SystemsNameRoute,
+  ApiV1RecordsRoute: ApiV1RecordsRoute,
   SystemsNameSessionsHarnessSourceSessionIdRoute:
     SystemsNameSessionsHarnessSourceSessionIdRoute,
 }

@@ -75,6 +75,29 @@ test('a body over the size cap is rejected as invalid', async () => {
   expect(response.status).toBe(422);
 });
 
+test('a Report just over the old 4 MiB cap is accepted', async () => {
+  await using h = await startHub();
+  const filler = 'x'.repeat(256);
+  const records = {
+    records: Array.from({ length: 12_000 }, (_, i) => {
+      const name = `svc-${String(i)}`;
+      return {
+        kind: 'service',
+        name,
+        record: { name, supervisor: 'systemd', unit: `${filler}${String(i)}.service` },
+      };
+    }),
+    unreadable: [],
+  };
+  const body = JSON.stringify({ ...report('laptop-1', [NOW]), records });
+  expect(body.length).toBeGreaterThan(4 * 1024 * 1024);
+  expect(body.length).toBeLessThan(MAX_REPORT_BYTES);
+
+  const response = await push(h.hub, body, { token: 'laptop-token' });
+
+  expect(response.status).toBe(200);
+});
+
 test('the largest Report the schema allows fits under the size cap', async () => {
   await using h = await startHub();
   const times = Array.from({ length: MAX_SAMPLES_PER_REPORT }, (_, i) => NOW + i * 15_000);

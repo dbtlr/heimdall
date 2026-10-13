@@ -1,6 +1,18 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { MAX_REPORT_BYTES, RecordsReadSchema } from '@heimdall/schema';
+import {
+  issue,
+  NOW,
+  push,
+  redeem,
+  report,
+  startHub,
+  storeReport,
+  storeToken,
+  unpair,
+} from '@heimdall/hub/testing';
+import type { Hub } from '@heimdall/hub/testing';
+import { RecordsReadSchema } from '@heimdall/schema';
 import type {
   JobRecord,
   JobRuns,
@@ -9,14 +21,13 @@ import type {
   ServiceRecord,
 } from '@heimdall/schema';
 
-import { migrate, MIGRATIONS } from './migrations.ts';
-import { listSystems, storeReport } from './store.ts';
-import { NOW, push, report, startHub } from './testing/hub.ts';
-import type { Hub } from './testing/hub.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { recordsAnswer } from './records.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
-beforeAll(startTestServer, 60_000);
+beforeAll(async () => {
+  const h = await startHub();
+  await h.db[Symbol.asyncDispose]();
+}, 60_000);
 
 const YEAR = 365 * 24 * 60 * 60 * 1000;
 
@@ -107,9 +118,16 @@ const send = async (
   expect(response.status).toBe(200);
 };
 
-// `GET /api/v1/records`, checked against the published schema.
+// `GET /api/v1/records` over the test Hub's database.
+const ask = (h: Hub, query = '') =>
+  recordsAnswer({
+    database: () => Promise.resolve(h.db.sql),
+    url: new URL(`http://dashboard.test/api/v1/records${query}`),
+  });
+
+// The answer of `GET /api/v1/records`, checked against the published schema.
 const read = async (h: Hub, query = '') => {
-  const response = await h.hub.fetch(new Request(`http://hub.test/api/v1/records${query}`));
+  const response = await ask(h, query);
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('application/json');
   return RecordsReadSchema.parse(await response.json()).systems;
@@ -902,7 +920,9 @@ describe('reading the records', () => {
     );
 
     expect((await read(h, '?unpaired=include')).map((entry) => entry.system)).toEqual(
-      (await listSystems(h.db.sql)).map((system) => system.name),
+      (await h.db.sql`SELECT name FROM systems ORDER BY name`).map(
+        (system: { name: string }) => system.name,
+      ),
     );
   });
 
@@ -912,139 +932,107 @@ describe('reading the records', () => {
     expect(await read(h)).toEqual([]);
   });
 
-  test('is open without a token, and answers no other method', async () => {
-    await using h = await startHub();
+  test('answers 503 when the database cannot be opened', async () => {
+    const response = await recordsAnswer({
+      database: () => Promise.reject(new Error('No database URL')),
+      url: new URL('http://dashboard.test/api/v1/records'),
+    });
 
-    const post = await h.hub.fetch(
-      new Request('http://hub.test/api/v1/records', { body: '{}', method: 'POST' }),
-    );
-
-    expect(post.status).toBe(404);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    expect(await response.text()).toBe('The dashboard cannot answer right now; try again later.');
   });
 
   test('answers 503 when the database cannot answer', async () => {
     const h = await startHub();
     await h.db.sql.close();
 
-    const response = await h.hub.fetch(new Request('http://hub.test/api/v1/records'));
+    const response = await ask(h);
 
     expect(response.status).toBe(503);
-    expect(h.errors).toHaveLength(1);
     await h.db[Symbol.asyncDispose]().catch(() => undefined);
   });
 });
 
-test('a Report just over the old 4 MiB cap is accepted', async () => {
-  await using h = await startHub();
-  const filler = 'x'.repeat(256);
-  const records = set(
-    Array.from({ length: 12_000 }, (_, i) =>
-      service({ ...WEBAPP, name: `svc-${String(i)}`, unit: `${filler}${String(i)}` }),
-    ),
-  );
-  const body = JSON.stringify({ ...report('laptop-1', [NOW]), records });
-  expect(body.length).toBeGreaterThan(4 * 1024 * 1024);
-  expect(body.length).toBeLessThan(MAX_REPORT_BYTES);
+// Both paired Systems report; then `laptop-1` is unpaired.
+const unpairedLaptop = async (h: Hub) => {
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
+  await unpair(h.db.sql, 'laptop-1');
+};
 
-  const response = await push(h.hub, body, { token: 'laptop-token' });
+describe('the paired and unpaired Systems', () => {
+  test('the records read leaves unpaired Systems out, marks the rest paired, and includes them on request', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
 
-  expect(response.status).toBe(200);
-});
+    const normal = await read(h);
+    expect(normal.map((s) => [s.system, s.paired])).toEqual([['server-1', true]]);
 
-test('migration 7 applies on top of version 6 and keeps what was there', async () => {
-  await using db = await testDatabase();
-  await migrate(
-    db.sql,
-    MIGRATIONS.filter((m) => m.version <= 6),
-  );
-  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+    const included = await read(h, '?unpaired=include');
+    expect(included.map((s) => [s.system, s.paired])).toEqual([
+      ['laptop-1', false],
+      ['server-1', true],
+    ]);
+  });
 
-  expect(
-    await migrate(
-      db.sql,
-      MIGRATIONS.filter((m) => m.version <= 7),
-    ),
-  ).toEqual([7]);
+  test('an unpaired System paired again is back in the default read', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
 
-  const rows = await db.sql`SELECT name FROM systems`;
-  expect(rows).toHaveLength(1);
-});
+    await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'new-token' });
 
-test('migration 8 applies on top of version 7 and leaves a System with no time zone or runs', async () => {
-  await using db = await testDatabase();
-  await migrate(
-    db.sql,
-    MIGRATIONS.filter((m) => m.version <= 7),
-  );
-  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+    expect((await read(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
+  });
 
-  expect(
-    await migrate(
-      db.sql,
-      MIGRATIONS.filter((m) => m.version <= 8),
-    ),
-  ).toEqual([8]);
+  test('a System unpaired and given a new code stays hidden until the code is redeemed', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
 
-  const rows = await db.sql`
-    SELECT s.name, s.time_zone, r.system AS runs_system
-    FROM systems s LEFT JOIN run_sets r ON r.system = s.name
-  `;
-  expect(rows).toEqual([{ name: 'laptop-1', runs_system: null, time_zone: null }]);
-});
+    const code = await issue(h, 'laptop-1');
 
-test('migration 11 applies on top of the earlier versions and leaves a System with no checks', async () => {
-  await using db = await testDatabase();
-  await migrate(
-    db.sql,
-    MIGRATIONS.filter((m) => m.version < 11),
-  );
-  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+    expect((await read(h)).map((s) => s.system)).toEqual(['server-1']);
 
-  expect(
-    await migrate(
-      db.sql,
-      MIGRATIONS.filter((m) => m.version <= 11),
-    ),
-  ).toEqual([11]);
+    expect((await redeem(h.hub, { code })).status).toBe(200);
 
-  const rows = await db.sql`
-    SELECT s.name, c.system AS checks_system
-    FROM systems s LEFT JOIN check_sets c ON c.system = s.name
-  `;
-  expect(rows).toEqual([{ checks_system: null, name: 'laptop-1' }]);
-});
+    expect((await read(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
+  });
 
-test('migration 12 keeps the size of checks that were over budget as that of the files part, has no services, and lets the files be null', async () => {
-  await using db = await testDatabase();
-  await migrate(
-    db.sql,
-    MIGRATIONS.filter((m) => m.version <= 11),
-  );
-  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
-  await db.sql`
-    INSERT INTO check_sets (system, sent_at, received_at, over_budget_bytes, files)
-    VALUES ('laptop-1', now(), now(), 2000000, '[{"path":"/a"}]')
-  `;
+  test("the default read lists exactly the paired entries of the Hub's Systems", async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
 
-  expect(
-    await migrate(
-      db.sql,
-      MIGRATIONS.filter((m) => m.version <= 12),
-    ),
-  ).toEqual([12]);
-  await db.sql`UPDATE check_sets SET file_records = NULL`;
+    const paired: { system: string }[] = await h.db.sql`SELECT system FROM paired_systems`;
 
-  const rows = await db.sql`
-    SELECT files, file_records, files_over_budget_bytes, services, services_over_budget_bytes
-    FROM check_sets
-  `;
-  expect(rows).toEqual([
-    {
-      file_records: null,
-      files: [{ path: '/a' }],
-      files_over_budget_bytes: '2000000',
-      services: null,
-      services_over_budget_bytes: null,
-    },
-  ]);
+    expect((await read(h)).map((s) => s.system)).toEqual(
+      paired.map((row) => row.system).toSorted(),
+    );
+  });
+
+  test.each([
+    ['an unknown value', '?unpaired=yes'],
+    ['a different case', '?unpaired=INCLUDE'],
+    ['an empty value', '?unpaired='],
+    ['no value', '?unpaired'],
+    ['a repeated value that is not include', '?unpaired=include&unpaired=yes'],
+  ])('a records read with %s for unpaired is refused', async (_name, query) => {
+    await using h = await startHub();
+
+    const response = await ask(h, query);
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    expect(await response.text()).toBe(
+      'The only value for unpaired is include: ?unpaired=include.',
+    );
+  });
+
+  test('a records read that repeats include still includes unpaired Systems', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+
+    const included = await read(h, '?unpaired=include&unpaired=include');
+
+    expect(included.map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
+  });
 });
