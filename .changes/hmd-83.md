@@ -1,5 +1,0 @@
-### Added
-
-- **The dashboard ships in each release and runs as its own Service** (HMD-83). `heimdall-dashboard` installs through `install-dashboard.sh` like the Collector and the Hub, and `heimdall-dashboard service install` runs it as a user Service on the Hub's System. It reads the Hub's database URL from `hub.toml`, takes its `host` and `port` from `~/.config/heimdall/dashboard.toml` (port 3000 by default), and answers `GET /api/health` in the Hub's shape. [Running Heimdall with Fleet](docs/fleet.md) shows how a provisioner declares it.
-- **Fleet overview** (HMD-81). The dashboard's front page shows every System as a lane on one time axis over 6 h, 12 h, 24 h, or 7 d: CPU low and high, agent Sessions by Harness and how they were linked, Conditions raised and cleared, gaps while a System was silent, each System's status in words, and the Conditions open now.
-- **System detail** (HMD-82). Each System's page stacks its Vitals, its Harness processes, and its Sessions on one axis, inspects any single sample, and lists what its provisioner recorded beside its 7-day Timeline.
