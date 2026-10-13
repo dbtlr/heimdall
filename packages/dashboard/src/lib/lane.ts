@@ -17,26 +17,26 @@ const BUCKET_MS = 5 * 60_000;
 // or nulls where the line must break.
 export type CpuPoint = { average: number | null; band: [number, number] | null; t: number };
 
-// The CPU plot's points, one per bucket at its middle. A bucket with no
-// neighbor after it, where the next one is more than 5 minutes on, gets a null
-// point after it, so the line and band do not bridge a gap. A bucket with no
-// neighbor on either side spans its 5 minutes instead, since a lone point
-// draws nothing.
-export const cpuSeries = (buckets: readonly CpuBucket[]): CpuPoint[] =>
+// The CPU plot's points, one per bucket at its middle; buckets are 5 minutes
+// unless `bucketMs` says otherwise. A bucket with no neighbor after it, where
+// the next one is more than a bucket on, gets a null point after it, so the
+// line and band do not bridge a gap. A bucket with no neighbor on either side
+// spans its bucket instead, since a lone point draws nothing.
+export const cpuSeries = (buckets: readonly CpuBucket[], bucketMs = BUCKET_MS): CpuPoint[] =>
   buckets.flatMap((bucket, index): CpuPoint[] => {
     const values = { average: bucket.average, band: [bucket.low, bucket.high] as [number, number] };
     const previous = buckets[index - 1];
     const next = buckets[index + 1];
-    const joinsPrevious = previous !== undefined && bucket.t - previous.t <= BUCKET_MS;
-    const joinsNext = next !== undefined && next.t - bucket.t <= BUCKET_MS;
+    const joinsPrevious = previous !== undefined && bucket.t - previous.t <= bucketMs;
+    const joinsNext = next !== undefined && next.t - bucket.t <= bucketMs;
     const points: CpuPoint[] =
       joinsPrevious || joinsNext
-        ? [{ ...values, t: bucket.t + BUCKET_MS / 2 }]
+        ? [{ ...values, t: bucket.t + bucketMs / 2 }]
         : [
             { ...values, t: bucket.t },
-            { ...values, t: bucket.t + BUCKET_MS },
+            { ...values, t: bucket.t + bucketMs },
           ];
-    return joinsNext ? points : [...points, { average: null, band: null, t: bucket.t + BUCKET_MS }];
+    return joinsNext ? points : [...points, { average: null, band: null, t: bucket.t + bucketMs }];
   });
 
 // A gap's label needs about this much of the window to fit.

@@ -16,6 +16,7 @@ import { SampleInspector } from '../components/sample-inspector.tsx';
 import { SessionRows } from '../components/session-rows.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
+import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, headerLine } from '../lib/detail.ts';
 import { statusWord } from '../lib/lane.ts';
 import { atFromSearch, rangeFromSearch } from '../lib/range.ts';
@@ -159,7 +160,12 @@ function SystemPage() {
               <DetailRow label="Harness processes" note="CPU cores per process tree">
                 <ProcessPlot processes={detail.processes} window={window} />
               </DetailRow>
-              <SessionRows sessions={detail.sessions} timeZone={timeZone} window={window} />
+              <SessionRows
+                sessions={detail.sessions}
+                system={detail.name}
+                timeZone={timeZone}
+                window={window}
+              />
               <DetailRow label="Conditions">
                 <ConditionSpans
                   conditions={detail.conditions}
@@ -168,7 +174,7 @@ function SystemPage() {
                   window={window}
                 />
               </DetailRow>
-              <TimeAxis range={detail.range} timeZone={timeZone} window={window}>
+              <TimeAxis ticks={axisTicks(detail.range, window, timeZone)} window={window}>
                 {sample !== null && inWindow(sample.t, window) && (
                   <span
                     className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-[#ffd666] px-[9px] font-semibold text-background"

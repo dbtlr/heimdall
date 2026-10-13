@@ -7,6 +7,7 @@ import { FleetLegend } from '../components/fleet-legend.tsx';
 import { OpenConditions } from '../components/open-conditions.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
+import { axisTicks } from '../lib/axis.ts';
 import { rangeFromSearch, rangeTitle } from '../lib/range.ts';
 import { getFleetOverview } from '../server/fleet-overview-fn.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
@@ -45,7 +46,7 @@ function Fleet() {
             <FleetLane key={lane.name} lane={lane} now={now} timeZone={timeZone} window={window} />
           ))
         )}
-        <TimeAxis range={range} timeZone={timeZone} window={window} />
+        <TimeAxis ticks={axisTicks(range, window, timeZone)} window={window} />
         <OpenConditions now={now} open={overview.open} timeZone={timeZone} />
       </main>
     </>

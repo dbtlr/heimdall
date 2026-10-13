@@ -9,6 +9,7 @@ import {
   syncPrices,
   timeline,
 } from '@heimdall/hub/testing';
+import type { RequestFixture, SubagentFixture, ToolCallFixture } from '@heimdall/hub/testing';
 // Fills a scratch Hub database with four paired Systems, a week of Vitals, agent
 // Sessions, the records, runs, checks, and Harness installs a provisioner and
 // Collector would report for two of them, and Conditions, so the dashboard has a
@@ -576,6 +577,185 @@ const seedSessions = async (sql: SQL, now: number) => {
   });
 };
 
+// One long Session shaped like real agent work, for the Session page: a main
+// conversation on Opus with subagents on Sonnet, one with a subagent of its
+// own; a workflow run; skills, tool calls, and slash commands; a /compact that
+// shrinks the context; waits on the person and an interrupted response; and a
+// process link that is linked, then ambiguous, then linked to a new process
+// after the first exits. Times are seconds before `now`.
+const seedWorkSession = async (sql: SQL, now: number) => {
+  const { addProcess, addSession } = timeline(now);
+  const random = noise(4099);
+  const between = (low: number, high: number) => low + ((random() + 1) / 2) * (high - low);
+  const cwd = `${HOME}/src/heimdall`;
+  const start = -hours(3.4);
+  const minute = (m: number) => start + m * 60;
+  const opus = 'claude-opus-5-5';
+  const sonnet = 'claude-sonnet-5-5';
+  const tools: [string, string?][] = [
+    ['Read'],
+    ['Read'],
+    ['Read'],
+    ['Bash'],
+    ['Bash'],
+    ['Grep'],
+    ['Edit'],
+    ['Glob'],
+    ['Write'],
+    ['TodoWrite'],
+    ['codegraph_explore', 'codegraph'],
+  ];
+  const process = { harness: 'claude-code', readings: 'both', system: SYSTEM } as const;
+
+  await addProcess(sql, {
+    ...process,
+    cpuCores: 0.8,
+    cwd,
+    end: minute(66),
+    pid: 48_211,
+    rssBytes: Math.round(1.8 * GIB),
+    start: minute(-1),
+  });
+  // A second process in the same directory while the first still runs.
+  await addProcess(sql, {
+    ...process,
+    cpuCores: 0.3,
+    cwd,
+    end: minute(70),
+    pid: 49_002,
+    rssBytes: Math.round(0.6 * GIB),
+    start: minute(40),
+  });
+  await addProcess(sql, {
+    ...process,
+    cpuCores: 0.6,
+    cwd,
+    end: minute(140),
+    pid: 50_122,
+    rssBytes: Math.round(1.4 * GIB),
+    start: minute(82),
+  });
+
+  // The main conversation: a request every 15 to 90 seconds, but for two waits
+  // on the person and the gap after the first process exits. Its context
+  // grows with each request until /compact.
+  const waits = [
+    [45.5, 49],
+    [124, 128.5],
+  ];
+  const gaps = [...waits, [66, 82.6]];
+  const compactAt = 82.67;
+  const main: RequestFixture[] = [];
+  let context = 26_000;
+  let compacted = false;
+  for (let m = 0.2; m < 132; m += between(0.25, 1.5)) {
+    const gap = gaps.find(([from = 0, to = 0]) => m > from && m < to);
+    if (gap !== undefined) {
+      m = gap[1] ?? m;
+    }
+    if (!compacted && m > compactAt) {
+      context = 52_000;
+      compacted = true;
+    }
+    context += between(300, 2500);
+    const inputTokens = Math.round(between(100, 2500));
+    const cacheWriteTokens = Math.round(between(300, 3000));
+    main.push({
+      at: minute(m),
+      cacheReadTokens: Math.round(context) - inputTokens - cacheWriteTokens,
+      cacheWriteTokens,
+      inputTokens,
+      model: opus,
+      outputTokens: Math.round(between(150, 6000)),
+      ...(m >= 14 && m < 82 && { skill: 'tdd' }),
+      ...(m >= 94 && { skill: 'code-review' }),
+      stopReason: random() > 0.94 ? null : 'tool_use',
+    });
+  }
+  // The request before each wait finished its turn.
+  for (const [from = 0] of waits) {
+    const before = main.findLast((request) => request.at < minute(from));
+    if (before !== undefined) {
+      before.stopReason = 'end_turn';
+    }
+  }
+
+  // A subagent's requests, evenly over its span with some jitter.
+  const agent = (model: string, from: number, to: number, count: number) =>
+    Array.from({ length: count }, (_, i): RequestFixture => {
+      const inputTokens = Math.round(between(200, 3000));
+      return {
+        at: minute(from + ((to - from) * (i + 0.5 + between(-0.3, 0.3))) / count),
+        cacheReadTokens: Math.round(10_000 + i * between(500, 2500)),
+        cacheWriteTokens: Math.round(between(200, 2500)),
+        inputTokens,
+        model,
+        outputTokens: Math.round(between(100, 2500)),
+        stopReason: i === count - 1 ? 'end_turn' : 'tool_use',
+      };
+    });
+  const subagents: (SubagentFixture & { requests: RequestFixture[] })[] = [
+    { agentId: 'explore-1', agentType: 'Explore', requests: agent(sonnet, 4, 9, 20) },
+    { agentId: 'explore-2', agentType: 'Explore', requests: agent(sonnet, 4.2, 11, 21) },
+    { agentId: 'general-1', agentType: 'general-purpose', requests: agent(sonnet, 32, 61, 65) },
+    {
+      agentId: 'explore-3',
+      agentType: 'Explore',
+      depth: 2,
+      parentAgentId: 'general-1',
+      requests: agent(sonnet, 38, 42, 17),
+    },
+    ...[
+      { count: 41, id: 'review-1', model: opus, phase: 'Review', span: [95, 109] },
+      { count: 26, id: 'review-2', model: opus, phase: 'Review', span: [95.2, 106] },
+      { count: 16, id: 'verify-1', model: sonnet, phase: 'Verify', span: [110, 117] },
+    ].map(({ count, id, model, phase, span: [from = 0, to = 0] }) => ({
+      agentId: id,
+      agentType: 'general-purpose',
+      requests: agent(model, from, to, count),
+      workflowPhase: phase,
+      workflowRun: 'wf-7c1e2a',
+    })),
+  ];
+
+  // One to three tool calls in each request that called tools.
+  const callsOf = (requests: RequestFixture[], agentId?: string): ToolCallFixture[] =>
+    requests.flatMap((request, requestIndex) =>
+      request.stopReason === 'tool_use'
+        ? Array.from({ length: Math.round(between(1, 3)) }, (_, i) => {
+            const [name = 'Read', mcpServer] =
+              tools[Math.floor(((random() + 1) / 2) * tools.length)] ?? [];
+            return {
+              ...(agentId !== undefined && { agentId }),
+              at: request.at + i,
+              ...(mcpServer !== undefined && { mcpServer }),
+              name,
+              requestIndex,
+            };
+          })
+        : [],
+    );
+
+  await addSession(sql, {
+    firstCwd: cwd,
+    gitBranch: 'hmd-82-system-detail',
+    harness: 'claude-code',
+    harnessVersion: '2.1.40',
+    id: '7f3c9a2e-5d41-4b8e-9c07-2a6f1e3b8d90',
+    lastCwd: cwd,
+    model: opus,
+    requests: main,
+    subagents,
+    system: SYSTEM,
+    toolCalls: [
+      ...callsOf(main),
+      ...subagents.flatMap((subagent) => callsOf(subagent.requests, subagent.agentId)),
+      { at: minute(compactAt), kind: 'command', name: 'compact' },
+      { at: minute(94.3), kind: 'command', name: 'code-review' },
+    ],
+  });
+};
+
 // How the Hub's reason names a run that failed, up to its exit status.
 const failedRun = (started: number) => `The run started ${iso(started)} exited with status`;
 
@@ -733,6 +913,7 @@ const fill = async (sql: SQL) => {
   );
   await seedConditions(sql, now);
   await seedSessions(sql, now);
+  await seedWorkSession(sql, now);
   const overview = await readFleetOverview(sql, { now, range: '24h', timeZone: 'UTC' });
   for (const lane of overview.lanes) {
     console.log(

@@ -242,12 +242,32 @@ describe('readSystemDetail', () => {
       harness: 'claude-code',
       project: 'api',
       sessionId: 's1',
+      source: 'claude-code',
       stretches: [
         { endedAt: NOW - 6000_000, link: 'linked', startedAt: NOW - 8500_000 },
         { endedAt: NOW - 2000_000, link: 'linked', startedAt: NOW - 3500_000 },
       ],
     });
     expect(sessions[1]).toMatchObject({ costUsd: undefined, sessionId: 's2' });
+  });
+
+  test('keeps two Sessions with one Harness and id but different sources apart', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addSession(h.db.sql, { id: 's1', requests: [-700, -600], system: 'server-1' });
+    await addSession(h.db.sql, {
+      id: 's1',
+      requests: [-500, -400],
+      source: 'other',
+      system: 'server-1',
+    });
+
+    const { sessions } = await detail(h);
+
+    expect(sessions.map(({ sessionId, source }) => [sessionId, source])).toEqual([
+      ['s1', 'claude-code'],
+      ['s1', 'other'],
+    ]);
   });
 
   test('marks every Condition open during the range, raised before it or not', async () => {

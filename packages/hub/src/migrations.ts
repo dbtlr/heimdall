@@ -1228,6 +1228,64 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 19,
   },
+  {
+    // insight.requests splits cost_usd by token kind, so a reader can show
+    // where a request's cost went. Each is null when the model is unpriced or
+    // has no price for a kind the request used, as cost_usd is, and the four
+    // sum to cost_usd. A cache write is the 5-minute term plus the 1-hour term.
+    // OR REPLACE appends the columns, so the privileges the insight reader
+    // holds on the view stay.
+    sql: `
+      CREATE OR REPLACE VIEW insight.requests WITH (security_barrier = true) AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+             r.cache_write_tokens, r.cache_write_5m_tokens, r.cache_write_1h_tokens,
+             r.input_tokens + r.cache_read_tokens + r.cache_write_tokens AS context_tokens,
+             r.stop_reason, r.skill, g.path, r.generation, r.byte_offset, r.parser_version,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+               + price_tokens(r.output_tokens, price.output_per_mtok)
+               + price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+               + price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
+                              price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cost_usd,
+             COALESCE(r.context_window, price.context_window) AS context_window,
+             (r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)::numeric * 100
+               / COALESCE(r.context_window, price.context_window) AS context_fill_percent,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+             END AS input_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.output_tokens, price.output_per_mtok)
+             END AS output_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+             END AS cache_read_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
+                            price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cache_write_cost_usd
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      JOIN transcript_generations g ON g.id = r.generation
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM model_prices p
+        WHERE p.model = regexp_replace(r.model, '-[0-9]{8}$', '') AND p.valid_from <= r.at
+          AND p.min_prompt_tokens <= r.input_tokens + r.cache_read_tokens + r.cache_write_tokens
+        ORDER BY p.min_prompt_tokens DESC, p.valid_from DESC, p.source = 'configured' DESC
+        LIMIT 1
+      ) price ON true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+    `,
+    version: 20,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

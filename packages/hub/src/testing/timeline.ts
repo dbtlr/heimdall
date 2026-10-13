@@ -3,20 +3,70 @@ import type { SQL } from 'bun';
 // The working directory of a fixture Session or process unless it names another.
 export const CWD = '/home/someone/work/my-project';
 
+// One request of a fixture Session, when its time alone is not enough.
+export type RequestFixture = {
+  agentId?: string;
+  // Seconds.
+  at: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  inputTokens?: number;
+  model?: string;
+  outputTokens?: number;
+  skill?: string;
+  // Null, the default, is an interrupted response.
+  stopReason?: string | null;
+};
+
+// A request's time in seconds, or the request with its own detail.
+type RequestEntry = number | RequestFixture;
+
+const detail = (entry: RequestEntry): RequestFixture =>
+  typeof entry === 'number' ? { at: entry } : entry;
+
+export type SubagentFixture = {
+  agentId: string;
+  agentType?: string;
+  depth?: number;
+  parentAgentId?: string;
+  // The subagent's span runs from its first request to its last.
+  requests: RequestEntry[];
+  workflowPhase?: string;
+  workflowRun?: string;
+};
+
+export type ToolCallFixture = {
+  // Whose request the call is in: the main conversation unless it names a subagent.
+  agentId?: string;
+  // Seconds.
+  at: number;
+  kind?: 'command' | 'tool';
+  mcpServer?: string;
+  name: string;
+  // The index of the request among its agent's requests that made the call.
+  requestIndex?: number;
+};
+
 export type SessionFixture = {
   firstCwd?: string;
   gitBranch?: string;
   harness?: string;
+  harnessVersion?: string;
   id: string;
   inputTokens?: number;
   lastCwd?: string;
   model?: string;
   outputTokens?: number;
-  // The times of its requests, in seconds; its span runs from the first to the last.
-  requests: number[];
-  // The times of its subagent's requests; the subagent's span runs from the first to the last.
+  // The times of its requests, in seconds, or the requests with their detail;
+  // its span runs from the first to the last.
+  requests: RequestEntry[];
+  // Defaults to the Harness.
+  source?: string;
+  // The times of its subagent's requests; the subagent, with id a1, spans the first to the last.
   subagentRequests?: number[];
+  subagents?: SubagentFixture[];
   system?: string;
+  toolCalls?: ToolCallFixture[];
 };
 
 export type ProcessFixture = {
@@ -58,25 +108,39 @@ export const timeline = (origin: number) => {
   const at = (seconds: number) => new Date(origin + seconds * 1000);
 
   // Adds a Session whose main transcript spans its requests, and the requests,
-  // and a subagent's when it has one. Its Harness gets a current parser.
+  // and its subagents' and tool calls when it has them. Its Harness gets a
+  // current parser.
   const addSession = async (
     sql: SQL,
     {
       firstCwd = CWD,
       gitBranch,
       harness = 'claude-code',
+      harnessVersion,
       id,
       inputTokens = 1,
       lastCwd,
       model = 'claude-opus-4-1',
       outputTokens = 2,
       requests,
+      source = harness,
       subagentRequests = [],
+      subagents = [],
       system = 'laptop-1',
+      toolCalls = [],
     }: SessionFixture,
   ) => {
-    const source = harness;
     const path = `projects/p/${id}.jsonl`;
+    const agents: SubagentFixture[] = [
+      ...(subagentRequests.length === 0 ? [] : [{ agentId: 'a1', requests: subagentRequests }]),
+      ...subagents,
+    ];
+    const mainRequests = requests.map(detail);
+    // The main conversation's requests, then each subagent's.
+    const requestsOf = [
+      { agent: undefined, entries: mainRequests },
+      ...agents.map((agent) => ({ agent, entries: agent.requests.map(detail) })),
+    ];
     await sql`
       INSERT INTO current_parsers (harness, version) VALUES (${harness}, 1)
       ON CONFLICT DO NOTHING
@@ -84,11 +148,14 @@ export const timeline = (origin: number) => {
     await sql`
       INSERT INTO projected_sessions (
         harness, parser_version, system, source, session_id, path, started_at, ended_at,
-        first_cwd, last_cwd, first_git_branch, last_git_branch
+        first_cwd, last_cwd, first_git_branch, last_git_branch, first_harness_version,
+        last_harness_version
       )
       VALUES (${harness}, 1, ${system}, ${source}, ${id}, ${path},
-              ${at(Math.min(...requests))}, ${at(Math.max(...requests))}, ${firstCwd},
-              ${lastCwd ?? firstCwd}, ${gitBranch ?? null}, ${gitBranch ?? null})
+              ${at(Math.min(...mainRequests.map((r) => r.at)))},
+              ${at(Math.max(...mainRequests.map((r) => r.at)))}, ${firstCwd},
+              ${lastCwd ?? firstCwd}, ${gitBranch ?? null}, ${gitBranch ?? null},
+              ${harnessVersion ?? null}, ${harnessVersion ?? null})
     `;
     const [row]: { id: string }[] = await sql`
       INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at)
@@ -97,40 +164,54 @@ export const timeline = (origin: number) => {
       RETURNING id
     `;
     const generation = Number(row?.id);
-    for (const [index, seconds] of requests.entries()) {
+    const requestId = (agentId: string | undefined, index: number) =>
+      agentId === undefined ? `${id}-${String(index)}` : `${id}-${agentId}-${String(index)}`;
+    for (const [agentIndex, { agent, entries }] of requestsOf.entries()) {
+      if (agent !== undefined) {
+        const times = entries.map((entry) => entry.at);
+        // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
+        await sql`
+          INSERT INTO projected_subagents (
+            harness, parser_version, system, source, session_id, agent_id, agent_type, depth,
+            parent_agent_id, workflow_run, workflow_phase, started_at, ended_at
+          )
+          VALUES (${harness}, 1, ${system}, ${source}, ${id}, ${agent.agentId},
+                  ${agent.agentType ?? null}, ${agent.depth ?? null},
+                  ${agent.parentAgentId ?? null}, ${agent.workflowRun ?? null},
+                  ${agent.workflowPhase ?? null}, ${at(Math.min(...times))},
+                  ${at(Math.max(...times))})
+        `;
+      }
+      for (const [index, entry] of entries.entries()) {
+        // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
+        await sql`
+          INSERT INTO projected_requests (
+            harness, parser_version, system, source, session_id, agent_id, request_id, at, model,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, stop_reason,
+            skill, generation, byte_offset
+          )
+          VALUES (${harness}, 1, ${system}, ${source}, ${id},
+                  ${agent?.agentId ?? entry.agentId ?? null},
+                  ${requestId(agent?.agentId, index)}, ${at(entry.at)}, ${entry.model ?? model},
+                  ${entry.inputTokens ?? inputTokens}, ${entry.outputTokens ?? outputTokens},
+                  ${entry.cacheReadTokens ?? 0}, ${entry.cacheWriteTokens ?? 0},
+                  ${entry.stopReason ?? null}, ${entry.skill ?? null}, ${generation},
+                  ${1000 * agentIndex + index})
+        `;
+      }
+    }
+    for (const [index, call] of toolCalls.entries()) {
       // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
       await sql`
-        INSERT INTO projected_requests (
-          harness, parser_version, system, source, session_id, request_id, at, model,
-          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation,
-          byte_offset
+        INSERT INTO projected_tool_calls (
+          harness, parser_version, system, source, session_id, agent_id, call_id, request_id, at,
+          kind, name, mcp_server, generation, byte_offset
         )
-        VALUES (${harness}, 1, ${system}, ${source}, ${id}, ${`${id}-${String(index)}`},
-                ${at(seconds)}, ${model}, ${inputTokens}, ${outputTokens}, 0, 0, ${generation},
-                ${index})
-      `;
-    }
-    if (subagentRequests.length === 0) {
-      return;
-    }
-    await sql`
-      INSERT INTO projected_subagents (
-        harness, parser_version, system, source, session_id, agent_id, started_at, ended_at
-      )
-      VALUES (${harness}, 1, ${system}, ${source}, ${id}, 'a1',
-              ${at(Math.min(...subagentRequests))}, ${at(Math.max(...subagentRequests))})
-    `;
-    for (const [index, seconds] of subagentRequests.entries()) {
-      // oxlint-disable-next-line no-await-in-loop -- a handful of fixture rows.
-      await sql`
-        INSERT INTO projected_requests (
-          harness, parser_version, system, source, session_id, agent_id, request_id, at, model,
-          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation,
-          byte_offset
-        )
-        VALUES (${harness}, 1, ${system}, ${source}, ${id}, 'a1',
-                ${`${id}-a1-${String(index)}`}, ${at(seconds)}, ${model}, ${inputTokens},
-                ${outputTokens}, 0, 0, ${generation}, ${1000 + index})
+        VALUES (${harness}, 1, ${system}, ${source}, ${id}, ${call.agentId ?? null},
+                ${`${id}-call-${String(index)}`},
+                ${call.requestIndex === undefined ? null : requestId(call.agentId, call.requestIndex)},
+                ${at(call.at)}, ${call.kind ?? 'tool'}, ${call.name}, ${call.mcpServer ?? null},
+                ${generation}, ${100_000 + index})
       `;
     }
   };

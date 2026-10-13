@@ -64,14 +64,23 @@ const timeAt = (event: React.MouseEvent<HTMLElement>, { from, to }: Window) => {
 };
 
 // The plot side of a detail row: its children on the axis, with the selected
-// sample and the pointer's time marked.
-export function DetailTrack({ children, className }: { children: ReactNode; className?: string }) {
+// sample and the pointer's time marked. `onSelect` replaces the axis's select
+// for a row that picks something nearer than a time.
+export function DetailTrack({
+  children,
+  className,
+  onSelect,
+}: {
+  children: ReactNode;
+  className?: string;
+  onSelect?: ((t: number) => void) | undefined;
+}) {
   const { hover, hovered, select, selected, window } = useAxis();
   return (
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- the pointer picks a time; the inspector also opens on the newest sample.
     <div
       className={cn('relative min-w-0 cursor-crosshair', className)}
-      onClick={(event) => select(timeAt(event, window))}
+      onClick={(event) => (onSelect ?? select)(timeAt(event, window))}
       onMouseLeave={() => hover(undefined)}
       onMouseMove={(event) => hover(timeAt(event, window))}
     >
@@ -93,10 +102,12 @@ export function DetailRow({
   children,
   label,
   note,
+  onSelect,
 }: {
   children: ReactNode;
   label: string;
   note?: string | undefined;
+  onSelect?: ((t: number) => void) | undefined;
 }) {
   return (
     <section aria-label={label} className={cn(LANE_GRID, 'border-t py-2.5')}>
@@ -104,7 +115,7 @@ export function DetailRow({
         <p className="text-sm font-semibold">{label}</p>
         {note !== undefined && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
       </div>
-      <DetailTrack>{children}</DetailTrack>
+      <DetailTrack onSelect={onSelect}>{children}</DetailTrack>
     </section>
   );
 }

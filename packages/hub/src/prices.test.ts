@@ -377,6 +377,48 @@ describe('a configured price overrides the bundled one', () => {
 });
 
 describe('an unpriced request is never free', () => {
+  test('the cost splits by kind of token and the parts sum to the cost', async () => {
+    await using db = await prepared({ bundled: [PRICE] });
+    await seed(db.sql, [
+      {
+        at: '2026-03-01T00:00:00Z',
+        cacheRead: 2_000_000,
+        cacheWrite1h: 100_000,
+        cacheWrite5m: 1_000_000,
+        id: 'r1',
+        input: 1_000_000,
+        output: 500_000,
+      },
+    ]);
+
+    const [row]: Record<string, string | null>[] = await db.sql`
+      SELECT cost_usd, input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_write_cost_usd
+      FROM insight.requests
+    `;
+    const parts = [
+      row?.input_cost_usd,
+      row?.output_cost_usd,
+      row?.cache_read_cost_usd,
+      row?.cache_write_cost_usd,
+    ].map(Number);
+
+    // A cache write is the 5-minute term (5) plus the 1-hour term (1).
+    expect(parts).toEqual([4, 10, 1, 6]);
+    expect(parts.reduce((sum, part) => sum + part, 0)).toBe(Number(row?.cost_usd));
+  });
+
+  test('an unpriced model has no cost of any kind', async () => {
+    await using db = await prepared({ bundled: [PRICE] });
+    await seed(db.sql, [{ at: '2026-03-01T00:00:00Z', id: 'r1', input: 1000, model: 'mystery' }]);
+
+    const [row]: Record<string, string | null>[] = await db.sql`
+      SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_write_cost_usd
+      FROM insight.requests
+    `;
+
+    expect(Object.values(row ?? {})).toEqual([null, null, null, null]);
+  });
+
   test('an unknown model reads null, not zero, even with no tokens', async () => {
     await using db = await prepared({ bundled: [PRICE] });
     await seed(db.sql, [

@@ -91,7 +91,7 @@ type LatestRow = {
 
 type MemoryRow = { bucket: Date; total: number; used: number };
 
-type CoresRow = {
+export type CoresRow = {
   bucket: Date;
   cores: number | null;
   cwd: string | null;
@@ -110,10 +110,11 @@ type StretchRow = {
   last_git_branch: string | null;
   link: string;
   session_id: string;
+  source: string;
   started_at: Date;
 };
 
-const linkOf = (link: string): Link => {
+export const linkOf = (link: string): Link => {
   if (!isLink(link)) {
     throw new Error(
       `The Hub holds a stretch with link ${link}, which the dashboard does not know.`,
@@ -135,7 +136,7 @@ const sessionPlace = (row: {
 });
 
 // Groups each Harness process's buckets into its series, in order of first bucket.
-const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
+export const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
   const series = new Map<number, ProcessSeries>();
   for (const row of rows) {
     let found = series.get(row.process_id);
@@ -154,11 +155,12 @@ const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
   return [...series.values()];
 };
 
-// Groups stretches into one row per Session, in order of first stretch.
+// Groups stretches into one row per Session, in order of first stretch. The
+// Harness's session id is unique only within a source, so the key has both.
 const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
   const sessions = new Map<string, SessionRow>();
   for (const row of rows) {
-    const key = `${row.harness}|${row.session_id}`;
+    const key = `${row.harness}|${row.source}|${row.session_id}`;
     let found = sessions.get(key);
     if (found === undefined) {
       found = {
@@ -166,6 +168,7 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
         costUsd: row.cost_usd === null ? undefined : Number(row.cost_usd),
         harness: row.harness,
         sessionId: row.session_id,
+        source: row.source,
         stretches: [],
       };
       sessions.set(key, found);
@@ -252,7 +255,7 @@ export const readSystemDetail = async (
     // As on the Fleet overview: stretches by System and a range of
     // `started_at`, and each Session's cost looked up per stretch.
     sql`
-      SELECT st.harness, st.session_id, st.started_at, st.ended_at, st.link,
+      SELECT st.harness, st.source, st.session_id, st.started_at, st.ended_at, st.link,
              s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
       FROM insight.session_stretches st
       JOIN insight.sessions s

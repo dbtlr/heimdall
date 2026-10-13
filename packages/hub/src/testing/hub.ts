@@ -17,6 +17,7 @@ export { unpair } from '../pairing.ts';
 
 // Seeds Sessions, Harness processes, Vitals, and Conditions at times on a timeline.
 export { CWD, timeline } from './timeline.ts';
+export type { RequestFixture, SubagentFixture, ToolCallFixture } from './timeline.ts';
 
 // What the dashboard's dev seed uses to fill a scratch database the way a Hub
 // would: migrate it, pair Systems, store Reports, and load the price table.

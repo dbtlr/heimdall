@@ -29,7 +29,7 @@ export const parseRangeInput = (input: unknown): Range => {
 };
 
 const MINUTE_MS = 60_000;
-const BUCKET_MS = 5 * MINUTE_MS;
+export const BUCKET_MS = 5 * MINUTE_MS;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 export const RANGE_MS: Record<Range, number> = {
   '12h': DAY_MS / 2,

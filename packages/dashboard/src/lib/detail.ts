@@ -109,11 +109,11 @@ export const unlinkedLine = (session: UnlinkedSession): { detail: string; title:
   };
 };
 
-// The start of every 5-minute bucket the window touches, aligned as the Hub
-// aligns its rollups.
-export const bucketGrid = ({ from, to }: Window): number[] => {
+// The start of every bucket the window touches, 5 minutes unless `bucketMs`
+// says otherwise, aligned as the Hub aligns its rollups.
+export const bucketGrid = ({ from, to }: Window, bucketMs = BUCKET_MS): number[] => {
   const starts: number[] = [];
-  for (let t = Math.floor(from / BUCKET_MS) * BUCKET_MS; t < to; t += BUCKET_MS) {
+  for (let t = Math.floor(from / bucketMs) * bucketMs; t < to; t += bucketMs) {
     starts.push(t);
   }
   return starts;
@@ -134,6 +134,7 @@ export const memoryRows = (
 export const processRows = (
   processes: readonly ProcessSeries[],
   window: Window,
+  bucketMs = BUCKET_MS,
 ): Record<string, number | null>[] => {
   const cores = processes.map(
     (process) =>
@@ -142,9 +143,9 @@ export const processRows = (
         new Map(process.points.map((point) => [point.t, point.cores])),
       ] as const,
   );
-  return bucketGrid(window).map((t) =>
+  return bucketGrid(window, bucketMs).map((t) =>
     Object.fromEntries([
-      ['t', t + BUCKET_MS / 2],
+      ['t', t + bucketMs / 2],
       ...cores.map(([key, byBucket]) => [key, byBucket.get(t) ?? null] as const),
     ]),
   );
