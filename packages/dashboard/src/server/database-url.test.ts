@@ -49,9 +49,9 @@ test('reads [database] url from $HOME/.config/heimdall/hub.toml', async () => {
   expect(await databaseUrl({ HOME: home })).toBe(URL_IN_FILE);
 });
 
-test('prefers XDG_CONFIG_HOME over $HOME/.config', async () => {
-  await writeHubConfig(join(home, '.config'), fileWith('postgres://home.test/db'));
-  await writeHubConfig(join(home, 'xdg'), fileWith(URL_IN_FILE));
+test('reads $HOME/.config as the Hub does, whatever XDG_CONFIG_HOME says', async () => {
+  await writeHubConfig(join(home, '.config'), fileWith(URL_IN_FILE));
+  await writeHubConfig(join(home, 'xdg'), fileWith('postgres://xdg.test/db'));
 
   expect(await databaseUrl({ HOME: home, XDG_CONFIG_HOME: join(home, 'xdg') })).toBe(URL_IN_FILE);
 });

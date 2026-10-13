@@ -9,7 +9,7 @@ It runs under Bun, like the Hub, and uses Bun's built-in `SQL`.
 The app reads the URL of the Hub's database from the first of these that is set:
 
 1. The `HEIMDALL_DATABASE_URL` environment variable.
-2. `[database] url` in the Hub's config file, `$XDG_CONFIG_HOME/heimdall/hub.toml`, or `$HOME/.config/heimdall/hub.toml` when `XDG_CONFIG_HOME` is unset.
+2. `[database] url` in the Hub's config file, `~/.config/heimdall/hub.toml`.
 
 The app opens the connection on the first request, so it starts and builds without a database.
 

@@ -16,9 +16,7 @@ function Systems() {
         <h1 className="mx-auto max-w-3xl px-4 py-3 text-xl font-bold tracking-wide">Heimdall</h1>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-6">
-        <h2 className="mb-3 text-sm font-semibold tracking-wider text-muted-foreground uppercase">
-          Systems
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Systems</h2>
         {systems.length === 0 ? (
           <p className="text-muted-foreground">No System is paired.</p>
         ) : (

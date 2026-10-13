@@ -2,12 +2,9 @@ import { join } from 'node:path';
 
 type Env = Record<string, string | undefined>;
 
-// Where the Hub's config file lives: under XDG_CONFIG_HOME when set, else
-// $HOME/.config, the same place the Hub reads it from.
-const hubConfigPath = (env: Env) => {
-  const base = env.XDG_CONFIG_HOME || join(env.HOME ?? '', '.config');
-  return join(base, 'heimdall', 'hub.toml');
-};
+// Where the Hub's config file lives, the same place the Hub reads it from
+// (ADR-0007): ~/.config/heimdall/hub.toml.
+const hubConfigPath = (env: Env) => join(env.HOME ?? '', '.config', 'heimdall', 'hub.toml');
 
 // The URL of the Hub's database: HEIMDALL_DATABASE_URL when set, else
 // `[database] url` in the Hub's config file. The dashboard runs on the Hub's
