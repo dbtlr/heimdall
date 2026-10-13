@@ -1,7 +1,7 @@
 import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { keepRefreshing } from '../lib/refresh.ts';
+import { isLoadRunning, keepRefreshing } from '../lib/refresh.ts';
 import type { RefreshHost } from '../lib/refresh.ts';
 
 const browser: RefreshHost = {
@@ -36,7 +36,7 @@ export function AutoRefresh() {
           void router.invalidate({ filter: (match) => match.routeId !== SESSION_ROUTE });
         },
         browser,
-        { isPending: () => router.state.isLoading },
+        { isPending: () => isLoadRunning(router.state) },
       ),
     [router],
   );

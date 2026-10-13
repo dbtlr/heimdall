@@ -51,3 +51,13 @@ export const keepRefreshing = (
     pause();
   };
 };
+
+// Whether the router is still reading a page: loading it, or reloading a match
+// in the background, which TanStack Router does with its status back at idle.
+export const isLoadRunning = ({
+  isLoading,
+  matches,
+}: {
+  isLoading: boolean;
+  matches: readonly { isFetching: false | string }[];
+}): boolean => isLoading || matches.some((match) => match.isFetching !== false);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { keepRefreshing, REFRESH_EVERY_MS } from './refresh.ts';
+import { isLoadRunning, keepRefreshing, REFRESH_EVERY_MS } from './refresh.ts';
 import type { RefreshHost } from './refresh.ts';
 
 // A host whose clock and visibility a test moves by hand.
@@ -142,5 +142,24 @@ describe('keepRefreshing', () => {
 
     expect(refreshes).toBe(0);
     expect(fake.running()).toBe(1);
+  });
+});
+
+describe('isLoadRunning', () => {
+  test('is true while the router loads a page', () => {
+    expect(isLoadRunning({ isLoading: true, matches: [{ isFetching: false }] })).toBe(true);
+  });
+
+  test('is true while a match reloads in the background, with the router idle', () => {
+    expect(
+      isLoadRunning({
+        isLoading: false,
+        matches: [{ isFetching: false }, { isFetching: 'loader' }],
+      }),
+    ).toBe(true);
+  });
+
+  test('is false when nothing loads', () => {
+    expect(isLoadRunning({ isLoading: false, matches: [{ isFetching: false }] })).toBe(false);
   });
 });
