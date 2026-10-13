@@ -44,5 +44,7 @@ jobs:
         run: |
           bun run build:collector
           ./dist/heimdall-collector --version | grep -E '^heimdall-collector v[0-9]+\.[0-9]+\.[0-9]+ \(Report schema v[0-9]+\)$'
-      - name: Build the dashboard
-        run: bun run build:dashboard
+      - name: Compile the dashboard binary
+        run: |
+          bun run build:dashboard
+          ./dist/heimdall-dashboard --version | grep -E '^heimdall-dashboard v[0-9]+\.[0-9]+\.[0-9]+ \(Report schema v[0-9]+\)$'
