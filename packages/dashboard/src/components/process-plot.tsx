@@ -9,12 +9,15 @@ import { ChartContainer } from './ui/chart.tsx';
 const HEIGHT = 60;
 const NO_MARGIN = { bottom: 1, left: 0, right: 0, top: 1 };
 
-// The CPU cores each Harness process tree kept busy per 5-minute bucket, one
-// line per process in its Harness's color, on a scale from 0 to the busiest.
+// The CPU cores each Harness process tree kept busy per bucket, 5 minutes
+// unless `bucketMs` says otherwise, one line per process in its Harness's
+// color, on a scale from 0 to the busiest.
 export function ProcessPlot({
+  bucketMs,
   processes,
   window,
 }: {
+  bucketMs?: number;
   processes: readonly ProcessSeries[];
   window: Window;
 }) {
@@ -31,7 +34,7 @@ export function ProcessPlot({
       role="img"
       style={{ height: HEIGHT }}
     >
-      <ComposedChart data={processRows(processes, window)} margin={NO_MARGIN}>
+      <ComposedChart data={processRows(processes, window, bucketMs)} margin={NO_MARGIN}>
         <XAxis allowDataOverflow dataKey="t" domain={[window.from, window.to]} hide type="number" />
         <YAxis domain={[0, busiest]} hide />
         {processes.map((process) => (

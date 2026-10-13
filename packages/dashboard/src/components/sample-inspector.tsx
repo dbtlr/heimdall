@@ -1,15 +1,10 @@
 import { formatGiB, sampleProcessLine, unlinkedLine } from '../lib/detail.ts';
 import { harnessColor } from '../lib/lane.ts';
-import { formatClock } from '../lib/time.ts';
+import { formatClockSeconds } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { SampleInspection } from '../server/system-detail-types.ts';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
-
-const clockWithSeconds = (t: number, timeZone: string) =>
-  `${formatClock(t, timeZone)}:${new Intl.DateTimeFormat('en-GB', { second: '2-digit', timeZone })
-    .format(t)
-    .padStart(2, '0')}`;
 
 function Entry({
   color,
@@ -65,7 +60,7 @@ export function SampleInspector({
       ) : (
         <>
           <p className="mb-2 text-[12.5px] text-muted-foreground">
-            Sample at {clockWithSeconds(sample.t, timeZone)}
+            Sample at {formatClockSeconds(sample.t, timeZone)}
           </p>
           <p className="mb-0.5 text-[19px] font-semibold">CPU {percent(sample.cpuBusyPercent)}</p>
           <p className="text-muted-foreground">

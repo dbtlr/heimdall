@@ -1,6 +1,13 @@
 import { expect, test } from 'bun:test';
 
-import { formatClock, formatCost, formatWhen, spanBox, xPercent } from './time.ts';
+import {
+  formatClock,
+  formatClockSeconds,
+  formatCost,
+  formatWhen,
+  spanBox,
+  xPercent,
+} from './time.ts';
 
 const HOUR = 3_600_000;
 const NOON = Date.UTC(2026, 9, 13, 12, 0, 0);
@@ -11,6 +18,11 @@ test('a clock time is 24-hour in the named zone', () => {
   expect(formatClock(Date.UTC(2026, 9, 13, 0, 0, 0), 'UTC')).toBe('00:00');
   expect(formatClock(NOON, 'America/Chicago')).toBe('07:00');
   expect(formatClock(NOON, 'Asia/Kolkata')).toBe('17:30');
+});
+
+test('a clock time to the second keeps the leading zeros', () => {
+  expect(formatClockSeconds(NOON + 5 * 60_000 + 7000, 'UTC')).toBe('12:05:07');
+  expect(formatClockSeconds(NOON + 13 * HOUR, 'UTC')).toBe('01:00:00');
 });
 
 test('a time on the same local day reads as a clock time, another day with its weekday', () => {

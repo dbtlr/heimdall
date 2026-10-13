@@ -35,6 +35,7 @@ export type SessionRow = {
   harness: string;
   project: string | undefined;
   sessionId: string;
+  source: string;
   stretches: { endedAt: number; link: Link; startedAt: number }[];
 };
 

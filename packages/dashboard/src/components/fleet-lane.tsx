@@ -17,8 +17,9 @@ export const STATUS_COLOR: Record<LaneStatus, string> = {
 };
 
 // A grid that gives the label column a fixed width beside the track, and
-// stacks them on a phone.
-export const LANE_GRID = 'grid gap-1.5 sm:grid-cols-[176px_1fr] sm:gap-4';
+// stacks them on a phone. A page with longer labels widens the column by
+// setting --lane-label on an element around its lanes.
+export const LANE_GRID = 'grid gap-1.5 sm:grid-cols-[var(--lane-label,176px)_1fr] sm:gap-4';
 
 // One System on the shared time axis: its name and status beside its CPU plot,
 // with the agent Sessions and Conditions of the window under it. The lane

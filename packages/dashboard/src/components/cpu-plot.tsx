@@ -13,21 +13,23 @@ const CONFIG = { average: { color: 'var(--foreground)', label: 'CPU busy' } } sa
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
-// The tooltip for the hovered 5-minute bucket.
+// The tooltip for the hovered bucket.
 function BucketTooltip({
   active,
+  bucketMs,
   buckets,
   label,
   timeZone,
 }: {
   active?: boolean | undefined;
+  bucketMs: number;
   buckets: readonly CpuBucket[];
   label?: number | string | undefined;
   timeZone: string;
 }) {
   const bucket =
     typeof label === 'number'
-      ? buckets.find((found) => found.t <= label && label <= found.t + BUCKET_MS)
+      ? buckets.find((found) => found.t <= label && label <= found.t + bucketMs)
       : undefined;
   if (active !== true || bucket === undefined) {
     return null;
@@ -35,7 +37,7 @@ function BucketTooltip({
   return (
     <div className="rounded-md border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">
       <p className="text-muted-foreground">
-        {formatClock(bucket.t, timeZone)} to {formatClock(bucket.t + BUCKET_MS, timeZone)}
+        {formatClock(bucket.t, timeZone)} to {formatClock(bucket.t + bucketMs, timeZone)}
       </p>
       <p>
         CPU {percent(bucket.average)}, low {percent(bucket.low)}, high {percent(bucket.high)}
@@ -44,16 +46,18 @@ function BucketTooltip({
   );
 }
 
-// A System's CPU busy over the window: the 5-minute low to high as a band, the
+// A System's CPU busy over the window: each bucket's low to high as a band, the
 // average as a line. The x axis is the window, so every lane lines up, and a
 // gap in the Vitals is a break in the line.
 export function CpuPlot({
+  bucketMs = BUCKET_MS,
   buckets,
   height = 46,
   label,
   timeZone,
   window,
 }: {
+  bucketMs?: number;
   buckets: readonly CpuBucket[];
   height?: number;
   label: string;
@@ -69,12 +73,18 @@ export function CpuPlot({
       role="img"
       style={{ height }}
     >
-      <ComposedChart data={cpuSeries(buckets)} margin={NO_MARGIN}>
+      <ComposedChart data={cpuSeries(buckets, bucketMs)} margin={NO_MARGIN}>
         <XAxis allowDataOverflow dataKey="t" domain={[window.from, window.to]} hide type="number" />
         <YAxis domain={[0, 100]} hide />
         <ChartTooltip
           content={({ active, label: at }) => (
-            <BucketTooltip active={active} buckets={buckets} label={at} timeZone={timeZone} />
+            <BucketTooltip
+              active={active}
+              bucketMs={bucketMs}
+              buckets={buckets}
+              label={at}
+              timeZone={timeZone}
+            />
           )}
         />
         <Area

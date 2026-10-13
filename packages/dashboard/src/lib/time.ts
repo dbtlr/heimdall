@@ -18,6 +18,15 @@ const formatter = (timeZone: string, options: Intl.DateTimeFormatOptions) => {
 export const formatClock = (t: number, timeZone: string): string =>
   formatter(timeZone, { hour: '2-digit', hourCycle: 'h23', minute: '2-digit' }).format(t);
 
+// The time of day as 24-hour "HH:MM:SS".
+export const formatClockSeconds = (t: number, timeZone: string): string =>
+  formatter(timeZone, {
+    hour: '2-digit',
+    hourCycle: 'h23',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(t);
+
 // The weekday as "Mon".
 export const formatWeekday = (t: number, timeZone: string): string =>
   formatter(timeZone, { weekday: 'short' }).format(t);
