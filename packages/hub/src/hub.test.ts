@@ -6,8 +6,7 @@ import { SQL } from 'bun';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { createHub } from './hub.ts';
-import { listSystems } from './store.ts';
-import { NOW, page, push, report, silentServer, startHub } from './testing/hub.ts';
+import { listSystems, NOW, push, report, silentServer, startHub } from './testing/hub.ts';
 
 test('a Report without a token is refused as unauthenticated', async () => {
   await using h = await startHub();
@@ -146,44 +145,14 @@ test('samples are keyed by System, so two Systems may share a time', async () =>
   expect(await response.json()).toEqual({ skipped: 0, stored: 1 });
 });
 
-test('the page says so when no System has reported', async () => {
+test('the Hub serves no page at /, since the dashboard serves every page', async () => {
   await using h = await startHub();
 
-  expect(await page(h.hub)).toContain('No System has reported yet.');
-});
-
-test("the page lists each System with its last-seen time and newest sample's Vitals", async () => {
-  await using h = await startHub();
-  const newest = {
-    ...sample(NOW),
-    cpu: { busyPercent: 61.25 },
-    disks: [{ mount: '/', totalBytes: 500 * 2 ** 30, usedBytes: 125 * 2 ** 30 }],
-    load: [2.5, 1.75, 1] as [number, number, number],
-    memory: { totalBytes: 32 * 2 ** 30, usedBytes: 8 * 2 ** 30 },
-    uptimeSeconds: 2 * 86_400 + 3 * 3600 + 5 * 60,
-  };
-  await push(
-    h.hub,
-    { ...report('laptop-1', [NOW - 15_000]), samples: [sample(NOW - 15_000), newest] },
-    {
-      token: 'laptop-token',
-    },
+  const responses = await Promise.all(
+    ['/', '/?unpaired'].map((path) => h.hub.fetch(new Request(`http://hub.test${path}`))),
   );
-  h.clock.now = NOW + 5 * 60_000;
-  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
 
-  const html = await page(h.hub);
-
-  expect(html).toContain('server-1');
-  expect(html).toContain('laptop-1');
-  expect(html).toContain('2026-10-06 12:00:00 UTC');
-  expect(html).toContain('5 min ago');
-  expect(html).toContain('61.3%');
-  expect(html).toContain('8.0 / 32.0 GiB');
-  expect(html).toContain('/ 125.0 / 500.0 GiB');
-  expect(html).toContain('2.50 1.75 1.00');
-  expect(html).toContain('2d 3h 5m');
-  expect(html).toContain('0.1.0 darwin/arm64');
+  expect(responses.map((r) => r.status)).toEqual([404, 404]);
 });
 
 test('a Report the Hub clock places earlier does not move last seen back', async () => {
@@ -192,7 +161,7 @@ test('a Report the Hub clock places earlier does not move last seen back', async
   h.clock.now = NOW - 60 * 60_000;
   await push(h.hub, report('laptop-1', [NOW + 15_000]), { token: 'laptop-token' });
 
-  expect(await page(h.hub)).toContain('2026-10-06 12:00:00 UTC');
+  expect((await listSystems(h.db.sql))[0]?.lastSeenAt).toBe(NOW);
 });
 
 test('a Report of samples the Hub already holds still counts as seeing the System', async () => {
@@ -201,31 +170,7 @@ test('a Report of samples the Hub already holds still counts as seeing the Syste
   h.clock.now = NOW + 60 * 60_000;
   await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
 
-  expect(await page(h.hub)).toContain('2026-10-06 13:00:00 UTC');
-});
-
-test('the page escapes what Collectors report', async () => {
-  await using h = await startHub();
-  const hostile = {
-    ...sample(NOW),
-    disks: [{ mount: '/Volumes/<b>x</b> & "y"', totalBytes: 1, usedBytes: 0 }],
-  };
-  await push(
-    h.hub,
-    {
-      ...report('laptop-1', [NOW]),
-      collector: { arch: '<i>arm64</i>', platform: 'darwin', version: '0.1.0' },
-      samples: [hostile],
-    },
-    { token: 'laptop-token' },
-  );
-
-  const html = await page(h.hub);
-
-  expect(html).toContain('/Volumes/&lt;b&gt;x&lt;/b&gt; &amp; &quot;y&quot;');
-  expect(html).toContain('darwin/&lt;i&gt;arm64&lt;/i&gt;');
-  expect(html).not.toContain('<b>');
-  expect(html).not.toContain('<i>');
+  expect((await listSystems(h.db.sql))[0]?.lastSeenAt).toBe(NOW + 60 * 60_000);
 });
 
 // PostgreSQL cannot store NUL or a lone surrogate. Refusing the Report would
@@ -248,9 +193,15 @@ test('text PostgreSQL cannot store is kept as a replacement character', async ()
   );
 
   expect(response.status).toBe(200);
-  const html = await page(h.hub);
-  expect(html).toContain('/a�b�c');
-  expect(html).toContain('0.1� darwin/arm�64');
+  const [stored] = await h.db.sql`
+    SELECT s.collector_version, s.collector_arch, v.disks
+    FROM systems s JOIN vitals_samples v ON v.system = s.name
+  `;
+  expect(stored).toEqual({
+    collector_arch: 'arm�64',
+    collector_version: '0.1�',
+    disks: [{ mount: '/a�b�c', totalBytes: 1, usedBytes: 0 }],
+  });
 });
 
 test('sample times up to the last a Date can hold are stored exactly', async () => {
@@ -261,8 +212,8 @@ test('sample times up to the last a Date can hold are stored exactly', async () 
   const response = await push(h.hub, report('laptop-1', times), { token: 'laptop-token' });
 
   expect(await response.json()).toEqual({ skipped: 0, stored: MAX_SAMPLES_PER_REPORT });
-  const [system] = await listSystems(h.db.sql);
-  expect(system?.reported?.latest.t).toBe(last - 1);
+  const [newest] = await h.db.sql`SELECT max(t) AS t FROM vitals_samples`;
+  expect(newest.t.getTime()).toBe(last - 1);
 });
 
 test('a Report the database cannot take is answered 503, so the Collector retries it', async () => {

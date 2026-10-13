@@ -5,8 +5,7 @@ import type { JobRecord, RunRecord } from '@heimdall/schema';
 
 import { evaluateJobConditions } from './job-conditions.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
-import { listSystems } from './store.ts';
-import { page, push, report, sampleTimes, startHub } from './testing/hub.ts';
+import { listSystems, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 
@@ -498,20 +497,6 @@ describe('unknown runs or records', () => {
 
     expect((await evaluate(h, '08:01:00')).open).toEqual([]);
   });
-});
-
-test('the page names the job a Condition is about', async () => {
-  await using h = await startHub();
-  await send(h, '07:40:00', {
-    records: set(BACKUP),
-    runs: runsOf('backup', run('07:30:00', 1), null),
-  });
-  await evaluate(h, '07:41:00');
-
-  const html = await page(h.hub);
-
-  expect(html).toContain('<strong>Job failing</strong> <code>backup</code> since');
-  expect(html).toContain('Job failing <code>backup</code>:');
 });
 
 test('migration 9 counts records mirrored before it from when it applied', async () => {

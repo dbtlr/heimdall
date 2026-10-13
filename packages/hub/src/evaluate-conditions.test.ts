@@ -3,10 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import { filesRecordDigest } from '@heimdall/schema';
 
 import { evaluateConditions, runInTurn } from './evaluate-conditions.ts';
-import { listSystems } from './store.ts';
 import type { ConditionKind } from './store.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
-import { NOW, push, report, sampleTimes, startHub } from './testing/hub.ts';
+import { listSystems, NOW, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
 const MINUTE = 60_000;

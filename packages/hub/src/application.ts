@@ -31,7 +31,7 @@ const database = {
 // Each `serve` setting comes from its flag, then its variable, then the
 // configuration file.
 export const serve = new Command('serve', {
-  description: 'Accept Reports from Collectors and serve the page of Systems.',
+  description: 'Accept Reports and transcripts from Collectors.',
 })
   .option('database', database)
   .option('host', {

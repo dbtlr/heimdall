@@ -1,6 +1,6 @@
 # Heimdall
 
-Cheap observability for a personal fleet and the agent work done on it: a Collector on each System pushes Reports to a Hub, which stores them in PostgreSQL, archives agent Session transcripts, and serves a dashboard of every System's Vitals and the Services and jobs its provisioner recorded. Heimdall works with any provisioner. The vocabulary lives in [docs/glossary.md](docs/glossary.md).
+Cheap observability for a personal fleet and the agent work done on it: a Collector on each System pushes Reports to a Hub, which stores them in PostgreSQL, and archives agent Session transcripts; a dashboard reads the Hub's database and shows every System's Vitals and the Services and jobs its provisioner recorded. Heimdall works with any provisioner. The vocabulary lives in [docs/glossary.md](docs/glossary.md).
 
 ## Where things are decided
 
