@@ -102,19 +102,27 @@ test('the now line says what each status knows', () => {
   expect(nowLine(lane({ status: 'never_seen' }), context)).toBe('never seen');
 });
 
-test('the now line of an unpaired System gives its last Vitals, however old', () => {
+test('the now line of an unpaired System leads with when it was last seen, then its Vitals', () => {
   const context = { now: NOW, timeZone: 'UTC' };
   const latest = {
     cpuBusyPercent: 17.6,
     memoryUsedPercent: 41.2,
     t: Date.UTC(2026, 9, 13, 4, 35),
   };
-  expect(nowLine(lane({ lastSeenAt: latest.t, latest, status: 'unpaired' }), context)).toBe(
-    'last Vitals 04:35, CPU 18%, memory 41%',
-  );
   expect(
-    nowLine(lane({ lastSeenAt: NOW - 3 * 24 * 60 * MINUTE, status: 'unpaired' }), context),
-  ).toBe('no Vitals');
+    nowLine(
+      lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), latest, status: 'unpaired' }),
+      context,
+    ),
+  ).toBe('last seen 04:36, CPU 18%, memory 41%');
+});
+
+test('the now line of an unpaired System seen without a sample still has its date', () => {
+  const context = { now: NOW, timeZone: 'UTC' };
+  expect(
+    nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), status: 'unpaired' }), context),
+  ).toBe('last seen 04:36, no Vitals');
+  expect(nowLine(lane({ status: 'unpaired' }), context)).toBe('never seen');
 });
 
 test('the now line of a System silent over 2 minutes says since when, not old Vitals', () => {

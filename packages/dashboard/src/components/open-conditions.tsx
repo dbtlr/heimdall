@@ -1,6 +1,5 @@
 import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
 import { formatWhen } from '../lib/time.ts';
-import { cn } from '../lib/utils.ts';
 import type { OpenCondition } from '../server/fleet-overview-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
 
@@ -23,16 +22,14 @@ export function OpenConditions({
         <ul>
           {open.map((condition) => (
             <li
-              className={cn(
-                'flex items-baseline gap-2.5 py-[5px]',
-                condition.unpaired && 'opacity-70',
-              )}
+              className="flex items-baseline gap-2.5 py-[5px]"
               key={`${condition.system}-${condition.kind}-${condition.subject}`}
             >
               <ConditionGlyph kind={SEVERITY[condition.kind]} />
               <span className="min-w-0 flex-1">
                 <b className="font-semibold">{KIND_NAMES[condition.kind]}</b> on {condition.system}
-                {condition.subject === '' ? '' : `, ${condition.subject}`}. {condition.reason}
+                {condition.subject === '' ? '' : `, ${condition.subject}`}.{' '}
+                <span className="whitespace-pre-wrap">{condition.reason}</span>
                 {condition.unpaired && (
                   <em className="ml-1 rounded border px-[5px] text-xs text-muted-foreground not-italic">
                     unpaired

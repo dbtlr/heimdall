@@ -14,25 +14,32 @@ export type RefreshHost = {
 
 // Calls `refresh` every `everyMs` while the page is visible. A hidden page
 // pauses it, and showing the page refreshes at once and starts the period
-// over, so a returning reader never sees old data. Returns a function that stops it all.
+// over, so a returning reader never sees old data. A tick, or a showing, that
+// finds the previous load still `isPending` is skipped, so a slow load is never
+// cut off and started again. Returns a function that stops it all.
 export const keepRefreshing = (
   refresh: () => void,
   host: RefreshHost,
-  everyMs = REFRESH_EVERY_MS,
+  { everyMs = REFRESH_EVERY_MS, isPending }: { everyMs?: number; isPending: () => boolean },
 ): (() => void) => {
+  const refreshUnlessPending = () => {
+    if (!isPending()) {
+      refresh();
+    }
+  };
   let cancel: (() => void) | undefined;
   const pause = () => {
     cancel?.();
     cancel = undefined;
   };
   const resume = () => {
-    cancel ??= host.repeat(refresh, everyMs);
+    cancel ??= host.repeat(refreshUnlessPending, everyMs);
   };
   const stopListening = host.onVisibilityChange(() => {
     if (host.isHidden()) {
       pause();
     } else if (cancel === undefined) {
-      refresh();
+      refreshUnlessPending();
       resume();
     }
   });

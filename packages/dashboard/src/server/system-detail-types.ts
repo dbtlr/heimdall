@@ -74,7 +74,7 @@ export type SystemDetail = {
   name: string;
   now: number;
   // Whether the System still holds a token. An unpaired System keeps its
-  // history, and its page is read-only.
+  // history, and its page says so in a banner.
   paired: boolean;
   // The Collector's operating system and architecture, such as linux and x64.
   platform: { arch: string; os: string } | undefined;

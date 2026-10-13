@@ -32,14 +32,15 @@ test('the link leads back when shown with no unpaired System to list', () => {
 });
 
 describe('emptyFleetText', () => {
-  test('says no System is paired when there are no lanes', () => {
-    expect(emptyFleetText([])).toBe('No System is paired.');
+  test('says no System is paired in place of the lanes when there are none', () => {
+    expect(emptyFleetText([])).toEqual({ replacesLanes: true, text: 'No System is paired.' });
   });
 
-  test('says no System has reported yet when every paired System has never been seen', () => {
-    expect(emptyFleetText([{ lastSeenAt: undefined }, { lastSeenAt: undefined }])).toBe(
-      'No System has reported yet.',
-    );
+  test('says no System has reported yet above the lanes when every paired System was never seen', () => {
+    expect(emptyFleetText([{ lastSeenAt: undefined }, { lastSeenAt: undefined }])).toEqual({
+      replacesLanes: false,
+      text: 'No System has reported yet.',
+    });
   });
 
   test('says nothing once any paired System has reported', () => {

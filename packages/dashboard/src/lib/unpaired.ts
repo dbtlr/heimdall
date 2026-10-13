@@ -15,14 +15,17 @@ export const unpairedLinkText = (count: number, shown: boolean): string => {
   return `${shown ? 'Hide' : 'Show'} ${String(count)} unpaired System${count === 1 ? '' : 's'}`;
 };
 
-// What replaces the paired lanes when there is nothing to draw: that no System
-// is paired, or that paired Systems have yet to send a first Report. Undefined
-// when any lane has been heard from.
-export const emptyFleetText = (lanes: readonly { lastSeenAt: number | undefined }[]) => {
+// What the overview says when there is little to draw: that no System is
+// paired, in place of the lanes, or that paired Systems have yet to send a
+// first Report, above their Never seen lanes so the names stay in view.
+// Undefined when any lane has been heard from.
+export const emptyFleetText = (
+  lanes: readonly { lastSeenAt: number | undefined }[],
+): { replacesLanes: boolean; text: string } | undefined => {
   if (lanes.length === 0) {
-    return 'No System is paired.';
+    return { replacesLanes: true, text: 'No System is paired.' };
   }
   return lanes.every(({ lastSeenAt }) => lastSeenAt === undefined)
-    ? 'No System has reported yet.'
+    ? { replacesLanes: false, text: 'No System has reported yet.' }
     : undefined;
 };

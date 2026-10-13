@@ -48,7 +48,7 @@ describe('keepRefreshing', () => {
     const fake = fakeHost();
     let refreshes = 0;
 
-    keepRefreshing(() => refreshes++, fake.host);
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => false });
     expect(fake.periods()).toEqual([15_000]);
     expect(REFRESH_EVERY_MS).toBe(15_000);
     expect(refreshes).toBe(0);
@@ -61,7 +61,7 @@ describe('keepRefreshing', () => {
   test('pauses while the document is hidden', () => {
     const fake = fakeHost();
     let refreshes = 0;
-    keepRefreshing(() => refreshes++, fake.host);
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => false });
 
     fake.show(true);
     expect(fake.running()).toBe(0);
@@ -73,7 +73,7 @@ describe('keepRefreshing', () => {
   test('refreshes at once when the document becomes visible again, then keeps its period', () => {
     const fake = fakeHost();
     let refreshes = 0;
-    keepRefreshing(() => refreshes++, fake.host);
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => false });
     fake.show(true);
 
     fake.show(false);
@@ -87,7 +87,7 @@ describe('keepRefreshing', () => {
   test('does not start a second timer or an extra refresh when a visible document reports visible again', () => {
     const fake = fakeHost();
     let refreshes = 0;
-    keepRefreshing(() => refreshes++, fake.host);
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => false });
 
     fake.show(false);
 
@@ -98,7 +98,7 @@ describe('keepRefreshing', () => {
   test('starts paused for a document that opens hidden, and refreshes when it shows', () => {
     const fake = fakeHost(true);
     let refreshes = 0;
-    keepRefreshing(() => refreshes++, fake.host);
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => false });
     expect(fake.running()).toBe(0);
 
     fake.show(false);
@@ -109,11 +109,38 @@ describe('keepRefreshing', () => {
 
   test('stops its timer and its listener', () => {
     const fake = fakeHost();
-    const stop = keepRefreshing(() => undefined, fake.host);
+    const stop = keepRefreshing(() => undefined, fake.host, { isPending: () => false });
 
     stop();
 
     expect(fake.running()).toBe(0);
     expect(fake.listening()).toBe(0);
+  });
+
+  test('skips a tick while the previous load is still pending, and refreshes on the next once it is done', () => {
+    const fake = fakeHost();
+    let pending = true;
+    let refreshes = 0;
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => pending });
+
+    fake.elapse();
+    fake.elapse();
+    expect(refreshes).toBe(0);
+
+    pending = false;
+    fake.elapse();
+    expect(refreshes).toBe(1);
+  });
+
+  test('does not refresh on showing the page while a load is pending', () => {
+    const fake = fakeHost();
+    let refreshes = 0;
+    keepRefreshing(() => refreshes++, fake.host, { isPending: () => true });
+    fake.show(true);
+
+    fake.show(false);
+
+    expect(refreshes).toBe(0);
+    expect(fake.running()).toBe(1);
   });
 });

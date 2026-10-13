@@ -28,7 +28,8 @@ export function UnpairedLink({ count, shown }: { count: number; shown: boolean }
   );
 }
 
-// The Systems that were unpaired, greyed below a divider: their history is
+// The Systems that were unpaired, greyed below a divider (plots dimmed, text in
+// the muted colour, which keeps its contrast): their history is
 // kept, and no new Report arrives. Each lane opens that System's page.
 export function UnpairedLanes({
   lanes,
@@ -43,15 +44,15 @@ export function UnpairedLanes({
 }) {
   return (
     <>
-      <div className="mt-3.5 flex items-center gap-3 text-[12.5px] text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed">
+      <h2 className="mt-3.5 flex items-center gap-3 text-[12.5px] font-normal text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed">
         Unpaired, history kept
-      </div>
+      </h2>
       {lanes.length === 0 ? (
         <p className="py-3 text-muted-foreground">No System is unpaired.</p>
       ) : (
         lanes.map((lane) => (
           <div
-            className="opacity-60 saturate-50 transition-opacity hover:opacity-85"
+            className="text-muted-foreground saturate-50 [&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-90"
             key={lane.name}
           >
             <FleetLane lane={lane} now={now} timeZone={timeZone} window={window} />

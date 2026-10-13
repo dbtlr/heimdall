@@ -45,11 +45,11 @@ A port of 0 picks a free one. The file holds no secret, and the database URL is 
 
 ## Pages
 
-- **Fleet overview** (`/`): every paired System as a lane on one time axis, and the Conditions open now. When the Hub holds Systems that are no longer paired, a link below the lanes adds them under a divider, greyed, with their Conditions in Open now tagged `unpaired`; the link sets `?unpaired`, so the view can be shared. With no lanes to draw, the page says "No System is paired." or, when paired Systems have yet to send a Report, "No System has reported yet."
-- **System detail** (`/systems/<name>`): the System's Vitals, Harness processes, Sessions, and Conditions on one axis, with a card of its load averages, disks (orange below 10% free, where the Hub raises low disk), and Harness installs. An unpaired System opens read-only under a banner; a name that is no System is not found.
+- **Fleet overview** (`/`): every paired System as a lane on one time axis, and the Conditions open now. When the Hub holds Systems that are no longer paired, a link below the lanes adds them under a divider, greyed, with their Conditions in Open now tagged `unpaired`; the link sets `?unpaired`, so the view can be shared. With no paired System, the page says "No System is paired." in place of the lanes; when paired Systems have yet to send a Report, it keeps their Never seen lanes under "No System has reported yet."
+- **System detail** (`/systems/<name>`): the System's Vitals, Harness processes, Sessions, and Conditions on one axis, with a card of its load averages, disks (orange below 10% free, the point where the Hub raises its low disk Condition, which clears only above 15% free), and Harness installs. An unpaired System opens under a banner that says its history is kept and no new Reports arrive; a name that is no System is not found.
 - **Session** (`/systems/<name>/sessions/<harness>/<source>/<session id>`): one Session's Timeline, Cost, and Trace.
 
-Every page reads its data again every 15 seconds while its tab is visible, through the router's invalidation, and at once when the tab becomes visible again.
+Every page but the Session page reads its data again every 15 seconds while its tab is visible, through the router's invalidation, and at once when the tab becomes visible again. A tick that finds the previous load still running is skipped.
 
 ## Seed a scratch database
 

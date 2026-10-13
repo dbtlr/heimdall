@@ -45,13 +45,11 @@ function Fleet() {
           </h1>
           <FleetLegend />
         </div>
-        {empty === undefined ? (
+        {empty !== undefined && <p className="border-t py-3 text-muted-foreground">{empty.text}</p>}
+        {empty?.replacesLanes !== true &&
           overview.lanes.map((lane) => (
             <FleetLane key={lane.name} lane={lane} now={now} timeZone={timeZone} window={window} />
-          ))
-        ) : (
-          <p className="border-t py-3 text-muted-foreground">{empty}</p>
-        )}
+          ))}
         {showUnpaired && (
           <UnpairedLanes
             lanes={overview.unpairedLanes}

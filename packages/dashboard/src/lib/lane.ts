@@ -75,15 +75,17 @@ const vitalsText = ({
 
 // The line under a lane's status: its newest CPU and memory, or since when it
 // has been asleep or silent, so old Vitals never read as current. An unpaired
-// System sends no more, so its line dates its last Vitals.
+// System sends no more, so its line dates when it was last seen.
 export const nowLine = (
   lane: Lane,
   { now, timeZone }: { now: number; timeZone: string },
 ): string => {
   if (lane.status === 'unpaired') {
-    return lane.latest === undefined
-      ? 'no Vitals'
-      : `last Vitals ${formatWhen(lane.latest.t, now, timeZone)}, ${vitalsText(lane.latest)}`;
+    if (lane.lastSeenAt === undefined) {
+      return 'never seen';
+    }
+    const seen = `last seen ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
+    return `${seen}, ${lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)}`;
   }
   if (lane.status === 'never_seen') {
     return 'never seen';

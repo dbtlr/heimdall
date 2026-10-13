@@ -75,8 +75,10 @@ function Harnesses({ installs }: { installs: readonly HarnessInstall[] }) {
   }
   return (
     <ul>
-      {installs.map(({ harness, location, version }) => (
-        <li className="py-0.5" key={`${harness}-${location}-${version}`}>
+      {installs.map(({ harness, location, version }, index) => (
+        // One Harness can have several installs at one version.
+        // oxlint-disable-next-line react/no-array-index-key
+        <li className="py-0.5" key={`${harness}-${location}-${version}-${String(index)}`}>
           <b className="font-semibold">
             {harnessName(harness)} {version}
           </b>
@@ -127,8 +129,10 @@ export function SystemFacts({
       {latest !== undefined && (
         <Fact asOf={asOf} grow={1.5} title="Disks">
           <ul>
-            {latest.disks.map((disk) => (
-              <DiskRow disk={disk} key={disk.mount} />
+            {latest.disks.map((disk, index) => (
+              // A mount can be listed twice.
+              // oxlint-disable-next-line react/no-array-index-key
+              <DiskRow disk={disk} key={`${disk.mount}-${String(index)}`} />
             ))}
           </ul>
         </Fact>

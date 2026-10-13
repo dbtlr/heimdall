@@ -39,7 +39,9 @@ export function TimelineRail({
                   {entry.subject !== '' && ` ${entry.subject}`}
                 </p>
                 <p className="text-muted-foreground">{timelineWhen(entry, { now, timeZone })}</p>
-                <p className="text-[12.5px] text-muted-foreground">{entry.reason}</p>
+                <p className="text-[12.5px] whitespace-pre-wrap text-muted-foreground">
+                  {entry.reason}
+                </p>
               </div>
             </li>
           ))}
