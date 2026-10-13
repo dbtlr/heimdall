@@ -240,7 +240,7 @@ tailnet_port = 3000
 
 `port` here and `port` in `dashboard.toml` are two literals on the one System that hosts the Hub, and they must match.
 
-`GET /api/health` answers 200 with `{"database":"ok","version":"<version>"}` when the Hub's database answers within 2 seconds, and 503 when it does not or when no database URL is configured. Fleet polls the URL until it returns 200, so a dashboard that cannot reach the database fails `install` and `restart`.
+`GET /api/health` answers 200 with `{"database":"ok","version":"<version>"}` when the Hub's database answers within 2 seconds, and 503 when it does not or when no database URL is configured. Fleet polls the URL until it returns 200, so a dashboard that cannot reach the database fails `install` and `restart`. The same ingress serves `GET /api/v1/records`, which `fleet doctor` reads.
 
 ### Collector
 
@@ -330,8 +330,9 @@ These are the gaps between Heimdall's needs and what Fleet's documents and rende
 - **An account on a System without one (A4).** A System that declares no `package_user` has no unprivileged account to run the Collector as a systemd user service. It joins Heimdall when Fleet gives it one.
 - **Record what Fleet installs (M4).** After a command that installs or updates an Application, a Service, or a Backup Job succeeds, Fleet records it with `heimdall-collector record` as the Collector's account, and removing the installed thing runs `heimdall-collector forget`. After a Push or Apply, Fleet records the files it wrote, if it wants Drift reported.
 - **Report job runs (M4).** Each Backup Job's runner reports every run with `heimdall-collector record run <job>`, and ignores a failure to record so a broken Collector never fails a backup.
-- **Check declarations against records (M4).** Fleet compares what it declares with the records the Hub mirrors, which `GET /api/v1/records` returns ([Reading the records back](spec.md#reading-the-records-back)), in a command of its own such as `fleet doctor`. Heimdall stores none of Fleet's declarations.
+- **Check declarations against records (M4).** Fleet compares what it declares with the records the Hub mirrors, which the dashboard's `GET /api/v1/records` returns ([Reading the records back](spec.md#reading-the-records-back)), in a command of its own such as `fleet doctor`. Heimdall stores none of Fleet's declarations.
 - **Declare the dashboard (A11).** Fleet adds the `heimdall-dashboard` Application, its config template, and its native Service on the System that hosts the Hub, as this document describes, with Tailscale ingress for its port. This is the ask written for Fleet's `docs/specs/heimdall-asks.md`.
+- **Read the records from the dashboard (A12).** `fleet doctor` reads `GET /api/v1/records` from the dashboard's tailnet address, which A11's ingress exposes, by default. The Hub no longer serves the records read, so until this lands an operator passes the dashboard's address with `fleet doctor --hub`. This is the ask written for Fleet's `docs/specs/heimdall-asks.md`, as a change to its A7, which has `fleet doctor` read the records from the Hub.
 - **Automated pairing (optional, later).** Fleet could run `heimdall-hub pair <system>` and `heimdall-collector pair <code>` for a System that is not paired. Fleet has no cross-System imperative step today, and a System pairs only once, so the manual step stands until the effort pays.
 
 Ask A3, per-System secrets and plain values in one template, is no longer needed. Pairing replaced the per-System token and System name, and the Hub's `port` and `tailnet_port` stay literals on the one System that hosts the Hub.

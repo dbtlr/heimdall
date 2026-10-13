@@ -1,13 +1,10 @@
 import { expect, test } from 'bun:test';
 
-import { RecordsReadSchema } from '@heimdall/schema';
-
 import { unpair } from './pairing.ts';
 import { listSystems } from './store.ts';
 import { evaluateSystemConditions, SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { issue, NOW, page, push, redeem, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
-import { storeToken } from './tokens.ts';
 
 const MINUTE = 60_000;
 
@@ -22,12 +19,6 @@ const unpairedLaptop = async (h: Hub) => {
 const evaluate = (h: Hub, time: number) => {
   h.clock.now = time;
   return evaluateSystemConditions(h.db.sql, () => h.clock.now, SYSTEM_CONDITION_THRESHOLDS);
-};
-
-const readRecords = async (h: Hub, query = '') => {
-  const response = await h.hub.fetch(new Request(`http://hub.test/api/v1/records${query}`));
-  expect(response.status).toBe(200);
-  return RecordsReadSchema.parse(await response.json()).systems;
 };
 
 test('an unpaired System is absent from the normal page, which links to the unpaired view', async () => {
@@ -123,29 +114,6 @@ test('pairing a System again brings it back to the normal view', async () => {
   expect(await page(h.hub, '/?unpaired')).not.toContain('laptop-1');
 });
 
-test('the records read leaves unpaired Systems out, marks the rest paired, and includes them on request', async () => {
-  await using h = await startHub();
-  await unpairedLaptop(h);
-
-  const normal = await readRecords(h);
-  expect(normal.map((s) => [s.system, s.paired])).toEqual([['server-1', true]]);
-
-  const included = await readRecords(h, '?unpaired=include');
-  expect(included.map((s) => [s.system, s.paired])).toEqual([
-    ['laptop-1', false],
-    ['server-1', true],
-  ]);
-});
-
-test('an unpaired System paired again is back in the default read', async () => {
-  await using h = await startHub();
-  await unpairedLaptop(h);
-
-  await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'new-token' });
-
-  expect((await readRecords(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
-});
-
 test('a System unpaired and given a new code stays hidden until the code is redeemed', async () => {
   await using h = await startHub();
   await unpairedLaptop(h);
@@ -153,45 +121,10 @@ test('a System unpaired and given a new code stays hidden until the code is rede
   const code = await issue(h, 'laptop-1');
 
   expect(await page(h.hub)).not.toContain('laptop-1');
-  expect((await readRecords(h)).map((s) => s.system)).toEqual(['server-1']);
 
   expect((await redeem(h.hub, { code })).status).toBe(200);
 
   expect(await page(h.hub)).toContain('laptop-1');
-  expect((await readRecords(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
-});
-
-test("the default read lists exactly the paired entries of the Hub's Systems", async () => {
-  await using h = await startHub();
-  await unpairedLaptop(h);
-
-  const paired = (await listSystems(h.db.sql)).filter((s) => s.paired).map((s) => s.name);
-
-  expect((await readRecords(h)).map((s) => s.system)).toEqual(paired);
-});
-
-test.each([
-  ['an unknown value', '?unpaired=yes'],
-  ['a different case', '?unpaired=INCLUDE'],
-  ['an empty value', '?unpaired='],
-  ['no value', '?unpaired'],
-  ['a repeated value that is not include', '?unpaired=include&unpaired=yes'],
-])('a records read with %s for unpaired is refused', async (_name, query) => {
-  await using h = await startHub();
-
-  const response = await h.hub.fetch(new Request(`http://hub.test/api/v1/records${query}`));
-
-  expect(response.status).toBe(400);
-  expect(await response.text()).toContain('unpaired=include');
-});
-
-test('a records read that repeats include still includes unpaired Systems', async () => {
-  await using h = await startHub();
-  await unpairedLaptop(h);
-
-  const included = await readRecords(h, '?unpaired=include&unpaired=include');
-
-  expect(included.map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
 });
 
 test('the unpaired page view shows whatever the value of unpaired', async () => {

@@ -22,7 +22,7 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 - **The dashboard is its own app** in `packages/dashboard`: TypeScript, TanStack Start, Tailwind, and shadcn/ui, with shadcn's chart components on Recharts. It is not compiled into the Hub binary.
 - **It reads the Hub's database directly.** TanStack Start server functions query PostgreSQL as the Hub's role, reading whatever tables and views a screen needs. Session facts come from the `insight` views, so a Session's cost or token count has the one definition [ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md) gives it. The dashboard does not write.
 - **The Hub ingests and derives.** It keeps the Collector-facing endpoints (Reports, transcript uploads, and pairing redemption) and its health check, derives Conditions, rollups, and Session insight, owns the schema and its migrations, and keeps its admin commands on its own System.
-- **The dashboard app serves every read.** Its pages and the read API, `GET /api/v1/records` and any later read endpoint, are TanStack Start routes in the same app, sharing their queries. The records read moves there once the app runs; the Hub serves it until provisioners read it from the app.
+- **The dashboard app serves every read.** Its pages and the read API, `GET /api/v1/records` and any later read endpoint, are TanStack Start routes in the same app, sharing their queries. The records read moved there whole; the Hub no longer serves it.
 - **It runs as its own Service on the Hub's System** and ships in each release beside the Collector and Hub binaries.
 - **Its type is Barlow Semi Condensed**, from Fontsource, served by the app itself.
 - **The Hub's page stays** until the dashboard shows everything it shows.
@@ -38,9 +38,10 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 
 - The dashboard depends on the Hub's tables as they are. A Hub migration that changes a table the dashboard reads changes the dashboard in the same pull request.
 - The dashboard holds the Hub's database credentials, with the same trust as the Hub.
-- A provisioner that reads records follows the records read to the app's address when it moves.
+- A provisioner that reads records reads them from the app's address.
 - A release has a third deliverable beside the binaries [ADR-0006](0006-releases-ship-both-binaries-installed-by-script.md) describes, and a provisioner installs and runs it beside the Hub.
 
 ## Changelog
 
 - 2026-10-13: Amended before any code relied on it. The Hub's HTTP API no longer stays whole: the Hub keeps ingestion, and the dashboard app serves every read, the records read included.
+- 2026-10-13: The records read moved to the app in one change, with no period in which the Hub also served it, so its query has one implementation (HMD-86). A provisioner switches to the app's address when it upgrades the Hub.

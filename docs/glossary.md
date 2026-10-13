@@ -45,7 +45,7 @@ The process that runs on each System, observes it, holds its records, and sends 
 _Avoid_: agent (reserved for the AI driving a Harness), exporter, daemon
 
 **Hub**:
-The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, and derives Session insight from transcripts. Until the dashboard shows everything, the Hub also serves its own page and the records read.
+The service that receives Reports and transcripts, stores them in PostgreSQL, derives Conditions, mirrors each System's records, and derives Session insight from transcripts. Until the dashboard shows everything, the Hub also serves its own page.
 _Avoid_: server, backend
 
 **dashboard**:
@@ -117,7 +117,7 @@ A System's history of Conditions being raised and cleared, newest Condition firs
 _Avoid_: event feed, event log (a Report is never an event)
 
 **Pairing**:
-How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's normal view and the records read, and keeps its history, which the dashboard's unpaired view still shows; `?unpaired=include` adds its last records to the records read.
+How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard and the records read, and keeps its history, which the unpaired view of the Hub's page still shows; `?unpaired=include` adds its last records to the records read.
 _Avoid_: enrollment, registration, provisioning (a provisioner's install, not Heimdall's identity)
 
 **Pairing code**:
