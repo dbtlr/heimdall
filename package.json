@@ -11,6 +11,7 @@
     "test": "bun test packages",
     "verify": "bun run check && bun run test",
     "build:collector": "bun run --cwd packages/collector loom build --out ../../dist/heimdall-collector",
+    "build:dashboard": "bun run --cwd packages/dashboard build",
     "build:hub": "bun run --cwd packages/hub loom build --out ../../dist/heimdall-hub",
     "release": "bun packages/release/src/main.ts"
   },

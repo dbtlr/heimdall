@@ -12,6 +12,9 @@ import { issueCode } from '../pairing.ts';
 import { storeToken } from '../tokens.ts';
 import { testDatabase } from './postgres.ts';
 
+// Revokes a System's token, as `heimdall-hub unpair` does.
+export { unpair } from '../pairing.ts';
+
 // gzip, as the Collector packs a chunk.
 export const gzip = promisify(gzipCallback);
 

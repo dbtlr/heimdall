@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource/barlow-semi-condensed/400.css';
+@import '@fontsource/barlow-semi-condensed/500.css';
+@import '@fontsource/barlow-semi-condensed/600.css';
+@import '@fontsource/barlow-semi-condensed/700.css';
+
+/* The dashboard is dark only. */
+@custom-variant dark (&:is(.dark *));
+
+/* Design B's dark tokens, as shadcn's CSS variables. */
+:root {
+  --background: #151b2a;
+  --foreground: #e7eaf3;
+  --card: #1c2336;
+  --card-foreground: #e7eaf3;
+  --popover: #1c2336;
+  --popover-foreground: #e7eaf3;
+  --primary: #4a90ea;
+  --primary-foreground: #151b2a;
+  --secondary: #1c2336;
+  --secondary-foreground: #e7eaf3;
+  --muted: #1c2336;
+  --muted-foreground: #9ba4b9;
+  --accent: #232c44;
+  --accent-foreground: #e7eaf3;
+  --destructive: #d03b3b;
+  --border: #2b3450;
+  --input: #2b3450;
+  --ring: #4a90ea;
+  --radius: 0.5rem;
+
+  /* Chart series: one color per Harness. */
+  --chart-1: #4a90ea;
+  --chart-2: #e2672f;
+  --chart-3: #9ba4b9;
+  --chart-4: #fab219;
+  --chart-5: #0ca30c;
+
+  /* Status, from good to critical. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}
+
+@theme inline {
+  --font-sans: 'Barlow Semi Condensed', ui-sans-serif, system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+}
