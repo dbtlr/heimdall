@@ -14,8 +14,12 @@ const open = async () =>
 let connection: Promise<SQL> | undefined;
 
 // The dashboard's one connection pool to the Hub's database, opened on first
-// use. Nothing here writes; queries only read.
+// use. An open that fails is forgotten, so the next request tries again once
+// the URL is there. Nothing here writes; queries only read.
 export const database = (): Promise<SQL> => {
-  connection ??= open();
+  connection ??= open().catch((error: unknown) => {
+    connection = undefined;
+    throw error;
+  });
   return connection;
 };
