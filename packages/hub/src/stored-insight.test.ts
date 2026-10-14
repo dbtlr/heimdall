@@ -6,7 +6,7 @@ import { migrate } from './migrations.ts';
 import { syncPrices } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { pruneVitals, RAW_RETENTION_MS } from './retention.ts';
-import { REFRESH_BATCH, refreshSessionInsight } from './stored-insight.ts';
+import { refreshSessionInsight } from './stored-insight.ts';
 import { startTestServer, testDatabase } from './testing/postgres.ts';
 import { CWD, timeline } from './testing/timeline.ts';
 
@@ -111,21 +111,21 @@ describe('refreshing', () => {
     expect(await differences(db.sql)).toEqual([]);
   });
 
-  test('takes batches until no Session is stale', async () => {
+  test('refreshes until no Session is stale', async () => {
     await using db = await database();
-    for (let i = 0; i < REFRESH_BATCH + 5; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       // oxlint-disable-next-line no-await-in-loop -- fixtures in order.
       await addSession(db.sql, { id: `s${String(i).padStart(2, '0')}`, requests: [i * 10] });
     }
     await price(db.sql);
 
-    expect(await refreshSessionInsight(db.sql)).toBe(REFRESH_BATCH + 5);
+    expect(await refreshSessionInsight(db.sql)).toBe(6);
     expect(await stale(db.sql)).toEqual([]);
   });
 
-  test('stops taking batches once its budget has passed', async () => {
+  test('stops once its budget has passed', async () => {
     await using db = await database();
-    for (let i = 0; i < REFRESH_BATCH + 5; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       // oxlint-disable-next-line no-await-in-loop -- fixtures in order.
       await addSession(db.sql, { id: `s${String(i).padStart(2, '0')}`, requests: [i * 10] });
     }
@@ -137,7 +137,7 @@ describe('refreshing', () => {
       now: () => (clock += 1),
     });
 
-    expect(refreshed).toBe(REFRESH_BATCH);
+    expect(refreshed).toBe(1);
     expect(await stale(db.sql)).toHaveLength(5);
   });
 
@@ -534,7 +534,7 @@ describe('a Session whose refresh fails', () => {
 describe('the refresh order', () => {
   test('stores the Sessions with the latest requests first', async () => {
     await using db = await database();
-    for (let i = 0; i < REFRESH_BATCH + 1; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       // oxlint-disable-next-line no-await-in-loop -- fixtures in order.
       await addSession(db.sql, { id: `s${String(i).padStart(2, '0')}`, requests: [i * 10] });
     }
