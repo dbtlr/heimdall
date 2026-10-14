@@ -37,8 +37,12 @@ export const refreshSessionInsight = async (
       refreshed += (await refreshSession(sql, key)) ? 1 : 0;
     } catch (error) {
       failed.push(`${key.harness} ${key.system} ${key.session_id}: ${describeError(error)}`);
-      // oxlint-disable-next-line no-await-in-loop -- the failure counts before the next pick.
-      await countFailure(sql, key);
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- the failure counts before the next pick.
+        await countFailure(sql, key);
+      } catch (countError) {
+        failed.push(`counting that failure: ${describeError(countError)}`);
+      }
     }
     if (now() >= until) {
       break;
