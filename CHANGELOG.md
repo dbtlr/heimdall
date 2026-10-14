@@ -8,6 +8,17 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.6.3 - 2026-10-14
+
+### Added
+
+- **The dashboard has a favicon** (HMD-102). Browser tabs show Heimdall's H standing on a blue heartbeat trace instead of a blank icon.
+
+### Changed
+
+- **The dashboard shows every time in the viewer's own timezone** (HMD-103). Clock times, weekdays, and the day marks on the time axes follow the browser's zone instead of the machine the dashboard runs on.
+- **The dashboard says why a System needs you** (HMD-98). A lane's status names the Condition and its subject, such as Drift on a file or Service down on a unit, and opens it on System detail. Open now becomes a table of what was observed, when it was first detected, and when its latest check arrived. System detail opens with each open Condition's expected and observed state and a next step with the commands to run. Evidence that cannot confirm a failure shows apart and greyed: a check set or run set older than 2 hours, a check that could not tell, a recorded file the Collector could not read, and checks that stopped arriving while the System still reports.
+
 ## v0.6.2 - 2026-10-14
 
 ### Changed
