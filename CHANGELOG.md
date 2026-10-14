@@ -8,6 +8,17 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.6.2 - 2026-10-14
+
+### Changed
+
+- **The Hub stores Session stretches and totals, so dashboard pages load in under half a second** (HMD-97). The Hub keeps each Session's stretches and totals, cost included, and refreshes a Session within about 15 seconds of anything they are computed from changing. A price change reprices every Session within a few refreshes. `insight.session_stretches` and `insight.session_totals` read the stored rows and keep their columns. On a copy of the live archive, after HMD-96, the 24-hour overview drops from 6 seconds to 0.1, and the 7-day overview from 13 to 0.4. A parser switch lags longer, while the refresh works through every Session it changed. The first start after upgrading stores every Session over a minute or two; until a Session is stored, its stretches and cost are missing from the views and the dashboard. See [ADR-0016](docs/decisions/0016-session-stretches-and-totals-are-stored-and-refreshed.md).
+
+### Fixed
+
+- **Dashboard pages read each Session's cost once** (HMD-96). The fleet overview and System detail looked up a Session's totals once per stretch, re-pricing every request of the Session each time. They now look each Session up once, through one shared stretches read. On the live archive the 24-hour overview drops from about 22 to 7 seconds and the 7-day overview from 31 to 12.
+- **The Hub's refresh of stored Session insight drains a backlog without slowing down as it grows** (HMD-99). It picks up to 20 stale Sessions at a time and leaves out only those that failed or another refresh holds, instead of sorting every stale Session again for each one. A backlog of 2,400 Sessions, such as every Session after a price change, drains in 3 seconds instead of 19.
+
 ## v0.6.1 - 2026-10-13
 
 ### Fixed
