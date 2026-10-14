@@ -142,7 +142,7 @@ type LatestRow = {
   t: Date;
 };
 
-type StretchRow = {
+export type StretchRow = {
   cost_usd: string | null;
   ended_at: Date;
   first_cwd: string | null;
@@ -152,6 +152,7 @@ type StretchRow = {
   last_git_branch: string | null;
   link: string;
   session_id: string;
+  source: string;
   started_at: Date;
   system: string;
 };
@@ -196,6 +197,45 @@ export const toMark = (row: ConditionRow): ConditionMark => ({
   raisedAt: row.raised_at.getTime(),
   subject: row.subject,
 });
+
+// The stretches of `systems` that overlap `from` to `to`, each with its
+// Session's place and cost, by System and start. Stretches name their System
+// and a range of `started_at`, which keeps the view cheap (docs/spec.md, the
+// insight views); a stretch that started over a day before `from` is left out.
+// A Session's totals price every request it made, so each Session is looked up
+// once, however many stretches it has; OFFSET 0 keeps that a lookup per
+// Session, since PostgreSQL would otherwise total every Session kept.
+export const readStretches = (
+  sql: SQL,
+  { from, systems, to }: { from: number; systems: readonly string[]; to: number },
+): Promise<StretchRow[]> => sql`
+  WITH st AS MATERIALIZED (
+    SELECT system, harness, source, session_id, started_at, ended_at, link
+    FROM insight.session_stretches
+    WHERE system IN ${sql(systems)}
+      AND started_at BETWEEN ${new Date(from - DAY_MS)} AND ${new Date(to)}
+      AND ended_at >= ${new Date(from)}
+  ), sessions AS MATERIALIZED (
+    SELECT k.harness, k.system, k.source, k.session_id,
+           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
+    FROM (SELECT DISTINCT harness, system, source, session_id FROM st) k
+    JOIN insight.sessions s
+      ON (s.harness, s.system, s.source, s.session_id)
+       = (k.harness, k.system, k.source, k.session_id)
+    CROSS JOIN LATERAL (
+      SELECT x.cost_usd
+      FROM insight.session_totals x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) t
+  )
+  SELECT st.system, st.harness, st.source, st.session_id, st.started_at, st.ended_at, st.link,
+         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.cost_usd
+  FROM st
+  JOIN sessions s USING (harness, system, source, session_id)
+  ORDER BY st.system, st.started_at
+`;
 
 // Groups `rows` by their `system`.
 const bySystem = <Row extends { system: string }>(rows: readonly Row[]) => {
@@ -275,30 +315,7 @@ export const readFleetOverview = async (
       ) v
       WHERE s.name IN ${sql(names)}
     `,
-    // Stretches name their System and a range of `started_at`, which keeps the
-    // view cheap (docs/spec.md, the insight views). A stretch that started over
-    // a day before the range is left out.
-    sql`
-      SELECT st.system, st.harness, st.session_id, st.started_at, st.ended_at, st.link,
-             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
-      FROM insight.session_stretches st
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (st.harness, st.system, st.source, st.session_id)
-      -- OFFSET 0 keeps this a lookup per stretch. Without it PostgreSQL
-      -- flattens the subquery into a join that totals every Session kept.
-      CROSS JOIN LATERAL (
-        SELECT x.cost_usd
-        FROM insight.session_totals x
-        WHERE (x.harness, x.system, x.source, x.session_id)
-            = (st.harness, st.system, st.source, st.session_id)
-        OFFSET 0
-      ) t
-      WHERE st.system IN ${sql(names)}
-        AND st.started_at BETWEEN ${new Date(from - DAY_MS)} AND ${toAt}
-        AND st.ended_at >= ${fromAt}
-      ORDER BY st.system, st.started_at
-    `,
+    readStretches(sql, { from, systems: names, to: now }),
     sql`
       SELECT system, kind, subject, raised_at, cleared_at, latest_reason
       FROM conditions

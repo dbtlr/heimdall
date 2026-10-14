@@ -11,10 +11,11 @@ import {
   laneStatus,
   projectOf,
   RANGE_MS,
+  readStretches,
   toBucket,
   toMark,
 } from './fleet-overview.ts';
-import type { BucketRow, ConditionRow } from './fleet-overview.ts';
+import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
 import type {
   Disk,
   FileIssue,
@@ -106,20 +107,6 @@ export type CoresRow = {
   harness: string;
   pid: number;
   process_id: number;
-};
-
-type StretchRow = {
-  cost_usd: string | null;
-  ended_at: Date;
-  first_cwd: string | null;
-  first_git_branch: string | null;
-  harness: string;
-  last_cwd: string | null;
-  last_git_branch: string | null;
-  link: string;
-  session_id: string;
-  source: string;
-  started_at: Date;
 };
 
 export const linkOf = (link: string): Link => {
@@ -263,28 +250,7 @@ export const readSystemDetail = async (
         AND (p.ended_at IS NULL OR p.ended_at >= ${firstBucket})
       ORDER BY p.started_at, p.id, r.bucket
     `,
-    // As on the Fleet overview: stretches by System and a range of
-    // `started_at`, and each Session's cost looked up per stretch.
-    sql`
-      SELECT st.harness, st.source, st.session_id, st.started_at, st.ended_at, st.link,
-             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
-      FROM insight.session_stretches st
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (st.harness, st.system, st.source, st.session_id)
-      -- OFFSET 0 keeps this a lookup per stretch (see fleet-overview.ts).
-      CROSS JOIN LATERAL (
-        SELECT x.cost_usd
-        FROM insight.session_totals x
-        WHERE (x.harness, x.system, x.source, x.session_id)
-            = (st.harness, st.system, st.source, st.session_id)
-        OFFSET 0
-      ) t
-      WHERE st.system = ${name}
-        AND st.started_at BETWEEN ${new Date(from - DAY_MS)} AND ${toAt}
-        AND st.ended_at >= ${fromAt}
-      ORDER BY st.started_at
-    `,
+    readStretches(sql, { from, systems: [name], to: now }),
     sql`
       SELECT system, kind, subject, raised_at, cleared_at, latest_reason
       FROM conditions
