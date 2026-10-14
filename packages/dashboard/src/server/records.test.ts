@@ -929,7 +929,6 @@ describe('reading the records', () => {
     const { lanes } = await readFleetOverview(h.db.sql, {
       now: NOW,
       range: '24h',
-      timeZone: 'UTC',
     });
     expect((await read(h)).map((entry) => entry.system)).toEqual(lanes.map((lane) => lane.name));
   });

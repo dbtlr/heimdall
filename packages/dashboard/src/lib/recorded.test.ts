@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { phraseText, zoneFreeText } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
 import {
   applicationLine,
   filesLine,
@@ -14,7 +16,22 @@ const NOW = Date.UTC(2026, 9, 6, 16, 0);
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
-const at = { now: NOW, timeZone: 'UTC' };
+
+const utc = (text: Phrase) => phraseText(text, 'UTC');
+
+// Each line as written in UTC.
+const service = (record: Parameters<typeof serviceLine>[0]) => {
+  const line = serviceLine(record, NOW);
+  return { ...line, text: utc(line.text) };
+};
+const job = (record: Parameters<typeof jobLine>[0]) => {
+  const line = jobLine(record, NOW);
+  return { ...line, text: utc(line.text) };
+};
+const files = (record: Parameters<typeof filesLine>[0]) => {
+  const line = filesLine(record, NOW);
+  return { ...line, issues: line.issues.map(({ path, text }) => ({ path, text: utc(text) })) };
+};
 
 const supervisor = (state: string, detail = 'ActiveState=active', since = NOW - 6 * HOUR) => ({
   check: 'supervisor',
@@ -25,14 +42,16 @@ const supervisor = (state: string, detail = 'ActiveState=active', since = NOW - 
 
 describe('serviceLine', () => {
   test('says since when a Service is up, and under which supervisor', () => {
+    expect(service({ checks: [supervisor('up')], name: 'web', supervisor: 'systemd' })).toEqual({
+      state: 'good',
+      text: 'Up since 10:00 (systemd).',
+    });
     expect(
-      serviceLine({ checks: [supervisor('up')], name: 'web', supervisor: 'systemd' }, at),
-    ).toEqual({ state: 'good', text: 'Up since 10:00 (systemd).' });
-    expect(
-      serviceLine(
-        { checks: [supervisor('up', 'running', NOW - 2 * DAY)], name: 'db', supervisor: 'docker' },
-        at,
-      ).text,
+      service({
+        checks: [supervisor('up', 'running', NOW - 2 * DAY)],
+        name: 'db',
+        supervisor: 'docker',
+      }).text,
     ).toBe('Up since Sun 16:00 (Docker).');
   });
 
@@ -41,11 +60,10 @@ describe('serviceLine', () => {
     const failing = { check: 'health', detail: 'HTTP 503', since: NOW - HOUR, state: 'unhealthy' };
 
     expect(
-      serviceLine({ checks: [supervisor('up'), up], name: 'web', supervisor: 'systemd-user' }, at)
-        .text,
+      service({ checks: [supervisor('up'), up], name: 'web', supervisor: 'systemd-user' }).text,
     ).toBe('Up since 10:00 (systemd user). Health URL answers.');
     expect(
-      serviceLine({ checks: [supervisor('up'), failing], name: 'web', supervisor: 'systemd' }, at),
+      service({ checks: [supervisor('up'), failing], name: 'web', supervisor: 'systemd' }),
     ).toEqual({
       state: 'bad',
       text: 'Up since 10:00 (systemd). Health check failing since 15:00: HTTP 503.',
@@ -54,32 +72,71 @@ describe('serviceLine', () => {
 
   test('says since when a Service stopped, with what its supervisor said', () => {
     expect(
-      serviceLine(
-        {
-          checks: [supervisor('stopped', 'ActiveState=failed', NOW - 10 * MINUTE)],
-          name: 'web',
-          supervisor: 'systemd',
-        },
-        at,
-      ),
+      service({
+        checks: [supervisor('stopped', 'ActiveState=failed', NOW - 10 * MINUTE)],
+        name: 'web',
+        supervisor: 'systemd',
+      }),
     ).toEqual({ state: 'bad', text: 'Stopped since 15:50 (systemd): ActiveState=failed.' });
   });
 
   test('is unknown when the Collector could not tell or has not checked', () => {
-    expect(serviceLine({ checks: [], name: 'web', supervisor: 'systemd' }, at)).toEqual({
+    expect(service({ checks: [], name: 'web', supervisor: 'systemd' })).toEqual({
       state: 'unknown',
       text: 'Not checked yet.',
     });
     expect(
-      serviceLine(
-        {
-          checks: [supervisor('unknown', 'launchctl exited 112')],
-          name: 'web',
-          supervisor: 'launchd',
-        },
-        at,
-      ),
+      service({
+        checks: [supervisor('unknown', 'launchctl exited 112')],
+        name: 'web',
+        supervisor: 'launchd',
+      }),
     ).toEqual({ state: 'unknown', text: 'Unknown since 10:00 (launchd): launchctl exited 112.' });
+  });
+});
+
+describe('a record line needs the zone only for its times', () => {
+  test('a stopped Service is bad, with no zone given', () => {
+    const line = serviceLine(
+      {
+        checks: [supervisor('stopped', 'ActiveState=failed', NOW - 10 * MINUTE)],
+        name: 'web',
+        supervisor: 'systemd',
+      },
+      NOW,
+    );
+    expect(line.state).toBe('bad');
+    expect(zoneFreeText(line.text)).toBeUndefined();
+  });
+
+  test('a failing job is bad, and a drifted file a warning, with no zone given', () => {
+    expect(
+      jobLine(
+        {
+          latestRun: run(2, NOW - HOUR, 60),
+          name: 'backup',
+          open: ['job_failing'],
+          schedule: [{ minute: 0 }],
+        },
+        NOW,
+      ).state,
+    ).toBe('bad');
+    expect(
+      filesLine(
+        {
+          checked: true,
+          count: 2,
+          issues: [{ path: '/etc/a', since: NOW - HOUR, state: 'drifted' }],
+          name: 'dotfiles',
+        },
+        NOW,
+      ).state,
+    ).toBe('warning');
+  });
+
+  test('text without a time is whole without a zone', () => {
+    const line = serviceLine({ checks: [], name: 'web', supervisor: 'systemd' }, NOW);
+    expect(zoneFreeText(line.text)).toBe('Not checked yet.');
   });
 });
 
@@ -108,21 +165,15 @@ const run = (exitStatus: number, started: number, seconds: number) => ({
 describe('jobLine', () => {
   test('gives the schedule and how the latest run went', () => {
     expect(
-      jobLine(
-        { latestRun: run(0, NOW - HOUR, 3), name: 'pull', open: [], schedule: [{ minute: 0 }] },
-        at,
-      ),
+      job({ latestRun: run(0, NOW - HOUR, 3), name: 'pull', open: [], schedule: [{ minute: 0 }] }),
     ).toEqual({ state: 'good', text: 'Hourly. Last run 15:00, succeeded in 3 s.' });
     expect(
-      jobLine(
-        {
-          latestRun: run(2, NOW - 14.5 * HOUR, 660),
-          name: 'backup',
-          open: ['job_failing'],
-          schedule: [{ hour: 1, minute: 30 }],
-        },
-        at,
-      ),
+      job({
+        latestRun: run(2, NOW - 14.5 * HOUR, 660),
+        name: 'backup',
+        open: ['job_failing'],
+        schedule: [{ hour: 1, minute: 30 }],
+      }),
     ).toEqual({
       state: 'bad',
       text: 'Daily at 01:30. Last run 01:30, failed with exit status 2 after 11 min.',
@@ -131,45 +182,39 @@ describe('jobLine', () => {
 
   test('warns of a job that is overdue, and knows nothing of one never run', () => {
     expect(
-      jobLine(
-        {
-          latestRun: run(0, NOW - 3 * HOUR, 3),
-          name: 'pull',
-          open: ['job_overdue'],
-          schedule: [{ minute: 0 }],
-        },
-        at,
-      ),
+      job({
+        latestRun: run(0, NOW - 3 * HOUR, 3),
+        name: 'pull',
+        open: ['job_overdue'],
+        schedule: [{ minute: 0 }],
+      }),
     ).toEqual({ state: 'warning', text: 'Hourly. Last run 13:00, succeeded in 3 s. Overdue.' });
     expect(
-      jobLine({ latestRun: undefined, name: 'pull', open: [], schedule: [{ minute: 0 }] }, at),
+      job({ latestRun: undefined, name: 'pull', open: [], schedule: [{ minute: 0 }] }),
     ).toEqual({ state: 'unknown', text: 'Hourly. No run recorded yet.' });
   });
 });
 
 describe('filesLine', () => {
   test('says how many files match when all do', () => {
-    expect(filesLine({ checked: true, count: 6, issues: [], name: 'units' }, at)).toEqual({
+    expect(files({ checked: true, count: 6, issues: [], name: 'units' })).toEqual({
       issues: [],
       rest: '6 files match.',
       state: 'good',
     });
-    expect(filesLine({ checked: true, count: 1, issues: [], name: 'units' }, at).rest).toBe(
+    expect(files({ checked: true, count: 1, issues: [], name: 'units' }).rest).toBe(
       '1 file matches.',
     );
   });
 
   test('names each file that does not match, since when, and how many others match', () => {
     expect(
-      filesLine(
-        {
-          checked: true,
-          count: 38,
-          issues: [{ path: '/home/someone/.gitconfig', since: NOW - 7 * HOUR, state: 'drifted' }],
-          name: 'dotfiles',
-        },
-        at,
-      ),
+      files({
+        checked: true,
+        count: 38,
+        issues: [{ path: '/home/someone/.gitconfig', since: NOW - 7 * HOUR, state: 'drifted' }],
+        name: 'dotfiles',
+      }),
     ).toEqual({
       issues: [{ path: '/home/someone/.gitconfig', text: 'drifted since 09:00' }],
       rest: '37 other files match.',
@@ -179,29 +224,23 @@ describe('filesLine', () => {
 
   test('is unknown, with nothing listed, while the Collector has not checked this version of the record', () => {
     expect(
-      filesLine(
-        {
-          checked: false,
-          count: 3,
-          issues: [{ path: '/etc/a', since: NOW - HOUR, state: 'drifted' }],
-          name: 'dotfiles',
-        },
-        at,
-      ),
+      files({
+        checked: false,
+        count: 3,
+        issues: [{ path: '/etc/a', since: NOW - HOUR, state: 'drifted' }],
+        name: 'dotfiles',
+      }),
     ).toEqual({ issues: [], rest: 'Not checked yet.', state: 'unknown' });
   });
 
   test('is unknown when a file only cannot be read', () => {
     expect(
-      filesLine(
-        {
-          checked: true,
-          count: 1,
-          issues: [{ path: '/etc/app.xml', since: NOW - 2 * DAY, state: 'unreadable' }],
-          name: 'app',
-        },
-        at,
-      ),
+      files({
+        checked: true,
+        count: 1,
+        issues: [{ path: '/etc/app.xml', since: NOW - 2 * DAY, state: 'unreadable' }],
+        name: 'app',
+      }),
     ).toEqual({
       issues: [{ path: '/etc/app.xml', text: 'cannot be read since Sun 16:00' }],
       rest: '',

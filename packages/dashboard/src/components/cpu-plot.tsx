@@ -1,9 +1,10 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
 import { cpuSeries } from '../lib/lane.ts';
-import { formatClock } from '../lib/time.ts';
+import { clockSpan } from '../lib/phrase.ts';
 import type { Window } from '../lib/time.ts';
 import type { CpuBucket } from '../server/fleet-overview-types.ts';
+import { PhraseText } from './date-time.tsx';
 import { ChartContainer, ChartTooltip } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
 
@@ -19,13 +20,11 @@ function BucketTooltip({
   bucketMs,
   buckets,
   label,
-  timeZone,
 }: {
   active?: boolean | undefined;
   bucketMs: number;
   buckets: readonly CpuBucket[];
   label?: number | string | undefined;
-  timeZone: string;
 }) {
   const bucket =
     typeof label === 'number'
@@ -37,7 +36,7 @@ function BucketTooltip({
   return (
     <div className="rounded-md border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">
       <p className="text-muted-foreground">
-        {formatClock(bucket.t, timeZone)} to {formatClock(bucket.t + bucketMs, timeZone)}
+        <PhraseText phrase={clockSpan(bucket.t, bucket.t + bucketMs)} />
       </p>
       <p>
         CPU {percent(bucket.average)}, low {percent(bucket.low)}, high {percent(bucket.high)}
@@ -54,14 +53,12 @@ export function CpuPlot({
   buckets,
   height = 46,
   label,
-  timeZone,
   window,
 }: {
   bucketMs?: number;
   buckets: readonly CpuBucket[];
   height?: number;
   label: string;
-  timeZone: string;
   window: Window;
 }) {
   return (
@@ -78,13 +75,7 @@ export function CpuPlot({
         <YAxis domain={[0, 100]} hide />
         <ChartTooltip
           content={({ active, label: at }) => (
-            <BucketTooltip
-              active={active}
-              bucketMs={bucketMs}
-              buckets={buckets}
-              label={at}
-              timeZone={timeZone}
-            />
+            <BucketTooltip active={active} bucketMs={bucketMs} buckets={buckets} label={at} />
           )}
         />
         <Area

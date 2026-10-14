@@ -2,22 +2,23 @@ import type { ReactNode } from 'react';
 
 import { diskUsage, formatLoad } from '../lib/facts.ts';
 import { harnessName } from '../lib/lane.ts';
-import { formatWhen } from '../lib/time.ts';
+import { whenAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 const LOAD_PERIODS = ['1 min', '5 min', '15 min'] as const;
 
-// A column of the card: a heading, and the facts under it. `asOf` dates facts
-// from a sample that is no longer current.
+// A column of the card: a heading, and the facts under it. `asOf` is the rest of
+// the heading that dates facts from a sample that is no longer current.
 function Fact({
   asOf,
   children,
   grow = 1,
   title,
 }: {
-  asOf?: string | undefined;
+  asOf?: ReactNode;
   children: ReactNode;
   grow?: number;
   title: string;
@@ -29,7 +30,7 @@ function Fact({
     >
       <h2 className="mb-1.5 text-[12.5px] font-normal text-muted-foreground">
         {title}
-        {asOf === undefined ? '' : `, as of ${asOf}`}
+        {asOf}
       </h2>
       {children}
     </section>
@@ -94,19 +95,17 @@ function Harnesses({ installs }: { installs: readonly HarnessInstall[] }) {
 // System never sent is left out, and so is the whole card when none was sent.
 export function SystemFacts({
   detail,
-  timeZone,
 }: {
   detail: Pick<SystemDetail, 'harnesses' | 'latest' | 'now'>;
-  timeZone: string;
 }) {
   const { harnesses, latest, now } = detail;
   if (latest === undefined && harnesses === undefined) {
     return null;
   }
   const asOf =
-    latest !== undefined && now - latest.t > QUIET_AFTER_MS
-      ? formatWhen(latest.t, now, timeZone)
-      : undefined;
+    latest !== undefined && now - latest.t > QUIET_AFTER_MS ? (
+      <PhraseText phrase={[', as of ', whenAt(latest.t, now)]} />
+    ) : undefined;
   return (
     <section
       aria-label="System facts"

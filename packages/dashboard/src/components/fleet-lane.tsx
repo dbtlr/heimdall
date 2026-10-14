@@ -6,6 +6,7 @@ import { cn } from '../lib/utils.ts';
 import type { Lane, LaneStatus } from '../server/fleet-overview-types.ts';
 import { ConditionMarks } from './condition-marks.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
+import { PhraseText } from './date-time.tsx';
 import { GapShades } from './gap-shades.tsx';
 import { SessionStrip } from './session-strip.tsx';
 
@@ -26,17 +27,7 @@ export const LANE_GRID = 'grid gap-1.5 sm:grid-cols-[var(--lane-label,176px)_1fr
 // One System on the shared time axis: its name and status beside its CPU plot,
 // with the agent Sessions and Conditions of the window under it. The lane
 // opens the System's detail page.
-export function FleetLane({
-  lane,
-  now,
-  timeZone,
-  window,
-}: {
-  lane: Lane;
-  now: number;
-  timeZone: string;
-  window: Window;
-}) {
+export function FleetLane({ lane, now, window }: { lane: Lane; now: number; window: Window }) {
   return (
     <Link
       aria-label={lane.name}
@@ -49,23 +40,15 @@ export function FleetLane({
         <p className={cn('w-fit text-[13px]', STATUS_COLOR[lane.status])}>
           {statusWord(lane.status)}
         </p>
-        <p className="text-[12.5px] text-muted-foreground">{nowLine(lane, { now, timeZone })}</p>
+        <p className="text-[12.5px] text-muted-foreground">
+          <PhraseText phrase={nowLine(lane, now)} />
+        </p>
       </div>
       <div className="relative min-w-0 group-hover:bg-white/[0.025]">
         <GapShades gaps={lane.gaps} labelHeight={46} sleeps={lane.sleeps} window={window} />
-        <CpuPlot
-          buckets={lane.buckets}
-          label={`${lane.name} CPU busy`}
-          timeZone={timeZone}
-          window={window}
-        />
-        <SessionStrip stretches={lane.stretches} timeZone={timeZone} window={window} />
-        <ConditionMarks
-          conditions={lane.conditions}
-          now={now}
-          timeZone={timeZone}
-          window={window}
-        />
+        <CpuPlot buckets={lane.buckets} label={`${lane.name} CPU busy`} window={window} />
+        <SessionStrip stretches={lane.stretches} window={window} />
+        <ConditionMarks conditions={lane.conditions} now={now} window={window} />
       </div>
     </Link>
   );

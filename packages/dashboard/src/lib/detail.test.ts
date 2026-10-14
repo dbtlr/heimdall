@@ -11,7 +11,12 @@ import {
   timelineWhen,
   unlinkedLine,
 } from './detail.ts';
+import { phraseText, zoneFreeText } from './phrase.ts';
 import { formatSpan } from './time.ts';
+
+// A header line as written in UTC.
+const header = (line: ReturnType<typeof headerLine>) =>
+  `${line.lead}${phraseText(line.tail, 'UTC')}.`;
 
 // Tuesday 2026-10-06 16:00 UTC.
 const NOW = Date.UTC(2026, 9, 6, 16, 0);
@@ -20,7 +25,6 @@ const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const GIB = 1024 ** 3;
-const at = { now: NOW, timeZone: 'UTC' };
 
 describe('formatSpan', () => {
   test('reads in the largest two units that matter', () => {
@@ -46,71 +50,78 @@ describe('headerLine', () => {
     latest: { t: NOW - 4 * SECOND, uptimeSeconds: 6 * 86_400 + 3600 },
     platform: { arch: 'x64', os: 'linux' },
   };
+  const none = {
+    collectorVersion: undefined,
+    lastSeenAt: undefined,
+    latest: undefined,
+    platform: undefined,
+  };
 
   test('names the platform, Collector version, uptime, and last Report', () => {
-    expect(headerLine(detail, at)).toBe(
+    expect(header(headerLine(detail, NOW))).toBe(
       'Linux x64, Collector 0.6.0, up 6 d 1 h, last Report 4 s ago.',
     );
   });
 
   test('calls darwin macOS and leaves out what the Hub does not hold', () => {
     expect(
-      headerLine(
-        {
-          collectorVersion: undefined,
-          lastSeenAt: NOW - 3 * DAY,
-          latest: undefined,
-          platform: { arch: 'arm64', os: 'darwin' },
-        },
-        at,
+      header(
+        headerLine(
+          { ...none, lastSeenAt: NOW - 3 * DAY, platform: { arch: 'arm64', os: 'darwin' } },
+          NOW,
+        ),
       ),
     ).toBe('macOS arm64, last Report Sat 16:00.');
-    expect(
-      headerLine(
-        {
-          collectorVersion: undefined,
-          lastSeenAt: undefined,
-          latest: undefined,
-          platform: undefined,
-        },
-        at,
-      ),
-    ).toBe('Never heard from.');
+    expect(header(headerLine(none, NOW))).toBe('Never heard from.');
   });
 
   test('opens on the Collector version when the platform is unknown', () => {
     expect(
-      headerLine(
-        { ...detail, lastSeenAt: NOW - 2 * MINUTE, latest: undefined, platform: undefined },
-        at,
+      header(
+        headerLine(
+          { ...detail, lastSeenAt: NOW - 2 * MINUTE, latest: undefined, platform: undefined },
+          NOW,
+        ),
       ),
     ).toBe('Collector 0.6.0, last Report 2 min ago.');
+    expect(header(headerLine({ ...none, lastSeenAt: NOW - 3 * DAY }, NOW))).toBe(
+      'Last Report Sat 16:00.',
+    );
   });
 
   test('gives no uptime from a sample that is no longer current', () => {
     expect(
-      headerLine(
-        {
-          ...detail,
-          lastSeenAt: NOW - HOUR,
-          latest: { t: NOW - HOUR, uptimeSeconds: 60 },
-        },
-        at,
+      header(
+        headerLine(
+          { ...detail, lastSeenAt: NOW - HOUR, latest: { t: NOW - HOUR, uptimeSeconds: 60 } },
+          NOW,
+        ),
       ),
     ).toBe('Linux x64, Collector 0.6.0, last Report 1 h ago.');
+  });
+
+  test('needs the zone only for a last Report a day or more old', () => {
+    expect(headerLine(detail, NOW).tail).toEqual([]);
+    expect(header(headerLine(detail, NOW))).toContain('up 6 d 1 h');
+    const old = headerLine({ ...detail, lastSeenAt: NOW - 3 * DAY, latest: undefined }, NOW);
+    expect(old.lead).toBe('Linux x64, Collector 0.6.0');
+    expect(zoneFreeText(old.tail)).toBeUndefined();
   });
 });
 
 describe('timelineWhen', () => {
   test('says how long an open Condition has been open', () => {
-    expect(timelineWhen({ clearedAt: undefined, raisedAt: NOW - 7 * HOUR }, at)).toBe(
-      'Open since 09:00, 7 h',
-    );
+    expect(
+      phraseText(timelineWhen({ clearedAt: undefined, raisedAt: NOW - 7 * HOUR }, NOW), 'UTC'),
+    ).toBe('Open since 09:00, 7 h');
   });
 
   test('says when a cleared Condition was raised and cleared, and for how long', () => {
     expect(
-      timelineWhen({ clearedAt: NOW - 3 * DAY + 12 * MINUTE, raisedAt: NOW - 3 * DAY }, at),
+      phraseText(
+        timelineWhen({ clearedAt: NOW - 3 * DAY + 12 * MINUTE, raisedAt: NOW - 3 * DAY }, NOW),
+        'UTC',
+      ),
     ).toBe('Sat 16:00 to Sat 16:12, 12 min');
   });
 });

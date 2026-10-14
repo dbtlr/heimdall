@@ -89,8 +89,6 @@ export type FleetOverview = {
   // unpaired Systems in the same order when they were asked for.
   open: OpenCondition[];
   range: Range;
-  // The server's IANA time zone, so the server and the browser format alike.
-  timeZone: string;
   to: number;
   // How many Systems the Hub holds that are no longer paired, asked for or not.
   unpairedCount: number;

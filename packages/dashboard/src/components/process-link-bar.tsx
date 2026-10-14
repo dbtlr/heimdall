@@ -1,6 +1,8 @@
 import { harnessColor } from '../lib/lane.ts';
-import { formatClock, spanBox } from '../lib/time.ts';
+import { clockSpan, phraseTitle } from '../lib/phrase.ts';
+import { spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { Link } from '../server/fleet-overview-types.ts';
 import type { SessionStretch } from '../server/session-view-types.ts';
@@ -29,14 +31,13 @@ export const linkLabel = (stretch: SessionStretch): string => {
 export function ProcessLinkBar({
   harness,
   stretches,
-  timeZone,
   window,
 }: {
   harness: string;
   stretches: readonly SessionStretch[];
-  timeZone: string;
   window: Window;
 }) {
+  const timeZone = useTimeZone();
   return (
     <div className="relative h-4" style={{ color: harnessColor(harness) }}>
       {stretches.map((stretch) => {
@@ -49,7 +50,13 @@ export function ProcessLinkBar({
             )}
             key={stretch.startedAt}
             style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
-            title={`${formatClock(stretch.startedAt, timeZone)} to ${formatClock(stretch.endedAt, timeZone)}, ${String(stretch.requests)} requests, ${linkLabel(stretch)}`}
+            title={phraseTitle(
+              [
+                ...clockSpan(stretch.startedAt, stretch.endedAt),
+                `, ${String(stretch.requests)} requests, ${linkLabel(stretch)}`,
+              ],
+              timeZone,
+            )}
           >
             <span
               className={cn(

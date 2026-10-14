@@ -106,7 +106,6 @@ export type SessionView = SessionKey & {
   requests: SessionRequest[];
   startedAt: number;
   stretches: SessionStretch[];
-  timeZone: string;
   // Oldest first.
   toolCalls: SessionToolCall[];
   totals: SessionTotals;

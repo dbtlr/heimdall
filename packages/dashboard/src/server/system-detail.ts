@@ -183,7 +183,7 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
 // that is no System. Read-only.
 export const readSystemDetail = async (
   sql: SQL,
-  { name, now, range, timeZone }: { name: string; now: number; range: Range; timeZone: string },
+  { name, now, range }: { name: string; now: number; range: Range },
 ): Promise<SystemDetail | undefined> => {
   const [system]: SystemRow[] = await sql`
     SELECT s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch, s.collector_version,
@@ -316,7 +316,6 @@ export const readSystemDetail = async (
       paired: system.paired,
       sleeps,
     }),
-    timeZone,
     to: now,
   };
 };

@@ -1,7 +1,9 @@
 import { SEVERITY } from '../lib/conditions.ts';
 import { clearedTitle, raisedTitle } from '../lib/lane.ts';
+import { phraseTitle } from '../lib/phrase.ts';
 import { inWindow, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
 
@@ -13,7 +15,7 @@ function Mark({
 }: {
   at: number;
   children: React.ReactNode;
-  title: string;
+  title: string | undefined;
   window: Window;
 }) {
   return (
@@ -32,20 +34,23 @@ function Mark({
 export function ConditionMarks({
   conditions,
   now,
-  timeZone,
   window,
 }: {
   conditions: readonly ConditionMark[];
   now: number;
-  timeZone: string;
   window: Window;
 }) {
+  const timeZone = useTimeZone();
   return conditions.map((mark) => {
     const key = `${mark.kind}-${mark.subject}-${String(mark.raisedAt)}`;
     return (
       <span key={key}>
         {inWindow(mark.raisedAt, window) && (
-          <Mark at={mark.raisedAt} title={raisedTitle(mark, { now, timeZone })} window={window}>
+          <Mark
+            at={mark.raisedAt}
+            title={phraseTitle(raisedTitle(mark, now), timeZone)}
+            window={window}
+          >
             <ConditionGlyph kind={SEVERITY[mark.kind]} />
           </Mark>
         )}

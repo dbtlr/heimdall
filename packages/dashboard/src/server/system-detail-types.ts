@@ -83,7 +83,6 @@ export type SystemDetail = {
   sessions: SessionRow[];
   sleeps: boolean;
   status: LaneStatus;
-  timeZone: string;
   to: number;
 };
 

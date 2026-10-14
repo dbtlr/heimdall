@@ -1,8 +1,12 @@
 import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
-import { formatWhen, spanBox } from '../lib/time.ts';
+import { markSpan } from '../lib/lane.ts';
+import { phraseTitle } from '../lib/phrase.ts';
+import { spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 const ROW_PX = 18;
 
@@ -29,14 +33,13 @@ const FILL = {
 export function ConditionSpans({
   conditions,
   now,
-  timeZone,
   window,
 }: {
   conditions: readonly ConditionMark[];
   now: number;
-  timeZone: string;
   window: Window;
 }) {
+  const timeZone = useTimeZone();
   if (conditions.length === 0) {
     return (
       <p className="text-[12.5px] leading-[18px] text-muted-foreground">None in this range.</p>
@@ -48,7 +51,6 @@ export function ConditionSpans({
         const end = mark.clearedAt ?? window.to;
         const { left, width } = spanBox({ end, start: mark.raisedAt }, window);
         const what = `${KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : ` ${mark.subject}`}`;
-        const when = `${formatWhen(mark.raisedAt, now, timeZone)} to ${mark.clearedAt === undefined ? 'now' : formatWhen(mark.clearedAt, now, timeZone)}`;
         const labelStyle = conditionLabelPlace({ left, width });
         return (
           <div
@@ -62,7 +64,7 @@ export function ConditionSpans({
                 top: row * ROW_PX + 5,
                 width: `${String(width)}%`,
               }}
-              title={`${what}, ${when}`}
+              title={phraseTitle([`${what}, `, ...markSpan(mark, now)], timeZone) ?? what}
             />
             <span
               className={cn(
@@ -71,7 +73,8 @@ export function ConditionSpans({
               )}
               style={{ ...labelStyle.style, top: row * ROW_PX + 1 }}
             >
-              {what} {when}
+              {what}
+              <PhraseText phrase={[' ', ...markSpan(mark, now)]} />
             </span>
           </div>
         );

@@ -115,7 +115,6 @@ const view = (overrides: Partial<SessionView> = {}): SessionView => ({
   startedAt: T0,
   stretches: [],
   system: 'box',
-  timeZone: 'UTC',
   toolCalls: [],
   totals: {
     cacheReadTokens: 0,

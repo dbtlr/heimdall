@@ -11,21 +11,15 @@ import {
 } from './system-detail.ts';
 
 // One System's detail over `range` (12h when none is given) with what its
-// provisioner recorded and its Timeline, read at the server's clock and in the
-// server's time zone. An unpaired System opens as it was left; not found for a
-// name that is no System.
+// provisioner recorded and its Timeline, read at the server's clock. An unpaired
+// System opens as it was left; not found for a name that is no System.
 export const getSystemDetail = createServerFn({ method: 'GET' })
   .validator(parseDetailInput)
   .handler(async ({ data: { name, range } }) => {
     const sql = await database();
     const now = Date.now();
     const [detail, records] = await Promise.all([
-      readSystemDetail(sql, {
-        name,
-        now,
-        range,
-        timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
+      readSystemDetail(sql, { name, now, range }),
       readSystemRecords(sql, { name, now }),
     ]);
     if (detail === undefined) {

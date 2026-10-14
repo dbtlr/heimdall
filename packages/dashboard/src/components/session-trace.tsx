@@ -3,14 +3,16 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { harnessName } from '../lib/lane.ts';
+import { clockSecondsAt } from '../lib/phrase.ts';
 import { modelColor, tokenLine } from '../lib/session-format.ts';
 import { MAIN } from '../lib/session-search.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { density, descendantLanes, filterTrace, traceEntries } from '../lib/session.ts';
 import type { AgentLane, TraceEntry, TraceFilter } from '../lib/session.ts';
-import { formatClockSeconds, formatCost, formatSpan } from '../lib/time.ts';
+import { formatCost, formatSpan } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { SessionRequest, SessionToolCall, SessionView } from '../server/session-view-types.ts';
+import { DateTime, PhraseText } from './date-time.tsx';
 import { sessionWindow } from './session-timeline.tsx';
 import { SpanLabels } from './span-labels.tsx';
 
@@ -62,13 +64,11 @@ function RequestRow({
   calls,
   request,
   selected,
-  timeZone,
 }: {
   agent: string;
   calls: readonly SessionToolCall[];
   request: SessionRequest;
   selected: boolean;
-  timeZone: string;
 }) {
   return (
     <div
@@ -76,7 +76,7 @@ function RequestRow({
       id={rowId(request.requestId)}
     >
       <span className="text-muted-foreground tabular-nums">
-        {formatClockSeconds(request.at, timeZone)}
+        <DateTime at={request.at} format="clockSeconds" />
       </span>
       <span className="truncate">
         <Swatch color={modelColor(request.model)} />
@@ -96,20 +96,10 @@ function RequestRow({
 
 // A line that marks something other than a request: a start, a process link,
 // a command, a skill, a pause.
-function EventRow({
-  children,
-  marker,
-  t,
-  timeZone,
-}: {
-  children: ReactNode;
-  marker: ReactNode;
-  t: number;
-  timeZone: string;
-}) {
+function EventRow({ children, marker, t }: { children: ReactNode; marker: ReactNode; t: number }) {
   return (
     <div className={cn(ROW, 'text-muted-foreground')}>
-      <span className="tabular-nums">{formatClockSeconds(t, timeZone)}</span>
+      <DateTime at={t} className="tabular-nums" format="clockSeconds" />
       <span className="col-span-2 sm:col-span-3">
         {marker}
         {children}
@@ -172,7 +162,6 @@ function SubagentRow({
   open,
   selected,
   toggle,
-  view,
 }: {
   callsOf: (request: SessionRequest) => SessionToolCall[];
   entry: Extract<TraceEntry, { kind: 'subagent' }>;
@@ -181,7 +170,6 @@ function SubagentRow({
   open: boolean;
   selected: string | undefined;
   toggle: () => void;
-  view: SessionView;
 }) {
   const { lane } = entry;
   const family = [lane, ...descendantLanes(lanes, lane)];
@@ -195,9 +183,11 @@ function SubagentRow({
   return (
     <>
       <div className={cn(ROW, 'bg-card/60')}>
-        <span className="text-muted-foreground tabular-nums">
-          {formatClockSeconds(lane.startedAt, view.timeZone)}
-        </span>
+        <DateTime
+          at={lane.startedAt}
+          className="text-muted-foreground tabular-nums"
+          format="clockSeconds"
+        />
         <button aria-expanded={open} className="truncate text-left" onClick={toggle} type="button">
           {open ? (
             <ChevronDown className="mr-1 inline size-3.5 text-muted-foreground" />
@@ -209,8 +199,8 @@ function SubagentRow({
         </button>
         <span className="col-span-3 col-start-1 row-start-2 sm:col-span-1 sm:col-start-3 sm:row-start-1">
           <b className="font-semibold">Subagent</b>{' '}
-          {lane.phase === undefined ? '' : `In ${lane.phase}. `}until{' '}
-          {formatClockSeconds(lane.endedAt, view.timeZone)},{' '}
+          {lane.phase === undefined ? '' : `In ${lane.phase}. `}
+          <PhraseText phrase={['until ', clockSecondsAt(lane.endedAt), ', ']} />
           {formatSpan(lane.endedAt - lane.startedAt)}. {requests.length} requests, {calls} tool
           calls
           {entry.nested === 0
@@ -238,7 +228,6 @@ function SubagentRow({
               key={request.requestId}
               request={request}
               selected={request.requestId === selected}
-              timeZone={view.timeZone}
             />
           ))}
           {!all && requests.length > FIRST_ROWS && (
@@ -273,7 +262,7 @@ function DensityStrip({ view }: { view: SessionView }) {
           />
         ))}
       </div>
-      <SpanLabels timeZone={view.timeZone} window={window} />
+      <SpanLabels window={window} />
     </div>
   );
 }
@@ -390,7 +379,6 @@ export function SessionTrace({
                     key={entry.request.requestId}
                     request={entry.request}
                     selected={entry.request.requestId === search.request}
-                    timeZone={view.timeZone}
                   />
                 );
               }
@@ -406,7 +394,6 @@ export function SessionTrace({
                     open={opened.has(agentId)}
                     selected={search.request}
                     toggle={() => toggle(agentId)}
-                    view={view}
                   />
                 );
               }
@@ -415,7 +402,6 @@ export function SessionTrace({
                   key={`${entry.kind}-${String(entry.at)}-${String(index)}`}
                   marker={MARKERS[entry.kind]}
                   t={entry.at}
-                  timeZone={view.timeZone}
                 >
                   {eventText(entry, view)}
                 </EventRow>
@@ -428,7 +414,6 @@ export function SessionTrace({
                 key={request.requestId}
                 request={request}
                 selected={request.requestId === search.request}
-                timeZone={view.timeZone}
               />
             ))}
       </section>

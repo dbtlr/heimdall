@@ -34,12 +34,10 @@ export function UnpairedLink({ count, shown }: { count: number; shown: boolean }
 export function UnpairedLanes({
   lanes,
   now,
-  timeZone,
   window,
 }: {
   lanes: readonly Lane[];
   now: number;
-  timeZone: string;
   window: Window;
 }) {
   return (
@@ -55,7 +53,7 @@ export function UnpairedLanes({
             className="text-muted-foreground saturate-50 [&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-90"
             key={lane.name}
           >
-            <FleetLane lane={lane} now={now} timeZone={timeZone} window={window} />
+            <FleetLane lane={lane} now={now} window={window} />
           </div>
         ))
       )}

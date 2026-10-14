@@ -1,10 +1,12 @@
 import { harnessName } from '../lib/lane.ts';
+import { clockAt, clockSecondsAt } from '../lib/phrase.ts';
 import { formatTokens, modelColor, modelName, stopLine } from '../lib/session-format.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { concurrentAt, stretchAt } from '../lib/session.ts';
 import type { AgentLane } from '../lib/session.ts';
-import { formatClock, formatClockSeconds, formatCost } from '../lib/time.ts';
+import { formatCost } from '../lib/time.ts';
 import type { SessionRequest, SessionView } from '../server/session-view-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
@@ -23,12 +25,12 @@ const processLine = (view: SessionView, request: SessionRequest) => {
 
 // CPU busy in the bucket that holds the request, and the cores its linked
 // process kept busy then.
-const sampleLine = (view: SessionView, request: SessionRequest) => {
+function SampleLine({ request, view }: { request: SessionRequest; view: SessionView }) {
   const bucket = view.cpu.find(
     (found) => found.t <= request.at && request.at < found.t + view.bucketMs,
   );
   if (bucket === undefined) {
-    return 'No Vitals sample from then.';
+    return <>No Vitals sample from then.</>;
   }
   const stretch = stretchAt(view.stretches, request.at);
   const cores =
@@ -37,13 +39,16 @@ const sampleLine = (view: SessionView, request: SessionRequest) => {
           .find((process) => process.processId === stretch.processId)
           ?.points.find((point) => point.t === bucket.t)?.cores
       : undefined;
-  return [
-    `Sample ${formatClock(bucket.t, view.timeZone)}: CPU ${percent(bucket.high)} high, ${percent(bucket.average)} average.`,
-    cores === undefined || cores === null || stretch === undefined
-      ? ''
-      : ` pid ${String(stretch.pid)} used ${cores.toFixed(1)} cores.`,
-  ].join('');
-};
+  return (
+    <>
+      <PhraseText phrase={['Sample ', clockAt(bucket.t), ': ']} />
+      CPU {percent(bucket.high)} high, {percent(bucket.average)} average.
+      {cores === undefined || cores === null || stretch === undefined
+        ? ''
+        : ` pid ${String(stretch.pid)} used ${cores.toFixed(1)} cores.`}
+    </>
+  );
+}
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -76,7 +81,7 @@ export function RequestInspector({
       ) : (
         <>
           <p className="mb-2 text-[12.5px] text-muted-foreground">
-            Request at {formatClockSeconds(request.at, view.timeZone)}
+            <PhraseText phrase={['Request at ', clockSecondsAt(request.at)]} />
           </p>
           <p className="mb-0.5 text-[19px] font-semibold">
             {lane.label}, {modelName(request.model)}
@@ -104,7 +109,9 @@ export function RequestInspector({
           </dl>
           <p className="mt-3.5 mb-1 text-[12.5px] text-muted-foreground">Process</p>
           <p className="text-[13.5px]">{processLine(view, request)}</p>
-          <p className="text-[13.5px] text-muted-foreground">{sampleLine(view, request)}</p>
+          <p className="text-[13.5px] text-muted-foreground">
+            <SampleLine request={request} view={view} />
+          </p>
           <p className="mt-3.5 mb-1 text-[12.5px] text-muted-foreground">
             Running at the same time
           </p>

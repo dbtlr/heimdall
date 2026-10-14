@@ -1,6 +1,5 @@
 import { isRange } from '../server/fleet-overview-types.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
-import { formatClock } from './time.ts';
 
 export const RANGE_LABELS: Record<Range, string> = {
   '12h': '12 h',
@@ -28,6 +27,6 @@ export const atFromSearch = (search: Record<string, unknown>): number | undefine
   return typeof at === 'number' && Number.isFinite(at) ? Math.round(at) : undefined;
 };
 
-// The page title, "Last 24 hours, to 16:00".
-export const rangeTitle = (range: Range, to: number, timeZone: string): string =>
-  `Last ${RANGE_NAMES[range]}, to ${formatClock(to, timeZone)}`;
+// The page title up to its clock time, "Last 24 hours, to"; the page adds the
+// time, which needs the viewer's zone.
+export const rangeLead = (range: Range): string => `Last ${RANGE_NAMES[range]}, to`;

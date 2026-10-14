@@ -252,12 +252,7 @@ const bySystem = <Row extends { system: string }>(rows: readonly Row[]) => {
 // asks for them. Read-only.
 export const readFleetOverview = async (
   sql: SQL,
-  {
-    now,
-    range,
-    timeZone,
-    unpaired = false,
-  }: { now: number; range: Range; timeZone: string; unpaired?: boolean },
+  { now, range, unpaired = false }: { now: number; range: Range; unpaired?: boolean },
 ): Promise<FleetOverview> => {
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
@@ -280,7 +275,6 @@ export const readFleetOverview = async (
       now,
       open: [],
       range,
-      timeZone,
       to: now,
       unpairedCount,
       unpairedLanes: [],
@@ -384,7 +378,6 @@ export const readFleetOverview = async (
     // The sort is stable, so each group stays newest raised first.
     open: openConditions.toSorted((a, b) => Number(a.unpaired) - Number(b.unpaired)),
     range,
-    timeZone,
     to: now,
     unpairedCount,
     unpairedLanes: systems.filter(({ paired }) => !paired).map(laneOf),

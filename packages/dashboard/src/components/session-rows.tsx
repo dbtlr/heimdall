@@ -2,11 +2,15 @@ import { Link } from '@tanstack/react-router';
 
 import { costPlacement } from '../lib/detail.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
-import { formatClock, formatCost, spanBox } from '../lib/time.ts';
+import { clockSpan, phraseTitle } from '../lib/phrase.ts';
+import type { Phrase } from '../lib/phrase.ts';
+import { formatCost, spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { Link as ProcessLink } from '../server/fleet-overview-types.ts';
 import type { SessionRow } from '../server/system-detail-types.ts';
+import { PhraseText } from './date-time.tsx';
 import { DetailTrack } from './detail-track.tsx';
 import { LANE_GRID } from './fleet-lane.tsx';
 
@@ -26,10 +30,11 @@ const swatch = (session: SessionRow) =>
     ? 'linked'
     : (session.stretches[0]?.link ?? 'linked');
 
-const span = (session: SessionRow, timeZone: string, window: Window) => {
+// When a Session ran in the window, "14:05 to 15:40" or "14:05 to now".
+const sessionSpan = (session: SessionRow, window: Window): Phrase => {
   const first = session.stretches[0]?.startedAt ?? window.from;
   const last = session.stretches.at(-1)?.endedAt ?? window.to;
-  return `${formatClock(first, timeZone)} to ${last >= window.to - 60_000 ? 'now' : formatClock(last, timeZone)}`;
+  return clockSpan(first, last >= window.to - 60_000 ? undefined : last);
 };
 
 // Where a Session's cost sits, from where `costPlacement` puts it.
@@ -69,14 +74,13 @@ function SessionLink({ session, system }: { session: SessionRow; system: string 
 export function SessionRows({
   sessions,
   system,
-  timeZone,
   window,
 }: {
   sessions: readonly SessionRow[];
   system: string;
-  timeZone: string;
   window: Window;
 }) {
+  const timeZone = useTimeZone();
   if (sessions.length === 0) {
     return null;
   }
@@ -116,7 +120,14 @@ export function SessionRows({
                       )}
                       key={stretch.startedAt}
                       style={{ left: `${String(left)}%`, top, width: `${String(width)}%` }}
-                      title={`${what(session)}, ${harnessName(session.harness)}, ${formatClock(stretch.startedAt, timeZone)} to ${formatClock(stretch.endedAt, timeZone)}, process ${stretch.link}`}
+                      title={phraseTitle(
+                        [
+                          `${what(session)}, ${harnessName(session.harness)}, `,
+                          ...clockSpan(stretch.startedAt, stretch.endedAt),
+                          `, process ${stretch.link}`,
+                        ],
+                        timeZone,
+                      )}
                     />
                   );
                 })}
@@ -152,7 +163,8 @@ export function SessionRows({
               {session.project !== undefined && session.branch}
               <br />
               <span className="text-muted-foreground">
-                {span(session, timeZone, window)}, {formatCost(session.costUsd)}
+                <PhraseText phrase={[...sessionSpan(session, window), ', ']} />
+                {formatCost(session.costUsd)}
               </span>
             </span>
           </li>

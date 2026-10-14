@@ -10,6 +10,7 @@ import {
 import type { RecordState } from '../lib/recorded.ts';
 import { cn } from '../lib/utils.ts';
 import type { Recorded } from '../server/system-detail-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 const DOT: Record<RecordState, string> = {
   bad: 'bg-status-critical',
@@ -50,16 +51,7 @@ function Group({ children, title }: { children: ReactNode; title: string }) {
 // Everything the System's provisioner recorded, grouped by kind, each with
 // how the Collector found it: Services with their checks, jobs with their
 // latest run, files records with their Drift, and Applications.
-export function RecordedPanel({
-  now,
-  recorded,
-  timeZone,
-}: {
-  now: number;
-  recorded: Recorded;
-  timeZone: string;
-}) {
-  const at = { now, timeZone };
+export function RecordedPanel({ now, recorded }: { now: number; recorded: Recorded }) {
   const { applications, files, jobs, services } = recorded;
   const provenance = provenanceLine(applications);
   const empty = applications.length + files.length + jobs.length + services.length === 0;
@@ -70,10 +62,10 @@ export function RecordedPanel({
       {services.length > 0 && (
         <Group title="Services">
           {services.map((service) => {
-            const { state, text } = serviceLine(service, at);
+            const { state, text } = serviceLine(service, now);
             return (
               <Row key={service.name} name={service.name} state={state}>
-                {text}
+                <PhraseText phrase={text} />
               </Row>
             );
           })}
@@ -82,10 +74,10 @@ export function RecordedPanel({
       {jobs.length > 0 && (
         <Group title="Jobs">
           {jobs.map((job) => {
-            const { state, text } = jobLine(job, at);
+            const { state, text } = jobLine(job, now);
             return (
               <Row key={job.name} name={job.name} state={state}>
-                {text}
+                <PhraseText phrase={text} />
               </Row>
             );
           })}
@@ -94,15 +86,15 @@ export function RecordedPanel({
       {files.length > 0 && (
         <Group title="Files">
           {files.map((record) => {
-            const { issues, rest, state } = filesLine(record, at);
+            const { issues, rest, state } = filesLine(record, now);
             return (
               <Row key={record.name} name={record.name} state={state}>
                 {issues.map((issue) => (
                   <span className="block" key={issue.path}>
                     <code className="font-mono text-[12.5px] break-all text-foreground">
                       {issue.path}
-                    </code>{' '}
-                    {issue.text}.
+                    </code>
+                    <PhraseText phrase={[' ', ...issue.text, '.']} />
                   </span>
                 ))}
                 {rest}

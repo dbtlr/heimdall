@@ -53,7 +53,7 @@ const start = async () => {
 };
 
 const view = async (h: Hub, key: Partial<typeof KEY> = {}) => {
-  const found = await readSessionView(h.db.sql, { ...KEY, ...key, timeZone: 'UTC' });
+  const found = await readSessionView(h.db.sql, { ...KEY, ...key });
   if (found === undefined) {
     throw new Error('no Session view');
   }
@@ -129,12 +129,8 @@ describe('readSessionView', () => {
     await using h = await start();
     await addSession(h.db.sql, { id: 's1', requests: [-600, -300], system: 'server-1' });
 
-    expect(
-      await readSessionView(h.db.sql, { ...KEY, sessionId: 'nobody', timeZone: 'UTC' }),
-    ).toBeUndefined();
-    expect(
-      await readSessionView(h.db.sql, { ...KEY, source: 'other', timeZone: 'UTC' }),
-    ).toBeUndefined();
+    expect(await readSessionView(h.db.sql, { ...KEY, sessionId: 'nobody' })).toBeUndefined();
+    expect(await readSessionView(h.db.sql, { ...KEY, source: 'other' })).toBeUndefined();
   });
 
   test('carries the Session identity, its place, and the span of its requests', async () => {
@@ -157,7 +153,6 @@ describe('readSessionView', () => {
       endedAt: NOW - 300 * SECOND,
       harnessVersion: '2.4.1',
       startedAt: NOW - 600 * SECOND,
-      timeZone: 'UTC',
     });
   });
 

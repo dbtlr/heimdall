@@ -4,6 +4,7 @@ import {
   formatClock,
   formatClockSeconds,
   formatCost,
+  formatTime,
   formatWhen,
   spanBox,
   xPercent,
@@ -34,6 +35,28 @@ test('the day is the one in the zone, not in UTC', () => {
   const lateUtc = Date.UTC(2026, 9, 13, 23, 0, 0);
   // 23:00 UTC is already the 14th in Tokyo.
   expect(formatWhen(NOON, lateUtc, 'Asia/Tokyo')).toBe('Tue 21:00');
+});
+
+// 2026-10-13 22:30 UTC: Tuesday 18:30 in New York, already Wednesday 00:30 in Berlin.
+const DAY_BOUNDARY = Date.UTC(2026, 9, 13, 22, 30, 15);
+
+test.each([
+  ['clock', 'Europe/Berlin', '00:30'],
+  ['clock', 'America/New_York', '18:30'],
+  ['clockSeconds', 'Europe/Berlin', '00:30:15'],
+  ['clockSeconds', 'America/New_York', '18:30:15'],
+  ['weekday', 'Europe/Berlin', 'Wed'],
+  ['weekday', 'America/New_York', 'Tue'],
+] as const)('one instant formats as %s in %s: %s', (format, zone, text) => {
+  expect(formatTime(DAY_BOUNDARY, zone, { format })).toBe(text);
+});
+
+test.each([
+  // An hour earlier it was Tuesday 23:30 in Berlin, still today in New York.
+  ['Europe/Berlin', 'Wed 00:30'],
+  ['America/New_York', '18:30'],
+] as const)('a time relative to now reads by the local day in %s', (zone, text) => {
+  expect(formatTime(DAY_BOUNDARY, zone, { format: 'when', now: DAY_BOUNDARY - HOUR })).toBe(text);
 });
 
 test.each([
