@@ -3,11 +3,12 @@ import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
 import { AppHeader } from '../components/app-header.tsx';
+import { AttentionList } from '../components/attention-list.tsx';
+import { AttentionStatus } from '../components/attention-status.tsx';
 import { ConditionSpans } from '../components/condition-spans.tsx';
 import { CpuPlot } from '../components/cpu-plot.tsx';
 import { DateTime, PhraseText } from '../components/date-time.tsx';
 import { DetailAxis, DetailRow } from '../components/detail-track.tsx';
-import { STATUS_COLOR } from '../components/fleet-lane.tsx';
 import { GapShades } from '../components/gap-shades.tsx';
 import { MemoryPlot } from '../components/memory-plot.tsx';
 import { ProcessPlot } from '../components/process-plot.tsx';
@@ -21,11 +22,9 @@ import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, headerLine } from '../lib/detail.ts';
-import { statusWord } from '../lib/lane.ts';
 import { atFromSearch, rangeFromSearch } from '../lib/range.ts';
 import { inWindow, xPercent } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
-import { cn } from '../lib/utils.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { getSample, getSystemDetail } from '../server/system-detail-fn.ts';
 import type { SampleInspection } from '../server/system-detail-types.ts';
@@ -103,7 +102,7 @@ const useSample = (
 };
 
 function SystemPage() {
-  const { at, detail, records, sample: loadedSample } = Route.useLoaderData();
+  const { at, attention, detail, records, sample: loadedSample } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const { failed, sample } = useSample(detail.name, search.at, at, loadedSample);
@@ -136,16 +135,19 @@ function SystemPage() {
               Fleet
             </Link>{' '}
             / {detail.name}{' '}
-            <span className={cn('ml-2 text-sm font-medium', STATUS_COLOR[detail.status])}>
-              {statusWord(detail.status)}
-            </span>
+            <AttentionStatus
+              className="ml-2 text-sm font-medium"
+              items={attention}
+              status={detail.status}
+            />
           </h1>
           <p className="text-muted-foreground">
             {header.lead}
-            <PhraseText phrase={header.tail} />.
+            <PhraseText phrase={header.tail} />
           </p>
         </div>
         {!detail.paired && <UnpairedBanner name={detail.name} />}
+        <AttentionList items={attention} now={now} />
         <SystemFacts detail={detail} />
         <div className="grid gap-x-[18px] lg:grid-cols-[1fr_290px]">
           <DetailAxis onSelect={select} selected={sample?.t} window={window}>

@@ -135,22 +135,54 @@ const sampleTimes = (profile: Profile, now: number) => {
   return times;
 };
 
+// Reports sent this long before now or more carry the `earlier` sections.
+const EARLIER_AGO_MS = 6 * HOUR;
+// A System's sample times as the day-long batches of one Report each.
+const days = (all: number[]) =>
+  Array.from({ length: Math.ceil(all.length / (DAY / SAMPLE_EVERY_MS)) }, (_, i) =>
+    all.slice(i * (DAY / SAMPLE_EVERY_MS), (i + 1) * (DAY / SAMPLE_EVERY_MS)),
+  );
+
+// The Reports of a System's week as batches of samples, a day each, with the
+// sections each carries: `earlier` rides the last Report sent `EARLIER_AGO_MS`
+// or more before now, so the Hub holds checks or runs that stopped arriving;
+// `provisioned` rides the last Report.
+const batchesOf = (
+  times: number[],
+  now: number,
+  {
+    earlier,
+    provisioned,
+  }: { earlier: Provisioned | undefined; provisioned: Provisioned | undefined },
+) => {
+  const split =
+    earlier === undefined ? times.length : times.findIndex((t) => t > now - EARLIER_AGO_MS);
+  const before = days(times.slice(0, split));
+  const after = times.slice(split);
+  const sections = (chunks: number[][], last: Provisioned | undefined) =>
+    chunks.map((chunk, i) => ({ chunk, sections: i === chunks.length - 1 ? last : undefined }));
+  return earlier === undefined
+    ? sections(before, provisioned)
+    : [...sections(before, earlier), ...sections([after], provisioned)];
+};
+
 // Sends the System's week of Reports, a day of samples each, as its Collector would.
-// The last Report carries `provisioned`, the sections a Collector sends beside its Vitals.
+// The last Report carries `provisioned`, the sections a Collector sends beside its
+// Vitals; `earlier` is the sections of one sent hours before, which later Reports
+// do not repeat.
 const sendVitals = async (
   sql: SQL,
   profile: Profile,
   now: number,
-  provisioned: Provisioned | undefined,
+  sent: { earlier: Provisioned | undefined; provisioned: Provisioned | undefined },
 ) => {
   const random = noise(profile.name.length * 7919);
   const times = sampleTimes(profile, now);
-  for (let from = 0; from < times.length; from += DAY / SAMPLE_EVERY_MS) {
-    const chunk = times.slice(from, from + DAY / SAMPLE_EVERY_MS);
-    const sent = report(profile.name, chunk);
-    sent.collector = { ...sent.collector, platform: profile.platform };
-    sent.sentAt = chunk.at(-1) ?? now;
-    for (const sample of sent.samples) {
+  for (const { chunk, sections } of batchesOf(times, now, sent)) {
+    const body = report(profile.name, chunk);
+    body.collector = { ...body.collector, platform: profile.platform };
+    body.sentAt = chunk.at(-1) ?? now;
+    for (const sample of body.samples) {
       // Noise, and now and then a burst, so a bucket's low and high spread.
       const burst = random() < 0.05 ? 40 * random() : 0;
       const busy = profile.cpu(sample.t) + 5 * random() + burst;
@@ -166,13 +198,12 @@ const sendVitals = async (
       }));
       sample.uptimeSeconds = (sample.t - (now - 7 * DAY)) / SECOND;
     }
-    const isLast = from + chunk.length >= times.length;
     // oxlint-disable-next-line no-await-in-loop -- a week of Reports, in order.
     await storeReport(sql, {
-      receivedAt: sent.sentAt,
+      receivedAt: body.sentAt,
       report: {
-        ...sent,
-        ...(isLast ? provisioned : {}),
+        ...body,
+        ...sections,
         sleeps: profile.sleepsFlag,
         timeZone: 'UTC',
       },
@@ -250,6 +281,9 @@ const scenarioOf = (now: number) => {
     borgStarted,
     dotfilesStarted: Math.floor(now / HOUR) * HOUR,
     driftSince: now - 26 * HOUR,
+    // The server's log rotation last succeeded three runs ago, and its next
+    // scheduled time, two days after that success, was missed.
+    logRotateMissed: Math.floor((now - 2 * DAY) / DAY) * DAY + 3.5 * HOUR,
     nightlyFinished: Math.min(nightlyStarted + 30 * MINUTE, now),
     nightlyStarted,
     ollamaUpSince: now - 8.5 * HOUR,
@@ -410,7 +444,7 @@ const workstationSections = async (now: number, scenario: Scenario) => {
 };
 
 // The server's recorded database container, stopped; its nightly backup, failing;
-// and its config file, changed.
+// its log rotation, overdue; and its config file, changed.
 const serverSections = async (now: number, scenario: Scenario) => {
   const appConfig = filesRecord('app-config', ['/etc/app/config.toml', '/etc/app/secrets.env']);
   const succeeded = runOf(
@@ -426,6 +460,17 @@ const serverSections = async (now: number, scenario: Scenario) => {
     name: 'dev-db',
     provenance: PROVENANCE,
     supervisor: 'docker',
+  };
+  const logRotateSucceeded = runOf(
+    { exitStatus: 0, minutes: 2, now, started: scenario.logRotateMissed - DAY },
+    undefined,
+  );
+  const logRotate = {
+    name: 'log-rotate',
+    provenance: PROVENANCE,
+    schedule: [{ hour: 3, minute: 30 }],
+    scheduler: 'systemd-timer',
+    unit: 'log-rotate.timer',
   };
   const nightly = {
     name: 'nightly-backup',
@@ -454,16 +499,45 @@ const serverSections = async (now: number, scenario: Scenario) => {
       records: [
         { kind: 'service', name: devDb.name, record: devDb },
         { kind: 'job', name: nightly.name, record: nightly },
+        { kind: 'job', name: logRotate.name, record: logRotate },
         { kind: 'files', name: appConfig.name, record: appConfig },
       ],
       unreadable: [],
     },
     runs: {
-      jobs: [{ job: nightly.name, latestRun: failed, latestSuccess: succeeded }],
+      jobs: [
+        { job: nightly.name, latestRun: failed, latestSuccess: succeeded },
+        { job: logRotate.name, latestRun: logRotateSucceeded, latestSuccess: logRotateSucceeded },
+      ],
       unreadable: [],
     },
   } satisfies Provisioned;
 };
+
+// The laptop's checks, sent hours before its last Report and not repeated: they
+// found its recorded Syncthing agent stopped, which no later check confirms.
+const laptopEarlierSections = (now: number): Provisioned => ({
+  checks: {
+    fileRecords: [],
+    files: [],
+    services: [supervisorCheck('syncthing', 'stopped', 'last exit status 1', now - 7 * HOUR)],
+  },
+  records: {
+    records: [
+      {
+        kind: 'service',
+        name: 'syncthing',
+        record: {
+          label: 'com.syncthing.agent',
+          name: 'syncthing',
+          provenance: PROVENANCE,
+          supervisor: 'launchd',
+        },
+      },
+    ],
+    unreadable: [],
+  },
+});
 
 // The sections each System's last Report carries, by System name.
 const provisionedBySystem = async (now: number) => {
@@ -863,6 +937,21 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: 'server-1',
   });
   conditions.push({
+    kind: 'job_overdue',
+    raisedAt: secondsFromNow(scenario.logRotateMissed + HOUR),
+    reason: `Scheduled for ${utcMinute(scenario.logRotateMissed)}; no successful run since.`,
+    subject: 'log-rotate',
+    system: 'server-1',
+  });
+  // The laptop's one Condition rests on checks that arrived 7 hours ago.
+  conditions.push({
+    kind: 'service_down',
+    raisedAt: -hours(7),
+    reason: 'Stopped: last exit status 1.',
+    subject: 'syncthing',
+    system: 'laptop-1',
+  });
+  conditions.push({
     kind: 'low_disk',
     raisedAt: -hours(5),
     reason: '/ is 94% full',
@@ -957,8 +1046,16 @@ const fill = async (sql: SQL) => {
     await storeToken(sql, { pairedAt: now - 8 * DAY, system: name, token: `seed-token-${name}` });
   }
   const provisioned = await provisionedBySystem(now);
+  // Sections some Systems sent hours before their last Report, so the evidence
+  // behind their Conditions is old.
+  const earlier = new Map([['laptop-1', laptopEarlierSections(now)]]);
   await Promise.all(
-    PROFILES.map((profile) => sendVitals(sql, profile, now, provisioned.get(profile.name))),
+    PROFILES.map((profile) =>
+      sendVitals(sql, profile, now, {
+        earlier: earlier.get(profile.name),
+        provisioned: provisioned.get(profile.name),
+      }),
+    ),
   );
   await seedConditions(sql, now);
   await seedSessions(sql, now);
@@ -976,7 +1073,10 @@ const fill = async (sql: SQL) => {
       `${lane.name}: ${lane.status}, ${lane.buckets.length} buckets, ${lane.gaps.length} gaps, ${lane.stretches.length} stretches, ${lane.conditions.length} Condition marks`,
     );
   }
-  console.log(`${overview.open.length} open Conditions.`);
+  const confirmed = overview.attention.filter(({ evidence }) => evidence === 'current');
+  console.log(
+    `${confirmed.length} confirmed and ${overview.attention.length - confirmed.length} unconfirmed items need you.`,
+  );
 };
 
 const configured = process.env.HEIMDALL_DATABASE_URL;

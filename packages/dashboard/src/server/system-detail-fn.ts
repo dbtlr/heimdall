@@ -1,6 +1,7 @@
 import { notFound } from '@tanstack/react-router';
 import { createServerFn } from '@tanstack/react-start';
 
+import { readAttention } from './attention.ts';
 import { database } from './database.ts';
 import {
   parseDetailInput,
@@ -25,7 +26,11 @@ export const getSystemDetail = createServerFn({ method: 'GET' })
     if (detail === undefined) {
       throw notFound();
     }
-    return { detail, records };
+    const attention = await readAttention(sql, {
+      now,
+      systems: [{ name, paired: detail.paired }],
+    });
+    return { attention, detail, records };
   });
 
 // The sample of a System nearest `at`, or its newest, for the inspector;

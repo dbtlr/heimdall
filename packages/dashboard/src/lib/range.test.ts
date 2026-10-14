@@ -3,10 +3,10 @@ import { expect, test } from 'bun:test';
 import { atFromSearch, rangeFromSearch, rangeLead } from './range.ts';
 
 test.each([
-  ['6h', 'Last 6 hours, to'],
-  ['12h', 'Last 12 hours, to'],
-  ['24h', 'Last 24 hours, to'],
-  ['7d', 'Last 7 days, to'],
+  ['6h', 'Last 6 hours'],
+  ['12h', 'Last 12 hours'],
+  ['24h', 'Last 24 hours'],
+  ['7d', 'Last 7 days'],
 ] as const)('the %s range title leads with %s', (range, lead) => {
   expect(rangeLead(range)).toBe(lead);
 });

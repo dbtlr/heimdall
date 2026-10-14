@@ -1,8 +1,9 @@
 import type { SQL } from 'bun';
 
+import type { Attention } from './attention-types.ts';
+import { readAttention } from './attention.ts';
 import { isRange, QUIET_AFTER_MS, RANGES } from './fleet-overview-types.ts';
 import type {
-  ConditionKind,
   ConditionMark,
   CpuBucket,
   FleetOverview,
@@ -10,13 +11,10 @@ import type {
   Lane,
   LaneStatus,
   Link,
-  OpenCondition,
   Range,
   Stretch,
 } from './fleet-overview-types.ts';
-
-const field = (input: unknown, key: string): unknown =>
-  typeof input === 'object' && input !== null ? Reflect.get(input, key) : undefined;
+import { bySystem, conditionKind, field } from './hub-rows.ts';
 
 // What an overview request asks for: its `range`, 24h when it names none, and
 // whether it wants the unpaired Systems too.
@@ -66,29 +64,8 @@ export const findGaps = (
   return gaps;
 };
 
-const CONDITION_KINDS: Record<ConditionKind, true> = {
-  drift: true,
-  job_failing: true,
-  job_overdue: true,
-  low_disk: true,
-  reports_rejected: true,
-  service_down: true,
-  system_stale: true,
-};
-
-const isConditionKind = (kind: string): kind is ConditionKind => kind in CONDITION_KINDS;
-
 export const isLink = (link: string): link is Link =>
   link === 'linked' || link === 'ambiguous' || link === 'unmatched';
-
-export const conditionKind = (kind: string): ConditionKind => {
-  if (!isConditionKind(kind)) {
-    throw new Error(
-      `The Hub holds a Condition of kind ${kind}, which the dashboard does not know.`,
-    );
-  }
-  return kind;
-};
 
 // The last directory name of a working directory.
 export const projectOf = (cwd: string | null) => cwd?.split('/').findLast((part) => part !== '');
@@ -237,18 +214,13 @@ export const readStretches = (
   ORDER BY st.system, st.started_at
 `;
 
-// Groups `rows` by their `system`.
-const bySystem = <Row extends { system: string }>(rows: readonly Row[]) => {
-  const grouped = new Map<string, Row[]>();
-  for (const row of rows) {
-    grouped.set(row.system, [...(grouped.get(row.system) ?? []), row]);
-  }
-  return grouped;
-};
+// Whether the item is a Condition the Hub holds, not one the dashboard raises.
+const isHubCondition = ({ kind }: Attention) =>
+  kind !== 'file_unreadable' && kind !== 'checks_missing';
 
 // Every paired System as a lane on one time axis, over the `range` that ends
-// at `now`, and the Conditions open now. The Systems no longer paired are
-// counted, and get lanes and Conditions of their own only when `unpaired`
+// at `now`, and what needs the operator now. The Systems no longer paired are
+// counted, and get lanes and attention of their own only when `unpaired`
 // asks for them. Read-only.
 export const readFleetOverview = async (
   sql: SQL,
@@ -270,22 +242,22 @@ export const readFleetOverview = async (
   const names = systems.map(({ name }) => name);
   if (names.length === 0) {
     return {
+      attention: [],
       from,
       lanes: [],
       now,
-      open: [],
       range,
       to: now,
       unpairedCount,
       unpairedLanes: [],
     };
   }
-  const [buckets, latest, stretches, marks, open]: [
+  const [buckets, latest, stretches, marks, attention]: [
     BucketRow[],
     LatestRow[],
     StretchRow[],
     ConditionRow[],
-    ConditionRow[],
+    Attention[],
   ] = await Promise.all([
     sql`
       SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
@@ -317,18 +289,15 @@ export const readFleetOverview = async (
         AND (raised_at BETWEEN ${fromAt} AND ${toAt} OR cleared_at BETWEEN ${fromAt} AND ${toAt})
       ORDER BY raised_at
     `,
-    sql`
-      SELECT system, kind, subject, raised_at, cleared_at, latest_reason
-      FROM conditions
-      WHERE system IN ${sql(names)} AND cleared_at IS NULL
-      ORDER BY raised_at DESC
-    `,
+    readAttention(sql, { now, systems }),
   ]);
   const bucketsOf = bySystem(buckets);
   const latestOf = bySystem(latest);
   const stretchesOf = bySystem(stretches);
   const marksOf = bySystem(marks);
-  const openOf = bySystem(open);
+  // A System needs you when a Condition the Hub holds is open on it; the other
+  // attention items are the dashboard's own.
+  const withOpenCondition = new Set(attention.filter(isHubCondition).map(({ system }) => system));
   const laneOf = (system: SystemRow): Lane => {
     const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
     const newest = latestOf.get(system.name)?.[0];
@@ -353,7 +322,7 @@ export const readFleetOverview = async (
       name: system.name,
       sleeps,
       status: laneStatus({
-        hasOpenCondition: openOf.has(system.name),
+        hasOpenCondition: withOpenCondition.has(system.name),
         lastSeenAt,
         now,
         paired: system.paired,
@@ -362,21 +331,11 @@ export const readFleetOverview = async (
       stretches: (stretchesOf.get(system.name) ?? []).map(toStretch),
     };
   };
-  const pairedNames = new Set(systems.filter(({ paired }) => paired).map(({ name }) => name));
-  const openConditions = open.map((row): OpenCondition => ({
-    kind: conditionKind(row.kind),
-    raisedAt: row.raised_at.getTime(),
-    reason: row.latest_reason,
-    subject: row.subject,
-    system: row.system,
-    unpaired: !pairedNames.has(row.system),
-  }));
   return {
+    attention,
     from,
     lanes: systems.filter(({ paired }) => paired).map(laneOf),
     now,
-    // The sort is stable, so each group stays newest raised first.
-    open: openConditions.toSorted((a, b) => Number(a.unpaired) - Number(b.unpaired)),
     range,
     to: now,
     unpairedCount,

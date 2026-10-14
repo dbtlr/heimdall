@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 
 import type { Window } from '../lib/time.ts';
 import { unpairedLinkText } from '../lib/unpaired.ts';
+import type { Attention } from '../server/attention-types.ts';
 import type { Lane } from '../server/fleet-overview-types.ts';
 import { FleetLane } from './fleet-lane.tsx';
 
@@ -32,10 +33,12 @@ export function UnpairedLink({ count, shown }: { count: number; shown: boolean }
 // the muted colour, which keeps its contrast): their history is
 // kept, and no new Report arrives. Each lane opens that System's page.
 export function UnpairedLanes({
+  itemsOf,
   lanes,
   now,
   window,
 }: {
+  itemsOf: (system: string) => Attention[];
   lanes: readonly Lane[];
   now: number;
   window: Window;
@@ -53,7 +56,7 @@ export function UnpairedLanes({
             className="text-muted-foreground saturate-50 [&_svg]:opacity-60 [&_svg]:transition-opacity hover:[&_svg]:opacity-90"
             key={lane.name}
           >
-            <FleetLane lane={lane} now={now} window={window} />
+            <FleetLane items={itemsOf(lane.name)} lane={lane} now={now} window={window} />
           </div>
         ))
       )}

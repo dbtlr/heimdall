@@ -26,10 +26,11 @@ export const formatGiB = (bytes: number): string => (bytes / GIB).toFixed(1);
 const joinAnd = (words: readonly string[]) =>
   words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words.at(-1) ?? ''}`;
 
-// The line under a System's name, as `lead` + `tail` + ".": its platform, its
+// The line under a System's name, as `lead` + `tail`: its platform, its
 // Collector's version, how long it has been up while its Vitals are current,
 // and when it last reported. Only a last Report a day or more old names a time,
-// so only `tail` needs the viewer's zone.
+// so only `tail` needs the viewer's zone. The full stop ends whichever part
+// ends the sentence, so the lead shown before the zone is known has none astray.
 export const headerLine = (
   detail: Pick<SystemDetail, 'collectorVersion' | 'lastSeenAt' | 'platform'> & {
     latest: { t: number; uptimeSeconds: number } | undefined;
@@ -37,7 +38,7 @@ export const headerLine = (
   now: number,
 ): { lead: string; tail: Phrase } => {
   if (detail.lastSeenAt === undefined) {
-    return { lead: 'Never heard from', tail: [] };
+    return { lead: 'Never heard from.', tail: [] };
   }
   const facts: string[] = [];
   if (detail.platform !== undefined) {
@@ -58,10 +59,10 @@ export const headerLine = (
   const lead =
     detail.platform === undefined ? `${joined.charAt(0).toUpperCase()}${joined.slice(1)}` : joined;
   if (ago < DAY_MS) {
-    return { lead, tail: [] };
+    return { lead: `${lead}.`, tail: [] };
   }
   const report = joined === '' ? 'Last Report ' : ', last Report ';
-  return { lead, tail: [report, whenAt(detail.lastSeenAt, now)] };
+  return { lead, tail: [report, whenAt(detail.lastSeenAt, now), '.'] };
 };
 
 // When a Condition on the Timeline was raised and cleared, and for how long.
