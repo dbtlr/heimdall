@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react';
 
 import { AutoRefresh } from '../components/auto-refresh.tsx';
+import favicon from '../favicon.svg?url';
 
 import appCss from '../styles.css?url';
 
@@ -13,10 +14,9 @@ export const Route = createRootRoute({
     </>
   ),
   head: () => ({
-    // No favicon yet; an empty one keeps the browser from asking for one.
     links: [
       { href: appCss, rel: 'stylesheet' },
-      { href: 'data:,', rel: 'icon' },
+      { href: favicon, rel: 'icon', type: 'image/svg+xml' },
     ],
     meta: [
       // oxlint-disable-next-line unicorn/text-encoding-identifier-case -- HTML wants the name "utf-8".
