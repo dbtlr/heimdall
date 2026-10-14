@@ -1,5 +1,7 @@
 import type { SQL } from 'bun';
 
+import { refreshSessionInsight } from '../stored-insight.ts';
+
 // The working directory of a fixture Session or process unless it names another.
 export const CWD = '/home/someone/work/my-project';
 
@@ -100,10 +102,22 @@ export type ConditionFixture = {
   system: string;
 };
 
+// Stores the stretches and totals of every stale Session, as a running Hub's
+// refresh does after it derives or receives what changed them. A database a
+// test migrated only as far as a version before they were stored has none.
+const caughtUp = async (sql: SQL) => {
+  const [row]: { stored: boolean }[] =
+    await sql`SELECT to_regproc('refresh_session_insight') IS NOT NULL AS stored`;
+  if (row?.stored === true) {
+    await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
+  }
+};
+
 // Seeds the rows the Hub derives or receives, so a test or a dev seed need not
 // go through a Collector and a parser for each one. Every time is in seconds
 // after `origin` (epoch milliseconds), so a fixture reads as a timeline. The
-// Systems named must exist: send a Report for each first.
+// Systems named must exist: send a Report for each first. Each helper leaves
+// the stored Session stretches and totals caught up.
 export const timeline = (origin: number) => {
   const at = (seconds: number) => new Date(origin + seconds * 1000);
 
@@ -214,6 +228,7 @@ export const timeline = (origin: number) => {
                 ${generation}, ${100_000 + index})
       `;
     }
+    await caughtUp(sql);
   };
 
   // Adds a Harness process as the Hub holds it, with its readings, and answers
@@ -265,6 +280,7 @@ export const timeline = (origin: number) => {
     if (readings === 'rollups') {
       await sql`DELETE FROM harness_process_samples WHERE process = ${id}`;
     }
+    await caughtUp(sql);
     return id;
   };
 
@@ -293,6 +309,7 @@ export const timeline = (origin: number) => {
         cpu_busy_sum = r.cpu_busy_sum + excluded.cpu_busy_sum,
         cpu_busy_max = GREATEST(r.cpu_busy_max, excluded.cpu_busy_max)
     `;
+    await caughtUp(sql);
   };
 
   // Adds a Condition as the Hub stores one: open unless `clearedAt` is given.

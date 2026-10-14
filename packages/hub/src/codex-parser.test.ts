@@ -5,6 +5,7 @@ import type { SQL } from 'bun';
 import { codexParser, requestIdOf } from './codex-parser.ts';
 import { syncPrices } from './price-table.ts';
 import { projectTranscripts } from './projection.ts';
+import { refreshSessionInsight } from './stored-insight.ts';
 import { assistant, jsonl as claudeJsonl, mainPath } from './testing/claude-code.ts';
 import {
   CHILD,
@@ -661,6 +662,7 @@ describe('Codex projection', () => {
         .filter((t: { skill: string | null }) => t.skill !== null)
         .every((t: { skill_inferred: boolean }) => t.skill_inferred),
     ).toBe(true);
+    await refreshSessionInsight(h.db.sql);
     const totals = await h.db
       .sql`SELECT requests, input_tokens, cache_read_tokens FROM insight.session_totals WHERE harness = 'codex'`;
     expect(
@@ -722,6 +724,7 @@ describe('Codex projection', () => {
       { agent_id: CHILD, depth: 1, parent_agent_id: null, session_id: SESSION },
       { agent_id: NESTED, depth: 2, parent_agent_id: CHILD, session_id: SESSION },
     ]);
+    await refreshSessionInsight(h.db.sql);
     const [total] = await h.db
       .sql`SELECT requests FROM insight.session_totals WHERE harness = 'codex'`;
     expect(Number(total?.requests)).toBe(5);
@@ -744,6 +747,7 @@ describe('Codex projection', () => {
     expect([
       ...(await h.db.sql`SELECT agent_id FROM insight.subagents WHERE harness = 'codex'`),
     ]).toEqual([{ agent_id: CHILD }]);
+    await refreshSessionInsight(h.db.sql);
     const [total] = await h.db
       .sql`SELECT requests FROM insight.session_totals WHERE harness = 'codex'`;
     expect(Number(total?.requests)).toBe(3);
@@ -784,6 +788,7 @@ describe('Codex projection', () => {
     );
     expect(error instanceof Error ? error.message : null).toBe('Injected link timeout');
     expect((await projectTranscripts(h.db.sql)).pending).toBe(0);
+    await refreshSessionInsight(h.db.sql);
     const [total] = await h.db
       .sql`SELECT requests FROM insight.session_totals WHERE harness = 'codex'`;
     expect(Number(total?.requests)).toBe(4);

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   BUNDLED_PRICES,
   migrate,
+  refreshSessionInsight,
   report,
   storeReport,
   storeToken,
@@ -963,6 +964,8 @@ const fill = async (sql: SQL) => {
   await seedSessions(sql, now);
   await seedWorkSession(sql, now);
   await unpair(sql, UNPAIRED_SYSTEM);
+  // Stores the seeded Sessions' stretches and totals, as a running Hub would.
+  await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
   const overview = await readFleetOverview(sql, {
     now,
     range: '24h',

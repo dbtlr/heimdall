@@ -4,7 +4,7 @@ title: ADR-0014 - Session insight is a rebuildable projection, read through insi
 description: "The Hub derives Session insight from the transcript archive as a projection at request and tool-call grain, built by a versioned parser per Harness and rebuilt whenever that version changes. Agents and the dashboard read it through one set of SQL views in an insight schema, which carry facts and locators but no transcript content, and which a read-only database role can query. Cost is computed in the views at API list prices, never stored."
 status: accepted
 created: 2026-10-11
-modified: 2026-10-11
+modified: 2026-10-14
 ---
 
 # Session insight is a rebuildable projection, read through insight views
@@ -63,3 +63,4 @@ A Harness that changes its transcript format needs a parser release before its n
 ## Changelog
 
 - 2026-10-11: Clarification of how the Hub rebuilds. A parser's new version writes its rows beside the current version's, and `current_parsers` switches the views to it in one statement once it has read every generation at least as far as the current version had; only then are the earlier rows deleted. While a rebuild runs only the new parser's code runs, so the current set stays as it was. Versions only move forward: no Hub switches a Harness to an earlier version, and a Hub deletes only rows of versions earlier than both the current version and its own. A generation that cannot be read or stored, or whose parse fails three runs in a row, is recorded failed for its parser version, and the next version tries it again. A delete and the batches being stored never overlap, so nothing derived from a deleted generation outlives it. A Session that deleting a generation touched is hidden from the views until it is derived again, then reappears whole. The decision is unchanged.
+- 2026-10-14: [ADR-0016](0016-session-stretches-and-totals-are-stored-and-refreshed.md) supersedes the rule that totals and cost are never stored: the Hub stores each Session's stretches and totals and refreshes them whenever anything they are computed from changes, prices included. Cost is still computed by the views' rules at the prices in force. The rest of this decision holds.
