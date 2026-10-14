@@ -107,7 +107,7 @@ export type ConditionFixture = {
 // test migrated only as far as a version before they were stored has none.
 const caughtUp = async (sql: SQL) => {
   const [row]: { stored: boolean }[] =
-    await sql`SELECT to_regproc('refresh_session_insight') IS NOT NULL AS stored`;
+    await sql`SELECT to_regproc('refresh_stale_session') IS NOT NULL AS stored`;
   if (row?.stored === true) {
     await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
   }

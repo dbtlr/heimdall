@@ -1292,10 +1292,10 @@ export const MIGRATIONS: readonly Migration[] = [
     // (ADR-0016). The computed_ views keep the rules, unchanged. Every change
     // to what they read marks the Sessions it can alter stale, in the
     // transaction that makes it: by key when the change names its Session, and
-    // otherwise as a range of Sessions that refresh_session_insight expands in
+    // otherwise as a range of Sessions that pick_stale_sessions expands in
     // its own snapshot, so a Session committed while the change was open is
-    // still found. The refresh stores what the computed_ views give for stale
-    // Sessions; the insight views read the stored rows. A Session a delete is
+    // still found. refresh_stale_session stores what the computed_ views give
+    // for a stale Session; the insight views read the stored rows. A Session a delete is
     // deriving again loses its stored rows at once. Every Session starts stale.
     sql: `
       CREATE VIEW computed_session_stretches WITH (security_barrier = true) AS
@@ -1378,6 +1378,7 @@ export const MIGRATIONS: readonly Migration[] = [
         session_id text NOT NULL,
         stretches boolean NOT NULL,
         totals boolean NOT NULL,
+        attempts integer NOT NULL DEFAULT 0,
         PRIMARY KEY (harness, system, source, session_id)
       );
 
@@ -1419,7 +1420,8 @@ export const MIGRATIONS: readonly Migration[] = [
             = (s.harness, s.system, s.source, s.session_id)
       );
 
-      -- Marks Sessions stale by key. A mark only ever adds to what is stale.
+      -- Marks Sessions stale by key. A mark only ever adds to what is stale,
+      -- and gives a Session whose refresh failed its attempts again.
       CREATE FUNCTION mark_sessions_stale(
         harnesses text[], systems text[], sources text[], session_ids text[],
         mark_stretches boolean, mark_totals boolean
@@ -1431,9 +1433,11 @@ export const MIGRATIONS: readonly Migration[] = [
           AS k (harness, system, source, session_id)
         ON CONFLICT (harness, system, source, session_id) DO UPDATE
         SET stretches = stale_sessions.stretches OR excluded.stretches,
-            totals = stale_sessions.totals OR excluded.totals
+            totals = stale_sessions.totals OR excluded.totals,
+            attempts = 0
         WHERE (excluded.stretches AND NOT stale_sessions.stretches)
            OR (excluded.totals AND NOT stale_sessions.totals)
+           OR stale_sessions.attempts > 0
       $$;
 
       -- Marks the Sessions that name a changed request or Session row.
@@ -1653,90 +1657,88 @@ export const MIGRATIONS: readonly Migration[] = [
         SELECT harness, system, source, session_id, stretches, totals FROM covered
         ON CONFLICT (harness, system, source, session_id) DO UPDATE
         SET stretches = stale_sessions.stretches OR excluded.stretches,
-            totals = stale_sessions.totals OR excluded.totals
+            totals = stale_sessions.totals OR excluded.totals,
+            attempts = 0
         WHERE (excluded.stretches AND NOT stale_sessions.stretches)
            OR (excluded.totals AND NOT stale_sessions.totals)
+           OR stale_sessions.attempts > 0
       $$;
 
-      -- Stores what the computed_ views give for up to batch stale Sessions,
-      -- those with the latest requests first, and returns how many it
-      -- refreshed. A Session marked again while this runs waits for it on the
-      -- stale row, and so is refreshed again later. Refreshes run one at a time.
-      CREATE FUNCTION refresh_session_insight(batch integer) RETURNS integer
+      -- Up to batch stale Sessions to refresh: those that failed fewest times
+      -- first, then those with the latest requests. Each counts an attempt
+      -- when picked, so a Session whose refresh keeps failing moves behind
+      -- the others and is left after 3 until it is marked again.
+      CREATE FUNCTION pick_stale_sessions(batch integer)
+      RETURNS TABLE (harness text, system text, source text, session_id text)
       LANGUAGE plpgsql AS $$
-      DECLARE
-        harnesses text[];
-        systems text[];
-        sources text[];
-        session_ids text[];
-        stale_stretches boolean[];
-        stale_totals boolean[];
       BEGIN
         PERFORM pg_advisory_xact_lock(hashtext('heimdall-session-insight-refresh'));
         PERFORM expand_stale_ranges();
+        RETURN QUERY
         WITH picked AS (
           SELECT x.harness, x.system, x.source, x.session_id FROM stale_sessions x
-          ORDER BY (
+          WHERE x.attempts < 3
+          ORDER BY x.attempts, (
             SELECT max(s.last_request_at) FROM projected_sessions s
             WHERE (s.harness, s.system, s.source, s.session_id)
                 = (x.harness, x.system, x.source, x.session_id)
           ) DESC NULLS LAST
           LIMIT batch FOR UPDATE OF x SKIP LOCKED
-        ), done AS (
-          DELETE FROM stale_sessions x USING picked p
-          WHERE (x.harness, x.system, x.source, x.session_id)
-              = (p.harness, p.system, p.source, p.session_id)
-          RETURNING x.*
         )
-        SELECT array_agg(harness), array_agg(system), array_agg(source), array_agg(session_id),
-               array_agg(done.stretches), array_agg(done.totals)
-        INTO harnesses, systems, sources, session_ids, stale_stretches, stale_totals
-        FROM done;
-        IF harnesses IS NULL THEN
-          RETURN 0;
+        UPDATE stale_sessions x SET attempts = x.attempts + 1 FROM picked p
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (p.harness, p.system, p.source, p.session_id)
+        RETURNING x.harness, x.system, x.source, x.session_id;
+      END
+      $$;
+
+      -- Stores what the computed_ views give for one stale Session, and says
+      -- whether it did: not when another refresh holds it or has stored it.
+      -- A Session marked again while this runs waits for it on the stale row,
+      -- and so is refreshed again later.
+      CREATE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
         END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
 
-        DELETE FROM stored_session_stretches s
-        USING unnest(harnesses, systems, sources, session_ids, stale_stretches, stale_totals)
-          AS k (harness, system, source, session_id, stretches, totals)
-        WHERE (s.harness, s.system, s.source, s.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-          AND k.stretches;
-        INSERT INTO stored_session_stretches
-        SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at, c.requests,
-               c.link, c.process_id, c.pid, c.candidates
-        FROM unnest(harnesses, systems, sources, session_ids, stale_stretches, stale_totals)
-          AS k (harness, system, source, session_id, stretches, totals)
-        CROSS JOIN LATERAL (
-          SELECT * FROM computed_session_stretches c
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
           WHERE (c.harness, c.system, c.source, c.session_id)
-              = (k.harness, k.system, k.source, k.session_id)
-          OFFSET 0
-        ) c
-        WHERE k.stretches;
-
-        DELETE FROM stored_session_totals s
-        USING unnest(harnesses, systems, sources, session_ids, stale_stretches, stale_totals)
-          AS k (harness, system, source, session_id, stretches, totals)
-        WHERE (s.harness, s.system, s.source, s.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-          AND k.totals;
-        INSERT INTO stored_session_totals
-        SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
-               c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
-               c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
-               c.unpriced_requests
-        FROM unnest(harnesses, systems, sources, session_ids, stale_stretches, stale_totals)
-          AS k (harness, system, source, session_id, stretches, totals)
-        CROSS JOIN LATERAL (
-          SELECT * FROM computed_session_totals c
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
           WHERE (c.harness, c.system, c.source, c.session_id)
-              = (k.harness, k.system, k.source, k.session_id)
-          OFFSET 0
-        ) c
-        WHERE k.totals;
-
-        RETURN cardinality(harnesses);
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
       END
       $$;
 

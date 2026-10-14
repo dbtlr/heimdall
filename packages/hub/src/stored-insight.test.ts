@@ -490,6 +490,47 @@ describe('the price table', () => {
   });
 });
 
+// What a refresh says: the error it throws, or how many Sessions it refreshed.
+const outcome = async (sql: SQL): Promise<string> => {
+  try {
+    return `refreshed ${String(await refreshSessionInsight(sql))}`;
+  } catch (error) {
+    return String(error);
+  }
+};
+
+describe('a Session whose refresh fails', () => {
+  test('holds up no other, is named, and is left after 3 tries until marked again', async () => {
+    await using db = await database();
+    await price(db.sql);
+    await addSession(db.sql, { id: 'poison', model: 'priced-model', requests: [20] });
+    await addSession(db.sql, { id: 's1', model: 'priced-model', requests: [10] });
+    await db.sql`
+      CREATE FUNCTION refuse_poison() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.session_id = 'poison' THEN RAISE EXCEPTION 'poisoned'; END IF;
+        RETURN NEW;
+      END
+      $$
+    `;
+    await db.sql`
+      CREATE TRIGGER refuse_poison BEFORE INSERT ON stored_session_totals
+        FOR EACH ROW EXECUTE FUNCTION refuse_poison()
+    `;
+    await price(db.sql, 3_000_000);
+
+    expect(await outcome(db.sql)).toMatch(/poison: .*poisoned/u);
+    expect(await stale(db.sql)).toEqual(['poison totals']);
+    expect(await outcome(db.sql)).toMatch(/poison/u);
+    expect(await outcome(db.sql)).toMatch(/poison/u);
+    expect(await outcome(db.sql)).toBe('refreshed 0');
+
+    await addRequest(db.sql, 'poison', 'poison-late', 30);
+
+    expect(await outcome(db.sql)).toMatch(/poison/u);
+  });
+});
+
 describe('the refresh order', () => {
   test('stores the Sessions with the latest requests first', async () => {
     await using db = await database();
