@@ -27,6 +27,6 @@ export const atFromSearch = (search: Record<string, unknown>): number | undefine
   return typeof at === 'number' && Number.isFinite(at) ? Math.round(at) : undefined;
 };
 
-// The page title up to its clock time, "Last 24 hours, to"; the page adds the
-// time, which needs the viewer's zone.
-export const rangeLead = (range: Range): string => `Last ${RANGE_NAMES[range]}, to`;
+// The page title before its clock time, "Last 24 hours"; the page adds ", to"
+// with the time, which needs the viewer's zone.
+export const rangeLead = (range: Range): string => `Last ${RANGE_NAMES[range]}`;

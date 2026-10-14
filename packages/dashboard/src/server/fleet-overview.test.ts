@@ -413,7 +413,7 @@ describe('conditions', () => {
   });
 });
 
-describe('open', () => {
+describe('attention', () => {
   test('lists open Conditions on paired Systems, newest raised first, with their latest reason', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
@@ -434,20 +434,19 @@ describe('open', () => {
     });
     await addCondition(db, { clearedAt: -60, kind: 'drift', raisedAt: -300, system: 'server-1' });
 
-    const { open } = await overview(h);
+    const { attention } = await overview(h);
 
-    expect(open).toEqual([
+    expect(attention).toMatchObject([
       {
+        firstDetected: NOW - 600_000,
         kind: 'job_failing',
-        raisedAt: NOW - 600_000,
-        reason: 'backup failed',
         subject: 'backup',
         system: 'server-1',
         unpaired: false,
       },
       {
+        firstDetected: NOW - 7200_000,
         kind: 'low_disk',
-        raisedAt: NOW - 7200_000,
         reason: 'disk 95% full',
         subject: '',
         system: 'laptop-1',
@@ -462,7 +461,7 @@ describe('open', () => {
     await addCondition(h.db.sql, { kind: 'low_disk', raisedAt: -600, system: 'server-1' });
     await unpair(h.db.sql, 'server-1');
 
-    expect((await overview(h)).open).toEqual([]);
+    expect((await overview(h)).attention).toEqual([]);
   });
 });
 
@@ -490,7 +489,7 @@ describe('unpaired Systems', () => {
     expect(found.lanes.map(({ name }) => name)).toEqual(['server-1']);
     expect(found.unpairedLanes).toEqual([]);
     expect(found.unpairedCount).toBe(1);
-    expect(found.open).toEqual([]);
+    expect(found.attention).toEqual([]);
   });
 
   test('keep their history and show as Unpaired, with their open Conditions, when asked for', async () => {
@@ -510,10 +509,10 @@ describe('unpaired Systems', () => {
       },
     ]);
     expect(found.unpairedCount).toBe(1);
-    expect(found.open).toEqual([
+    expect(found.attention).toMatchObject([
       {
+        firstDetected: NOW - 3600_000,
         kind: 'low_disk',
-        raisedAt: NOW - 3600_000,
         reason: 'disk 95% full',
         subject: '/',
         system: 'laptop-1',
@@ -528,14 +527,16 @@ describe('unpaired Systems', () => {
     await addCondition(h.db.sql, { kind: 'drift', raisedAt: -7200, system: 'server-1' });
     await addCondition(h.db.sql, { kind: 'drift', raisedAt: -60, system: 'laptop-1' });
 
-    const { open } = await overview(h, '24h', NOW, true);
+    const { attention } = await overview(h, '24h', NOW, true);
 
-    expect(open.map(({ system, unpaired }) => [system, unpaired])).toEqual([
+    expect(attention.map(({ system, unpaired }) => [system, unpaired])).toEqual([
       ['server-1', false],
       ['laptop-1', true],
       ['laptop-1', true],
     ]);
-    expect(open.map(({ raisedAt }) => NOW - raisedAt)).toEqual([7200_000, 60_000, 3600_000]);
+    expect(attention.map(({ firstDetected }) => NOW - firstDetected)).toEqual([
+      7200_000, 60_000, 3600_000,
+    ]);
   });
 
   test('do not include a paired System that was never seen', async () => {

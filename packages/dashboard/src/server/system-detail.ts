@@ -1,11 +1,9 @@
-import { filesRecordDigest } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { isRange, RANGES } from './fleet-overview-types.ts';
 import type { Link, Range } from './fleet-overview-types.ts';
 import {
   bucketStart,
-  conditionKind,
   findGaps,
   isLink,
   laneStatus,
@@ -16,11 +14,21 @@ import {
   toMark,
 } from './fleet-overview.ts';
 import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
+import {
+  byCheck,
+  conditionKind,
+  field,
+  filesOf,
+  judgedFilesRecords,
+  scheduleOf,
+  text,
+  toRun,
+} from './hub-rows.ts';
+import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import type {
   Disk,
   FileIssue,
   HarnessInstall,
-  JobRun,
   MemoryBucket,
   ProcessSeries,
   RecordedApplication,
@@ -29,8 +37,6 @@ import type {
   RecordedService,
   SampleInspection,
   SampleProcess,
-  ScheduleEntry,
-  ServiceCheck,
   SessionRow,
   SystemDetail,
   SystemRecords,
@@ -41,9 +47,6 @@ import type {
 const DAY_MS = 24 * 60 * 60_000;
 // The Timeline covers this much history, and every Condition still open.
 const TIMELINE_MS = 7 * DAY_MS;
-
-const field = (input: unknown, key: string): unknown =>
-  typeof input === 'object' && input !== null ? Reflect.get(input, key) : undefined;
 
 const systemName = (input: unknown): string => {
   const name = field(input, 'name');
@@ -512,61 +515,6 @@ export const readSample = async (
   };
 };
 
-type RecordRow = { kind: string; name: string; record: Record<string, unknown> };
-
-type ChecksRow = {
-  file_records: { digest: string; record: string }[] | null;
-  files: { path: string; record: string; since: number; state: string }[] | null;
-  services: (ServiceCheck & { service: string })[] | null;
-};
-
-type RunRow = {
-  job: string;
-  latest_run: { exitStatus: number; finished: string; started: string };
-};
-
-const text = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined;
-
-const NUMBER_FIELDS = ['day', 'hour', 'minute', 'month', 'weekday'] as const;
-
-// A job record's schedule: its calendar entries, each with the numeric fields
-// it names.
-const scheduleOf = (schedule: unknown): ScheduleEntry[] =>
-  Array.isArray(schedule)
-    ? schedule.map((entry: unknown) => {
-        const found: ScheduleEntry = {};
-        for (const key of NUMBER_FIELDS) {
-          const value = field(entry, key);
-          if (typeof value === 'number') {
-            found[key] = value;
-          }
-        }
-        return found;
-      })
-    : [];
-
-// A files record's files, each with its path and hash.
-const filesOf = (files: unknown): { path: string; sha256: string }[] =>
-  Array.isArray(files)
-    ? files.flatMap((entry: unknown) => {
-        const path = field(entry, 'path');
-        const sha256 = field(entry, 'sha256');
-        return typeof path === 'string' && typeof sha256 === 'string' ? [{ path, sha256 }] : [];
-      })
-    : [];
-
-const toRun = (run: RunRow['latest_run']): JobRun => ({
-  exitStatus: run.exitStatus,
-  finished: Date.parse(run.finished),
-  started: Date.parse(run.started),
-});
-
-// The checks of a Service: its supervisor's first, then the others by name.
-const byCheck = (a: ServiceCheck, b: ServiceCheck) =>
-  Number(b.check === 'supervisor') - Number(a.check === 'supervisor') ||
-  a.check.localeCompare(b.check);
-
 const isJobCondition = (kind: string): kind is RecordedJob['open'][number] =>
   kind === 'job_failing' || kind === 'job_overdue';
 
@@ -595,27 +543,20 @@ export const readSystemRecords = async (
   const of = (kind: string) => records.filter((row) => row.kind === kind);
   const serviceChecks = checks[0]?.services ?? [];
   const fileChecks = checks[0]?.files ?? [];
-  // As in the Hub's Drift rule: the checks speak for a files record only when
-  // their files part names it with the digest of the record the Hub mirrors.
-  const judged = new Map((checks[0]?.file_records ?? []).map((row) => [row.record, row.digest]));
-  const files = await Promise.all(
-    of('files').map(async ({ name: record, record: body }): Promise<RecordedFiles> => {
-      const listed = filesOf(body.files);
-      const checked =
-        checks[0]?.files != null &&
-        judged.get(record) === (await filesRecordDigest({ files: listed }));
-      return {
-        checked,
-        count: listed.length,
-        issues: checked
-          ? fileChecks
-              .filter((check) => check.record === record)
-              .map(({ path, since, state }): FileIssue => ({ path, since, state }))
-          : [],
-        name: record,
-      };
-    }),
-  );
+  const judged = await judgedFilesRecords(checks[0], records);
+  const files = of('files').map(({ name: record, record: body }): RecordedFiles => {
+    const checked = judged.has(record);
+    return {
+      checked,
+      count: filesOf(body.files).length,
+      issues: checked
+        ? fileChecks
+            .filter((check) => check.record === record)
+            .map(({ path, since, state }): FileIssue => ({ path, since, state }))
+        : [],
+      name: record,
+    };
+  });
   const runOf = new Map(runs.map((row) => [row.job, toRun(row.latest_run)]));
   const openJobConditions = conditions.filter(
     (row) => row.cleared_at === null && isJobCondition(row.kind),

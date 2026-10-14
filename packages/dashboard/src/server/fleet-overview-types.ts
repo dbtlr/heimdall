@@ -1,6 +1,8 @@
 // The data the Fleet overview renders: every paired System as a lane on one
-// time axis, the unpaired Systems when asked for, and the Conditions open now.
+// time axis, the unpaired Systems when asked for, and what needs the operator now.
 // Times are epoch milliseconds.
+
+import type { Attention } from './attention-types.ts';
 
 export const RANGES = ['6h', '12h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];
@@ -71,23 +73,13 @@ export type Lane = {
   stretches: Stretch[];
 };
 
-export type OpenCondition = {
-  kind: ConditionKind;
-  raisedAt: number;
-  reason: string;
-  subject: string;
-  system: string;
-  // Whether the System it is on is no longer paired.
-  unpaired: boolean;
-};
-
 export type FleetOverview = {
+  // Everything that needs the operator on the Systems shown, with the evidence
+  // behind it: newest first detected first, those on paired Systems first.
+  attention: Attention[];
   from: number;
   lanes: Lane[];
   now: number;
-  // Open Conditions on paired Systems, newest raised first, then those on
-  // unpaired Systems in the same order when they were asked for.
-  open: OpenCondition[];
   range: Range;
   to: number;
   // How many Systems the Hub holds that are no longer paired, asked for or not.

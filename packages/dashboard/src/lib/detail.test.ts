@@ -16,7 +16,7 @@ import { formatSpan } from './time.ts';
 
 // A header line as written in UTC.
 const header = (line: ReturnType<typeof headerLine>) =>
-  `${line.lead}${phraseText(line.tail, 'UTC')}.`;
+  `${line.lead}${phraseText(line.tail, 'UTC')}`;
 
 // Tuesday 2026-10-06 16:00 UTC.
 const NOW = Date.UTC(2026, 9, 6, 16, 0);
@@ -106,6 +106,13 @@ describe('headerLine', () => {
     const old = headerLine({ ...detail, lastSeenAt: NOW - 3 * DAY, latest: undefined }, NOW);
     expect(old.lead).toBe('Linux x64, Collector 0.6.0');
     expect(zoneFreeText(old.tail)).toBeUndefined();
+  });
+
+  test('ends the sentence in the part that ends it, so the lead alone has no stray full stop', () => {
+    expect(headerLine(detail, NOW).lead).toMatch(/ago\.$/u);
+    const old = headerLine({ ...none, lastSeenAt: NOW - 3 * DAY }, NOW);
+    expect(old.lead).toBe('');
+    expect(old.tail.at(-1)).toBe('.');
   });
 });
 

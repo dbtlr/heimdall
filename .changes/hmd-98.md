@@ -1,0 +1,3 @@
+### Changed
+
+- **The dashboard says why a System needs you** (HMD-98). A lane's status names the Condition and its subject, such as Drift on a file or Service down on a unit, and opens it on System detail. Open now becomes a table of what was observed, when it was first detected, and when its latest check arrived. System detail opens with each open Condition's expected and observed state and a next step with the commands to run. Evidence that cannot confirm a failure shows apart and greyed: a check set or run set older than 2 hours, a check that could not tell, a recorded file the Collector could not read, and checks that stopped arriving while the System still reports.
