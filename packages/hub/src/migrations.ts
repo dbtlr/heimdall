@@ -1292,7 +1292,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // (ADR-0016). The computed_ views keep the rules, unchanged. Every change
     // to what they read marks the Sessions it can alter stale, in the
     // transaction that makes it: by key when the change names its Session, and
-    // otherwise as a range of Sessions that pick_stale_session expands in
+    // otherwise as a range of Sessions that pick_stale_sessions expands in
     // its own snapshot, so a Session committed while the change was open is
     // still found. refresh_stale_session stores what the computed_ views give
     // for a stale Session; the insight views read the stored rows. A Session a delete is
@@ -1664,22 +1664,25 @@ export const MIGRATIONS: readonly Migration[] = [
            OR stale_sessions.attempts > 0
       $$;
 
-      -- The next stale Session to refresh, if any, leaving out the keys in
-      -- skip, a JSON array: of those whose refresh failed fewest times, the one with the
-      -- latest requests. One that failed 3 times is left until it is marked
-      -- again.
-      CREATE FUNCTION pick_stale_session(skip jsonb)
+      -- Up to n stale Sessions to refresh, leaving out the keys in skip, a
+      -- JSON array: of those whose refresh failed fewest times, those with the
+      -- latest requests first. One that failed 3 times is left until it is
+      -- marked again.
+      CREATE FUNCTION pick_stale_sessions(skip jsonb, n integer)
       RETURNS TABLE (harness text, system text, source text, session_id text)
       LANGUAGE plpgsql AS $$
       BEGIN
         PERFORM pg_advisory_xact_lock(hashtext('heimdall-session-insight-refresh'));
         PERFORM expand_stale_ranges();
         RETURN QUERY
+        WITH skipped AS MATERIALIZED (
+          SELECT * FROM jsonb_to_recordset(skip)
+            AS k (harness text, system text, source text, session_id text)
+        )
         SELECT x.harness, x.system, x.source, x.session_id FROM stale_sessions x
         WHERE x.attempts < 3
           AND NOT EXISTS (
-            SELECT 1 FROM jsonb_to_recordset(skip)
-              AS k (harness text, system text, source text, session_id text)
+            SELECT 1 FROM skipped k
             WHERE (k.harness, k.system, k.source, k.session_id)
                 = (x.harness, x.system, x.source, x.session_id)
           )
@@ -1688,7 +1691,7 @@ export const MIGRATIONS: readonly Migration[] = [
           WHERE (s.harness, s.system, s.source, s.session_id)
               = (x.harness, x.system, x.source, x.session_id)
         ) DESC NULLS LAST
-        LIMIT 1;
+        LIMIT n;
       END
       $$;
 
