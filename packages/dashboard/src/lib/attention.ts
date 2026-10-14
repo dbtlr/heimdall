@@ -35,9 +35,13 @@ const severityOf = (item: Attention): Severity | undefined =>
 export const attentionMark = (item: Attention): Severity | 'unknown' =>
   (isConfirmed(item) ? severityOf(item) : undefined) ?? 'unknown';
 
-// Keeps case, dots, underscores, and tildes, so paths that differ only in
-// those keep apart.
-const slug = (text: string) => text.replaceAll(/[^A-Za-z0-9._~]+/gu, '-').replaceAll(/^-|-$/gu, '');
+// Keeps case, dots, underscores, and tildes, and doubles a dash before other
+// runs become one, so paths that differ only in those keep apart.
+const slug = (text: string) =>
+  text
+    .replaceAll('-', '--')
+    .replaceAll(/[^A-Za-z0-9._~-]+/gu, '-')
+    .replaceAll(/^-|-$/gu, '');
 
 // An HTML id for the item, unique on its System: the kind and its subject.
 export const anchorOf = (item: Attention): string => {
@@ -157,15 +161,25 @@ type Words = { long: Phrase; short: Phrase };
 
 const same = (text: string): Words => ({ long: [text], short: [text] });
 
+// How the latest checks found a drifted file. With no state, only a current
+// check that judged its record says it matched.
 const driftObserved = (
   state: 'drifted' | 'missing' | 'unreadable' | undefined,
-  evidence: Attention['evidence'],
+  { checkedAt, evidence }: Pick<Attention, 'checkedAt' | 'evidence'>,
 ): Words => {
   if (state === undefined && evidence === 'unknown') {
     return {
       long: ['Unknown. The latest checks did not judge the version of its record the Hub holds.'],
       short: ['Not checked against its record'],
     };
+  }
+  if (state === undefined && evidence === 'old') {
+    return checkedAt === undefined
+      ? { long: ['Unknown. No file check has arrived.'], short: ['Not checked'] }
+      : {
+          long: ['Unknown. No file check has arrived in the last 2 hours.'],
+          short: ['No recent check'],
+        };
   }
   switch (state) {
     case 'drifted': {
@@ -297,7 +311,7 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
       const recorded = recordedContent(item.record, item.sha256);
       return evidence(
         { long: [recorded.long], short: [recorded.short] },
-        driftObserved(item.state, item.evidence),
+        driftObserved(item.state, item),
         item.othersMatching > 0 ? othersWords(item.othersMatching, item.record) : undefined,
       );
     }

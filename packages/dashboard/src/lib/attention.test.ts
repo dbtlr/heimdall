@@ -163,6 +163,9 @@ describe('anchorOf', () => {
     expect(anchorOf(drift({}, '/etc/foo.conf'))).not.toBe(anchorOf(drift({}, '/etc/foo-conf')));
     expect(anchorOf(drift({}, '/home/x/.zshrc'))).not.toBe(anchorOf(drift({}, '/home/x/zshrc')));
     expect(anchorOf(drift({}, '/A'))).not.toBe(anchorOf(drift({}, '/a')));
+    expect(anchorOf(drift({}, '/etc/app/config.toml'))).not.toBe(
+      anchorOf(drift({}, '/etc-app/config.toml')),
+    );
   });
 
   test('omits the slug part when the subject is empty or has nothing to slug', () => {
@@ -315,6 +318,23 @@ describe('evidenceWords: drift', () => {
       'Unknown. The latest checks did not judge the version of its record the Hub holds.',
     );
     expect(utc(words.observedShort)).toBe('Matched at the latest check');
+  });
+
+  test('claims no match for a file with old evidence and no state', () => {
+    const recent = attention(
+      { ...DRIFT, state: undefined },
+      { checkedAt: NOW - 3 * HOUR, evidence: 'old' },
+    );
+    const never = attention(
+      { ...DRIFT, state: undefined },
+      { checkedAt: undefined, evidence: 'old' },
+    );
+    expect(utc(evidenceWords(recent, NOW).observed)).toBe(
+      'Unknown. No file check has arrived in the last 2 hours.',
+    );
+    expect(utc(evidenceWords(recent, NOW).observedShort)).toBe('No recent check');
+    expect(utc(evidenceWords(never, NOW).observed)).toBe('Unknown. No file check has arrived.');
+    expect(utc(evidenceWords(never, NOW).observedShort)).toBe('Not checked');
   });
 
   test('observes a file that matched at the latest check when its state is gone', () => {
