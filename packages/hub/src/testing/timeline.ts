@@ -104,10 +104,11 @@ export type ConditionFixture = {
 
 // Stores the stretches and totals of every stale Session, as a running Hub's
 // refresh does after it derives or receives what changed them. A database a
-// test migrated only as far as a version before they were stored has none.
+// test migrated only as far as a version before the refresh's functions is
+// left as it is.
 const caughtUp = async (sql: SQL) => {
   const [row]: { stored: boolean }[] =
-    await sql`SELECT to_regproc('refresh_stale_session') IS NOT NULL AS stored`;
+    await sql`SELECT to_regproc('pick_stale_sessions') IS NOT NULL AS stored`;
   if (row?.stored === true) {
     await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
   }

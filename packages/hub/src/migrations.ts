@@ -1747,6 +1747,45 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 21,
   },
+  {
+    // The refresh picks up to n stale Sessions per call, so draining a
+    // backlog does not sort every stale Session again for each one.
+    sql: `
+      DROP FUNCTION pick_stale_session(jsonb);
+
+      -- Up to n stale Sessions to refresh, leaving out the keys in skip, a
+      -- JSON array: of those whose refresh failed fewest times, those with the
+      -- latest requests first. One that failed 3 times is left until it is
+      -- marked again.
+      CREATE FUNCTION pick_stale_sessions(skip jsonb, n integer)
+      RETURNS TABLE (harness text, system text, source text, session_id text)
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('heimdall-session-insight-refresh'));
+        PERFORM expand_stale_ranges();
+        RETURN QUERY
+        WITH skipped AS MATERIALIZED (
+          SELECT * FROM jsonb_to_recordset(skip)
+            AS k (harness text, system text, source text, session_id text)
+        )
+        SELECT x.harness, x.system, x.source, x.session_id FROM stale_sessions x
+        WHERE x.attempts < 3
+          AND NOT EXISTS (
+            SELECT 1 FROM skipped k
+            WHERE (k.harness, k.system, k.source, k.session_id)
+                = (x.harness, x.system, x.source, x.session_id)
+          )
+        ORDER BY x.attempts, (
+          SELECT max(s.last_request_at) FROM projected_sessions s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (x.harness, x.system, x.source, x.session_id)
+        ) DESC NULLS LAST
+        LIMIT n;
+      END
+      $$;
+    `,
+    version: 22,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -2,7 +2,12 @@ import type { SQL } from 'bun';
 
 import { describeError } from './errors.ts';
 
-// How long one refresh keeps picking Sessions, so a backlog, such as every
+// How many stale Sessions one pick returns, so the pick's scan of every stale
+// Session is shared by several refreshes. Sessions a run picks but has no
+// budget left for stay stale, unpenalized, for the next run.
+export const REFRESH_PICK = 20;
+
+// How long one refresh keeps refreshing Sessions, so a backlog, such as every
 // Session after a parser switch, drains over several runs.
 export const REFRESH_BUDGET_MS = 10_000;
 
@@ -23,47 +28,53 @@ export const refreshSessionInsight = async (
 ): Promise<number> => {
   const until = now() + budgetMs;
   let refreshed = 0;
-  const tried: SessionKey[] = [];
+  // Sessions this run leaves: those that failed, and those another refresh
+  // holds. A Session refreshed is no longer stale, so no pick returns it.
+  const skipped: SessionKey[] = [];
   const failed: string[] = [];
   for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- one Session per transaction, in turn.
-    const key = await pickStaleSession(sql, tried);
-    if (key === undefined) {
+    // oxlint-disable-next-line no-await-in-loop -- a pick waits for the refreshes before it.
+    const picked = await pickStaleSessions(sql, skipped);
+    if (picked.length === 0) {
       break;
     }
-    tried.push(key);
-    try {
-      // oxlint-disable-next-line no-await-in-loop -- one Session per transaction, in turn.
-      refreshed += (await refreshSession(sql, key)) ? 1 : 0;
-    } catch (error) {
-      failed.push(`${key.harness} ${key.system} ${key.session_id}: ${describeError(error)}`);
+    for (const key of picked) {
       try {
-        // oxlint-disable-next-line no-await-in-loop -- the failure counts before the next pick.
-        await countFailure(sql, key);
-      } catch (countError) {
-        failed.push(`counting that failure: ${describeError(countError)}`);
+        // oxlint-disable-next-line no-await-in-loop -- one Session per transaction, in turn.
+        if (await refreshSession(sql, key)) {
+          refreshed += 1;
+        } else {
+          skipped.push(key);
+        }
+      } catch (error) {
+        skipped.push(key);
+        failed.push(`${key.harness} ${key.system} ${key.session_id}: ${describeError(error)}`);
+        try {
+          // oxlint-disable-next-line no-await-in-loop -- the failure counts before the next pick.
+          await countFailure(sql, key);
+        } catch (countError) {
+          failed.push(`counting that failure: ${describeError(countError)}`);
+        }
+      }
+      if (now() >= until) {
+        return finish(refreshed, failed);
       }
     }
-    if (now() >= until) {
-      break;
-    }
   }
+  return finish(refreshed, failed);
+};
+
+const finish = (refreshed: number, failed: readonly string[]): number => {
   if (failed.length > 0) {
     throw new Error(`Could not refresh ${failed.length} Session(s): ${failed.join('; ')}`);
   }
   return refreshed;
 };
 
-// The next stale Session to refresh, leaving out those this run tried.
-const pickStaleSession = async (
-  sql: SQL,
-  tried: readonly SessionKey[],
-): Promise<SessionKey | undefined> => {
-  const [key]: SessionKey[] = await sql`
-    SELECT * FROM pick_stale_session(${JSON.stringify(tried)}::text::jsonb)
-  `;
-  return key;
-};
+// The next stale Sessions to refresh, leaving out those in `skipped`.
+const pickStaleSessions = (sql: SQL, skipped: readonly SessionKey[]): Promise<SessionKey[]> => sql`
+  SELECT * FROM pick_stale_sessions(${JSON.stringify(skipped)}::text::jsonb, ${REFRESH_PICK})
+`;
 
 const countFailure = (sql: SQL, key: SessionKey) => sql`
   UPDATE stale_sessions SET attempts = attempts + 1

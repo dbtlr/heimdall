@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 
 import { SQL } from 'bun';
 
-import { migrate } from './migrations.ts';
+import { MIGRATIONS, migrate } from './migrations.ts';
 import { syncPrices } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { pruneVitals, RAW_RETENTION_MS } from './retention.ts';
@@ -623,4 +623,20 @@ describe('a change committed while a refresh runs beside it', () => {
 
     expect(await differences(db.sql)).toEqual([]);
   });
+});
+
+test('a database migrated to version 21 refreshes once migrated to the latest', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 21),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await addSession(db.sql, { id: 's1', requests: [10, 20] });
+
+  await migrate(db.sql);
+  await price(db.sql);
+
+  expect(await refreshSessionInsight(db.sql)).toBe(1);
+  expect(await differences(db.sql)).toEqual([]);
 });
