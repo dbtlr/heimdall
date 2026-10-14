@@ -24,6 +24,7 @@ import { BUNDLED_PRICES } from './prices.ts';
 import type { PriceEntry } from './prices.ts';
 import { projectionNotes, projectTranscripts } from './projection.ts';
 import { pruneVitals } from './retention.ts';
+import { refreshSessionInsight } from './stored-insight.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 
@@ -149,6 +150,7 @@ const serveUntilStopped = async ({
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
     let stopProjecting: (() => Promise<void>) | undefined;
+    let stopRefreshing: (() => Promise<void>) | undefined;
     const outdatedLogged = new Set<string>();
     try {
       const paired = await pairedSystemCount(sql);
@@ -180,14 +182,22 @@ const serveUntilStopped = async ({
           }
         },
       });
+      stopRefreshing = every({
+        intervalMs: PROJECT_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(clean(`Could not store Session insight: ${describeError(error)}`));
+        },
+        task: () => refreshSessionInsight(sql),
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A prune, judgment, or parse still running must finish before the database closes.
+      // A prune, judgment, parse, or refresh still running must finish before the database closes.
       await stopPruning?.();
       await stopJudging?.();
       await stopProjecting?.();
+      await stopRefreshing?.();
       await server.stop();
     }
   } finally {

@@ -9,6 +9,7 @@ import { migrate } from './migrations.ts';
 import { loadPriceOverrides, parsePriceOverrides, syncPrices } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { BUNDLED_PRICES } from './prices.ts';
+import { refreshSessionInsight } from './stored-insight.ts';
 import { startTestServer, testDatabase } from './testing/postgres.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -436,6 +437,8 @@ describe('an unpriced request is never free', () => {
       { at: '2026-03-01T00:00:00Z', id: 'unknown', input: 1000, model: 'mystery-model' },
     ]);
 
+    await refreshSessionInsight(db.sql);
+
     const [totals]: Record<string, string | null>[] = await db.sql`
       SELECT cost_usd, priced_cost_usd, unpriced_requests FROM insight.session_totals
     `;
@@ -452,6 +455,8 @@ describe('an unpriced request is never free', () => {
       { at: '2026-03-01T00:00:00Z', id: 'b', output: 1_000_000 },
     ]);
 
+    await refreshSessionInsight(db.sql);
+
     const [totals]: Record<string, string | null>[] = await db.sql`
       SELECT cost_usd, priced_cost_usd, unpriced_requests FROM insight.session_totals
     `;
@@ -464,6 +469,8 @@ describe('an unpriced request is never free', () => {
   test('a Session with no requests costs nothing and has none unpriced', async () => {
     await using db = await prepared({ bundled: [PRICE] });
     await seed(db.sql, []);
+
+    await refreshSessionInsight(db.sql);
 
     const [totals]: Record<string, string | null>[] = await db.sql`
       SELECT cost_usd, priced_cost_usd, unpriced_requests FROM insight.session_totals
@@ -485,6 +492,7 @@ describe('an unpriced request is never free', () => {
     const [main]: Record<string, string | null>[] = await db.sql`
       SELECT cost_usd, unpriced_requests FROM insight.main_conversation_totals
     `;
+    await refreshSessionInsight(db.sql);
     const [whole]: Record<string, string | null>[] = await db.sql`
       SELECT cost_usd, unpriced_requests FROM insight.session_totals
     `;

@@ -71,6 +71,8 @@ The reader can query every view in the `insight` schema:
 - **Sessions:** `insight.sessions`, `insight.subagents`, `insight.requests`, `insight.tool_calls`, `insight.session_totals`, `insight.main_conversation_totals`, and `insight.parse_status`.
 - **Sessions beside Harness processes and Vitals:** `insight.request_links` and `insight.session_stretches`, which link each stretch of a Session to the Harness process that ran it when only one seen process could have; `insight.harness_processes`; and `insight.vitals`, `insight.vitals_processes`, `insight.vitals_sessions`, and `insight.vitals_requests`, which set each Vitals sample beside the processes, Sessions, and requests of its time. See [Linking Harness processes to Sessions](spec.md#linking-harness-processes-to-sessions).
 
+`insight.session_totals` and `insight.session_stretches` read what the Hub stored at its last refresh, so they can lag new data by about 15 seconds. The other views compute what they show when read.
+
 The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. A few columns are text as the Harness or the Collector wrote it:
 
 - `first_cwd` and `last_cwd`, the working directories, and `first_git_branch` and `last_git_branch`, in `insight.sessions`.

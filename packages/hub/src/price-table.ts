@@ -108,12 +108,13 @@ export const loadPriceOverrides = async (path: string): Promise<PriceEntry[]> =>
   }
 };
 
-// Replaces the price table with `bundled` and `configured` entries. Both stay
-// in it: where a configured entry and a bundled one share a model, a date, and
-// a prompt tier, the views choose the configured one. The replacement holds the
-// lock migrations take, so Hubs that start together load it one at a time.
-// An entry for the reserved `unknown` model, bundled or configured, refuses
-// the load before it touches the table.
+// Replaces the price table with `bundled` and `configured` entries, and leaves
+// it untouched when it already holds exactly those. Both stay in it: where a
+// configured entry and a bundled one share a model, a date, and a prompt tier,
+// the views choose the configured one. The replacement holds the lock
+// migrations take, so Hubs that start together load it one at a time. An
+// entry for the reserved `unknown` model, bundled or configured, refuses the
+// load before it touches the table.
 export const syncPrices = async (
   sql: SQL,
   { bundled, configured }: { bundled: readonly PriceEntry[]; configured: readonly PriceEntry[] },
@@ -123,23 +124,35 @@ export const syncPrices = async (
   }
   await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
-    await tx`DELETE FROM model_prices`;
     const rows = [
-      ...bundled.map((p) => ({ price: p, source: 'bundled' })),
-      ...configured.map((p) => ({ price: p, source: 'configured' })),
-    ];
-    for (const { price: p, source } of rows) {
-      // oxlint-disable-next-line no-await-in-loop -- a table of a few dozen rows.
+      ...bundled.map((entry) => ({ entry, source: 'bundled' })),
+      ...configured.map((entry) => ({ entry, source: 'configured' })),
+    ].map(({ entry: p, source }) => ({
+      cache_read_per_mtok: p.cacheRead ?? null,
+      cache_write_1h_per_mtok: p.cacheWrite1h ?? null,
+      cache_write_5m_per_mtok: p.cacheWrite5m ?? null,
+      context_window: p.contextWindow,
+      input_per_mtok: p.input,
+      min_prompt_tokens: (p.promptOver ?? -1) + 1,
+      model: p.model,
+      output_per_mtok: p.output,
+      source,
+      valid_from: `${p.validFrom}T00:00:00Z`,
+    }));
+    const loaded = JSON.stringify(rows);
+    // Writing the same prices again would mark every Session's totals stale.
+    const [changed]: { changed: boolean }[] = await tx`
+      WITH loaded AS (
+        SELECT * FROM jsonb_populate_recordset(NULL::model_prices, ${loaded}::text::jsonb)
+      )
+      SELECT EXISTS (TABLE loaded EXCEPT TABLE model_prices)
+          OR EXISTS (TABLE model_prices EXCEPT TABLE loaded) AS changed
+    `;
+    if (changed?.changed === true) {
+      await tx`DELETE FROM model_prices`;
       await tx`
-        INSERT INTO model_prices (
-          model, valid_from, source, input_per_mtok, output_per_mtok, cache_read_per_mtok,
-          cache_write_5m_per_mtok, cache_write_1h_per_mtok, context_window, min_prompt_tokens
-        )
-        VALUES (
-          ${p.model}, ${`${p.validFrom}T00:00:00Z`}::timestamptz, ${source}, ${p.input},
-          ${p.output}, ${p.cacheRead ?? null}, ${p.cacheWrite5m ?? null},
-          ${p.cacheWrite1h ?? null}, ${p.contextWindow}, ${(p.promptOver ?? -1) + 1}
-        )
+        INSERT INTO model_prices
+        SELECT * FROM jsonb_populate_recordset(NULL::model_prices, ${loaded}::text::jsonb)
       `;
     }
   });

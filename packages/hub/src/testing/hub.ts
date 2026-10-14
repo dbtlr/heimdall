@@ -24,6 +24,7 @@ export { migrate } from '../migrations.ts';
 export { BUNDLED_PRICES } from '../prices.ts';
 export { syncPrices } from '../price-table.ts';
 export { storeReport } from '../store.ts';
+export { refreshSessionInsight } from '../stored-insight.ts';
 export { storeToken } from '../tokens.ts';
 
 // Reads back what the Hub derived about each System.

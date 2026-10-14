@@ -1286,6 +1286,467 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 20,
   },
+  {
+    // Session stretches and totals are stored, so a page reads them by index
+    // instead of linking every request and pricing it again on each read
+    // (ADR-0016). The computed_ views keep the rules, unchanged. Every change
+    // to what they read marks the Sessions it can alter stale, in the
+    // transaction that makes it: by key when the change names its Session, and
+    // otherwise as a range of Sessions that pick_stale_session expands in
+    // its own snapshot, so a Session committed while the change was open is
+    // still found. refresh_stale_session stores what the computed_ views give
+    // for a stale Session; the insight views read the stored rows. A Session a delete is
+    // deriving again loses its stored rows at once. Every Session starts stale.
+    sql: `
+      CREATE VIEW computed_session_stretches WITH (security_barrier = true) AS
+      SELECT DISTINCT ON (l.harness, l.system, l.source, l.session_id, l.at)
+             l.harness, l.system, l.source, l.session_id, l.at AS started_at,
+             l.stretch_ended_at AS ended_at,
+             (SELECT count(*) FROM insight.requests x
+              WHERE x.harness = l.harness AND x.system = l.system AND x.source = l.source
+                AND x.session_id = l.session_id
+                AND x.at BETWEEN l.at AND l.stretch_ended_at) AS requests,
+             l.link, l.process_id, l.pid, l.candidates
+      FROM insight.request_links l
+      WHERE l.at = l.stretch_started_at
+      ORDER BY l.harness, l.system, l.source, l.session_id, l.at, l.request_id;
+
+      CREATE VIEW computed_session_totals WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id,
+             count(r.request_id)::bigint AS requests,
+             COALESCE(sum(r.input_tokens), 0)::bigint AS input_tokens,
+             COALESCE(sum(r.output_tokens), 0)::bigint AS output_tokens,
+             sum(r.reasoning_tokens)::bigint AS reasoning_tokens,
+             COALESCE(sum(r.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+             COALESCE(sum(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+             sum(r.cache_write_5m_tokens)::bigint AS cache_write_5m_tokens,
+             sum(r.cache_write_1h_tokens)::bigint AS cache_write_1h_tokens,
+             CASE WHEN count(r.request_id) FILTER (WHERE r.cost_usd IS NULL) = 0
+                  THEN COALESCE(sum(r.cost_usd), 0) END AS cost_usd,
+             sum(r.cost_usd) AS priced_cost_usd,
+             (count(r.request_id) FILTER (WHERE r.cost_usd IS NULL))::bigint AS unpriced_requests
+      FROM insight.sessions s
+      LEFT JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id
+      GROUP BY s.harness, s.system, s.source, s.session_id;
+
+      DROP VIEW insight.session_stretches;
+      DROP VIEW insight.session_totals;
+
+      CREATE TABLE stored_session_stretches (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        started_at timestamptz NOT NULL,
+        ended_at timestamptz NOT NULL,
+        requests bigint NOT NULL,
+        link text NOT NULL,
+        process_id bigint,
+        pid integer,
+        candidates bigint NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id, started_at)
+      );
+      CREATE INDEX stored_session_stretches_by_time ON stored_session_stretches (system, started_at);
+
+      CREATE TABLE stored_session_totals (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        requests bigint NOT NULL,
+        input_tokens bigint NOT NULL,
+        output_tokens bigint NOT NULL,
+        reasoning_tokens bigint,
+        cache_read_tokens bigint NOT NULL,
+        cache_write_tokens bigint NOT NULL,
+        cache_write_5m_tokens bigint,
+        cache_write_1h_tokens bigint,
+        cost_usd numeric,
+        priced_cost_usd numeric,
+        unpriced_requests bigint NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id)
+      );
+
+      -- A Session whose stored stretches or totals may differ from what the
+      -- computed_ views give.
+      CREATE TABLE stale_sessions (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        stretches boolean NOT NULL,
+        totals boolean NOT NULL,
+        attempts integer NOT NULL DEFAULT 0,
+        PRIMARY KEY (harness, system, source, session_id)
+      );
+
+      -- Sessions to mark stale when the refresh next reads them: those of
+      -- system and harness, every one when null, with a request from 10
+      -- minutes before since to 10 minutes after until, either bound open
+      -- when null. 10 minutes covers the 2 seconds a process window opens
+      -- early, the 60 seconds a running process surely runs past its last
+      -- sighting, and the 5-minute Vitals bucket that bounds a missed end.
+      CREATE TABLE stale_ranges (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text,
+        harness text,
+        since timestamptz,
+        until timestamptz,
+        stretches boolean NOT NULL,
+        totals boolean NOT NULL
+      );
+
+      CREATE VIEW insight.session_stretches WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.started_at, s.ended_at, s.requests,
+             s.link, s.process_id, s.pid, s.candidates
+      FROM stored_session_stretches s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+
+      CREATE VIEW insight.session_totals WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.requests, s.input_tokens,
+             s.output_tokens, s.reasoning_tokens, s.cache_read_tokens, s.cache_write_tokens,
+             s.cache_write_5m_tokens, s.cache_write_1h_tokens, s.cost_usd, s.priced_cost_usd,
+             s.unpriced_requests
+      FROM stored_session_totals s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+
+      -- Marks Sessions stale by key. A mark only ever adds to what is stale,
+      -- and gives a Session whose refresh failed its attempts again.
+      CREATE FUNCTION mark_sessions_stale(
+        harnesses text[], systems text[], sources text[], session_ids text[],
+        mark_stretches boolean, mark_totals boolean
+      ) RETURNS void
+      LANGUAGE sql AS $$
+        INSERT INTO stale_sessions (harness, system, source, session_id, stretches, totals)
+        SELECT DISTINCT k.harness, k.system, k.source, k.session_id, mark_stretches, mark_totals
+        FROM unnest(harnesses, systems, sources, session_ids)
+          AS k (harness, system, source, session_id)
+        ON CONFLICT (harness, system, source, session_id) DO UPDATE
+        SET stretches = stale_sessions.stretches OR excluded.stretches,
+            totals = stale_sessions.totals OR excluded.totals,
+            attempts = 0
+        WHERE (excluded.stretches AND NOT stale_sessions.stretches)
+           OR (excluded.totals AND NOT stale_sessions.totals)
+           OR stale_sessions.attempts > 0
+      $$;
+
+      -- Marks the Sessions that name a changed request or Session row.
+      CREATE FUNCTION mark_changed_requests_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF TG_OP <> 'INSERT' THEN
+          PERFORM mark_sessions_stale(
+            array_agg(harness), array_agg(system), array_agg(source), array_agg(session_id),
+            true, true
+          ) FROM before_change;
+        END IF;
+        IF TG_OP <> 'DELETE' THEN
+          PERFORM mark_sessions_stale(
+            array_agg(harness), array_agg(system), array_agg(source), array_agg(session_id),
+            true, true
+          ) FROM after_change;
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_request_insert AFTER INSERT ON projected_requests
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      CREATE TRIGGER mark_stale_on_request_update AFTER UPDATE ON projected_requests
+        REFERENCING OLD TABLE AS before_change NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      CREATE TRIGGER mark_stale_on_request_delete AFTER DELETE ON projected_requests
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      CREATE TRIGGER mark_stale_on_session_insert AFTER INSERT ON projected_sessions
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      CREATE TRIGGER mark_stale_on_session_update AFTER UPDATE ON projected_sessions
+        REFERENCING OLD TABLE AS before_change NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      CREATE TRIGGER mark_stale_on_session_delete AFTER DELETE ON projected_sessions
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+      -- A Session a delete was deriving again is shown again.
+      CREATE TRIGGER mark_stale_on_rederived AFTER DELETE ON rederiving_sessions
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_requests_stale();
+
+      -- Nothing derived from a deleted generation outlives it, so a Session a
+      -- delete starts deriving again loses its stored rows with the delete.
+      CREATE FUNCTION forget_rederiving_sessions() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        DELETE FROM stored_session_stretches s USING after_change k
+        WHERE (s.harness, s.system, s.source, s.session_id)
+            = (k.harness, k.system, k.source, k.session_id);
+        DELETE FROM stored_session_totals s USING after_change k
+        WHERE (s.harness, s.system, s.source, s.session_id)
+            = (k.harness, k.system, k.source, k.session_id);
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER forget_stored_on_rederiving AFTER INSERT ON rederiving_sessions
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION forget_rederiving_sessions();
+
+      -- A process's window moves only at the earliest of its old and new
+      -- start, end, and last sighting, or from its start when its start or
+      -- directory changed; Sessions with no request after that keep their
+      -- stretches.
+      CREATE FUNCTION mark_changed_processes_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF TG_OP = 'UPDATE' THEN
+          INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+          SELECT n.system, n.harness, min(
+                   CASE WHEN o.started_at IS DISTINCT FROM n.started_at
+                          OR o.cwd IS DISTINCT FROM n.cwd
+                          OR o.system IS DISTINCT FROM n.system
+                          OR o.harness IS DISTINCT FROM n.harness
+                        THEN LEAST(o.started_at, n.started_at)
+                        ELSE LEAST(o.last_seen_at, n.last_seen_at, o.ended_at, n.ended_at) END
+                 ), NULL, true, false
+          FROM before_change o JOIN after_change n ON n.id = o.id
+          GROUP BY n.system, n.harness;
+          INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+          SELECT o.system, o.harness, min(o.started_at), NULL, true, false
+          FROM before_change o JOIN after_change n ON n.id = o.id
+          WHERE (o.system, o.harness) IS DISTINCT FROM (n.system, n.harness)
+          GROUP BY o.system, o.harness;
+        ELSIF TG_OP = 'INSERT' THEN
+          INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+          SELECT system, harness, min(started_at), NULL, true, false
+          FROM after_change GROUP BY system, harness;
+        ELSE
+          INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+          SELECT system, harness, min(started_at), NULL, true, false
+          FROM before_change GROUP BY system, harness;
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_process_insert AFTER INSERT ON harness_processes
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_processes_stale();
+      CREATE TRIGGER mark_stale_on_process_update AFTER UPDATE ON harness_processes
+        REFERENCING OLD TABLE AS before_change NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_processes_stale();
+      CREATE TRIGGER mark_stale_on_process_delete AFTER DELETE ON harness_processes
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_processes_stale();
+
+      -- A reading links the stretches that hold it, so stored or pruned it
+      -- changes only Sessions whose requests span its time. A rollup stands
+      -- for readings anywhere in its 5 minutes.
+      CREATE FUNCTION mark_read_samples_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+        SELECT p.system, p.harness, min(r.t), max(r.t), true, false
+        FROM changed r JOIN harness_processes p ON p.id = r.process
+        GROUP BY p.system, p.harness;
+        RETURN NULL;
+      END
+      $$;
+      CREATE FUNCTION mark_read_rollups_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+        SELECT p.system, p.harness, min(r.bucket), max(r.bucket) + interval '5 minutes', true, false
+        FROM changed r JOIN harness_processes p ON p.id = r.process
+        GROUP BY p.system, p.harness;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_reading_insert AFTER INSERT ON harness_process_samples
+        REFERENCING NEW TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_read_samples_stale();
+      CREATE TRIGGER mark_stale_on_reading_delete AFTER DELETE ON harness_process_samples
+        REFERENCING OLD TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_read_samples_stale();
+      CREATE TRIGGER mark_stale_on_process_rollup_insert AFTER INSERT ON harness_process_rollups
+        REFERENCING NEW TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_read_rollups_stale();
+      CREATE TRIGGER mark_stale_on_process_rollup_delete AFTER DELETE ON harness_process_rollups
+        REFERENCING OLD TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_read_rollups_stale();
+
+      -- A Vitals bucket bounds a missed end, and where candidates are looked
+      -- for, only for the Sessions of its System up to the end of the next
+      -- bucket it holds, or after it when it holds none.
+      CREATE FUNCTION mark_vitals_buckets_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+        SELECT c.system, NULL, c.first, (
+                 SELECT min(v.bucket) FROM vitals_rollups v
+                 WHERE v.system = c.system AND v.bucket > c.last
+               ) + interval '5 minutes', true, false
+        FROM (
+          SELECT system, min(bucket) AS first, max(bucket) AS last FROM changed GROUP BY system
+        ) c;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_vitals_bucket_insert AFTER INSERT ON vitals_rollups
+        REFERENCING NEW TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_vitals_buckets_stale();
+      CREATE TRIGGER mark_stale_on_vitals_bucket_delete AFTER DELETE ON vitals_rollups
+        REFERENCING OLD TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_vitals_buckets_stale();
+
+      -- A price change reprices every Session's totals, and a parser switch
+      -- changes every Session of its Harness.
+      CREATE FUNCTION mark_priced_sessions_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+        VALUES (NULL, NULL, NULL, NULL, false, true);
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_price_change AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE
+        ON model_prices
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_priced_sessions_stale();
+      CREATE FUNCTION mark_parsed_sessions_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+        SELECT DISTINCT NULL::text, harness, NULL::timestamptz, NULL::timestamptz, true, true
+        FROM changed;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_parser_insert AFTER INSERT ON current_parsers
+        REFERENCING NEW TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_parsed_sessions_stale();
+      CREATE TRIGGER mark_stale_on_parser_update AFTER UPDATE ON current_parsers
+        REFERENCING NEW TABLE AS changed
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_parsed_sessions_stale();
+
+      -- Marks stale the Sessions each committed range covers, read now, and
+      -- forgets the ranges. A range committed after this reads is kept for the
+      -- next one.
+      CREATE FUNCTION expand_stale_ranges() RETURNS void
+      LANGUAGE sql AS $$
+        WITH ranges AS (
+          DELETE FROM stale_ranges RETURNING *
+        ), covered AS (
+          SELECT s.harness, s.system, s.source, s.session_id,
+                 bool_or(r.stretches) AS stretches, bool_or(r.totals) AS totals
+          FROM ranges r
+          JOIN projected_sessions s
+            ON (r.system IS NULL OR s.system = r.system)
+           AND (r.harness IS NULL OR s.harness = r.harness)
+           AND (r.since IS NULL OR s.last_request_at >= r.since - interval '10 minutes')
+           AND (r.until IS NULL OR s.first_request_at <= r.until + interval '10 minutes')
+          GROUP BY s.harness, s.system, s.source, s.session_id
+        )
+        INSERT INTO stale_sessions (harness, system, source, session_id, stretches, totals)
+        SELECT harness, system, source, session_id, stretches, totals FROM covered
+        ON CONFLICT (harness, system, source, session_id) DO UPDATE
+        SET stretches = stale_sessions.stretches OR excluded.stretches,
+            totals = stale_sessions.totals OR excluded.totals,
+            attempts = 0
+        WHERE (excluded.stretches AND NOT stale_sessions.stretches)
+           OR (excluded.totals AND NOT stale_sessions.totals)
+           OR stale_sessions.attempts > 0
+      $$;
+
+      -- The next stale Session to refresh, if any, leaving out the keys in
+      -- skip, a JSON array: of those whose refresh failed fewest times, the one with the
+      -- latest requests. One that failed 3 times is left until it is marked
+      -- again.
+      CREATE FUNCTION pick_stale_session(skip jsonb)
+      RETURNS TABLE (harness text, system text, source text, session_id text)
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('heimdall-session-insight-refresh'));
+        PERFORM expand_stale_ranges();
+        RETURN QUERY
+        SELECT x.harness, x.system, x.source, x.session_id FROM stale_sessions x
+        WHERE x.attempts < 3
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(skip)
+              AS k (harness text, system text, source text, session_id text)
+            WHERE (k.harness, k.system, k.source, k.session_id)
+                = (x.harness, x.system, x.source, x.session_id)
+          )
+        ORDER BY x.attempts, (
+          SELECT max(s.last_request_at) FROM projected_sessions s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (x.harness, x.system, x.source, x.session_id)
+        ) DESC NULLS LAST
+        LIMIT 1;
+      END
+      $$;
+
+      -- Stores what the computed_ views give for one stale Session, and says
+      -- whether it did: not when another refresh holds it or has stored it.
+      -- A Session marked again while this runs waits for it on the stale row,
+      -- and so is refreshed again later.
+      CREATE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
+      END
+      $$;
+
+      INSERT INTO stale_sessions (harness, system, source, session_id, stretches, totals)
+      SELECT DISTINCT harness, system, source, session_id, true, true FROM projected_sessions;
+    `,
+    version: 21,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

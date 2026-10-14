@@ -16,6 +16,7 @@ import {
 import type { Projected } from './projection.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import type { HarnessParser } from './session-insight.ts';
+import { refreshSessionInsight } from './stored-insight.ts';
 import {
   agentMeta,
   agentPath,
@@ -327,7 +328,9 @@ const requests = async (sql: SQL) => {
 const TOTALS = `requests, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
   cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens`;
 
+// Totals as the views show them once the Hub has refreshed what it stores.
 const totals = async (sql: SQL, view: 'main_conversation_totals' | 'session_totals') => {
+  await refreshSessionInsight(sql);
   const rows: Record<string, unknown>[] = await sql.unsafe(
     `SELECT session_id, ${TOTALS} FROM insight.${view} ORDER BY session_id`,
   );
@@ -2233,6 +2236,7 @@ describe('the insight views', () => {
 
     const views = ['sessions', 'subagents', 'requests', 'tool_calls', 'parse_status'];
     const found: string[] = [];
+    await refreshSessionInsight(h.db.sql);
     for (const view of views) {
       // oxlint-disable-next-line no-await-in-loop -- one view at a time.
       const rows: Record<string, unknown>[] = await h.db.sql.unsafe(
@@ -2285,6 +2289,7 @@ describe('the insight views', () => {
       'parse_status',
     ];
     const found: string[] = [];
+    await refreshSessionInsight(h.db.sql);
     for (const view of views) {
       // oxlint-disable-next-line no-await-in-loop -- one view at a time.
       const rows: Record<string, unknown>[] = await h.db.sql.unsafe(
