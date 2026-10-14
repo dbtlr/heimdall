@@ -297,6 +297,35 @@ describe('stretches', () => {
     ]);
   });
 
+  test("gives each of a Session's stretches the Session's whole cost, keeping sources apart", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await price(h);
+    await addProcess(h.db.sql, { end: -5000, pid: 10, start: -9000, system: 'server-1' });
+    await addProcess(h.db.sql, { end: -1000, pid: 12, start: -4000, system: 'server-1' });
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [-8500, -6000, -3500, -2000],
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [-700],
+      source: 'other',
+      system: 'server-1',
+    });
+
+    const stretches = (await lane(h, 'server-1')).stretches;
+
+    expect(stretches.map(({ costUsd, startedAt }) => [startedAt, costUsd])).toEqual([
+      [NOW - 8500_000, 20],
+      [NOW - 3500_000, 20],
+      [NOW - 700_000, 5],
+    ]);
+  });
+
   test('is ambiguous when two processes of the Harness in its directory may have run it', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
