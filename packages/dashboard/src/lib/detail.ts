@@ -9,14 +9,14 @@ import type {
   UnlinkedSession,
 } from '../server/system-detail-types.ts';
 import { harnessName } from './lane.ts';
-import { formatSpan, formatWhen, spanBox } from './time.ts';
+import { whenAt } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
+import { formatSpan, spanBox } from './time.ts';
 import type { Window } from './time.ts';
 
 const GIB = 1024 ** 3;
 const DAY_MS = 24 * 60 * 60_000;
 const BUCKET_MS = 5 * 60_000;
-
-type At = { now: number; timeZone: string };
 
 const OS_NAMES: Record<string, string> = { darwin: 'macOS', linux: 'Linux' };
 
@@ -26,16 +26,18 @@ export const formatGiB = (bytes: number): string => (bytes / GIB).toFixed(1);
 const joinAnd = (words: readonly string[]) =>
   words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words.at(-1) ?? ''}`;
 
-// The line under a System's name: its platform, its Collector's version, how
-// long it has been up while its Vitals are current, and when it last reported.
+// The line under a System's name, as `lead` + `tail` + ".": its platform, its
+// Collector's version, how long it has been up while its Vitals are current,
+// and when it last reported. Only a last Report a day or more old names a time,
+// so only `tail` needs the viewer's zone.
 export const headerLine = (
   detail: Pick<SystemDetail, 'collectorVersion' | 'lastSeenAt' | 'platform'> & {
     latest: { t: number; uptimeSeconds: number } | undefined;
   },
-  { now, timeZone }: At,
-): string => {
+  now: number,
+): { lead: string; tail: Phrase } => {
   if (detail.lastSeenAt === undefined) {
-    return 'Never heard from.';
+    return { lead: 'Never heard from', tail: [] };
   }
   const facts: string[] = [];
   if (detail.platform !== undefined) {
@@ -48,22 +50,33 @@ export const headerLine = (
     facts.push(`up ${formatSpan(detail.latest.uptimeSeconds * 1000)}`);
   }
   const ago = now - detail.lastSeenAt;
-  facts.push(
-    `last Report ${ago < DAY_MS ? `${formatSpan(ago)} ago` : formatWhen(detail.lastSeenAt, now, timeZone)}`,
-  );
+  if (ago < DAY_MS) {
+    facts.push(`last Report ${formatSpan(ago)} ago`);
+  }
   const joined = facts.join(', ');
   // Without a platform the sentence opens on "up" or "last Report".
-  return `${detail.platform === undefined ? `${joined.charAt(0).toUpperCase()}${joined.slice(1)}` : joined}.`;
+  const lead =
+    detail.platform === undefined ? `${joined.charAt(0).toUpperCase()}${joined.slice(1)}` : joined;
+  if (ago < DAY_MS) {
+    return { lead, tail: [] };
+  }
+  const report = joined === '' ? 'Last Report ' : ', last Report ';
+  return { lead, tail: [report, whenAt(detail.lastSeenAt, now)] };
 };
 
 // When a Condition on the Timeline was raised and cleared, and for how long.
 export const timelineWhen = (
   entry: Pick<TimelineEntry, 'clearedAt' | 'raisedAt'>,
-  { now, timeZone }: At,
-): string =>
+  now: number,
+): Phrase =>
   entry.clearedAt === undefined
-    ? `Open since ${formatWhen(entry.raisedAt, now, timeZone)}, ${formatSpan(now - entry.raisedAt)}`
-    : `${formatWhen(entry.raisedAt, now, timeZone)} to ${formatWhen(entry.clearedAt, now, timeZone)}, ${formatSpan(entry.clearedAt - entry.raisedAt)}`;
+    ? ['Open since ', whenAt(entry.raisedAt, now), `, ${formatSpan(now - entry.raisedAt)}`]
+    : [
+        whenAt(entry.raisedAt, now),
+        ' to ',
+        whenAt(entry.clearedAt, now),
+        `, ${formatSpan(entry.clearedAt - entry.raisedAt)}`,
+      ];
 
 // "heimdall on main", or whichever of the two a Session recorded.
 const place = ({ branch, project }: { branch: string | undefined; project: string | undefined }) =>

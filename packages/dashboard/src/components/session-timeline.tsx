@@ -5,11 +5,13 @@ import { modelColor, modelFamily, modelName } from '../lib/session-format.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { commandMarks } from '../lib/session.ts';
 import type { AgentLane } from '../lib/session.ts';
-import { formatClock, formatCost, inWindow, xPercent } from '../lib/time.ts';
+import { formatCost, inWindow, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { SessionRequest, SessionView } from '../server/session-view-types.ts';
 import { CpuPlot } from './cpu-plot.tsx';
+import { DateTime } from './date-time.tsx';
 import { DetailAxis, DetailRow, DetailTrack } from './detail-track.tsx';
 import { LANE_GRID } from './fleet-lane.tsx';
 import { ProcessLinkBar } from './process-link-bar.tsx';
@@ -177,7 +179,7 @@ export function SessionTimeline({
   view: SessionView;
 }) {
   const window = sessionWindow(view);
-  const { timeZone } = view;
+  const timeZone = useTimeZone();
   const selected = view.requests.find((request) => request.requestId === search.request);
   const pick = (request: SessionRequest) => go({ lane: undefined, request: request.requestId });
   const commands = commandMarks(view.requests, view.toolCalls);
@@ -224,7 +226,6 @@ export function SessionTimeline({
               buckets={view.cpu}
               height={60}
               label="CPU busy"
-              timeZone={timeZone}
               window={window}
             />
           </DetailRow>
@@ -232,20 +233,18 @@ export function SessionTimeline({
             <ProcessPlot bucketMs={view.bucketMs} processes={view.processes} window={window} />
           </DetailRow>
           <DetailRow label="Process link">
-            <ProcessLinkBar
-              harness={view.harness}
-              stretches={view.stretches}
-              timeZone={timeZone}
-              window={window}
-            />
+            <ProcessLinkBar harness={view.harness} stretches={view.stretches} window={window} />
           </DetailRow>
-          <TimeAxis ticks={spanTicks(window, timeZone)} window={window}>
+          <TimeAxis
+            ticks={timeZone === undefined ? [] : spanTicks(window, timeZone)}
+            window={window}
+          >
             {selected !== undefined && (
               <span
                 className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-[#ffd666] px-[9px] font-semibold text-background"
                 style={{ left: `${String(xPercent(selected.at, window))}%` }}
               >
-                {formatClock(selected.at, timeZone)}
+                <DateTime at={selected.at} format="clock" />
               </span>
             )}
           </TimeAxis>

@@ -57,7 +57,7 @@ const price = (h: Hub) => h.db.sql`
 `;
 
 const detail = async (h: Hub, name = 'server-1', range: '12h' | '24h' | '6h' | '7d' = '12h') => {
-  const found = await readSystemDetail(h.db.sql, { name, now: NOW, range, timeZone: 'UTC' });
+  const found = await readSystemDetail(h.db.sql, { name, now: NOW, range });
   if (found === undefined) {
     throw new Error(`no detail for ${name}`);
   }
@@ -99,7 +99,6 @@ describe('readSystemDetail', () => {
         name: 'nobody-1',
         now: NOW,
         range: '12h',
-        timeZone: 'UTC',
       }),
     ).toBeUndefined();
   });

@@ -3,18 +3,11 @@ import { timelineWhen } from '../lib/detail.ts';
 import { cn } from '../lib/utils.ts';
 import type { TimelineEntry } from '../server/system-detail-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
+import { PhraseText } from './date-time.tsx';
 
 // The System's Timeline: each Condition of the last 7 days and each still
 // open, open first, then newest raised, with when and why.
-export function TimelineRail({
-  entries,
-  now,
-  timeZone,
-}: {
-  entries: readonly TimelineEntry[];
-  now: number;
-  timeZone: string;
-}) {
+export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry[]; now: number }) {
   return (
     <section className="mt-[18px] self-start rounded-lg bg-card p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">
@@ -38,7 +31,9 @@ export function TimelineRail({
                   <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
                   {entry.subject !== '' && ` ${entry.subject}`}
                 </p>
-                <p className="text-muted-foreground">{timelineWhen(entry, { now, timeZone })}</p>
+                <p className="text-muted-foreground">
+                  <PhraseText phrase={timelineWhen(entry, now)} />
+                </p>
                 <p className="text-[12.5px] whitespace-pre-wrap text-muted-foreground">
                   {entry.reason}
                 </p>

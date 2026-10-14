@@ -1,6 +1,8 @@
 import { harnessColor, stretchTitle } from '../lib/lane.ts';
+import { phraseTitle } from '../lib/phrase.ts';
 import { spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { Link, Stretch } from '../server/fleet-overview-types.ts';
 
@@ -17,13 +19,12 @@ const LINK_STYLE: Record<Link, string> = {
 // time axis.
 export function SessionStrip({
   stretches,
-  timeZone,
   window,
 }: {
   stretches: readonly Stretch[];
-  timeZone: string;
   window: Window;
 }) {
+  const timeZone = useTimeZone();
   return (
     <div className="relative mt-1 h-2.5 overflow-hidden">
       {stretches.map((stretch) => {
@@ -40,7 +41,7 @@ export function SessionStrip({
               left: `${String(left)}%`,
               width: `${String(width)}%`,
             }}
-            title={stretchTitle(stretch, timeZone)}
+            title={phraseTitle(stretchTitle(stretch), timeZone)}
           />
         );
       })}

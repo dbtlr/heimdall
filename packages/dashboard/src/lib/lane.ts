@@ -8,7 +8,9 @@ import type {
 } from '../server/fleet-overview-types.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import { KIND_NAMES } from './conditions.ts';
-import { formatClock, formatCost, formatWhen, spanBox } from './time.ts';
+import { clockSpan, whenAt } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
+import { formatCost, spanBox } from './time.ts';
 import type { Window } from './time.ts';
 
 const BUCKET_MS = 5 * 60_000;
@@ -75,30 +77,31 @@ const vitalsText = ({
 
 // The line under a lane's status: its newest CPU and memory, or since when it
 // has been asleep or silent, so old Vitals never read as current. An unpaired
-// System sends no more, so its line dates when it was last seen.
-export const nowLine = (
-  lane: Lane,
-  { now, timeZone }: { now: number; timeZone: string },
-): string => {
+// System sends no more, so its line dates when it was last seen. Only the
+// lines that name a time need the viewer's zone.
+export const nowLine = (lane: Lane, now: number): Phrase => {
   if (lane.status === 'unpaired') {
     if (lane.lastSeenAt === undefined) {
-      return 'never seen';
+      return ['never seen'];
     }
-    const seen = `last seen ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
-    return `${seen}, ${lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)}`;
+    return [
+      'last seen ',
+      whenAt(lane.lastSeenAt, now),
+      `, ${lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)}`,
+    ];
   }
   if (lane.status === 'never_seen') {
-    return 'never seen';
+    return ['never seen'];
   }
   if (lane.status === 'asleep') {
     return lane.lastSeenAt === undefined
-      ? 'asleep'
-      : `asleep since ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
+      ? ['asleep']
+      : ['asleep since ', whenAt(lane.lastSeenAt, now)];
   }
   if (lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS) {
-    return `silent since ${formatWhen(lane.lastSeenAt, now, timeZone)}`;
+    return ['silent since ', whenAt(lane.lastSeenAt, now)];
   }
-  return lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest);
+  return [lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)];
 };
 
 const HARNESS_NAMES: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
@@ -117,26 +120,31 @@ export const harnessColor = (harness: string): string =>
 
 // A Session stretch's tooltip: "fleet on main, Codex, 07:40 to 08:15, $4.05,
 // process linked".
-export const stretchTitle = (stretch: Stretch, timeZone: string): string => {
+export const stretchTitle = (stretch: Stretch): Phrase => {
   const what =
     stretch.project !== undefined && stretch.branch !== undefined
       ? `${stretch.project} on ${stretch.branch}`
       : (stretch.project ?? stretch.branch ?? 'Session');
   return [
-    what,
-    harnessName(stretch.harness),
-    `${formatClock(stretch.startedAt, timeZone)} to ${formatClock(stretch.endedAt, timeZone)}`,
-    formatCost(stretch.costUsd),
-    `process ${stretch.link}`,
-  ].join(', ');
+    `${what}, ${harnessName(stretch.harness)}, `,
+    ...clockSpan(stretch.startedAt, stretch.endedAt),
+    `, ${formatCost(stretch.costUsd)}, process ${stretch.link}`,
+  ];
 };
 
 // A Condition's raised mark: "Job failing, photos-sync, since 03:04".
-export const raisedTitle = (
-  mark: ConditionMark,
-  { now, timeZone }: { now: number; timeZone: string },
-): string =>
-  `${KIND_NAMES[mark.kind]}, ${mark.subject}, since ${formatWhen(mark.raisedAt, now, timeZone)}`;
+export const raisedTitle = (mark: ConditionMark, now: number): Phrase => [
+  `${KIND_NAMES[mark.kind]}, ${mark.subject}, since `,
+  whenAt(mark.raisedAt, now),
+];
+
+// When a Condition was raised and cleared, "Tue 03:04 to 03:40", or "... to
+// now" while it is open.
+export const markSpan = (mark: ConditionMark, now: number): Phrase => [
+  whenAt(mark.raisedAt, now),
+  ' to ',
+  mark.clearedAt === undefined ? 'now' : whenAt(mark.clearedAt, now),
+];
 
 // A Condition's cleared mark: "Service down cleared for ollama."
 export const clearedTitle = (mark: ConditionMark): string =>

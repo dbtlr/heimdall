@@ -1,8 +1,9 @@
 import { formatGiB, sampleProcessLine, unlinkedLine } from '../lib/detail.ts';
 import { harnessColor } from '../lib/lane.ts';
-import { formatClockSeconds } from '../lib/time.ts';
+import { clockSecondsAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
 import type { SampleInspection } from '../server/system-detail-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
@@ -43,11 +44,9 @@ function Entry({
 export function SampleInspector({
   failed,
   sample,
-  timeZone,
 }: {
   failed: boolean;
   sample: SampleInspection | null;
-  timeZone: string;
 }) {
   return (
     <aside className="mt-2.5 self-start rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5">
@@ -60,7 +59,7 @@ export function SampleInspector({
       ) : (
         <>
           <p className="mb-2 text-[12.5px] text-muted-foreground">
-            Sample at {formatClockSeconds(sample.t, timeZone)}
+            <PhraseText phrase={['Sample at ', clockSecondsAt(sample.t)]} />
           </p>
           <p className="mb-0.5 text-[19px] font-semibold">CPU {percent(sample.cpuBusyPercent)}</p>
           <p className="text-muted-foreground">

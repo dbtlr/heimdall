@@ -6,11 +6,14 @@ import {
   cpuSeries,
   gapLabel,
   harnessColor,
+  markSpan,
   nowLine,
   raisedTitle,
   statusWord,
   stretchTitle,
 } from './lane.ts';
+import { phraseText, zoneFreeText } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
 
 const MINUTE = 60_000;
 const BUCKET = 5 * MINUTE;
@@ -85,50 +88,60 @@ const lane = (overrides: Partial<Lane>): Lane => ({
   ...overrides,
 });
 
+const text = (phrase: Phrase) => phraseText(phrase, 'UTC');
+
 test('the now line says what each status knows', () => {
-  const context = { now: NOW, timeZone: 'UTC' };
   expect(
-    nowLine(
-      lane({
-        lastSeenAt: NOW - MINUTE,
-        latest: { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW },
-      }),
-      context,
+    text(
+      nowLine(
+        lane({
+          lastSeenAt: NOW - MINUTE,
+          latest: { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW },
+        }),
+        NOW,
+      ),
     ),
   ).toBe('CPU 12%, memory 58%');
   expect(
-    nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 12, 48), status: 'asleep' }), context),
+    text(nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 12, 48), status: 'asleep' }), NOW)),
   ).toBe('asleep since 12:48');
-  expect(nowLine(lane({ status: 'never_seen' }), context)).toBe('never seen');
+  expect(text(nowLine(lane({ status: 'never_seen' }), NOW))).toBe('never seen');
+});
+
+test('the now line needs no time zone unless it names a time', () => {
+  const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW };
+  expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW - MINUTE, latest }), NOW))).toBe(
+    'CPU 12%, memory 58%',
+  );
+  expect(zoneFreeText(nowLine(lane({ status: 'never_seen' }), NOW))).toBe('never seen');
+  expect(zoneFreeText(nowLine(lane({ status: 'unpaired' }), NOW))).toBe('never seen');
+  expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW, status: 'asleep' }), NOW))).toBeUndefined();
 });
 
 test('the now line of an unpaired System leads with when it was last seen, then its Vitals', () => {
-  const context = { now: NOW, timeZone: 'UTC' };
   const latest = {
     cpuBusyPercent: 17.6,
     memoryUsedPercent: 41.2,
     t: Date.UTC(2026, 9, 13, 4, 35),
   };
   expect(
-    nowLine(
-      lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), latest, status: 'unpaired' }),
-      context,
+    text(
+      nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), latest, status: 'unpaired' }), NOW),
     ),
   ).toBe('last seen 04:36, CPU 18%, memory 41%');
 });
 
 test('the now line of an unpaired System seen without a sample still has its date', () => {
-  const context = { now: NOW, timeZone: 'UTC' };
   expect(
-    nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), status: 'unpaired' }), context),
+    text(nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), status: 'unpaired' }), NOW)),
   ).toBe('last seen 04:36, no Vitals');
-  expect(nowLine(lane({ status: 'unpaired' }), context)).toBe('never seen');
+  expect(text(nowLine(lane({ status: 'unpaired' }), NOW))).toBe('never seen');
 });
 
 test('the now line of a System silent over 2 minutes says since when, not old Vitals', () => {
   const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW - 6 * 60 * MINUTE };
   const silent = lane({ lastSeenAt: NOW - 6 * 60 * MINUTE, latest, status: 'needs_you' });
-  expect(nowLine(silent, { now: NOW, timeZone: 'UTC' })).toBe('silent since 10:00');
+  expect(text(nowLine(silent, NOW))).toBe('silent since 10:00');
 });
 
 test('a status reads as a word', () => {
@@ -149,20 +162,19 @@ const stretch: Stretch = {
 };
 
 test('a stretch title names its project, Harness, times, cost, and link', () => {
-  expect(stretchTitle(stretch, 'UTC')).toBe(
+  expect(text(stretchTitle(stretch))).toBe(
     'fleet on main, Claude Code, 07:40 to 08:15, $4.05, process linked',
   );
   expect(
-    stretchTitle(
-      {
+    text(
+      stretchTitle({
         ...stretch,
         branch: undefined,
         costUsd: undefined,
         harness: 'codex',
         link: 'ambiguous',
         project: undefined,
-      },
-      'UTC',
+      }),
     ),
   ).toBe('Session, Codex, 07:40 to 08:15, cost unknown, process ambiguous');
 });
@@ -173,6 +185,20 @@ test('a Harness has its color, and an unknown one the neutral one', () => {
   expect(harnessColor('aider')).toBe('var(--chart-3)');
 });
 
+test('a Condition mark spans from raised to cleared, or to now while open', () => {
+  const mark: ConditionMark = {
+    clearedAt: Date.UTC(2026, 9, 13, 3, 40),
+    kind: 'job_failing',
+    raisedAt: Date.UTC(2026, 9, 13, 3, 4),
+    subject: 'photos-sync',
+  };
+  expect(text(markSpan(mark, NOW))).toBe('03:04 to 03:40');
+  expect(text(markSpan({ ...mark, raisedAt: mark.raisedAt - 24 * 60 * MINUTE }, NOW))).toBe(
+    'Mon 03:04 to 03:40',
+  );
+  expect(text(markSpan({ ...mark, clearedAt: undefined }, NOW))).toBe('03:04 to now');
+});
+
 test('condition mark titles name the kind and subject', () => {
   const mark: ConditionMark = {
     clearedAt: undefined,
@@ -180,9 +206,7 @@ test('condition mark titles name the kind and subject', () => {
     raisedAt: Date.UTC(2026, 9, 13, 3, 4),
     subject: 'photos-sync',
   };
-  expect(raisedTitle(mark, { now: NOW, timeZone: 'UTC' })).toBe(
-    'Job failing, photos-sync, since 03:04',
-  );
+  expect(text(raisedTitle(mark, NOW))).toBe('Job failing, photos-sync, since 03:04');
   expect(clearedTitle({ ...mark, kind: 'service_down', subject: 'ollama' })).toBe(
     'Service down cleared for ollama.',
   );

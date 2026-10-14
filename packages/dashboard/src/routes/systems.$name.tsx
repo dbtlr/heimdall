@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { AppHeader } from '../components/app-header.tsx';
 import { ConditionSpans } from '../components/condition-spans.tsx';
 import { CpuPlot } from '../components/cpu-plot.tsx';
+import { DateTime, PhraseText } from '../components/date-time.tsx';
 import { DetailAxis, DetailRow } from '../components/detail-track.tsx';
 import { STATUS_COLOR } from '../components/fleet-lane.tsx';
 import { GapShades } from '../components/gap-shades.tsx';
@@ -22,7 +23,8 @@ import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, headerLine } from '../lib/detail.ts';
 import { statusWord } from '../lib/lane.ts';
 import { atFromSearch, rangeFromSearch } from '../lib/range.ts';
-import { formatClock, inWindow, xPercent } from '../lib/time.ts';
+import { inWindow, xPercent } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { getSample, getSystemDetail } from '../server/system-detail-fn.ts';
@@ -105,7 +107,9 @@ function SystemPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const { failed, sample } = useSample(detail.name, search.at, at, loadedSample);
-  const { latest, now, timeZone } = detail;
+  const timeZone = useTimeZone();
+  const { latest, now } = detail;
+  const header = headerLine(detail, now);
   const window = { from: detail.from, to: detail.to };
   const select = (t: number) => {
     void navigate({
@@ -136,10 +140,13 @@ function SystemPage() {
               {statusWord(detail.status)}
             </span>
           </h1>
-          <p className="text-muted-foreground">{headerLine(detail, { now, timeZone })}</p>
+          <p className="text-muted-foreground">
+            {header.lead}
+            <PhraseText phrase={header.tail} />.
+          </p>
         </div>
         {!detail.paired && <UnpairedBanner name={detail.name} />}
-        <SystemFacts detail={detail} timeZone={timeZone} />
+        <SystemFacts detail={detail} />
         <div className="grid gap-x-[18px] lg:grid-cols-[1fr_290px]">
           <DetailAxis onSelect={select} selected={sample?.t} window={window}>
             <div className="min-w-0">
@@ -150,13 +157,7 @@ function SystemPage() {
                   sleeps={detail.sleeps}
                   window={window}
                 />
-                <CpuPlot
-                  buckets={detail.cpu}
-                  height={96}
-                  label="CPU busy"
-                  timeZone={timeZone}
-                  window={window}
-                />
+                <CpuPlot buckets={detail.cpu} height={96} label="CPU busy" window={window} />
               </DetailRow>
               <DetailRow label="Memory" note={memoryNote}>
                 <MemoryPlot buckets={detail.memory} window={window} />
@@ -164,37 +165,30 @@ function SystemPage() {
               <DetailRow label="Harness processes" note="CPU cores per process tree">
                 <ProcessPlot processes={detail.processes} window={window} />
               </DetailRow>
-              <SessionRows
-                sessions={detail.sessions}
-                system={detail.name}
-                timeZone={timeZone}
-                window={window}
-              />
+              <SessionRows sessions={detail.sessions} system={detail.name} window={window} />
               <DetailRow label="Conditions">
-                <ConditionSpans
-                  conditions={detail.conditions}
-                  now={now}
-                  timeZone={timeZone}
-                  window={window}
-                />
+                <ConditionSpans conditions={detail.conditions} now={now} window={window} />
               </DetailRow>
-              <TimeAxis ticks={axisTicks(detail.range, window, timeZone)} window={window}>
+              <TimeAxis
+                ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
+                window={window}
+              >
                 {sample !== null && inWindow(sample.t, window) && (
                   <span
                     className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-[#ffd666] px-[9px] font-semibold text-background"
                     style={{ left: `${String(xPercent(sample.t, window))}%` }}
                   >
-                    {formatClock(sample.t, timeZone)}
+                    <DateTime at={sample.t} format="clock" />
                   </span>
                 )}
               </TimeAxis>
             </div>
           </DetailAxis>
-          <SampleInspector failed={failed} sample={sample} timeZone={timeZone} />
+          <SampleInspector failed={failed} sample={sample} />
         </div>
         <div className="grid gap-x-[18px] lg:grid-cols-[1.35fr_1fr]">
-          <RecordedPanel now={now} recorded={records.recorded} timeZone={timeZone} />
-          <TimelineRail entries={records.timeline} now={now} timeZone={timeZone} />
+          <RecordedPanel now={now} recorded={records.recorded} />
+          <TimelineRail entries={records.timeline} now={now} />
         </div>
       </main>
     </>

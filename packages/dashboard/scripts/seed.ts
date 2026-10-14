@@ -969,7 +969,6 @@ const fill = async (sql: SQL) => {
   const overview = await readFleetOverview(sql, {
     now,
     range: '24h',
-    timeZone: 'UTC',
     unpaired: true,
   });
   for (const lane of [...overview.lanes, ...overview.unpairedLanes]) {

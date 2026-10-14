@@ -339,7 +339,7 @@ const readProcesses = async (
 // Session up by its key, and reads no transcript content. Read-only.
 export const readSessionView = async (
   sql: SQL,
-  { harness, sessionId, source, system, timeZone }: SessionKey & { timeZone: string },
+  { harness, sessionId, source, system }: SessionKey,
 ): Promise<SessionView | undefined> => {
   const [sessions, agents, requests, toolCalls, stretches, totals, main]: [
     SessionRow[],
@@ -450,7 +450,6 @@ export const readSessionView = async (
     startedAt: span.startedAt,
     stretches: linked,
     system,
-    timeZone,
     toolCalls: toolCalls.map(toToolCall),
     totals: toTotals(totals[0], main[0]?.requests ?? 0),
   };

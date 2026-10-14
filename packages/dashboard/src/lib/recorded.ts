@@ -5,12 +5,12 @@ import type {
   RecordedService,
   ScheduleEntry,
 } from '../server/system-detail-types.ts';
-import { formatSpan, formatWhen } from './time.ts';
+import { whenAt } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
+import { formatSpan } from './time.ts';
 
 // How a recorded thing stands, as its dot shows it.
 export type RecordState = 'bad' | 'good' | 'unknown' | 'warning';
-
-type At = { now: number; timeZone: string };
 
 const SUPERVISOR_NAMES: Record<string, string> = {
   docker: 'Docker',
@@ -32,24 +32,33 @@ const tail = (detail: string) => (detail === '' ? '' : `: ${detail.replace(/\.$/
 
 // What a Service's checks say: its supervisor's check first, then whether its
 // health URL answers. Bad when any check found it stopped or unhealthy,
-// unknown when any could not tell.
+// unknown when any could not tell. The state needs no time zone, only the
+// times in the text do.
 export const serviceLine = (
   service: RecordedService,
-  { now, timeZone }: At,
-): { state: RecordState; text: string } => {
+  now: number,
+): { state: RecordState; text: Phrase } => {
   if (service.checks.length === 0) {
-    return { state: 'unknown', text: 'Not checked yet.' };
+    return { state: 'unknown', text: ['Not checked yet.'] };
   }
-  const parts = service.checks.map((check) => {
-    const since = formatWhen(check.since, now, timeZone);
+  const parts = service.checks.map((check): Phrase => {
+    const since = whenAt(check.since, now);
     if (check.check === 'health') {
       return check.state === 'up'
-        ? 'Health URL answers.'
-        : `Health check ${check.state === 'unhealthy' ? 'failing' : (STATE_WORDS[check.state] ?? check.state).toLowerCase()} since ${since}${tail(check.detail)}.`;
+        ? ['Health URL answers.']
+        : [
+            `Health check ${check.state === 'unhealthy' ? 'failing' : (STATE_WORDS[check.state] ?? check.state).toLowerCase()} since `,
+            since,
+            `${tail(check.detail)}.`,
+          ];
     }
     const supervisor = SUPERVISOR_NAMES[service.supervisor];
     const under = supervisor === undefined ? '' : ` (${supervisor})`;
-    return `${STATE_WORDS[check.state] ?? check.state} since ${since}${under}${check.state === 'up' ? '' : tail(check.detail)}.`;
+    return [
+      `${STATE_WORDS[check.state] ?? check.state} since `,
+      since,
+      `${under}${check.state === 'up' ? '' : tail(check.detail)}.`,
+    ];
   });
   const states = new Set(service.checks.map(({ state }) => state));
   let state: RecordState = 'good';
@@ -58,7 +67,10 @@ export const serviceLine = (
   } else if ([...states].some((found) => found !== 'up')) {
     state = 'unknown';
   }
-  return { state, text: parts.join(' ') };
+  return {
+    state,
+    text: parts.flatMap((part, index) => (index === 0 ? [part] : [[' '], part])).flat(),
+  };
 };
 
 const WEEKDAYS = [
@@ -103,14 +115,11 @@ export const scheduleWords = (schedule: readonly ScheduleEntry[]): string => {
 
 // A job's schedule and how its latest run went. Bad when it is failing, a
 // warning when it is overdue, unknown when it has never run.
-export const jobLine = (
-  job: RecordedJob,
-  { now, timeZone }: At,
-): { state: RecordState; text: string } => {
+export const jobLine = (job: RecordedJob, now: number): { state: RecordState; text: Phrase } => {
   const schedule = `${scheduleWords(job.schedule)}.`;
   const run = job.latestRun;
   if (run === undefined) {
-    return { state: 'unknown', text: `${schedule} No run recorded yet.` };
+    return { state: 'unknown', text: [`${schedule} No run recorded yet.`] };
   }
   const took = formatSpan(run.finished - run.started);
   const outcome =
@@ -126,7 +135,11 @@ export const jobLine = (
   }
   return {
     state,
-    text: `${schedule} Last run ${formatWhen(run.started, now, timeZone)}, ${outcome}.${overdue ? ' Overdue.' : ''}`,
+    text: [
+      `${schedule} Last run `,
+      whenAt(run.started, now),
+      `, ${outcome}.${overdue ? ' Overdue.' : ''}`,
+    ],
   };
 };
 
@@ -144,8 +157,8 @@ const files = (count: number) =>
 // read or the Collector has not checked this version of the record.
 export const filesLine = (
   record: RecordedFiles,
-  { now, timeZone }: At,
-): { issues: { path: string; text: string }[]; rest: string; state: RecordState } => {
+  now: number,
+): { issues: { path: string; text: Phrase }[]; rest: string; state: RecordState } => {
   if (!record.checked) {
     return { issues: [], rest: 'Not checked yet.', state: 'unknown' };
   }
@@ -165,7 +178,7 @@ export const filesLine = (
   return {
     issues: record.issues.map((issue) => ({
       path: issue.path,
-      text: `${ISSUE_WORDS[issue.state] ?? issue.state} since ${formatWhen(issue.since, now, timeZone)}`,
+      text: [`${ISSUE_WORDS[issue.state] ?? issue.state} since `, whenAt(issue.since, now)],
     })),
     rest,
     state,

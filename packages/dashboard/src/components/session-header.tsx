@@ -1,19 +1,28 @@
 import { Link } from '@tanstack/react-router';
 
 import { harnessName } from '../lib/lane.ts';
+import { clockAt, whenAt } from '../lib/phrase.ts';
 import { formatTokens, modelName } from '../lib/session-format.ts';
 import { costBy, toolCounts } from '../lib/session.ts';
 import type { AgentLane } from '../lib/session.ts';
-import { formatClock, formatCost, formatSpan, formatWhen } from '../lib/time.ts';
+import { formatCost, formatSpan } from '../lib/time.ts';
 import type { SessionView } from '../server/session-view-types.ts';
+import { PhraseText } from './date-time.tsx';
 
 // "Claude Code 2.1.40 in ~/src/heimdall. 13:30 to 15:42, 2 h 12 min. Session 7f3c9a2e."
-const placeLine = (view: SessionView, now: number) =>
-  [
-    `${harnessName(view.harness)}${view.harnessVersion === undefined ? '' : ` ${view.harnessVersion}`}${view.cwd === undefined ? '' : ` in ${view.cwd}`}.`,
-    `${formatWhen(view.startedAt, now, view.timeZone)} to ${formatClock(view.endedAt, view.timeZone)}, ${formatSpan(view.endedAt - view.startedAt)}.`,
-    `Session ${view.sessionId.slice(0, 8)}.`,
-  ].join(' ');
+function PlaceLine({ now, view }: { now: number; view: SessionView }) {
+  return (
+    <>
+      {harnessName(view.harness)}
+      {view.harnessVersion === undefined ? '' : ` ${view.harnessVersion}`}
+      {view.cwd === undefined ? '' : ` in ${view.cwd}`}.
+      <PhraseText
+        phrase={[' ', whenAt(view.startedAt, now), ' to ', clockAt(view.endedAt), ',']}
+      />{' '}
+      {formatSpan(view.endedAt - view.startedAt)}. Session {view.sessionId.slice(0, 8)}.
+    </>
+  );
+}
 
 function Total({ label, note, value }: { label: string; note: string; value: string }) {
   return (
@@ -121,7 +130,9 @@ export function SessionHeader({
             <span className="font-medium text-muted-foreground"> on {view.branch}</span>
           )}
         </h1>
-        <p className="text-muted-foreground">{placeLine(view, now)}</p>
+        <p className="text-muted-foreground">
+          <PlaceLine now={now} view={view} />
+        </p>
       </div>
       <section
         aria-label="Totals"

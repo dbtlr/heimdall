@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Area, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from 'recharts';
 
+import { clockSpan } from '../lib/phrase.ts';
 import { formatTokens, modelColor, modelName } from '../lib/session-format.ts';
 import { MAIN } from '../lib/session-search.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
@@ -13,8 +14,9 @@ import {
   toolCounts,
 } from '../lib/session.ts';
 import type { AgentLane, TokenKind } from '../lib/session.ts';
-import { formatClock, formatCost } from '../lib/time.ts';
+import { formatCost } from '../lib/time.ts';
 import type { SessionView } from '../server/session-view-types.ts';
+import { PhraseText } from './date-time.tsx';
 import { ProcessLinkBar } from './process-link-bar.tsx';
 import { runName, sessionWindow } from './session-timeline.tsx';
 import { SpanLabels } from './span-labels.tsx';
@@ -166,7 +168,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
           />
         </ComposedChart>
       </ChartContainer>
-      <SpanLabels timeZone={view.timeZone} window={window} />
+      <SpanLabels window={window} />
       <p className="mt-3 mb-1 text-[13.5px] text-muted-foreground">
         Main conversation context
         {contextWindow === undefined ? '' : `, of a ${formatTokens(contextWindow)} window`}
@@ -207,12 +209,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
         </ComposedChart>
       </ChartContainer>
       <p className="mt-3 mb-1 text-[13.5px] text-muted-foreground">Process link</p>
-      <ProcessLinkBar
-        harness={view.harness}
-        stretches={view.stretches}
-        timeZone={view.timeZone}
-        window={window}
-      />
+      <ProcessLinkBar harness={view.harness} stretches={view.stretches} window={window} />
     </Card>
   );
 }
@@ -222,11 +219,9 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
 function ByAgent({
   go,
   lanes,
-  view,
 }: {
   go: (next: Partial<SessionSearch>) => void;
   lanes: readonly AgentLane[];
-  view: SessionView;
 }) {
   const costliest = Math.max(0.000_001, ...lanes.map((lane) => lane.costUsd ?? 0));
   return (
@@ -279,9 +274,13 @@ function ByAgent({
                     )}
                     <br />
                     <span className="text-muted-foreground">
-                      {lane.model === undefined ? '' : `${modelName(lane.model)}, `}
-                      {formatClock(lane.startedAt, view.timeZone)} to{' '}
-                      {formatClock(lane.endedAt, view.timeZone)}
+                      {lane.model === undefined ? '' : modelName(lane.model)}
+                      <PhraseText
+                        phrase={[
+                          lane.model === undefined ? '' : ', ',
+                          ...clockSpan(lane.startedAt, lane.endedAt),
+                        ]}
+                      />
                     </span>
                   </button>
                 </td>
@@ -370,7 +369,7 @@ export function SessionCost({
       <PaidFor view={view} />
       <RunningCost lanes={lanes} view={view} />
       <div className="grid gap-x-3.5 lg:grid-cols-[1.4fr_1fr]">
-        <ByAgent go={go} lanes={lanes} view={view} />
+        <ByAgent go={go} lanes={lanes} />
         <div>
           <BarList
             bars={models.map((model) => ({

@@ -1,18 +1,10 @@
 import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
-import { formatWhen } from '../lib/time.ts';
 import type { OpenCondition } from '../server/fleet-overview-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
+import { DateTime } from './date-time.tsx';
 
 // Every Condition open now, newest raised first, those on unpaired Systems last and tagged.
-export function OpenConditions({
-  now,
-  open,
-  timeZone,
-}: {
-  now: number;
-  open: readonly OpenCondition[];
-  timeZone: string;
-}) {
+export function OpenConditions({ now, open }: { now: number; open: readonly OpenCondition[] }) {
   return (
     <section className="mt-[18px] rounded-lg bg-card p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">Open now</h2>
@@ -36,9 +28,12 @@ export function OpenConditions({
                   </em>
                 )}
               </span>
-              <time className="shrink-0 text-muted-foreground">
-                {formatWhen(condition.raisedAt, now, timeZone)}
-              </time>
+              <DateTime
+                at={condition.raisedAt}
+                className="shrink-0 text-muted-foreground"
+                format="when"
+                now={now}
+              />
             </li>
           ))}
         </ul>

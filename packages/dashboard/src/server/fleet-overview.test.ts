@@ -31,7 +31,7 @@ const { addCondition, addProcess, addSession } = timeline(NOW);
 const seconds = (ms: number) => ms / 1000;
 
 const overview = (h: Hub, range: Range = '24h', now = NOW, unpaired = false) =>
-  readFleetOverview(h.db.sql, { now, range, timeZone: 'UTC', unpaired });
+  readFleetOverview(h.db.sql, { now, range, unpaired });
 
 // The lane of `name`, which the test has paired.
 const lane = async (h: Hub, name: string, now = NOW, range: Range = '24h') => {

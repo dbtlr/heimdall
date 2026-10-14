@@ -1,6 +1,6 @@
 // Times and positions on the overview's time axis. Every time is epoch
-// milliseconds, formatted in the zone the server names, so the server render and
-// the browser agree.
+// milliseconds, formatted in the zone the caller names: the viewer's own, known
+// only in the browser.
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -60,6 +60,34 @@ export const formatWhen = (t: number, now: number, timeZone: string): string =>
   localDayNumber(t, timeZone) === localDayNumber(now, timeZone)
     ? formatClock(t, timeZone)
     : `${formatWeekday(t, timeZone)} ${formatClock(t, timeZone)}`;
+
+// How a time is written: a clock time, with or without seconds, a weekday, or
+// `when`, the clock time or the weekday and clock time relative to `now`.
+export type TimeFormat =
+  | { format: 'clock' | 'clockSeconds' | 'weekday' }
+  | { format: 'when'; now: number };
+
+// `t` written as `spec` says, in `timeZone`.
+export const formatTime = (t: number, timeZone: string, spec: TimeFormat): string => {
+  switch (spec.format) {
+    case 'clock': {
+      return formatClock(t, timeZone);
+    }
+    case 'clockSeconds': {
+      return formatClockSeconds(t, timeZone);
+    }
+    case 'weekday': {
+      return formatWeekday(t, timeZone);
+    }
+    case 'when': {
+      return formatWhen(t, spec.now, timeZone);
+    }
+    default: {
+      const _exhaustive: never = spec;
+      return _exhaustive;
+    }
+  }
+};
 
 const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
