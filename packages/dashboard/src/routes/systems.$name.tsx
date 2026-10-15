@@ -1,38 +1,30 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { AttentionList } from '../components/attention-list.tsx';
-import { AttentionStatus } from '../components/attention-status.tsx';
-import { ConditionSpans } from '../components/condition-spans.tsx';
-import { CpuPlot } from '../components/cpu-plot.tsx';
-import { DateTime, PhraseText } from '../components/date-time.tsx';
-import { DetailAxis, DetailRow } from '../components/detail-track.tsx';
-import { GapShades } from '../components/gap-shades.tsx';
-import { MemoryPlot } from '../components/memory-plot.tsx';
-import { ProcessPlot } from '../components/process-plot.tsx';
+import { PhraseText } from '../components/date-time.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
 import { SampleInspector } from '../components/sample-inspector.tsx';
-import { SessionRows } from '../components/session-rows.tsx';
+import { SampleSheet } from '../components/sample-sheet.tsx';
+import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
-import { TimeAxis } from '../components/time-axis.tsx';
+import { SystemGlance } from '../components/system-glance.tsx';
+import { SystemNavigationHeader } from '../components/system-navigation.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
-import { axisTicks } from '../lib/axis.ts';
-import { formatGiB, headerLine } from '../lib/detail.ts';
-import { atFromSearch, rangeFromSearch } from '../lib/range.ts';
-import { inWindow, xPercent } from '../lib/time.ts';
-import { useTimeZone } from '../lib/use-time-zone.ts';
+import { headerLine } from '../lib/detail.ts';
+import { atFromSearch } from '../lib/range.ts';
+import { systemSearch } from '../lib/system-search.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { getSample, getSystemDetail } from '../server/system-detail-fn.ts';
 import type { SampleInspection } from '../server/system-detail-types.ts';
 
 export const Route = createFileRoute('/systems/$name')({
   component: SystemPage,
-  // Selecting a sample changes only `at`, so the stack is not read again; the
-  // loader reads the first sample, and the page reads later ones itself.
+  // Tab and sample selection reuse the loaded history; only range reloads it.
   loader: async ({
     deps,
     location,
@@ -53,15 +45,12 @@ export const Route = createFileRoute('/systems/$name')({
   notFoundComponent: () => (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 py-6 sm:px-[22px]">
+      <main className="mx-auto max-w-[1200px] px-3.5 py-6">
         <p>No System has that name.</p>
       </main>
     </>
   ),
-  validateSearch: (search: { at?: unknown; range?: unknown } & SearchSchemaInput) => ({
-    at: atFromSearch(search),
-    range: rangeFromSearch(search, '12h'),
-  }),
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => systemSearch(search),
 });
 
 // The sample at `at`: the one the loader read, until `at` moves off it, and
@@ -72,12 +61,12 @@ const useSample = (
   loadedAt: number | undefined,
   loadedSample: SampleInspection | null,
 ) => {
-  const [shown, setShown] = useState({ at: loadedAt, failed: false, sample: loadedSample });
+  const [shown, setShown] = useState({ at: loadedAt, failed: false, name, sample: loadedSample });
   useEffect(() => {
-    setShown({ at: loadedAt, failed: false, sample: loadedSample });
-  }, [loadedAt, loadedSample]);
+    setShown({ at: loadedAt, failed: false, name, sample: loadedSample });
+  }, [loadedAt, loadedSample, name]);
   useEffect(() => {
-    if (at === shown.at) {
+    if (at === shown.at && name === shown.name) {
       return undefined;
     }
     let current = true;
@@ -85,11 +74,11 @@ const useSample = (
       try {
         const sample = await getSample({ data: { at, name } });
         if (current) {
-          setShown({ at, failed: false, sample });
+          setShown({ at, failed: false, name, sample });
         }
       } catch {
         if (current) {
-          setShown({ at, failed: true, sample: null });
+          setShown({ at, failed: true, name, sample: null });
         }
       }
     };
@@ -97,19 +86,29 @@ const useSample = (
     return () => {
       current = false;
     };
-  }, [at, name, shown.at]);
-  return { failed: shown.failed, sample: shown.sample };
+  }, [at, name, shown.at, shown.name]);
+  const loading = at !== shown.at || name !== shown.name;
+  return {
+    failed: !loading && shown.failed,
+    loading,
+    sample: name === shown.name ? shown.sample : null,
+  };
 };
 
 function SystemPage() {
-  const { at, attention, detail, records, sample: loadedSample } = Route.useLoaderData();
+  const {
+    at,
+    attention,
+    detail,
+    navigation,
+    records,
+    sample: loadedSample,
+  } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const { failed, sample } = useSample(detail.name, search.at, at, loadedSample);
-  const timeZone = useTimeZone();
-  const { latest, now } = detail;
-  const header = headerLine(detail, now);
-  const window = { from: detail.from, to: detail.to };
+  const { failed, loading, sample } = useSample(detail.name, search.at, at, loadedSample);
+  const header = headerLine(detail, detail.now);
+  const charts = search.tab === 'vitals' || search.tab === 'sessions';
   const select = (t: number) => {
     void navigate({
       replace: true,
@@ -117,82 +116,100 @@ function SystemPage() {
       search: (previous) => ({ ...previous, at: Math.round(t) }),
     });
   };
-  const cpuNote =
-    latest === undefined ? undefined : `${String(Math.round(latest.cpuBusyPercent))}% now`;
-  const memoryNote =
-    latest === undefined
-      ? undefined
-      : `${formatGiB(latest.memoryUsedBytes)} of ${formatGiB(latest.memoryTotalBytes)} GiB`;
+  const closeSample = () => {
+    if (search.at !== undefined) {
+      void navigate({
+        replace: true,
+        resetScroll: false,
+        search: (previous) => ({ ...previous, at: undefined }),
+      });
+    }
+  };
   return (
     <>
-      <AppHeader>
-        <RangePicker current={detail.range} />
-      </AppHeader>
+      <SystemNavigationHeader
+        current={detail.name}
+        range={detail.range}
+        systems={navigation}
+        tab={search.tab}
+      />
       <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 pt-3.5 pb-2 sm:pt-[18px] sm:pb-2.5">
-          <h1 className="text-[19px] font-semibold sm:text-[22px]">
-            <Link className="text-muted-foreground" to="/">
-              Fleet
-            </Link>{' '}
-            / {detail.name}{' '}
-            <AttentionStatus
-              className="ml-2 text-sm font-medium"
-              items={attention}
-              status={detail.status}
-            />
-          </h1>
-          <p className="text-muted-foreground">
-            {header.lead}
-            <PhraseText phrase={header.tail} />
-          </p>
-        </div>
+        <p className="py-3 text-sm text-muted-foreground">
+          {header.lead}
+          <PhraseText phrase={header.tail} />
+        </p>
         {!detail.paired && <UnpairedBanner name={detail.name} />}
-        <AttentionList items={attention} now={now} />
-        <SystemFacts detail={detail} />
-        <div className="grid gap-x-[18px] lg:grid-cols-[1fr_290px]">
-          <DetailAxis onSelect={select} selected={sample?.t} window={window}>
-            <div className="min-w-0">
-              <DetailRow label="CPU busy" note={cpuNote}>
-                <GapShades
-                  gaps={detail.gaps}
-                  labelHeight={96}
-                  sleeps={detail.sleeps}
-                  window={window}
-                />
-                <CpuPlot buckets={detail.cpu} height={96} label="CPU busy" window={window} />
-              </DetailRow>
-              <DetailRow label="Memory" note={memoryNote}>
-                <MemoryPlot buckets={detail.memory} window={window} />
-              </DetailRow>
-              <DetailRow label="Harness processes" note="CPU cores per process tree">
-                <ProcessPlot processes={detail.processes} window={window} />
-              </DetailRow>
-              <SessionRows sessions={detail.sessions} system={detail.name} window={window} />
-              <DetailRow label="Conditions">
-                <ConditionSpans conditions={detail.conditions} now={now} window={window} />
-              </DetailRow>
-              <TimeAxis
-                ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
-                window={window}
-              >
-                {sample !== null && inWindow(sample.t, window) && (
-                  <span
-                    className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-[#ffd666] px-[9px] font-semibold text-background"
-                    style={{ left: `${String(xPercent(sample.t, window))}%` }}
-                  >
-                    <DateTime at={sample.t} format="clock" />
-                  </span>
-                )}
-              </TimeAxis>
+        {search.tab === 'now' && (
+          <>
+            <h2 className="mb-2 text-lg font-semibold">Open Conditions</h2>
+            {attention.length === 0 ? (
+              <p className="rounded-xl bg-card p-4 text-base">
+                No open Condition or uncertain evidence.
+              </p>
+            ) : (
+              <AttentionList compact items={attention} key={detail.name} now={detail.now} />
+            )}
+            <SystemGlance detail={detail} />
+          </>
+        )}
+        {charts && (
+          <>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">
+                {search.tab === 'vitals' ? 'Vitals' : 'Sessions'}
+              </h2>
+              <RangePicker current={detail.range} />
             </div>
-          </DetailAxis>
-          <SampleInspector failed={failed} sample={sample} />
-        </div>
-        <div className="grid gap-x-[18px] lg:grid-cols-[1.35fr_1fr]">
-          <RecordedPanel now={now} recorded={records.recorded} />
-          <TimelineRail entries={records.timeline} now={now} />
-        </div>
+            <div className="grid min-w-0 gap-4 lg:grid-cols-[1fr_290px]">
+              <div className="min-w-0">
+                <SystemCharts
+                  detail={detail}
+                  onSelect={select}
+                  sample={sample}
+                  view={search.tab === 'vitals' ? 'vitals' : 'sessions'}
+                />
+                <button
+                  className="my-3 min-h-11 rounded-lg border px-3 text-base text-primary lg:hidden"
+                  onClick={() => select(sample?.t ?? detail.now)}
+                  type="button"
+                >
+                  Inspect sample
+                </button>
+              </div>
+              <div className="hidden lg:block">
+                <SampleInspector failed={failed} loading={loading} sample={sample} />
+              </div>
+            </div>
+            {search.tab === 'vitals' && (
+              <SystemFacts detail={{ ...detail, harnesses: undefined }} />
+            )}
+          </>
+        )}
+        {search.tab === 'records' && (
+          <>
+            <h2 className="text-lg font-semibold">Records</h2>
+            {detail.harnesses !== undefined && (
+              <SystemFacts detail={{ ...detail, latest: undefined }} />
+            )}
+            <RecordedPanel now={detail.now} recorded={records.recorded} />
+          </>
+        )}
+        {search.tab === 'timeline' && (
+          <>
+            <h2 className="text-lg font-semibold">Timeline</h2>
+            <TimelineRail entries={records.timeline} now={detail.now} />
+          </>
+        )}
       </main>
+      {charts && (
+        <SampleSheet
+          failed={failed}
+          loading={loading}
+          onClose={closeSample}
+          open={search.at !== undefined}
+          sample={sample}
+        />
+      )}
     </>
   );
 }

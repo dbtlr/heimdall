@@ -10,6 +10,7 @@ import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { PhraseText } from './date-time.tsx';
+import { MoreItems } from './more-items.tsx';
 
 const LOAD_PERIODS = ['1 min', '5 min', '15 min'] as const;
 
@@ -130,29 +131,37 @@ export function SystemFacts({
       )}
       {latest !== undefined && (
         <Fact asOf={asOf} grow={1.5} title="Disks">
-          <ul>
-            {latest.disks.map((disk, index) => (
-              // A mount can be listed twice.
-              // oxlint-disable-next-line react/no-array-index-key
-              <DiskRow
-                disk={disk}
-                level={
-                  detail.conditions.find(
-                    (condition) =>
-                      condition.kind === 'low_disk' &&
-                      condition.subject === disk.mount &&
-                      condition.clearedAt === undefined,
-                  )?.level
-                }
-                key={`${disk.mount}-${String(index)}`}
-              />
-            ))}
-          </ul>
+          <div className="max-h-[30dvh] overflow-y-auto">
+            <ul>
+              {latest.disks.map((disk, index) => (
+                // A mount can be listed twice.
+                // oxlint-disable-next-line react/no-array-index-key
+                <DiskRow
+                  disk={disk}
+                  level={
+                    detail.conditions.find(
+                      (condition) =>
+                        condition.kind === 'low_disk' &&
+                        condition.subject === disk.mount &&
+                        condition.clearedAt === undefined,
+                    )?.level
+                  }
+                  key={`${disk.mount}-${String(index)}`}
+                />
+              ))}
+            </ul>
+          </div>
         </Fact>
       )}
       {harnesses !== undefined && (
         <Fact title="Harnesses installed">
-          <Harnesses installs={harnesses} />
+          {harnesses.length > 3 ? (
+            <MoreItems label={`Show ${String(harnesses.length)} Harness installs`}>
+              <Harnesses installs={harnesses} />
+            </MoreItems>
+          ) : (
+            <Harnesses installs={harnesses} />
+          )}
         </Fact>
       )}
     </section>

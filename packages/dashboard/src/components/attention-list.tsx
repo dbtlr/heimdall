@@ -50,9 +50,28 @@ const sentence = (phrase: Phrase): Phrase => {
 // An item's row, which opens to show it: the Condition, its subject, what was
 // expected and observed, when it was first detected and last checked, and the
 // first thing to do, in a seven-column row on a wide screen, stacked on a narrow one.
-function Summary({ item, now }: { item: Attention; now: number }) {
+function Summary({ compact, item, now }: { compact: boolean; item: Attention; now: number }) {
   const mark = attentionMark(item);
   const words = evidenceWords(item, now);
+  if (compact) {
+    return (
+      <summary className="min-h-11 cursor-pointer list-none py-3 [&::-webkit-details-marker]:hidden">
+        <span className={cn('flex items-center gap-2 text-sm font-semibold', MARK_COLOR[mark])}>
+          <ConditionGlyph kind={mark} />
+          {item.level === undefined
+            ? 'Evidence old or unknown'
+            : item.level.charAt(0).toUpperCase() + item.level.slice(1)}
+        </span>
+        <span className="mt-1 block text-xl font-semibold wrap-anywhere [&_code]:text-base">
+          {ATTENTION_NAMES[item.kind]} <AttentionSubject item={item} />
+        </span>
+        <span className="mt-1 block text-base text-muted-foreground">
+          <PhraseText phrase={words.observedShort} />
+        </span>
+        <span className="mt-1 block text-sm text-primary">Evidence and next step</span>
+      </summary>
+    );
+  }
   return (
     <summary
       className={cn(
@@ -133,6 +152,9 @@ function Evidence({ item, now }: { item: Attention; now: number }) {
         </p>
       )}
       <p className="mb-[3px] text-xs text-muted-foreground">
+        First detected <DateTime at={item.firstDetected} format="when" now={now} />
+      </p>
+      <p className="mb-[3px] text-xs text-muted-foreground">
         {item.checkedAt === undefined ? (
           'No check has arrived.'
         ) : (
@@ -172,11 +194,13 @@ function NextStep({ item }: { item: Attention }) {
 // One item: a row that opens to its evidence and next step. Unconfirmed
 // evidence is muted, its observed words in italics, with a dashed rule above.
 function AttentionItem({
+  compact,
   item,
   now,
   onToggle,
   open,
 }: {
+  compact: boolean;
   item: Attention;
   now: number;
   onToggle: (open: boolean) => void;
@@ -185,7 +209,7 @@ function AttentionItem({
   return (
     <details
       className={cn(
-        'group border-t first-of-type:border-t-0',
+        'group scroll-mt-44 border-t first-of-type:border-t-0',
         attentionMark(item) === 'unknown' && 'border-dashed text-[#b3bacb]',
       )}
       id={anchorOf(item)}
@@ -194,7 +218,7 @@ function AttentionItem({
       }}
       open={open}
     >
-      <Summary item={item} now={now} />
+      <Summary compact={compact} item={item} now={now} />
       <div className="grid gap-2.5 pt-0.5 pb-3 pl-4 lg:grid-cols-2 lg:gap-[22px]">
         <Evidence item={item} now={now} />
         <NextStep item={item} />
@@ -211,13 +235,21 @@ const hashAnchor = (hash: string) => hash.replace(/^#/u, '');
 // hash names opens and scrolls into view, on arrival and whenever the hash
 // changes, but not when a refresh changes the items. Nothing when the System
 // has none.
-export function AttentionList({ items, now }: { items: readonly Attention[]; now: number }) {
+export function AttentionList({
+  compact = false,
+  items,
+  now,
+}: {
+  compact?: boolean;
+  items: readonly Attention[];
+  now: number;
+}) {
   const ranked = (({ confirmed, unconfirmed }) => [...confirmed, ...unconfirmed])(
     rankAttention(items),
   );
   const first = ranked[0];
   const [opened, setOpened] = useState<ReadonlySet<string>>(
-    () => new Set(first === undefined ? [] : [anchorOf(first)]),
+    () => new Set(first === undefined || compact ? [] : [anchorOf(first)]),
   );
   const hash = hashAnchor(useLocation({ select: (location) => location.hash }));
   useEffect(() => {
@@ -233,12 +265,16 @@ export function AttentionList({ items, now }: { items: readonly Attention[]; now
   return (
     <section
       aria-label="Needs you"
-      className="mt-1 mb-2.5 rounded-lg bg-card px-3 py-1 text-[13px]"
+      className={cn(
+        'mt-1 mb-2.5 rounded-lg bg-card px-3 py-1 text-[13px]',
+        compact && 'max-h-[65dvh] overflow-y-auto overscroll-contain',
+      )}
     >
       <div
         aria-hidden="true"
         className={cn(
-          'hidden gap-x-2.5 border-b py-1.5 pl-4 text-xs text-muted-foreground lg:grid',
+          'hidden gap-x-2.5 border-b py-1.5 pl-4 text-xs text-muted-foreground',
+          !compact && 'lg:grid',
           COLUMNS,
         )}
       >
@@ -250,6 +286,7 @@ export function AttentionList({ items, now }: { items: readonly Attention[]; now
         const id = anchorOf(item);
         return (
           <AttentionItem
+            compact={compact}
             item={item}
             key={id}
             now={now}

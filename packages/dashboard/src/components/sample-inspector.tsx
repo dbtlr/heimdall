@@ -2,8 +2,9 @@ import { formatGiB, sampleProcessLine, unlinkedLine } from '../lib/detail.ts';
 import { harnessColor } from '../lib/lane.ts';
 import { clockSecondsAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
-import type { SampleInspection } from '../server/system-detail-types.ts';
+import type { SampleInspection, SampleProcess } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
+import { MoreItems } from './more-items.tsx';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
@@ -38,25 +39,42 @@ function Entry({
   );
 }
 
+function ProcessEntry({ process }: { process: SampleProcess }) {
+  return (
+    <Entry color={harnessColor(process.harness)} dashed={false} {...sampleProcessLine(process)} />
+  );
+}
+
 // The panel that inspects one Vitals sample: its CPU against its 5-minute
 // bucket, memory and load, the Harness processes running then with their
 // Sessions, and the Sessions no single process is linked to.
 export function SampleInspector({
   failed,
+  loading = false,
   sample,
 }: {
   failed: boolean;
+  loading?: boolean;
   sample: SampleInspection | null;
 }) {
+  const idle =
+    sample?.processes.filter((process) => process.cores === 0 && process.requests === 0) ?? [];
+  const active =
+    sample?.processes.filter((process) => process.cores !== 0 || process.requests !== 0) ?? [];
   return (
-    <aside className="mt-2.5 self-start rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5">
-      {sample === null ? (
+    <aside
+      aria-busy={loading}
+      className="mt-2.5 max-h-[70dvh] self-start overflow-y-auto rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5"
+    >
+      {loading && <p role="status">Reading sample…</p>}
+      {sample === null && !loading && (
         <p className="text-muted-foreground">
           {failed
             ? 'The sample could not be read. Select a time to try again.'
             : 'No Vitals sample to inspect.'}
         </p>
-      ) : (
+      )}
+      {sample !== null && (
         <>
           <p className="mb-2 text-[12.5px] text-muted-foreground">
             <PhraseText phrase={['Sample at ', clockSecondsAt(sample.t)]} />
@@ -73,13 +91,8 @@ export function SampleInspector({
             <p className="text-[13.5px] text-muted-foreground">No Harness process or Session.</p>
           ) : (
             <ul>
-              {sample.processes.map((process) => (
-                <Entry
-                  color={harnessColor(process.harness)}
-                  dashed={false}
-                  key={process.processId}
-                  {...sampleProcessLine(process)}
-                />
+              {active.map((process) => (
+                <ProcessEntry key={process.processId} process={process} />
               ))}
               {sample.unlinked.map((session) => (
                 <Entry
@@ -90,6 +103,17 @@ export function SampleInspector({
                 />
               ))}
             </ul>
+          )}
+          {idle.length > 0 && (
+            <MoreItems
+              label={`${String(idle.length)} idle ${idle.length === 1 ? 'process' : 'processes'}`}
+            >
+              <ul>
+                {idle.map((process) => (
+                  <ProcessEntry key={process.processId} process={process} />
+                ))}
+              </ul>
+            </MoreItems>
           )}
         </>
       )}

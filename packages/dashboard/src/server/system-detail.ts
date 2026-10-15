@@ -44,6 +44,7 @@ import type {
   TimelineEntry,
   UnlinkedSession,
 } from './system-detail-types.ts';
+import { readSystemNavigation } from './system-navigation.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 // The Timeline covers this much history, and every Condition still open.
@@ -624,12 +625,13 @@ export const readSystemPage = (sql: SQL, input: Parameters<typeof readSystemDeta
     if (detail === undefined) {
       return undefined;
     }
-    const [records, attention] = await Promise.all([
+    const [records, attention, navigation] = await Promise.all([
       readSystemRecordsSnapshot(tx, input),
       readAttention(tx, {
         now: input.now,
         systems: [{ name: input.name, paired: detail.paired }],
       }),
+      readSystemNavigation(tx, input),
     ]);
-    return { attention, detail, records };
+    return { attention, detail, navigation, records };
   });
