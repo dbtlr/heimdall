@@ -23,7 +23,7 @@ The Collector needs an explicit execution boundary before those checks are imple
 
 **The Collector observes pending updates independently of provisioner records.**
 The initial checks cover APT, Homebrew, macOS Software Update, and the Debian-family reboot-required marker where supported.
-Observations identify the manager, package or update, installed and available versions when known, and security status when the manager establishes it.
+Observations identify the package manager, package or update, installed and available versions when known, and security status when the package manager establishes it.
 Unknown versions or security status remain unknown.
 A pending macOS update that would require a restart is distinct from a System already requiring a reboot.
 
@@ -53,7 +53,6 @@ The Hub cannot request a command or trigger a check.
 Running Homebrew as the Collector's account is not assumed to work when another account owns it.
 The Collector neither changes ownership nor attempts interactive authentication or automatic privilege escalation.
 Until a supported execution arrangement exists, it reports that installation's coverage as unavailable.
-macOS queries also need bounded execution even when they only read cached metadata.
 
 **Reports distinguish successful observations from missing evidence.**
 Each check carries its observation time and coverage, including failures, missing tools, and account restrictions.
@@ -61,6 +60,8 @@ Only a successful check with usable metadata can report an empty update list or 
 Repeating a cached observation preserves its time, and a recent query does not make old package metadata current.
 Metadata freshness is reported when known and remains unknown otherwise.
 Failed, unsupported, or stale evidence cannot clear an open update Condition or lower its level.
+Missing evidence alone does not establish that a Condition's subject was removed.
+Explicit subject removal follows a separate clearing rule under ADR-0017, defined with the update Condition identities in HMD-118.
 The Hub derives Conditions and their levels under [ADR-0017](0017-the-hub-sets-condition-levels.md).
 
 ## Considered options
@@ -77,5 +78,5 @@ Cache maintenance remains outside the initial Collector checks, so a quiet updat
 Some Systems may initially have no usable macOS or Homebrew coverage.
 
 HMD-118 implements this contract and fixes the exact cadence, configuration, command and parser choices, separate-account execution arrangement, and freshness rules.
-It also defines the additive Report section and update Condition identities and age thresholds.
+It also defines the additive Report section, update Condition identities, age thresholds, and explicit subject-removal clearing rules.
 Those runtime interfaces are not implemented by this ADR.
