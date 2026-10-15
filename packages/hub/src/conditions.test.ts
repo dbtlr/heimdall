@@ -73,6 +73,20 @@ test('repeated rejections raise one Condition, which keeps its first reason and 
   });
 });
 
+test('identical repeated rejections refresh their evidence time without adding history', async () => {
+  await using h = await startHub();
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
+  h.clock.now = NOW + 60_000;
+
+  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
+
+  const conditions: { latest_at: Date }[] = await h.db.sql`SELECT latest_at FROM conditions`;
+  const transitions: { n: number }[] = await h.db
+    .sql`SELECT count(*)::int AS n FROM condition_transitions`;
+  expect(conditions).toEqual([{ latest_at: new Date(NOW + 60_000) }]);
+  expect(transitions).toEqual([{ n: 1 }]);
+});
+
 test('a stored Report clears the Condition, and the Timeline holds when it was raised and cleared', async () => {
   await using h = await startHub();
   await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });

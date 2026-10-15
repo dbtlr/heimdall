@@ -1,3 +1,4 @@
+import { ConditionLevelSchema } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
@@ -23,6 +24,7 @@ import type { Disk } from './system-detail-types.ts';
 
 type ConditionRow = {
   kind: string;
+  level: string;
   latest_at: Date;
   latest_reason: string;
   raised_at: Date;
@@ -58,7 +60,11 @@ type Held = {
 };
 
 // What the item rests on and how far that holds, with the facts of its kind.
-type Found = { checkedAt: number | undefined; evidence: Evidence; facts: AttentionFacts };
+type Found = {
+  checkedAt: number | undefined;
+  evidence: Evidence;
+  facts: Exclude<AttentionFacts, { kind: 'checks_missing' | 'file_unreadable' }>;
+};
 
 // Where an item is: the System it is on, and whether that System is unpaired.
 type Place = { system: string; unpaired: boolean };
@@ -317,6 +323,7 @@ const itemsOf = async (held: Held, place: Place, now: number): Promise<Attention
       checkedAt,
       evidence,
       firstDetected: row.raised_at.getTime(),
+      level: ConditionLevelSchema.parse(row.level),
       subject: row.subject,
     };
   });
@@ -377,7 +384,7 @@ export const readAttention = async (
     SampleRow[],
   ] = await Promise.all([
     sql`
-      SELECT system, kind, subject, raised_at, latest_at, latest_reason
+      SELECT system, kind, level, subject, raised_at, latest_at, latest_reason
       FROM conditions
       WHERE system IN ${sql(names)} AND cleared_at IS NULL
     `,

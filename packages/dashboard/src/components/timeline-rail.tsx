@@ -1,12 +1,12 @@
-import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
+import { KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
 import { timelineWhen } from '../lib/detail.ts';
 import { cn } from '../lib/utils.ts';
 import type { TimelineEntry } from '../server/system-detail-types.ts';
 import { ConditionGlyph } from './condition-glyph.tsx';
-import { PhraseText } from './date-time.tsx';
+import { DateTime, PhraseText } from './date-time.tsx';
 
 // The System's Timeline: each Condition of the last 7 days and each still
-// open, open first, then newest raised, with when and why.
+// open, newest raised first, with transitions in the Hub's recording order.
 export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry[]; now: number }) {
   return (
     <section className="mt-[18px] self-start rounded-lg bg-card p-4">
@@ -23,9 +23,9 @@ export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry
                 '-ml-[7px] flex items-start gap-2.5 py-1.5 pl-3',
                 entry.clearedAt === undefined && 'rounded-md bg-[rgba(250,178,25,0.08)]',
               )}
-              key={`${entry.kind}-${entry.subject}-${String(entry.raisedAt)}`}
+              key={entry.id}
             >
-              <ConditionGlyph className="mt-1" kind={SEVERITY[entry.kind]} />
+              <ConditionGlyph className="mt-1" kind={entry.level} />
               <div className="min-w-0">
                 <p className="break-words">
                   <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
@@ -37,6 +37,21 @@ export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry
                 <p className="text-[12.5px] whitespace-pre-wrap text-muted-foreground">
                   {entry.reason}
                 </p>
+                <ol className="mt-1 space-y-1 text-[12.5px] text-muted-foreground">
+                  {entry.transitions.map((transition, index) => (
+                    // The Hub's recording order distinguishes transitions at the same time.
+                    // oxlint-disable-next-line react/no-array-index-key
+                    <li key={index}>
+                      <p>
+                        {transitionLabel(transition)}
+                        {' · '}
+                        <DateTime at={transition.at} format="when" now={now} />
+                        {transition.backfilled && ' · Backfilled level'}
+                      </p>
+                      <p className="whitespace-pre-wrap">{transition.reason}</p>
+                    </li>
+                  ))}
+                </ol>
               </div>
             </li>
           ))}

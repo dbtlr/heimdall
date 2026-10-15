@@ -1,11 +1,12 @@
+import type { ConditionLevel } from '@heimdall/schema';
+
 import {
   ATTENTION_NAMES,
   attentionMark,
   laneSummary,
-  rankAttention,
+  isConfirmed,
   subjectText,
 } from '../lib/attention.ts';
-import type { Severity } from '../lib/conditions.ts';
 import { statusWord } from '../lib/lane.ts';
 import { cn } from '../lib/utils.ts';
 import type { Attention } from '../server/attention-types.ts';
@@ -21,18 +22,17 @@ const STATUS_COLOR: Record<LaneStatus, string> = {
   up: 'text-[color-mix(in_srgb,var(--status-good)_60%,white)]',
 };
 
-// The text colour of each mark, a severity's status colour lightened toward
-// white, or muted for unconfirmed evidence.
-export const MARK_COLOR: Record<Severity | 'unknown', string> = {
-  critical: 'text-[color-mix(in_srgb,var(--status-critical)_65%,white)]',
-  serious: 'text-[color-mix(in_srgb,var(--status-serious)_70%,white)]',
+// Stored Hub levels keep their color regardless of evidence freshness.
+// Evidence without a Hub Condition uses the muted color.
+export const MARK_COLOR: Record<ConditionLevel | 'unknown', string> = {
+  alert: 'text-[color-mix(in_srgb,var(--status-critical)_65%,white)]',
+  note: 'text-[color-mix(in_srgb,var(--status-warning)_75%,white)]',
   unknown: 'text-muted-foreground',
-  warning: 'text-[color-mix(in_srgb,var(--status-warning)_75%,white)]',
+  warning: 'text-[color-mix(in_srgb,var(--status-serious)_70%,white)]',
 };
 
-// The item a System's status names: its most pressing confirmed one, else the
-// first unconfirmed one when the System needs you only on unconfirmed evidence.
-// An unpaired System names none; its status stays Unpaired.
+// The worst open warning or alert names the System's status, even with old
+// evidence. An unpaired System keeps its Unpaired status.
 export const namedItem = (
   items: readonly Attention[],
   status: LaneStatus,
@@ -40,8 +40,7 @@ export const namedItem = (
   if (status === 'unpaired') {
     return undefined;
   }
-  const { confirmed, unconfirmed } = rankAttention(items);
-  return confirmed[0] ?? (status === 'needs_you' ? unconfirmed[0] : undefined);
+  return laneSummary(items).lead;
 };
 
 const PILL = 'ml-1.5 rounded-lg px-[5px] text-xs';
@@ -60,9 +59,8 @@ function UnconfirmedPill({ count, plus }: { count: number; plus: boolean }) {
   );
 }
 
-// The status of a System: the name of its most pressing cause in that cause's
-// severity colour, with how many other causes there are and how many pieces of
-// unconfirmed evidence; else its plain status word.
+// A System's worst open level calls for action independently of freshness.
+// Notes alone leave its plain healthy status visible.
 export function AttentionStatus({
   className,
   items,
@@ -75,8 +73,7 @@ export function AttentionStatus({
   const named = namedItem(items, status);
   const { more, unconfirmed } = laneSummary(items);
   // The named item, when unconfirmed, is already counted by its name.
-  const others =
-    named !== undefined && attentionMark(named) === 'unknown' ? unconfirmed - 1 : unconfirmed;
+  const others = named !== undefined && !isConfirmed(named) ? unconfirmed - 1 : unconfirmed;
   const pill = others > 0 && status !== 'unpaired' && (
     <UnconfirmedPill count={others} plus={named !== undefined} />
   );
@@ -99,7 +96,7 @@ export function AttentionStatus({
         {ATTENTION_NAMES[named.kind]}
       </b>
       {more > 0 && (
-        <span className={cn(PILL, 'bg-status-serious/15', MARK_COLOR.serious)}>+{more}</span>
+        <span className={cn(PILL, 'bg-status-serious/15', MARK_COLOR.warning)}>+{more}</span>
       )}
       {pill}
     </span>

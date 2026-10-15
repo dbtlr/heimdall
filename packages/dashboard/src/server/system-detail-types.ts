@@ -183,13 +183,7 @@ export type Recorded = {
   services: RecordedService[];
 };
 
-// One Condition on the Timeline.
-export type TimelineEntry = {
-  clearedAt: number | undefined;
-  kind: ConditionKind;
-  raisedAt: number;
-  reason: string;
-  subject: string;
-};
+// One occurrence and its transitions in the Hub's recording order.
+export type TimelineEntry = ConditionMark & { reason: string };
 
 export type SystemRecords = { recorded: Recorded; timeline: TimelineEntry[] };

@@ -1,3 +1,5 @@
+import type { ConditionLevel } from '@heimdall/schema';
+
 import type {
   Attention,
   AttentionKind,
@@ -5,8 +7,7 @@ import type {
   ServiceTarget,
 } from '../server/attention-types.ts';
 import type { Disk, JobRun, ServiceCheck } from '../server/system-detail-types.ts';
-import { KIND_NAMES, SEVERITY } from './conditions.ts';
-import type { Severity } from './conditions.ts';
+import { KIND_NAMES } from './conditions.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { scheduleWords } from './recorded.ts';
@@ -27,13 +28,10 @@ export const isConfirmed = (item: Attention): boolean => item.evidence === 'curr
 const isOwn = (item: Attention) =>
   item.kind === 'file_unreadable' || item.kind === 'checks_missing';
 
-const severityOf = (item: Attention): Severity | undefined =>
-  isOwn(item) ? undefined : SEVERITY[item.kind];
-
-// The mark an item wears: its Condition's severity when confirmed, else
-// unknown, so unconfirmed evidence is never drawn as a failure.
-export const attentionMark = (item: Attention): Severity | 'unknown' =>
-  (isConfirmed(item) ? severityOf(item) : undefined) ?? 'unknown';
+// Evidence freshness is separate from the Hub's stored judgment. Only items
+// without a Hub Condition have no level.
+export const attentionMark = (item: Attention): ConditionLevel | 'unknown' =>
+  item.level ?? 'unknown';
 
 // Keeps case, dots, underscores, and tildes, and doubles a dash before other
 // runs become one, so paths that differ only in those keep apart.
@@ -53,11 +51,11 @@ export const anchorOf = (item: Attention): string => {
   return subject === '' ? kind : `${kind}-${subject}`;
 };
 
-const MARK_RANK: Record<Severity | 'unknown', number> = {
-  critical: 0,
-  serious: 1,
+const MARK_RANK: Record<ConditionLevel | 'unknown', number> = {
+  alert: 0,
+  note: 2,
   unknown: 3,
-  warning: 2,
+  warning: 1,
 };
 
 // Items on a System still paired first, then the most severe, then the Hub's
@@ -77,15 +75,16 @@ export const rankAttention = (
   unconfirmed: items.filter((item) => !isConfirmed(item)).toSorted(byPriority),
 });
 
-// What a System's lane says: its most pressing confirmed item, how many other
-// confirmed items there are, and how many unconfirmed.
+// What a System's lane says: its worst open level that calls for action,
+// regardless of evidence freshness. Notes alone leave it healthy.
 export const laneSummary = (
   items: readonly Attention[],
 ): { lead: Attention | undefined; more: number; unconfirmed: number } => {
-  const { confirmed, unconfirmed } = rankAttention(items);
+  const open = items.filter((item) => item.level !== undefined).toSorted(byPriority);
+  const unconfirmed = items.filter((item) => !isConfirmed(item));
   return {
-    lead: confirmed[0],
-    more: Math.max(0, confirmed.length - 1),
+    lead: open.find((item) => item.level !== 'note'),
+    more: Math.max(0, open.length - 1),
     unconfirmed: unconfirmed.length,
   };
 };
@@ -353,8 +352,8 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
     case 'low_disk': {
       return evidence(
         {
-          long: ['At least 10% free. The Hub raises this below 10% and clears it above 15%.'],
-          short: ['At least 10% free'],
+          long: ['Disk use within the limits configured in the Hub for this System.'],
+          short: ['Within the Hub disk limits'],
         },
         diskObserved(item.disk, item.reason),
       );

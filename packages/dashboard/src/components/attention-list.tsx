@@ -69,6 +69,7 @@ function Summary({ item, now }: { item: Attention; now: number }) {
           'inline-flex items-baseline gap-1 self-start font-semibold whitespace-nowrap',
           MARK_COLOR[mark],
         )}
+        title={item.level === undefined ? 'Evidence old or unknown' : `Hub level: ${item.level}`}
       >
         <ConditionGlyph className="self-center" kind={mark} />
         {ATTENTION_NAMES[item.kind]}

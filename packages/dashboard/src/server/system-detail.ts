@@ -1,5 +1,7 @@
 import type { SQL } from 'bun';
 
+import { readAttention } from './attention.ts';
+import { readConditionTransitions } from './condition-transitions.ts';
 import { isRange, RANGES } from './fleet-overview-types.ts';
 import type { Link, Range } from './fleet-overview-types.ts';
 import {
@@ -16,7 +18,6 @@ import {
 import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
 import {
   byCheck,
-  conditionKind,
   field,
   filesOf,
   judgedFilesRecords,
@@ -184,7 +185,7 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
 // processes, Sessions, and Conditions, on one time axis. A System that is no
 // longer paired keeps its history and reads as unpaired. Undefined for a name
 // that is no System. Read-only.
-export const readSystemDetail = async (
+const readSystemDetailSnapshot = async (
   sql: SQL,
   { name, now, range }: { name: string; now: number; range: Range },
 ): Promise<SystemDetail | undefined> => {
@@ -255,21 +256,22 @@ export const readSystemDetail = async (
     `,
     readStretches(sql, { from, systems: [name], to: now }),
     sql`
-      SELECT system, kind, subject, raised_at, cleared_at, latest_reason
+      SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
-      WHERE system = ${name} AND raised_at <= ${toAt}
-        AND (cleared_at IS NULL OR cleared_at >= ${fromAt})
-      ORDER BY raised_at
+      WHERE system = ${name}
+        AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
+      ORDER BY raised_at, id
     `,
-    sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL`,
+    sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL AND level <> 'note'`,
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
   const lastSeenAt = system.last_seen_at?.getTime();
   const sleeps = system.sleeps === true;
+  const transitions = await readConditionTransitions(sql, marks);
   return {
     collectorVersion: system.collector_version ?? undefined,
-    conditions: marks.map(toMark),
+    conditions: marks.map((row) => toMark(row, transitions.get(row.id) ?? [])),
     cpu,
     from,
     gaps: findGaps(
@@ -521,7 +523,7 @@ const isJobCondition = (kind: string): kind is RecordedJob['open'][number] =>
 // What System `name`'s provisioner recorded, with the latest checks and runs,
 // and its Timeline: every Condition of the last 7 days before `now` and every
 // one still open, newest received first. Read-only.
-export const readSystemRecords = async (
+const readSystemRecordsSnapshot = async (
   sql: SQL,
   { name, now }: { name: string; now: number },
 ): Promise<SystemRecords> => {
@@ -531,12 +533,11 @@ export const readSystemRecords = async (
       sql`SELECT services, files, file_records FROM check_sets WHERE system = ${name}`,
       sql`SELECT job, latest_run FROM mirrored_runs WHERE system = ${name}`,
       sql`
-      SELECT system, kind, subject, raised_at, cleared_at, latest_reason
+      SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
       WHERE system = ${name}
         AND (cleared_at IS NULL OR cleared_at >= ${new Date(now - TIMELINE_MS)})
-      -- Newest received first (ADR-0005), so a step back in the Hub's clock
-      -- cannot reorder the Timeline.
+      -- The Hub's occurrence order survives a step back in its clock.
       ORDER BY id DESC
     `,
     ]);
@@ -561,13 +562,10 @@ export const readSystemRecords = async (
   const openJobConditions = conditions.filter(
     (row) => row.cleared_at === null && isJobCondition(row.kind),
   );
-  const timeline = conditions.map((row): TimelineEntry => ({
-    clearedAt: row.cleared_at?.getTime(),
-    kind: conditionKind(row.kind),
-    raisedAt: row.raised_at.getTime(),
-    reason: row.latest_reason,
-    subject: row.subject,
-  }));
+  const transitions = await readConditionTransitions(sql, conditions);
+  const timeline = conditions.map((row): TimelineEntry =>
+    Object.assign(toMark(row, transitions.get(row.id) ?? []), { reason: row.latest_reason }),
+  );
   return {
     recorded: {
       applications: of('application').map(({ name: app, record }): RecordedApplication => {
@@ -604,3 +602,34 @@ export const readSystemRecords = async (
     timeline,
   };
 };
+
+// Current levels and their transitions must come from the same snapshot.
+export const readSystemDetail = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
+    readSystemDetailSnapshot(tx, input),
+  );
+
+export const readSystemRecords = (
+  sql: SQL,
+  input: Parameters<typeof readSystemRecordsSnapshot>[1],
+) =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
+    readSystemRecordsSnapshot(tx, input),
+  );
+
+// Health, history, and attention must describe the same committed judgment.
+export const readSystemPage = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+    const detail = await readSystemDetailSnapshot(tx, input);
+    if (detail === undefined) {
+      return undefined;
+    }
+    const [records, attention] = await Promise.all([
+      readSystemRecordsSnapshot(tx, input),
+      readAttention(tx, {
+        now: input.now,
+        systems: [{ name: input.name, paired: detail.paired }],
+      }),
+    ]);
+    return { attention, detail, records };
+  });

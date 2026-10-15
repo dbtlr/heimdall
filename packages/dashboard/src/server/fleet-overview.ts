@@ -1,7 +1,10 @@
+import { ConditionLevelSchema } from '@heimdall/schema';
+import type { ConditionTransition } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import type { Attention } from './attention-types.ts';
 import { readAttention } from './attention.ts';
+import { readConditionTransitions } from './condition-transitions.ts';
 import { isRange, QUIET_AFTER_MS, RANGES } from './fleet-overview-types.ts';
 import type {
   ConditionMark,
@@ -136,7 +139,9 @@ export type StretchRow = {
 
 export type ConditionRow = {
   cleared_at: Date | null;
+  id: string;
   kind: string;
+  level: string;
   latest_reason: string;
   raised_at: Date;
   subject: string;
@@ -168,11 +173,14 @@ const toStretch = (row: StretchRow): Stretch => {
   };
 };
 
-export const toMark = (row: ConditionRow): ConditionMark => ({
+export const toMark = (row: ConditionRow, transitions: ConditionTransition[]): ConditionMark => ({
   clearedAt: row.cleared_at?.getTime(),
+  id: row.id,
   kind: conditionKind(row.kind),
+  level: ConditionLevelSchema.parse(row.level),
   raisedAt: row.raised_at.getTime(),
   subject: row.subject,
+  transitions,
 });
 
 // The stretches of `systems` that overlap `from` to `to`, each with its
@@ -222,7 +230,7 @@ const isHubCondition = ({ kind }: Attention) =>
 // at `now`, and what needs the operator now. The Systems no longer paired are
 // counted, and get lanes and attention of their own only when `unpaired`
 // asks for them. Read-only.
-export const readFleetOverview = async (
+const readFleetOverviewSnapshot = async (
   sql: SQL,
   { now, range, unpaired = false }: { now: number; range: Range; unpaired?: boolean },
 ): Promise<FleetOverview> => {
@@ -283,11 +291,11 @@ export const readFleetOverview = async (
     `,
     readStretches(sql, { from, systems: names, to: now }),
     sql`
-      SELECT system, kind, subject, raised_at, cleared_at, latest_reason
+      SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
       WHERE system IN ${sql(names)}
-        AND (raised_at BETWEEN ${fromAt} AND ${toAt} OR cleared_at BETWEEN ${fromAt} AND ${toAt})
-      ORDER BY raised_at
+        AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
+      ORDER BY raised_at, id
     `,
     readAttention(sql, { now, systems }),
   ]);
@@ -295,9 +303,14 @@ export const readFleetOverview = async (
   const latestOf = bySystem(latest);
   const stretchesOf = bySystem(stretches);
   const marksOf = bySystem(marks);
-  // A System needs you when a Condition the Hub holds is open on it; the other
-  // attention items are the dashboard's own.
-  const withOpenCondition = new Set(attention.filter(isHubCondition).map(({ system }) => system));
+  const transitions = await readConditionTransitions(sql, marks);
+  // Notes remain visible without making the System need action. Evidence
+  // freshness does not change the level the Hub stored.
+  const withOpenCondition = new Set(
+    attention
+      .filter((item) => isHubCondition(item) && item.level !== 'note')
+      .map(({ system }) => system),
+  );
   const laneOf = (system: SystemRow): Lane => {
     const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
     const newest = latestOf.get(system.name)?.[0];
@@ -305,7 +318,9 @@ export const readFleetOverview = async (
     const sleeps = system.sleeps === true;
     return {
       buckets: own,
-      conditions: (marksOf.get(system.name) ?? []).map(toMark),
+      conditions: (marksOf.get(system.name) ?? []).map((row) =>
+        toMark(row, transitions.get(row.id) ?? []),
+      ),
       gaps: findGaps(
         own.map(({ t }) => t),
         { from, now },
@@ -342,3 +357,12 @@ export const readFleetOverview = async (
     unpairedLanes: systems.filter(({ paired }) => !paired).map(laneOf),
   };
 };
+
+// Current levels and their transitions must come from the same snapshot.
+export const readFleetOverview = (
+  sql: SQL,
+  input: Parameters<typeof readFleetOverviewSnapshot>[1],
+) =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
+    readFleetOverviewSnapshot(tx, input),
+  );

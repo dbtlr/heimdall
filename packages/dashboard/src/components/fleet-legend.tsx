@@ -19,10 +19,12 @@ export function FleetLegend() {
         Codex Session
       </span>
       <span className="inline-flex items-center gap-[5px]">
-        <ConditionGlyph kind="critical" />
-        <ConditionGlyph kind="serious" />
+        <ConditionGlyph kind="alert" />
+        alert
         <ConditionGlyph kind="warning" />
-        Condition raised
+        warning
+        <ConditionGlyph kind="note" />
+        note · raised or level changed
       </span>
       <span className="inline-flex items-center gap-[5px]">
         <ConditionGlyph kind="cleared" />

@@ -2,6 +2,8 @@
 // time axis, the unpaired Systems when asked for, and what needs the operator now.
 // Times are epoch milliseconds.
 
+import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
+
 import type { Attention } from './attention-types.ts';
 
 export const RANGES = ['6h', '12h', '24h', '7d'] as const;
@@ -55,9 +57,12 @@ export type ConditionKind =
 // outside it.
 export type ConditionMark = {
   clearedAt: number | undefined;
+  id: string;
   kind: ConditionKind;
+  level: ConditionLevel;
   raisedAt: number;
   subject: string;
+  transitions: ConditionTransition[];
 };
 
 export type Lane = {

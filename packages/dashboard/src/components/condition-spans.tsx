@@ -1,4 +1,4 @@
-import { KIND_NAMES, SEVERITY } from '../lib/conditions.ts';
+import { KIND_NAMES, LEVEL_FILL } from '../lib/conditions.ts';
 import { markSpan } from '../lib/lane.ts';
 import { phraseTitle } from '../lib/phrase.ts';
 import { spanBox } from '../lib/time.ts';
@@ -22,12 +22,6 @@ const conditionLabelPlace = ({ left, width }: { left: number; width: number }) =
   return { over: true, style: { left: `calc(${String(left)}% + 8px)` } };
 };
 
-const FILL = {
-  critical: 'bg-status-critical',
-  serious: 'bg-status-serious',
-  warning: 'bg-status-warning',
-} as const;
-
 // Each Condition open during the window as a bar from raised to cleared, with
 // what it was and when beside it, one to a line.
 export function ConditionSpans({
@@ -40,32 +34,58 @@ export function ConditionSpans({
   window: Window;
 }) {
   const timeZone = useTimeZone();
-  if (conditions.length === 0) {
+  const visible = conditions.filter(
+    (mark) => mark.raisedAt <= window.to && (mark.clearedAt ?? window.to) >= window.from,
+  );
+  if (visible.length === 0) {
     return (
       <p className="text-[12.5px] leading-[18px] text-muted-foreground">None in this range.</p>
     );
   }
   return (
-    <div className="relative overflow-hidden" style={{ height: conditions.length * ROW_PX }}>
-      {conditions.map((mark, row) => {
+    <div className="relative overflow-hidden" style={{ height: visible.length * ROW_PX }}>
+      {visible.map((mark, row) => {
         const end = mark.clearedAt ?? window.to;
         const { left, width } = spanBox({ end, start: mark.raisedAt }, window);
         const what = `${KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : ` ${mark.subject}`}`;
         const labelStyle = conditionLabelPlace({ left, width });
         return (
-          <div
-            key={`${mark.kind}-${mark.subject}-${String(mark.raisedAt)}`}
-            style={{ height: ROW_PX }}
-          >
-            <div
-              className={cn('absolute h-2 min-w-[3px] rounded-[2px]', FILL[SEVERITY[mark.kind]])}
-              style={{
-                left: `${String(left)}%`,
-                top: row * ROW_PX + 5,
-                width: `${String(width)}%`,
-              }}
-              title={phraseTitle([`${what}, `, ...markSpan(mark, now)], timeZone) ?? what}
-            />
+          <div key={mark.id} style={{ height: ROW_PX }}>
+            {mark.transitions.map((transition, index) => {
+              const next = mark.transitions[index + 1];
+              if (
+                transition.kind === 'cleared' ||
+                transition.at > window.to ||
+                (next?.at ?? end) < window.from
+              ) {
+                return null;
+              }
+              const segment = spanBox({ end: next?.at ?? end, start: transition.at }, window);
+              return (
+                <div
+                  className={cn(
+                    'absolute h-2 min-w-[3px] rounded-[2px]',
+                    LEVEL_FILL[transition.level],
+                  )}
+                  // oxlint-disable-next-line react/no-array-index-key -- recording order distinguishes equal timestamps.
+                  key={index}
+                  style={{
+                    left: `${String(segment.left)}%`,
+                    top: row * ROW_PX + 5,
+                    width: `${String(segment.width)}%`,
+                  }}
+                  title={
+                    phraseTitle(
+                      [
+                        `${what}, ${transition.level}${transition.backfilled ? ' (Backfilled level)' : ''}, `,
+                        ...markSpan(mark, now),
+                      ],
+                      timeZone,
+                    ) ?? what
+                  }
+                />
+              );
+            })}
             <span
               className={cn(
                 'absolute text-xs whitespace-nowrap text-muted-foreground',

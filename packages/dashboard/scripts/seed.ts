@@ -72,10 +72,10 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: (t) => (isWorkHour(t) ? 38 + 20 * Math.sin(t / (20 * MINUTE)) : 6),
-    // `/backup` is nearly full, so the facts card shows a mount in orange.
+    // Each mount has a different Hub level in the seeded Conditions.
     disks: [
-      { mount: '/', totalGib: 500, usedFraction: 0.62 },
-      { mount: '/data', totalGib: 3600, usedFraction: 0.58 },
+      { mount: '/', totalGib: 500, usedFraction: 0.82 },
+      { mount: '/data', totalGib: 3600, usedFraction: 0.72 },
       { mount: '/backup', totalGib: 4000, usedFraction: 0.97 },
     ],
     memoryTotalBytes: 32 * GIB,
@@ -95,7 +95,7 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: () => 4,
-    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.94 }],
+    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.72 }],
     memoryTotalBytes: 4 * GIB,
     name: 'gateway-1',
     platform: 'linux',
@@ -890,6 +890,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: SYSTEM,
   });
   conditions.push({
+    backfilled: true,
     clearedAt: -(4.8 * DAY) / SECOND,
     kind: 'low_disk',
     raisedAt: -(5 * DAY) / SECOND,
@@ -953,16 +954,38 @@ const seedConditions = async (sql: SQL, now: number) => {
   });
   conditions.push({
     kind: 'low_disk',
+    level: 'note',
     raisedAt: -hours(5),
-    reason: '/ is 94% full',
+    reason: '/ is 72% used',
     subject: '/',
     system: 'gateway-1',
   });
   conditions.push({
     kind: 'low_disk',
+    level: 'note',
     raisedAt: -hours(3),
-    reason: '120.0 GiB free of 4000.0 GiB (3.0%).',
+    reason: '/backup is 72% used',
     subject: '/backup',
+    system: SYSTEM,
+    transitions: [
+      { at: -hours(2), level: 'warning', reason: '/backup is 82% used' },
+      { at: -hours(1), level: 'alert', reason: '120.0 GiB free of 4000.0 GiB (3.0%).' },
+    ],
+  });
+  conditions.push({
+    kind: 'low_disk',
+    level: 'warning',
+    raisedAt: -hours(2.5),
+    reason: '/ is 82% used',
+    subject: '/',
+    system: SYSTEM,
+  });
+  conditions.push({
+    kind: 'low_disk',
+    level: 'note',
+    raisedAt: -hours(1.5),
+    reason: '/data is 72% used',
+    subject: '/data',
     system: SYSTEM,
   });
   // The unpaired System keeps the Conditions it left open, and its history.

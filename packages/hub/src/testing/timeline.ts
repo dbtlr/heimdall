@@ -1,3 +1,4 @@
+import type { ConditionLevel } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { refreshSessionInsight } from '../stored-insight.ts';
@@ -93,13 +94,16 @@ export type ProcessFixture = {
 };
 
 export type ConditionFixture = {
+  backfilled?: boolean;
   // Seconds; undefined while the Condition is open.
   clearedAt?: number;
   kind: string;
+  level?: ConditionLevel;
   raisedAt: number;
   reason?: string;
   subject?: string;
   system: string;
+  transitions?: { at: number; level: ConditionLevel; reason?: string }[];
 };
 
 // Stores the stretches and totals of every stale Session, as a running Hub's
@@ -316,15 +320,50 @@ export const timeline = (origin: number) => {
   // Adds a Condition as the Hub stores one: open unless `clearedAt` is given.
   const addCondition = async (
     sql: SQL,
-    { clearedAt, kind, raisedAt, reason = kind, subject = '', system }: ConditionFixture,
+    {
+      backfilled = false,
+      clearedAt,
+      kind,
+      level = kind === 'drift' || kind === 'job_overdue' ? 'warning' : 'alert',
+      raisedAt,
+      reason = kind,
+      subject = '',
+      system,
+      transitions = [],
+    }: ConditionFixture,
   ) => {
-    await sql`
+    const last = transitions.at(-1);
+    const [row]: { id: string }[] = await sql`
       INSERT INTO conditions (
-        system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, cleared_at
+        system, kind, subject, level, raised_at, raised_reason, latest_at, latest_reason, cleared_at
       )
-      VALUES (${system}, ${kind}, ${subject}, ${at(raisedAt)}, ${reason}, ${at(raisedAt)},
-              ${reason}, ${clearedAt === undefined ? null : at(clearedAt)})
+      VALUES (${system}, ${kind}, ${subject}, ${last?.level ?? level}, ${at(raisedAt)}, ${reason}, ${at(last?.at ?? raisedAt)},
+              ${last?.reason ?? reason}, ${clearedAt === undefined ? null : at(clearedAt)})
+      RETURNING id
     `;
+    if (row === undefined) {
+      throw new Error('Condition fixture was not stored.');
+    }
+    await sql`
+      INSERT INTO condition_transitions (condition, action, level, at, reason, backfilled)
+      VALUES (${row.id}, 'raised', ${level}, ${at(raisedAt)}, ${reason}, ${backfilled})
+    `;
+    let previous = level;
+    for (const transition of transitions) {
+      // oxlint-disable-next-line no-await-in-loop -- fixture transitions retain recording order.
+      await sql`
+        INSERT INTO condition_transitions (condition, action, level, previous_level, at, reason)
+        VALUES (${row.id}, 'level_changed', ${transition.level}, ${previous}, ${at(transition.at)}, ${transition.reason ?? reason})
+      `;
+      previous = transition.level;
+    }
+    if (clearedAt !== undefined) {
+      await sql`
+        INSERT INTO condition_transitions (condition, action, level, at, reason, backfilled)
+        VALUES (${row.id}, 'cleared', ${previous}, ${at(clearedAt)}, ${last?.reason ?? reason}, ${backfilled})
+      `;
+    }
+    return row.id;
   };
 
   return { addCondition, addProcess, addSession, addVitals, at };

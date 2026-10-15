@@ -107,6 +107,22 @@ port = 8080
 url = "postgres://heimdall@localhost/heimdall"
 ```
 
+The Hub sets each Condition's level: note, warning, or alert. Disk defaults to note at 70% used, warning at 80%, and alert at 90%, with a five-percentage-point recovery margin. Optional disk limits and per-System overrides belong in the same configuration file:
+
+```toml
+[conditions.disk]
+note = 70
+warning = 80
+alert = 90
+hysteresis = 5
+
+[conditions.systems.laptop-1.disk]
+warning = 85
+alert = 95
+```
+
+Unspecified System limits inherit the fleet's limits. Restart the Hub after changing them. Invalid limits stop startup before database access. [Condition levels and history](docs/spec.md#condition-levels-and-history) describes levels, migration, and recovery rules.
+
 ### Pairing a System
 
 Each System pairs with the Hub once, and the Hub keeps only SHA-256 hashes of the tokens and codes it issues ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)). Pairing works whether `serve` runs or not, and needs no restart.

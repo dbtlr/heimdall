@@ -1,19 +1,17 @@
-import { VitalsSampleSchema } from '@heimdall/schema';
-import type { VitalsSample } from '@heimdall/schema';
+import { OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
+import type { ConditionLevel, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { DISK_LIMITS } from './condition-limits.ts';
+import type { ConditionLimits, DiskLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
-// What decides the Conditions about a System as a whole. The evaluator takes
-// them as a parameter, so Hub configuration can supply them later.
+// Stale time limits and disk limits used by each evaluation pass.
 export type SystemConditionThresholds = {
-  // A mount's free space, as a fraction of its size, above which low disk
-  // clears. Between this and `lowDiskBelow` an open Condition is held.
-  lowDiskClearAbove: number;
-  // A mount's free space, as a fraction of its size, below which low disk is raised.
-  lowDiskBelow: number;
+  disk: DiskLimits;
+  systems: ConditionLimits['systems'];
   // How long a System that sleeps may go unheard from before it is stale.
   sleepingStaleAfterMs: number;
   // How long an always-on System may go unheard from before it is stale.
@@ -21,15 +19,16 @@ export type SystemConditionThresholds = {
 };
 
 export const SYSTEM_CONDITION_THRESHOLDS: SystemConditionThresholds = {
-  lowDiskBelow: 0.1,
-  lowDiskClearAbove: 0.15,
+  disk: DISK_LIMITS,
   sleepingStaleAfterMs: 7 * 24 * 60 * 60_000,
   staleAfterMs: 10 * 60_000,
+  systems: new Map(),
 };
 
 // What the Hub should do with one Condition: raise it with a reason (or update
 // the reason of the open one), clear it, or leave it as it is.
 type Verdict = { raise: string } | 'clear' | 'hold';
+type DiskVerdict = { raise: string; level: ConditionLevel } | 'clear' | 'hold';
 
 type Disk = VitalsSample['disks'][number];
 
@@ -103,23 +102,30 @@ const tighter = (a: Disk, b: Disk) => {
     : a;
 };
 
-// Low disk: a mount is low below `lowDiskBelow` free and recovers above
-// `lowDiskClearAbove`, so one that hovers near the limit does not flap.
-// A mount with no size has no free fraction and is left as it is.
+// Escalation is immediate. On recovery, only levels at or below the current
+// one retain their hysteresis band; a drop can skip levels or clear outright.
 const diskVerdict = (
   disk: Disk,
-  { lowDiskBelow, lowDiskClearAbove }: SystemConditionThresholds,
-): Verdict => {
+  limits: DiskLimits,
+  current: ConditionLevel | undefined,
+): DiskVerdict => {
   const free = freeOf(disk);
   if (free === undefined) {
     return 'hold';
   }
-  if (free.fraction < lowDiskBelow) {
-    return {
-      raise: `${bytesText(free.bytes)} free of ${bytesText(disk.totalBytes)} (${(free.fraction * 100).toFixed(1)}%).`,
-    };
+  const used = (100 * disk.usedBytes) / disk.totalBytes;
+  const levels = ['note', 'warning', 'alert'] as const;
+  const currentRank = current === undefined ? -1 : levels.indexOf(current);
+  for (const level of levels.toReversed()) {
+    const recovering = levels.indexOf(level) <= currentRank;
+    if (used >= limits[level] || (recovering && used >= limits[level] - limits.hysteresis)) {
+      return {
+        level,
+        raise: `${bytesText(free.bytes)} free of ${bytesText(disk.totalBytes)} (${(free.fraction * 100).toFixed(1)}%).`,
+      };
+    }
   }
-  return free.fraction > lowDiskClearAbove ? 'clear' : 'hold';
+  return 'clear';
 };
 
 const DISKS_SCHEMA = VitalsSampleSchema.shape.disks;
@@ -133,13 +139,16 @@ export const FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60_000;
 // The mounts in the System's latest Vitals sample stamped no later than
 // `now` plus the tolerance, or undefined when it has none the Hub can read.
 // The Hub does not store when it received a sample.
-const latestDisks = async (tx: SQL, system: string, now: number): Promise<Disk[] | undefined> => {
-  const [row]: { disks: unknown }[] = await tx`
-    SELECT disks FROM vitals_samples
+const latestDisks = async (tx: SQL, system: string, now: number) => {
+  const [row]: { disks: unknown; t: Date }[] = await tx`
+    SELECT disks, t FROM vitals_samples
     WHERE system = ${system} AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
     ORDER BY t DESC LIMIT 1
   `;
-  return DISKS_SCHEMA.safeParse(row?.disks).data;
+  const disks = DISKS_SCHEMA.safeParse(row?.disks).data;
+  return row === undefined || disks === undefined
+    ? undefined
+    : { disks, old: now - row.t.getTime() > OLD_EVIDENCE_MS };
 };
 
 type Held = { last_seen_at: Date | null; sleeps: boolean | null };
@@ -176,10 +185,14 @@ const SYSTEM_KINDS = ['system_stale', 'low_disk'] as const satisfies readonly Co
 // is no longer paired and so is no longer judged.
 const withdraw = async (tx: SQL, { now, system }: { now: Date; system: string }) => {
   await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
-  await tx`
-    UPDATE conditions SET cleared_at = GREATEST(raised_at, ${now})
+  const open: { kind: (typeof SYSTEM_KINDS)[number]; subject: string }[] = await tx`
+    SELECT kind, subject FROM conditions
     WHERE system = ${system} AND kind IN ${tx([...SYSTEM_KINDS])} AND cleared_at IS NULL
   `;
+  for (const { kind, subject } of open) {
+    // oxlint-disable-next-line no-await-in-loop -- each clearing shares this transaction.
+    await clear(tx, { kind, now, subject, system });
+  }
 };
 
 // Raises and clears one System's stale System and low disk Conditions under
@@ -211,11 +224,7 @@ export const evaluateSystem = (
     }
     const now = clock();
     const at = new Date(now);
-    const apply = async (
-      kind: (typeof SYSTEM_KINDS)[number],
-      subject: string,
-      verdict: Verdict,
-    ) => {
+    const apply = async (kind: 'system_stale', subject: string, verdict: Verdict) => {
       if (verdict === 'clear') {
         await clear(tx, { kind, now: at, subject, system });
       } else if (verdict !== 'hold') {
@@ -234,29 +243,52 @@ export const evaluateSystem = (
       }),
     );
 
-    const disks = await latestDisks(tx, system, now);
-    if (disks === undefined) {
+    const latest = await latestDisks(tx, system, now);
+    if (latest === undefined) {
       return;
     }
-    const open: { subject: string }[] = await tx`
-      SELECT subject FROM conditions
+    const open: { subject: string; level: ConditionLevel }[] = await tx`
+      SELECT subject, level FROM conditions
       WHERE system = ${system} AND kind = 'low_disk' AND cleared_at IS NULL
     `;
     const mounts = new Map<string, Disk>();
-    for (const disk of disks) {
+    for (const disk of latest.disks) {
       const other = mounts.get(disk.mount);
       mounts.set(disk.mount, other === undefined ? disk : tighter(other, disk));
     }
     const subjects = new Set([...mounts.keys(), ...open.map((condition) => condition.subject)]);
+    const levels = new Map(open.map(({ subject, level }) => [subject, level]));
+    const limits = thresholds.systems.get(system) ?? thresholds.disk;
     for (const subject of subjects) {
       const disk = mounts.get(subject);
       // A mount that left the samples recovered or was unmounted.
-      // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
-      await apply(
-        'low_disk',
-        subject,
-        disk === undefined ? 'clear' : diskVerdict(disk, thresholds),
-      );
+      const verdict = disk === undefined ? 'clear' : diskVerdict(disk, limits, levels.get(subject));
+      const current = levels.get(subject);
+      const order = ['note', 'warning', 'alert'];
+      // Old Vitals cannot establish recovery, including a mount missing from
+      // that sample. Explicit unpairing still clears under its own rule.
+      if (
+        latest.old &&
+        current !== undefined &&
+        (verdict === 'clear' ||
+          (verdict !== 'hold' && order.indexOf(verdict.level) < order.indexOf(current)))
+      ) {
+        continue;
+      }
+      if (verdict === 'clear') {
+        // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
+        await clear(tx, { kind: 'low_disk', now: at, subject, system });
+      } else if (verdict !== 'hold') {
+        // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
+        await raise(tx, {
+          kind: 'low_disk',
+          level: verdict.level,
+          now: at,
+          reason: verdict.raise,
+          subject,
+          system,
+        });
+      }
     }
   });
 

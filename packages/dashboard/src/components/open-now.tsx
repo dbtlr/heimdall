@@ -48,6 +48,7 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
           hash={anchorOf(item)}
           params={{ name: item.system }}
           to="/systems/$name"
+          title={item.level === undefined ? 'Evidence old or unknown' : `Hub level: ${item.level}`}
         >
           <ConditionGlyph className="self-center" kind={attentionMark(item)} />
           {ATTENTION_NAMES[item.kind]}
@@ -81,8 +82,8 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
   );
 }
 
-// Everything that needs the operator now across the Systems shown: the
-// confirmed failures first, then the unconfirmed evidence under its own
+// Open Conditions across the Systems shown: current evidence first, then
+// evidence old or unknown under its own
 // heading, each row linking to the System's page at that item.
 export function OpenNow({ items, now }: { items: readonly Attention[]; now: number }) {
   const { confirmed, unconfirmed } = rankAttention(items);
@@ -91,7 +92,7 @@ export function OpenNow({ items, now }: { items: readonly Attention[]; now: numb
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">
         {items.length === 0
           ? 'Open now'
-          : `Needs you · ${String(confirmed.length)} open${unconfirmed.length > 0 ? `, ${String(unconfirmed.length)} unconfirmed` : ''}`}
+          : `Open now · ${String(confirmed.length)} open${unconfirmed.length > 0 ? `, ${String(unconfirmed.length)} with evidence old or unknown` : ''}`}
       </h2>
       {items.length === 0 && <p>Nothing is open.</p>}
       {items.length > 0 && (
@@ -122,7 +123,7 @@ export function OpenNow({ items, now }: { items: readonly Attention[]; now: numb
                   className="border-b border-dashed pt-3 pb-1 text-left text-xs font-normal text-muted-foreground italic max-sm:block max-sm:border-0 max-sm:pt-2"
                   colSpan={7}
                 >
-                  Unconfirmed evidence, not failures
+                  Evidence old or unknown
                 </th>
               </tr>
               {unconfirmed.map((item) => (
