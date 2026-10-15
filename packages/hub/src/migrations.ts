@@ -1844,6 +1844,20 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 24,
   },
+  {
+    sql: `
+      ALTER TABLE vitals_samples ADD COLUMN processes jsonb;
+      CREATE TABLE hot_process_evaluations (
+        system text PRIMARY KEY REFERENCES systems (name),
+        through timestamptz NOT NULL,
+        dirty_from timestamptz,
+        pending_from timestamptz,
+        coverage jsonb NOT NULL DEFAULT '{}',
+        limits jsonb NOT NULL
+      );
+    `,
+    version: 25,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

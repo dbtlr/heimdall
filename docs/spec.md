@@ -186,6 +186,59 @@ Each duration must fit its window. CPU's note duration must be less than its war
 Unknown fields and invalid inherited combinations stop `serve` before it opens the database.
 Restarting the Hub applies changed limits to subsequent judgments, including its latest stored window, without rewriting recorded history.
 
+### Hot processes
+
+The Hub raises `hot_process` for an individual process above 0.5 CPU core for 30 measured minutes within an hour at note,
+or 120 measured minutes within four hours at warning.
+One core means one CPU second per elapsed second, regardless of the System's core count.
+Equality with the core limit is quiet. Duration equality qualifies.
+Only the process's own user and system CPU time counts, excluding descendants and reaped children.
+Each subject identifies a boot, PID, exact kernel lifetime identifier, and reported executable name. Separate lifetimes never share busy time.
+Reasons and dashboard labels name the executable and PID.
+
+The Collector shares one process-table pass with Harness tracking per Vitals sample.
+An optional `processes` field carries the five hottest measured processes, each with its executable name, PID, lifetime identifier, CPU cores, and resident bytes.
+It never carries arguments or environment variables.
+Executable lookup falls back to the platform's accounting name when unreadable, which can be truncated.
+The first reported fallback name stays attached to that lifetime, so changing an accounting name or losing read permission cannot clear a still-hot process.
+The Collector keeps these names and confirmed executable names in `process-names.sqlite` under its configured state directory.
+Collector restarts preserve those labels while discarding CPU baselines. Confirmed absence, replacement, or a new boot removes the old name.
+Only a change between two confirmed executable names establishes an executable replacement.
+An empty or invalid name leaves that PID unknown without discarding other processes.
+Linux uses its boot ID and kernel start ticks. macOS uses `kern.bootsessionuuid` and libproc's full 64-bit process unique identifier.
+XNU exempts `PROC_PIDUNIQIDENTIFIERINFO` from the same-user check, allowing root-owned processes to be observed without the privileged BSD start-time query.
+The [kernel access policy](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c) and [API structure](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h) define this query.
+A denied unique-identifier query leaves that process unknown.
+CPU rates use monotonic elapsed time. A baseline, a counter decrease, changed identity, or invalid interval contributes no busy time.
+Credited intervals cannot exceed 15 seconds, the monotonic interval, the wall-time interval, or the increase in uptime.
+A wall-time or monotonic gap over 30 seconds is unknown. Failed probes omit process evidence while preserving host Vitals.
+Harness tracking consumes a successful table read even when host Vitals fail.
+A host Vitals read has a 15-second deadline. A timed-out read stays the only host read in flight until it settles, and its late result is discarded.
+Later sampling attempts still read processes while that host read is pending.
+
+A complete census includes every enumerated PID, unreadable PIDs, and the highest measured CPU rate omitted from the top five.
+An omitted process is known quiet only when its PID was readable and the omitted ceiling does not exceed the Hub's core limit.
+Otherwise its CPU is unknown. Absence from the top five alone never establishes recovery or exit.
+Each census list is limited to 4,096 PIDs. Overflow makes the census partial, disabling absence and omitted-quiet inference.
+Top-five readings remain usable with a partial census.
+Report delivery splits batches by encoded bytes as well as sample count, preserving the Report size cap.
+
+Measured busy time, unknown intervals, freshness, level changes, historical replay, and recovery follow the load rules above.
+An alive process can step down or clear after enough measured quiet time rules out its held level.
+A fresh complete census that no longer contains its PID confirms exit and clears immediately.
+A changed boot, a replacement lifetime identifier, or a confirmed executable replacement also ends the previous subject.
+A present PID outside the top five does not confirm reuse. Its earlier lifetime can remain uncertain until replacement or absence is observed.
+Old evidence cannot lower or clear a current Condition, including by exit.
+The Hub stores coverage for each subject, and the dashboard uses it only when it matches the latest Vitals sample.
+Silence, missing fields from older Collectors, and unreadable processes never establish recovery.
+
+`[conditions.process]` configures `cores = 0.5`, `noteMinutes = 30`, `noteWindowMinutes = 60`,
+`warningMinutes = 120`, and `warningWindowMinutes = 240` by default.
+`[conditions.systems.<System>.process]` overrides individual fields, inheriting the rest.
+The core limit must be finite and positive. Durations and windows use the load bounds and ordering rules above.
+Invalid inherited combinations stop startup before database access. Restarting the Hub applies changed limits without rewriting history.
+Process evidence remains in raw Vitals samples and does not change Vitals rollups or Session insight.
+
 ## Drift
 
 The Collector hashes every file in its `files` records with SHA-256 when it starts, right after the `files` records change, and an hour after the last time it hashed them. Recording a run, an application, or the same `files` record again does not start a pass. It follows symbolic links and hashes one file at a time, reading each as a stream, so a large file is never held in memory, and reading no more than the file's size when it opened it, so a file that keeps growing cannot stall a pass. It reads no file a provisioner keeps as its own record, and hashes only the paths its own `files` records name. A pass stops between chunks when the Collector stops. A read that hangs, as on an unreachable network mount, cannot be cancelled and holds the pass until the operating system returns. Each file is in one of four states:
@@ -374,7 +427,14 @@ The Collector watches the process table for Harness root processes and reports t
 - `rssBytes` is the sum of the tree's resident memory at `lastSeenAt`, which counts shared pages once per process. `peakRssBytes` is the highest of those the Collector saw.
 - One Harness process can run several Sessions in turn, and one Session can run in several processes in turn. The Hub links each stretch of a Session to the process that ran it by Harness, System, working directory, and time, and only when the match is unambiguous, as [Linking Harness processes to Sessions](#linking-harness-processes-to-sessions) describes.
 
-**How it is read.** The Collector reads the table once per 15-second Vitals interval, in one pass whatever the number of Harnesses. On Linux it reads each process's `/proc/<pid>/stat`, at most 64 at once, and the `exe` and `cwd` links only of processes whose command name could be a Harness. On macOS it runs `ps -axww -o pid=,ppid=,rss=,etime=,time=,ucomm=` once, and asks libproc in libSystem, through `bun:ffi`, for the executable path of each candidate named above (`proc_pidpath`), and for the working directory of each root and the start the kernel recorded for each Harness process (`proc_pidinfo`), since `ps` has neither exactly and `lsof` is a heavy way to ask. No column or call reads a process's arguments or environment.
+**How it is read.** The Collector shares one table pass per 15-second Vitals interval between Harness tracking and hot-process observations.
+On Linux it reads each process's `/proc/<pid>/stat`, at most 64 at once.
+It reads `exe` links for Harness candidates and the hottest processes, and `cwd` links for Harness roots.
+On macOS it runs `ps -axww -o pid=,ppid=,rss=,etime=,time=,ucomm=` once.
+Through libproc in libSystem and `bun:ffi`, `proc_pidpath` resolves executable paths for Harness candidates and the hottest processes.
+`proc_pidinfo` reads each root's working directory and exact BSD start where permitted.
+It also reads every process's cross-user lifetime identifier for hot-process observations, which `ps` does not supply.
+No column or call reads a process's arguments or environment.
 
 **Identity.** A process is its System, Harness, pid, and start. Within one Collector run, a pid read again is the same process when the kernel's record of its start is the same: the start in clock ticks since boot on Linux, and the start time the kernel recorded on macOS. A wall-clock step moves neither, and a process's `startedAt` is the one the Collector computed when it first saw the process, so a step never splits a running process. On macOS, when the kernel will not give a process's start, the start is the time `etime` ago, to the second, and a pid seen again with a start more than 5 seconds apart is a new process. The Hub matches a section to its rows by Harness, pid, and a start within the same 5 seconds; when a pid was reused within them, each process takes the row whose start is closest, and each row is taken by one process. Across a Collector restart, a Linux start is computed again from the boot time, which moves with every wall-clock step since boot; a restart after a step of more than 5 seconds splits each running process into the row the Hub closes as missed and a new one.
 

@@ -1,9 +1,9 @@
 import type { SQL } from 'bun';
 
 import type { ConditionLimits } from './condition-limits.ts';
-import { recordClosedOccurrence } from './conditions.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
+import { recordSampledEpisodes } from './sampled-history.ts';
 
 type Step = { level: Level; reason: string };
 type Episode = {
@@ -12,7 +12,6 @@ type Episode = {
   steps: [Step, ...Step[]];
 };
 type Recovered = Episode & { kind: Kind; until: Date };
-type Span = { kind: Kind; sample_from: Date; sample_until: Date };
 
 const KINDS: Kind[] = ['high_cpu', 'high_memory'];
 
@@ -71,63 +70,23 @@ export const recordHistoricalLoad = async (
     now: Date;
   },
 ) => {
-  const episodes = replayEpisodes(rows, limits, through);
-  const inserted: Span[] = [];
-  let pendingFrom: Date | undefined;
   const first = rows[0];
-  if ((episodes.recovered.length === 0 && episodes.open.size === 0) || first === undefined) {
-    return { inserted, pendingFrom };
+  if (first === undefined) {
+    return { inserted: [], pendingFrom: undefined };
   }
-  const spans: Span[] = await tx`
-    SELECT c.kind, e.sample_from, e.sample_until
-    FROM load_episode_samples e JOIN conditions c ON c.id = e.condition
-    WHERE c.system = ${system} AND c.kind IN ${tx(KINDS)}
-      AND e.sample_until >= ${first.t} AND e.sample_from <= ${through}
-    ORDER BY e.sample_from
-  `;
-  const existing = new Map(KINDS.map((kind) => [kind, spans.filter((span) => span.kind === kind)]));
-  const positions = new Map<Kind, number>();
-  // Each kind's recovered episodes precede its remaining open episode, so
-  // overlap checks advance once through the recorded sample spans.
-  const overlaps = (kind: Kind, from: Date, until: Date) => {
-    const candidates = existing.get(kind) ?? [];
-    let position = positions.get(kind) ?? 0;
-    let span = candidates[position];
-    while (span !== undefined && span.sample_until < from) {
-      position += 1;
-      span = candidates[position];
-    }
-    positions.set(kind, position);
-    return span !== undefined && span.sample_from <= until;
-  };
-  for (const episode of episodes.recovered) {
-    if (overlaps(episode.kind, episode.from, episode.until)) {
-      continue;
-    }
-    // oxlint-disable-next-line no-await-in-loop -- the System lock serializes occurrence insertion.
-    const condition = await recordClosedOccurrence(tx, {
-      kind: episode.kind,
-      now,
+  const episodes = replayEpisodes(rows, limits, through);
+  return recordSampledEpisodes(tx, {
+    completed: episodes.recovered.map((episode) => ({ ...episode, subject: '' })),
+    from: first.t,
+    kinds: KINDS,
+    now,
+    pending: [...episodes.open].map(([kind, episode]) => ({
+      from: episode.from,
+      kind,
       steps: episode.steps,
       subject: '',
-      system,
-    });
-    // oxlint-disable-next-line no-await-in-loop -- span and Timeline must commit together.
-    await tx`
-      INSERT INTO load_episode_samples (condition, sample_from, sample_until)
-      VALUES (${condition}, ${episode.from}, ${episode.until})
-    `;
-    inserted.push({ kind: episode.kind, sample_from: episode.from, sample_until: episode.until });
-  }
-  // Keep unrecorded episodes in the next replay even after their measured
-  // busy time has left the rolling window and only unknown time retains them.
-  for (const [kind, episode] of episodes.open) {
-    if (
-      !overlaps(kind, episode.from, through) &&
-      (pendingFrom === undefined || episode.from < pendingFrom)
-    ) {
-      pendingFrom = episode.from;
-    }
-  }
-  return { inserted, pendingFrom };
+    })),
+    system,
+    through,
+  });
 };

@@ -1,9 +1,9 @@
 // Asks the macOS kernel, through libproc's `proc_pidinfo` and `proc_pidpath`,
 // for what `ps` cannot give exactly: a process's working directory, its
 // executable's path, and the start time the kernel recorded for it. The calls are made in the Collector's own
-// process and start nothing, and only for the few Harness processes. Each
-// answers null for a process it may not inspect, which belongs to another
-// user, and when libproc cannot be loaded.
+// process and start nothing. Hot-process lifetimes use the cross-user unique
+// identifier instead of the privileged BSD start-time query. A denied query
+// or unavailable libproc returns null.
 
 // PROC_PIDVNODEPATHINFO returns a proc_vnodepathinfo: the working directory's
 // vnode_info (152 bytes) and path (1024 bytes), then the root directory's.
@@ -27,7 +27,14 @@ const START_SECONDS_OFFSET = 120;
 const START_MICROS_OFFSET = 128;
 const MICROS_PER_SECOND = 1_000_000n;
 
-type ProcPidInfo = (
+// XNU exempts this flavor from the same-user check. The API struct is 56
+// bytes; p_uniqueid is the uint64 after its 16-byte executable UUID.
+// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h
+const PROC_PIDUNIQIDENTIFIERINFO = 17;
+const UNIQUE_INFO_SIZE = 56;
+const UNIQUE_ID_OFFSET = 16;
+
+export type ProcPidInfo = (
   pid: number,
   flavor: number,
   arg: bigint,
@@ -118,4 +125,22 @@ export const darwinKernelStart = async (pid: number): Promise<number | null> => 
     buffer.readBigUInt64LE(START_SECONDS_OFFSET) * MICROS_PER_SECOND +
     buffer.readBigUInt64LE(START_MICROS_OFFSET);
   return Number(micros);
+};
+
+// Keep the full kernel identifier as decimal text; uint64 IDs can exceed the
+// precision of a JavaScript number and must never merge after rounding.
+export const uniqueIdWith = (procPidInfo: ProcPidInfo, pid: number): string | null => {
+  const buffer = Buffer.alloc(UNIQUE_INFO_SIZE);
+  if (
+    procPidInfo(pid, PROC_PIDUNIQIDENTIFIERINFO, 0n, buffer, UNIQUE_INFO_SIZE) < UNIQUE_INFO_SIZE
+  ) {
+    return null;
+  }
+  const id = buffer.readBigUInt64LE(UNIQUE_ID_OFFSET);
+  return id === 0n ? null : String(id);
+};
+
+export const darwinProcessIdentity = async (pid: number): Promise<string | null> => {
+  const procPidInfo = (await libProc())?.procPidInfo;
+  return procPidInfo === undefined ? null : uniqueIdWith(procPidInfo, pid);
 };

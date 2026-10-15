@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
 import { ConditionMarks } from './condition-marks.tsx';
 import { ConditionSpans } from './condition-spans.tsx';
+import { ConditionOccurrence } from './timeline-rail.tsx';
 
 const occurrence: ConditionMark = {
   clearedAt: undefined,
@@ -66,4 +67,22 @@ test('an open occurrence ahead of a rolled-back clock has no future bar or label
   );
   expect(html).toContain('None in this range.');
   expect(html).not.toContain('Low disk');
+});
+
+test('hot process spans and Timeline name the executable and PID without exposing its identity tuple', () => {
+  const process: ConditionMark = {
+    ...occurrence,
+    kind: 'hot_process',
+    subject: JSON.stringify(['boot-1', 42, '123', 'compiler']),
+  };
+  const views = [
+    <ConditionSpans conditions={[process]} now={100} window={{ from: 0, to: 100 }} />,
+    <ConditionOccurrence entry={{ ...process, reason: 'CPU load' }} now={100} />,
+  ];
+  for (const view of views) {
+    const html = renderToStaticMarkup(view);
+    expect(html).toContain('compiler (PID 42)');
+    expect(html).toContain('Hot process');
+    expect(html).not.toContain('boot-1');
+  }
 });

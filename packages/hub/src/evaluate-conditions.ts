@@ -2,6 +2,7 @@ import type { SQL } from 'bun';
 
 import { evaluateDrift } from './drift.ts';
 import { describeError } from './errors.ts';
+import { evaluateHotProcessConditions } from './hot-process-conditions.ts';
 import { evaluateJobConditions } from './job-conditions.ts';
 import { evaluateLoadConditions } from './load-conditions.ts';
 import { evaluateServiceConditions } from './service-conditions.ts';
@@ -38,6 +39,7 @@ export const evaluateConditions = (
     () => evaluateJobConditions(sql, clock),
     () => evaluateSystemConditions(sql, clock, thresholds),
     () => evaluateLoadConditions(sql, clock, thresholds),
+    () => evaluateHotProcessConditions(sql, clock, thresholds),
     () => evaluateDrift(sql, clock),
     () => evaluateServiceConditions(sql, clock),
   ]);

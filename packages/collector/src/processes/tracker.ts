@@ -123,8 +123,8 @@ export const createProcessTracker = ({
     enclosing?.pending.push({ cpuMicros: tracked.readCpuMicros, ticksLeft: ABSORB_TICKS });
   };
 
-  const rootsAt = async (at: number) => {
-    const roots = findHarnessRoots(await reader.table());
+  const rootsAt = async (at: number, entries?: readonly ProcessEntry[]) => {
+    const roots = findHarnessRoots(entries ?? (await reader.table()));
     return Promise.all(
       roots.map(async (root) => ({ at, cwd: await reader.cwdOf(root.entry.pid), root })),
     );
@@ -140,9 +140,8 @@ export const createProcessTracker = ({
       );
       ended = ended.filter((p) => !gone.has(`${keyOf(p)}:${String(p.startedAt)}`));
     },
-    tick: async () => {
-      const at = now();
-      const seen = await rootsAt(at);
+    tick: async (entries?: readonly ProcessEntry[], at = now()) => {
+      const seen = await rootsAt(at, entries);
       const next = new Map<string, Tracked>();
       const replaced: Tracked[] = [];
       const reapedNow = new Map<string, number>();

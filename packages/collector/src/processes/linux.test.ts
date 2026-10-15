@@ -92,6 +92,20 @@ const fixtureFs = (processes: Record<number, Fixture>) => {
 const readerOf = (fs: ProcFs) =>
   createLinuxReader({ clockTicks: CLOCK_TICKS, fs, pageSize: PAGE_SIZE });
 
+test('the census includes unreadable processes and boot identity is independent of wall-clock boot time', async () => {
+  const { files, fs } = fixtureFs({
+    1: { stat: stat(1, 'launchd', { ppid: 0 }) },
+    2: { stat: 'unreadable' },
+  });
+  files.set('/proc/sys/kernel/random/boot_id', 'boot-a\n');
+  const reader = readerOf(fs);
+  expect(await reader.snapshot()).toMatchObject({ presentPids: [1, 2] });
+  expect((await reader.snapshot()).entries.map((p) => p.pid)).toEqual([1]);
+  expect(await reader.bootId()).toBe('boot-a');
+  files.set('/proc/stat', 'btime 123\n');
+  expect(await reader.bootId()).toBe('boot-a');
+});
+
 test('reads a process from its stat line: name, parent, CPU time with reaped children, memory, and start', async () => {
   const { fs } = fixtureFs({
     42: {

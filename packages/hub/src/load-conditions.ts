@@ -6,32 +6,10 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 import { recordHistoricalLoad } from './load-history.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
+import { trackEpisodeSample } from './sampled-history.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
 const KINDS: Kind[] = ['high_cpu', 'high_memory'];
-
-const trackSample = (
-  tx: SQL,
-  {
-    system,
-    kind,
-    at,
-    terminal = false,
-  }: {
-    system: string;
-    kind: Kind;
-    at: Date;
-    terminal?: boolean;
-  },
-) => tx`
-  INSERT INTO load_episode_samples (condition, sample_from, sample_until)
-  SELECT id, ${at}, ${at} FROM conditions
-  WHERE system = ${system} AND kind = ${kind} AND cleared_at IS NULL
-  ON CONFLICT (condition) DO UPDATE SET
-    sample_from = LEAST(load_episode_samples.sample_from, excluded.sample_from),
-    sample_until = CASE WHEN ${terminal} THEN excluded.sample_until
-      ELSE GREATEST(load_episode_samples.sample_until, excluded.sample_until) END
-`;
 
 const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: ConditionLimits) =>
   sql.begin(async (tx) => {
@@ -81,7 +59,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
     }
     const old = now - latest.t.getTime() > OLD_EVIDENCE_MS;
     let pendingFrom = cursor?.pending_from ?? undefined;
-    let backfilled: { kind: Kind; sample_from: Date; sample_until: Date }[] = [];
+    let backfilled: Awaited<ReturnType<typeof recordHistoricalLoad>>['inserted'] = [];
     if (
       cursor?.dirty_from != null ||
       ((old || pendingFrom !== undefined) && (cursor === undefined || latest.t > cursor.through))
@@ -90,7 +68,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       // duplicate. A subsequent live recovery trims it to the actual sample.
       for (const { kind } of held) {
         // oxlint-disable-next-line no-await-in-loop -- all spans share the System lock.
-        await trackSample(tx, { at: latest.t, kind, system });
+        await trackEpisodeSample(tx, { at: latest.t, kind, subject: '', system });
       }
       const history = await recordHistoricalLoad(tx, {
         limits: selected,
@@ -148,7 +126,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
             continue;
           }
           // oxlint-disable-next-line no-await-in-loop -- all changes share the System transaction.
-          await trackSample(tx, { at: row.t, kind, system, terminal: true });
+          await trackEpisodeSample(tx, { at: row.t, kind, subject: '', system, terminal: true });
           // oxlint-disable-next-line no-await-in-loop -- record recovery with its sampled span.
           await clear(tx, { kind, now: new Date(now), subject: '', system });
           current.delete(kind);
@@ -167,14 +145,14 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
             system,
           });
           // oxlint-disable-next-line no-await-in-loop -- metadata shares the Condition transaction.
-          await trackSample(tx, { at: row.t, kind, system });
+          await trackEpisodeSample(tx, { at: row.t, kind, subject: '', system });
           current.set(kind, qualifying.level);
         }
       }
     }
     for (const kind of KINDS) {
       // oxlint-disable-next-line no-await-in-loop -- extend open spans through unknown evidence too.
-      await trackSample(tx, { at: latest.t, kind, system });
+      await trackEpisodeSample(tx, { at: latest.t, kind, subject: '', system });
     }
     await tx`
       INSERT INTO load_evaluations (system, through, cpu_known, memory_known, pending_from)

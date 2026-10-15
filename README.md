@@ -144,6 +144,22 @@ percent = 95
 
 Quiet readings can leave a recent pattern open. Missing samples never establish recovery. Completed episodes remain in the Timeline, including those found in delayed Reports. See [sustained and recurring load](docs/spec.md#sustained-and-recurring-load) for sample coverage, recovery, and configuration rules. Upgrade the Hub before the dashboard and Collectors so its migration has applied and it can store macOS pressure. Older Collectors remain compatible, but macOS high-memory judgments need the new pressure field.
 
+Hot-process Conditions name the executable and PID when one process exceeds half a core for 30 measured minutes within an hour at note, or two hours within four hours at warning. CPU excludes descendants. Confirmed exit clears immediately; unknown readings preserve the stored level. The Collector reports the five hottest processes and bounded coverage evidence, without arguments or environment variables.
+
+```toml
+[conditions.process]
+cores = 0.5
+noteMinutes = 30
+noteWindowMinutes = 60
+warningMinutes = 120
+warningWindowMinutes = 240
+
+[conditions.systems.laptop-1.process]
+cores = 0.75
+```
+
+System overrides inherit unspecified fleet values. Upgrade the Hub before Collectors to store the additive process evidence. See [hot processes](docs/spec.md#hot-processes) for identity, coverage, recovery, and configuration rules.
+
 ### Pairing a System
 
 Each System pairs with the Hub once, and the Hub keeps only SHA-256 hashes of the tokens and codes it issues ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)). Pairing works whether `serve` runs or not, and needs no restart.

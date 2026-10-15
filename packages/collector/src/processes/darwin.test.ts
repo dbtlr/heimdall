@@ -2,7 +2,10 @@ import { expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { ProcessObservationSchema } from '@heimdall/schema';
+
 import { createDarwinReader, parsePs, PS_COLUMNS } from './darwin.ts';
+import { createProcessObserver } from './observation.ts';
 
 const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
 
@@ -20,6 +23,44 @@ const PS = `
 
 test('names the columns it asks ps for, none of which is the command line or the environment', () => {
   expect(PS_COLUMNS).toBe('pid=,ppid=,rss=,etime=,time=,ucomm=');
+});
+
+test('a root-owned hot process is measured through its unique identity when the BSD start query is denied', async () => {
+  let at = NOW;
+  let cpu = '0:00.00';
+  const reader = createDarwinReader({
+    bootId: () => Promise.resolve('macos-boot'),
+    cwdOf: () => Promise.resolve(null),
+    kernelStartOf: () => Promise.resolve(null),
+    now: () => at,
+    pathOf: () => Promise.resolve(null),
+    processIdentityOf: () => Promise.resolve('18446744073709551615'),
+    ps: () => Promise.resolve(`42 1 4096 00:30 ${cpu} fseventsd`),
+  });
+  const observer = createProcessObserver();
+  const observe = async () =>
+    observer.observe({
+      ...(await reader.snapshot()),
+      at,
+      bootId: await reader.bootId(),
+      monotonicMs: at - NOW,
+      nameOf: reader.nameOf,
+      uptimeSeconds: 1000 + (at - NOW) / 1000,
+    });
+  await observe();
+  at += 15_000;
+  cpu = '0:15.00';
+  const second = await observe();
+  expect(second.top).toEqual([
+    {
+      cpuCores: 1,
+      name: 'fseventsd',
+      pid: 42,
+      rssBytes: 4096 * 1024,
+      start: '18446744073709551615',
+    },
+  ]);
+  expect(ProcessObservationSchema.safeParse(second).success).toBe(true);
 });
 
 test('a name with spaces is read whole, and is not cut at a slash', () => {
@@ -126,7 +167,7 @@ test('a start from the elapsed time is to the second, however far into the secon
   expect(launchd?.startedAt).toBe(NOW - ((12 * 24 + 3) * 3600 + 4 * 60 + 5) * 1000);
 });
 
-test("a Harness process's start is the kernel's, to the second, and the elapsed time stands in when the kernel will not say", async () => {
+test("every process's start is the kernel's, to the second, and the elapsed time stands in when the kernel will not say", async () => {
   const asked: number[] = [];
   // 2 hours and 10.4 seconds before NOW, in microseconds.
   const kernel = (NOW - 7_210_400) * 1000;
@@ -143,7 +184,7 @@ test("a Harness process's start is the kernel's, to the second, and the elapsed 
 
   const table = await reader.table();
 
-  expect(asked).toEqual([612, 700]);
+  expect(asked.toSorted((a, b) => a - b)).toEqual([1, 612, 613, 700, 801]);
   expect(table.find((p) => p.pid === 612)).toMatchObject({
     kernelStart: kernel,
     startedAt: NOW - 7_211_000,

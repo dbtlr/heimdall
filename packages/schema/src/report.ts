@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ChecksSectionSchema } from './checks-section.ts';
 import { HarnessProcessesSectionSchema } from './harness-processes-section.ts';
 import { HarnessesSectionSchema } from './harnesses-section.ts';
+import { ProcessObservationSchema } from './process-observation.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
 import { TranscriptsSectionSchema } from './transcripts.ts';
@@ -60,6 +61,10 @@ export const VitalsSampleSchema = z.object({
     totalBytes: bytes,
     usedBytes: bytes,
   }),
+  // Process read failures and older Collectors leave coverage unknown without
+  // costing the rest of the Vitals sample.
+  // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
+  processes: ProcessObservationSchema.optional().catch(undefined),
   t: epochMs,
   uptimeSeconds: amount,
 });

@@ -135,6 +135,46 @@ const flush = (
   });
 
 describe('flushing the queue', () => {
+  test('splits a census backlog by encoded bytes without losing or repeating samples', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 1000, stateDir: dir.path });
+    for (let t = 1; t <= 500; t += 1) {
+      queue.append({
+        ...sample(t),
+        processes: {
+          bootId: 'boot-a',
+          census: {
+            kind: 'complete',
+            presentPids: Array.from({ length: 4096 }, (_, i) => 10_000_000 + i),
+            remainderMaxCores: 0,
+            unknownPids: [],
+          },
+          intervalMs: 15_000,
+          top: [],
+        },
+      });
+    }
+    const hub = scriptedHub([]);
+    await flushQueue({
+      identity,
+      now: () => 9000,
+      queue,
+      sections: NO_SECTIONS,
+      send: hub.send,
+      timeZone: NO_TIME_ZONE,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+    expect(hub.reports.length).toBeGreaterThan(1);
+    expect(
+      hub.reports.every((sent) => Buffer.byteLength(JSON.stringify(sent)) <= MAX_REPORT_BYTES),
+    ).toBe(true);
+    expect(hub.reports.flatMap((sent) => sent.samples.map((reading) => reading.t))).toEqual(
+      Array.from({ length: 500 }, (_, i) => i + 1),
+    );
+    expect(queue.oldest(1)).toEqual([]);
+    queue.close();
+  });
+
   test('sends the backlog oldest first in Reports of at most the batch size', async () => {
     await using dir = await tempStateDir();
     const queue = await openQueue({ capacity: 10, stateDir: dir.path });

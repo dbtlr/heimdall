@@ -6,6 +6,8 @@ import { filesRecordDigest } from '@heimdall/schema';
 
 import type { Attention, AttentionKind } from './attention-types.ts';
 import { readAttention } from './attention.ts';
+import { readFleetOverview } from './fleet-overview.ts';
+import { readSystemRecords } from './system-detail.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -110,6 +112,89 @@ const only = async (h: Hub, kind: AttentionKind): Promise<Attention> => {
   }
   return item;
 };
+
+test('a hot process keeps its stored level while a newer sample awaits evaluation', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await addCondition(h.db.sql, {
+    kind: 'hot_process',
+    level: 'warning',
+    raisedAt: -3600,
+    reason: 'compiler (PID 42) above 0.5 cores for 120 minutes in 240 minutes.',
+    subject: JSON.stringify(['boot-1', 42, '123', 'compiler']),
+    system: 'server-1',
+  });
+  expect(await only(h, 'hot_process')).toMatchObject({
+    checkedAt: NOW,
+    evidence: 'unknown',
+    level: 'warning',
+    reason: 'compiler (PID 42) above 0.5 cores for 120 minutes in 240 minutes.',
+  });
+  const fleet = await readFleetOverview(h.db.sql, { now: NOW, range: '6h' });
+  expect(fleet.lanes.find(({ name }) => name === 'server-1')).toMatchObject({
+    conditions: [{ kind: 'hot_process', level: 'warning' }],
+    status: 'needs_you',
+  });
+  const systemRecords = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+  expect(systemRecords.timeline).toMatchObject([
+    { kind: 'hot_process', level: 'warning', transitions: [{ kind: 'raised', level: 'warning' }] },
+  ]);
+});
+
+test.each([
+  {
+    covered: true,
+    evidence: 'current',
+    label: 'current for this process',
+    latest: NOW,
+    through: NOW,
+  },
+  {
+    covered: false,
+    evidence: 'unknown',
+    label: 'unknown for an uncovered process',
+    latest: NOW,
+    through: NOW,
+  },
+  {
+    covered: true,
+    evidence: 'unknown',
+    label: 'unknown when coverage predates the sample',
+    latest: NOW,
+    through: NOW - 15_000,
+  },
+  {
+    covered: true,
+    evidence: 'old',
+    label: 'old when the newest sample is old',
+    latest: NOW - 3 * HOUR,
+    through: NOW - 3 * HOUR,
+  },
+])('hot process evidence is $label', async ({ covered, latest, through, evidence }) => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { receivedAt: latest });
+  const subject = JSON.stringify(['boot-1', 42, '123', 'compiler']);
+  await addCondition(h.db.sql, {
+    kind: 'hot_process',
+    level: 'warning',
+    raisedAt: -4 * 3600,
+    subject,
+    system: 'server-1',
+  });
+  const coverage = JSON.stringify({
+    [subject]: covered,
+    [JSON.stringify(['boot-1', 43, '123', 'compiler'])]: true,
+  });
+  await h.db.sql`
+    INSERT INTO hot_process_evaluations (system, through, coverage, limits)
+    VALUES ('server-1', ${new Date(through)}, ${coverage}::text::jsonb, '{}'::jsonb)
+  `;
+  expect(await only(h, 'hot_process')).toMatchObject({
+    checkedAt: latest,
+    evidence,
+    level: 'warning',
+  });
+});
 
 const drift = (h: Hub, path = ZSHRC) =>
   addCondition(h.db.sql, { kind: 'drift', raisedAt: -3600, subject: path, system: 'server-1' });
