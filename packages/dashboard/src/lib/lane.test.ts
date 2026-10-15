@@ -188,9 +188,12 @@ test('a Harness has its color, and an unknown one the neutral one', () => {
 test('a Condition mark spans from raised to cleared, or to now while open', () => {
   const mark: ConditionMark = {
     clearedAt: Date.UTC(2026, 9, 13, 3, 40),
+    id: '1',
     kind: 'job_failing',
+    level: 'alert',
     raisedAt: Date.UTC(2026, 9, 13, 3, 4),
     subject: 'photos-sync',
+    transitions: [],
   };
   expect(text(markSpan(mark, NOW))).toBe('03:04 to 03:40');
   expect(text(markSpan({ ...mark, raisedAt: mark.raisedAt - 24 * 60 * MINUTE }, NOW))).toBe(
@@ -202,9 +205,12 @@ test('a Condition mark spans from raised to cleared, or to now while open', () =
 test('condition mark titles name the kind and subject', () => {
   const mark: ConditionMark = {
     clearedAt: undefined,
+    id: '2',
     kind: 'job_failing',
+    level: 'alert',
     raisedAt: Date.UTC(2026, 9, 13, 3, 4),
     subject: 'photos-sync',
+    transitions: [],
   };
   expect(text(raisedTitle(mark, NOW))).toBe('Job failing, photos-sync, since 03:04');
   expect(clearedTitle({ ...mark, kind: 'service_down', subject: 'ollama' })).toBe(

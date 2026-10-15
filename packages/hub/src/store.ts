@@ -10,6 +10,7 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { clear, raise } from './conditions.ts';
 import { storeHarnessProcesses } from './harness-processes.ts';
 import { storable, storableJson } from './storable.ts';
 
@@ -169,10 +170,7 @@ export const storeReport = (
       await storeChecks(tx, { receivedAt: seenAt, report, section: report.checks });
     }
     // A stored Report ends a run of rejections (ADR-0005).
-    await tx`
-      UPDATE conditions SET cleared_at = GREATEST(raised_at, ${seenAt})
-      WHERE system = ${report.system} AND kind = ${REPORTS_REJECTED} AND cleared_at IS NULL
-    `;
+    await clear(tx, { kind: REPORTS_REJECTED, now: seenAt, subject: '', system: report.system });
     return { skipped: report.samples.length - stored.length, stored: stored.length };
   });
 
@@ -408,11 +406,5 @@ export const recordRejection = (
     const at = new Date(receivedAt);
     const why = storable(reason);
     await seeSystem(tx, { at: receivedAt, system });
-    await tx`
-      INSERT INTO conditions (system, kind, raised_at, raised_reason, latest_at, latest_reason)
-      VALUES (${system}, ${REPORTS_REJECTED}, ${at}, ${why}, ${at}, ${why})
-      ON CONFLICT (system, kind, subject) WHERE cleared_at IS NULL DO UPDATE SET
-        latest_at = excluded.latest_at,
-        latest_reason = excluded.latest_reason
-    `;
+    await raise(tx, { kind: REPORTS_REJECTED, now: at, reason: why, subject: '', system });
   });

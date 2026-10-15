@@ -9,6 +9,7 @@ import {
   parseSampleInput,
   readSample,
   readSystemDetail,
+  readSystemPage,
   readSystemRecords,
 } from './system-detail.ts';
 
@@ -27,6 +28,72 @@ const GIB = 1024 ** 3;
 
 // Seconds after NOW, as the Hub's fixtures take them.
 const { addCondition, addProcess, addSession } = timeline(NOW);
+
+test('a System page keeps health, history, and attention in one snapshot during a concurrent level change', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  const occurrence = await addCondition(h.db.sql, {
+    kind: 'low_disk',
+    level: 'note',
+    raisedAt: -600,
+    subject: '/',
+    system: 'server-1',
+  });
+  const writer = await h.db.sql.reserve();
+  await writer.unsafe('BEGIN');
+  await writer.unsafe('LOCK TABLE vitals_rollups IN ACCESS EXCLUSIVE MODE');
+  let writing = true;
+  const input = { name: 'server-1', now: NOW, range: '12h' as const };
+  const pending = readSystemPage(h.db.sql, input);
+  try {
+    let blocked = false;
+    const deadline = Date.now() + 3000;
+    while (!blocked && Date.now() < deadline) {
+      // oxlint-disable-next-line no-await-in-loop -- observe the real reader reaching the gate.
+      const rows: { blocked: boolean }[] = await h.db.sql`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query LIKE '%FROM vitals_rollups%'
+        ) AS blocked
+      `;
+      blocked = rows[0]?.blocked === true;
+      if (!blocked) {
+        // oxlint-disable-next-line no-await-in-loop -- bounded wait for another connection.
+        await Bun.sleep(10);
+      }
+    }
+    expect(blocked).toBe(true);
+    await writer`SELECT 1 FROM systems WHERE name = 'server-1' FOR UPDATE`;
+    await writer`UPDATE conditions SET level = 'alert', latest_reason = '90% used' WHERE id = ${occurrence}`;
+    await writer`
+      INSERT INTO condition_transitions (condition, action, level, previous_level, at, reason)
+      VALUES (${occurrence}, 'level_changed', 'alert', 'note', ${new Date(NOW)}, '90% used')
+    `;
+    await writer.unsafe('COMMIT');
+    writing = false;
+    const page = await pending;
+    expect(page?.detail.status).toBe('up');
+    expect(page?.detail.conditions[0]?.level).toBe('note');
+    expect(page?.records.timeline[0]?.transitions.map(({ level }) => level)).toEqual(['note']);
+    expect(page?.attention[0]?.level).toBe('note');
+
+    const fresh = await readSystemPage(h.db.sql, input);
+    expect(fresh?.detail.status).toBe('needs_you');
+    expect(fresh?.detail.conditions[0]?.level).toBe('alert');
+    expect(fresh?.records.timeline[0]?.transitions.map(({ level }) => level)).toEqual([
+      'note',
+      'alert',
+    ]);
+    expect(fresh?.attention[0]?.level).toBe('alert');
+  } finally {
+    if (writing) {
+      await writer.unsafe('ROLLBACK');
+    }
+    writer.release();
+    await pending;
+  }
+});
 
 // The times of a sample every 15 seconds from `from` until before `to`, in
 // seconds after NOW.
@@ -343,9 +410,21 @@ describe('readSystemDetail', () => {
 
     const { conditions } = await detail(h);
 
-    expect(conditions).toEqual([
-      { clearedAt: undefined, kind: 'drift', raisedAt: NOW - 2 * DAY, subject: '/etc/a' },
-      { clearedAt: NOW - HOUR, kind: 'service_down', raisedAt: NOW - 4000_000, subject: 'web' },
+    expect(conditions).toMatchObject([
+      {
+        clearedAt: undefined,
+        kind: 'drift',
+        level: 'warning',
+        raisedAt: NOW - 2 * DAY,
+        subject: '/etc/a',
+      },
+      {
+        clearedAt: NOW - HOUR,
+        kind: 'service_down',
+        level: 'alert',
+        raisedAt: NOW - 4000_000,
+        subject: 'web',
+      },
     ]);
   });
 });
@@ -422,8 +501,14 @@ describe('an unpaired System', () => {
       status: 'unpaired',
     });
     expect(found.cpu).toHaveLength(1);
-    expect(found.conditions).toEqual([
-      { clearedAt: undefined, kind: 'low_disk', raisedAt: NOW - 3600_000, subject: '/' },
+    expect(found.conditions).toMatchObject([
+      {
+        clearedAt: undefined,
+        kind: 'low_disk',
+        level: 'alert',
+        raisedAt: NOW - 3600_000,
+        subject: '/',
+      },
     ]);
   });
 
@@ -788,7 +873,86 @@ describe('readSystemRecords', () => {
     });
   });
 
-  test('puts on the Timeline the Conditions of the last 7 days and those still open, newest received first', async () => {
+  test('keeps recurrences distinct when their identity and raised timestamp match', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    const ended = await addCondition(h.db.sql, {
+      clearedAt: -600,
+      kind: 'low_disk',
+      level: 'alert',
+      raisedAt: -600,
+      reason: 'Earlier occurrence',
+      subject: '/',
+      system: 'server-1',
+    });
+    const open = await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -600,
+      reason: 'Later recurrence',
+      subject: '/',
+      system: 'server-1',
+    });
+    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+    expect(entries.map(({ id }) => id)).toEqual([open, ended]);
+    expect(entries.map(({ transitions }) => transitions.map(({ kind }) => kind))).toEqual([
+      ['raised'],
+      ['raised', 'cleared'],
+    ]);
+  });
+
+  test('keeps level changes inside their occurrence in recording order, with backfilled levels distinguished', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addCondition(h.db.sql, {
+      backfilled: true,
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -600,
+      reason: '70% used',
+      subject: '/',
+      system: 'server-1',
+      transitions: [
+        { at: -300, level: 'warning', reason: '80% used' },
+        { at: -300, level: 'alert', reason: '90% used' },
+      ],
+    });
+    await addCondition(h.db.sql, {
+      clearedAt: -60,
+      kind: 'service_down',
+      raisedAt: -400,
+      subject: 'web',
+      system: 'server-1',
+    });
+
+    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+    expect(entries.map(({ kind }) => kind)).toEqual(['service_down', 'low_disk']);
+    expect(entries[1]).toMatchObject({
+      level: 'alert',
+      raisedAt: NOW - 600_000,
+      transitions: [
+        { at: NOW - 600_000, backfilled: true, kind: 'raised', level: 'note', reason: '70% used' },
+        {
+          at: NOW - 300_000,
+          backfilled: false,
+          kind: 'level_changed',
+          level: 'warning',
+          previousLevel: 'note',
+          reason: '80% used',
+        },
+        {
+          at: NOW - 300_000,
+          backfilled: false,
+          kind: 'level_changed',
+          level: 'alert',
+          previousLevel: 'warning',
+          reason: '90% used',
+        },
+      ],
+    });
+  });
+
+  test('puts on the Timeline the Conditions of the last 7 days and those still open, newest raised first', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await hear(h, 'laptop-1');
@@ -828,7 +992,7 @@ describe('readSystemRecords', () => {
     const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
 
     expect(entries.map(({ kind }) => kind)).toEqual(['low_disk', 'service_down', 'drift']);
-    expect(entries[2]).toEqual({
+    expect(entries[2]).toMatchObject({
       clearedAt: undefined,
       kind: 'drift',
       raisedAt: NOW - 10 * DAY,

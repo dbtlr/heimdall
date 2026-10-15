@@ -5,7 +5,7 @@ description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, 
 # Glossary
 
 Heimdall observes a fleet and the agent work done on it, whatever provisions its Systems. The terms below are Heimdall's own.
-Condition levels and level-change history describe the M7 model in [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md), ahead of runtime implementation.
+Condition levels and level-change history follow [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
 
 ## Language
 

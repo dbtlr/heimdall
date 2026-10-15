@@ -3,11 +3,11 @@
 // and each set of checks or runs that stopped arriving while the System still
 // reports. Times are epoch milliseconds.
 
+import type { ConditionLevel } from '@heimdall/schema';
+
 import type { Disk, JobRun, ScheduleEntry, ServiceCheck } from './system-detail-types.ts';
 
-// Evidence older than this is old: two missed hourly resends of a check set or
-// run set.
-export const OLD_EVIDENCE_MS = 2 * 60 * 60_000;
+export { OLD_EVIDENCE_MS } from '@heimdall/schema';
 
 // How far an item's evidence holds: `current` when the check, run, or sample it
 // rests on arrived within OLD_EVIDENCE_MS, or the Condition is about silence
@@ -71,7 +71,12 @@ export type AttentionFacts =
 
 export type AttentionKind = AttentionFacts['kind'];
 
-export type Attention = AttentionFacts & {
+type EvidenceOnly = Extract<AttentionFacts, { kind: 'checks_missing' | 'file_unreadable' }>;
+
+export type Attention = (
+  | (Exclude<AttentionFacts, EvidenceOnly> & { level: ConditionLevel })
+  | (EvidenceOnly & { level?: never })
+) & {
   // When the check, run, sample, or rejection the item rests on arrived:
   // check_sets or run_sets received_at for Services, files, and jobs; the
   // newest Vitals sample for low disk; last seen for a stale System; the latest

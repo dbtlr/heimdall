@@ -376,6 +376,59 @@ describe('stretches', () => {
 });
 
 describe('conditions', () => {
+  test('includes a level change in the range when its occurrence was raised before the range', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -2 * 86_400,
+      subject: '/',
+      system: 'server-1',
+      transitions: [{ at: -1800, level: 'alert', reason: '90% used' }],
+    });
+    const marks = (await lane(h, 'server-1', NOW, '6h')).conditions;
+    expect(marks).toMatchObject([
+      {
+        level: 'alert',
+        transitions: [
+          { at: NOW - 2 * 86_400_000, kind: 'raised', level: 'note' },
+          { at: NOW - 1800_000, kind: 'level_changed', level: 'alert' },
+        ],
+      },
+    ]);
+  });
+
+  test('notes stay visible without making a System need you, while an old alert still does', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: [NOW - 3 * HOUR] });
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -3600,
+      subject: '/',
+      system: 'server-1',
+    });
+
+    const notes = await overview(h);
+    expect(notes.lanes.find(({ name }) => name === 'server-1')?.status).toBe('up');
+    expect(notes.attention.find(({ kind }) => kind === 'low_disk')?.level).toBe('note');
+
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'alert',
+      raisedAt: -300,
+      subject: '/data',
+      system: 'server-1',
+    });
+    const alerts = await overview(h);
+    expect(alerts.lanes.find(({ name }) => name === 'server-1')?.status).toBe('needs_you');
+    expect(alerts.attention.find(({ kind }) => kind === 'low_disk')).toMatchObject({
+      evidence: 'old',
+      level: 'alert',
+    });
+  });
+
   test('marks those raised or cleared inside the range, with the times that fall outside it', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
@@ -401,14 +454,21 @@ describe('conditions', () => {
 
     const marks = (await lane(h, 'server-1')).conditions;
 
-    expect(marks).toEqual([
+    expect(marks).toMatchObject([
       {
         clearedAt: NOW - (day / 2) * 1000,
         kind: 'service_down',
+        level: 'alert',
         raisedAt: NOW - 2 * day * 1000,
         subject: 'a',
       },
-      { clearedAt: undefined, kind: 'drift', raisedAt: NOW - 3600_000, subject: '' },
+      {
+        clearedAt: undefined,
+        kind: 'drift',
+        level: 'warning',
+        raisedAt: NOW - 3600_000,
+        subject: '',
+      },
     ]);
   });
 });

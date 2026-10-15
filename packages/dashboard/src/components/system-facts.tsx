@@ -1,11 +1,14 @@
+import type { ConditionLevel } from '@heimdall/schema';
 import type { ReactNode } from 'react';
 
+import { LEVEL_FILL } from '../lib/conditions.ts';
 import { diskUsage, formatLoad } from '../lib/facts.ts';
 import { harnessName } from '../lib/lane.ts';
 import { whenAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
+import { MARK_COLOR } from './attention-status.tsx';
 import { PhraseText } from './date-time.tsx';
 
 const LOAD_PERIODS = ['1 min', '5 min', '15 min'] as const;
@@ -37,8 +40,8 @@ function Fact({
   );
 }
 
-function DiskRow({ disk }: { disk: Disk }) {
-  const { nearlyFull, percent, text } = diskUsage(disk);
+function DiskRow({ disk, level }: { disk: Disk; level: ConditionLevel | undefined }) {
+  const { percent, text } = diskUsage(disk);
   return (
     <li className="py-[3px]">
       <p className="flex items-baseline gap-2">
@@ -47,7 +50,7 @@ function DiskRow({ disk }: { disk: Disk }) {
         <span
           className={cn(
             'text-[12.5px] text-muted-foreground',
-            nearlyFull && 'text-[color-mix(in_srgb,var(--status-serious)_70%,white)]',
+            level !== undefined && MARK_COLOR[level],
           )}
         >
           {percent}%
@@ -62,7 +65,7 @@ function DiskRow({ disk }: { disk: Disk }) {
         role="meter"
       >
         <div
-          className={cn('h-full', nearlyFull ? 'bg-status-serious' : 'bg-[#8fa7d6]')}
+          className={cn('h-full', level === undefined ? 'bg-[#8fa7d6]' : LEVEL_FILL[level])}
           style={{ width: `${String(percent)}%` }}
         />
       </div>
@@ -96,7 +99,7 @@ function Harnesses({ installs }: { installs: readonly HarnessInstall[] }) {
 export function SystemFacts({
   detail,
 }: {
-  detail: Pick<SystemDetail, 'harnesses' | 'latest' | 'now'>;
+  detail: Pick<SystemDetail, 'conditions' | 'harnesses' | 'latest' | 'now'>;
 }) {
   const { harnesses, latest, now } = detail;
   if (latest === undefined && harnesses === undefined) {
@@ -131,7 +134,18 @@ export function SystemFacts({
             {latest.disks.map((disk, index) => (
               // A mount can be listed twice.
               // oxlint-disable-next-line react/no-array-index-key
-              <DiskRow disk={disk} key={`${disk.mount}-${String(index)}`} />
+              <DiskRow
+                disk={disk}
+                level={
+                  detail.conditions.find(
+                    (condition) =>
+                      condition.kind === 'low_disk' &&
+                      condition.subject === disk.mount &&
+                      condition.clearedAt === undefined,
+                  )?.level
+                }
+                key={`${disk.mount}-${String(index)}`}
+              />
             ))}
           </ul>
         </Fact>

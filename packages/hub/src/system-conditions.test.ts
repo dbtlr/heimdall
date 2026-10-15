@@ -79,6 +79,9 @@ const conditionsOf = async (h: Hub, system = 'laptop-1') => {
   return { open: found?.conditions ?? [], timeline: found?.timeline ?? [] };
 };
 
+const diskLevels = async (h: Hub): Promise<{ level: string }[]> =>
+  h.db.sql`SELECT level FROM conditions WHERE kind = 'low_disk'`;
+
 const kinds = (conditions: { kind: string }[]) => conditions.map((c) => c.kind);
 
 describe('stale System', () => {
@@ -365,6 +368,76 @@ describe('a System that is no longer paired', () => {
 });
 
 describe('low disk', () => {
+  test('old Vitals do not lower an open disk level or clear a missing mount', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { disks: [disk('/', 5), disk('/data', 5)] });
+    await evaluate(h, NOW);
+    await send(h, NOW + 3 * 60 * MINUTE, {
+      disks: [disk('/', 50)],
+      sampleAt: NOW + MINUTE,
+    });
+
+    await evaluate(h, NOW + 3 * 60 * MINUTE);
+
+    const open: { subject: string; level: string }[] = await h.db
+      .sql`SELECT subject, level FROM conditions WHERE kind = 'low_disk' AND cleared_at IS NULL ORDER BY subject`;
+    expect(open).toEqual([
+      { level: 'alert', subject: '/' },
+      { level: 'alert', subject: '/data' },
+    ]);
+  });
+
+  test('grades each boundary and retains one occurrence through hysteresis and direct jumps', async () => {
+    await using h = await startHub();
+    const observed: (string | null)[] = [];
+    for (const [index, used] of [
+      69, 70, 79, 80, 89, 90, 85, 84, 75, 74, 65, 64, 92, 72, 64,
+    ].entries()) {
+      const time = NOW + index * MINUTE;
+      // oxlint-disable-next-line no-await-in-loop -- observations arrive in sequence.
+      await send(h, time, { disks: [{ mount: '/', totalBytes: 1000, usedBytes: used * 10 }] });
+      // oxlint-disable-next-line no-await-in-loop -- judge each observation before the next.
+      await evaluate(h, time);
+      // oxlint-disable-next-line no-await-in-loop -- observe each resulting level.
+      const [open]: { level: string }[] = await h.db
+        .sql`SELECT level FROM conditions WHERE kind = 'low_disk' AND cleared_at IS NULL`;
+      observed.push(open?.level ?? null);
+    }
+    expect(observed).toEqual([
+      null,
+      'note',
+      'note',
+      'warning',
+      'warning',
+      'alert',
+      'alert',
+      'warning',
+      'warning',
+      'note',
+      'note',
+      null,
+      'alert',
+      'note',
+      null,
+    ]);
+    const occurrences: { n: number }[] = await h.db
+      .sql`SELECT count(*)::int AS n FROM conditions WHERE kind = 'low_disk'`;
+    expect(occurrences).toEqual([{ n: 2 }]);
+    const events: { action: string; level: string }[] = await h.db
+      .sql`SELECT e.action, e.level FROM condition_transitions e JOIN conditions c ON c.id = e.condition WHERE c.kind = 'low_disk' ORDER BY e.id`;
+    expect(events.map((row) => [row.action, row.level])).toEqual([
+      ['raised', 'note'],
+      ['level_changed', 'warning'],
+      ['level_changed', 'alert'],
+      ['level_changed', 'warning'],
+      ['level_changed', 'note'],
+      ['cleared', 'note'],
+      ['raised', 'alert'],
+      ['level_changed', 'note'],
+      ['cleared', 'note'],
+    ]);
+  });
+
   test('is raised for a mount below 10% free, with the free space and percentage', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 9.9)] });
@@ -381,25 +454,25 @@ describe('low disk', () => {
     ]);
   });
 
-  test('is not raised at exactly 10% free', async () => {
+  test('raises an alert at exactly 10% free', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 10)] });
 
     await evaluate(h, NOW + MINUTE);
 
-    expect((await conditionsOf(h)).open).toEqual([]);
+    expect(await diskLevels(h)).toEqual([{ level: 'alert' }]);
   });
 
-  test('is not raised for a mount that has been between 10% and 15% free all along', async () => {
+  test('raises a warning for a mount between 10% and 15% free', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 12)] });
 
     await evaluate(h, NOW + MINUTE);
 
-    expect((await conditionsOf(h)).open).toEqual([]);
+    expect(await diskLevels(h)).toEqual([{ level: 'warning' }]);
   });
 
-  test('is held between 10% and 15% free and clears above 15%', async () => {
+  test('holds alert through 15% free, then steps down and clears above 35%', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 5)] });
     await evaluate(h, NOW + MINUTE);
@@ -414,10 +487,13 @@ describe('low disk', () => {
 
     await send(h, NOW + 6 * MINUTE, { disks: [disk('/', 15.1)] });
     await evaluate(h, NOW + 7 * MINUTE);
+    expect(await diskLevels(h)).toEqual([{ level: 'warning' }]);
+    await send(h, NOW + 8 * MINUTE, { disks: [disk('/', 36)] });
+    await evaluate(h, NOW + 9 * MINUTE);
     const { open, timeline } = await conditionsOf(h);
     expect(open).toEqual([]);
     expect(timeline).toEqual([
-      { at: NOW + 7 * MINUTE, condition: 'low_disk', kind: 'cleared', subject: '/' },
+      { at: NOW + 9 * MINUTE, condition: 'low_disk', kind: 'cleared', subject: '/' },
       expect.objectContaining({ at: NOW + MINUTE, condition: 'low_disk', kind: 'raised' }),
     ]);
   });
@@ -540,11 +616,14 @@ describe('low disk', () => {
   test('uses the thresholds it is given', async () => {
     await using h = await startHub();
     await send(h, NOW, { disks: [disk('/', 30)] });
-    const tight = { ...SYSTEM_CONDITION_THRESHOLDS, lowDiskBelow: 0.4, lowDiskClearAbove: 0.5 };
+    const tight = {
+      ...SYSTEM_CONDITION_THRESHOLDS,
+      disk: { alert: 90, hysteresis: 5, note: 60, warning: 75 },
+    };
 
     await evaluate(h, NOW + MINUTE, tight);
 
-    expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
+    expect(await diskLevels(h)).toEqual([{ level: 'note' }]);
   });
 
   test('a System with no samples has nothing to judge', async () => {

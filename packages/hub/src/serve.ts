@@ -13,6 +13,8 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
+import { readConditionLimits } from './condition-limits.ts';
+import type { ConditionLimits } from './condition-limits.ts';
 import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
@@ -58,7 +60,12 @@ export const serveAction: ActionHandler<typeof serve> = async ({
     path: servicePaths('hub', homeOf(host.env)).log,
   });
   try {
-    await serveUntilStopped({ clean, log, options, signal });
+    const named =
+      'config' in options && typeof options.config === 'string' ? options.config : undefined;
+    const limits = await readConditionLimits({ cwd: host.cwd, env: host.env, named }).catch(
+      (error: unknown) => log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
+    );
+    await serveUntilStopped({ clean, limits, log, options, signal });
   } finally {
     await stopRotating();
   }
@@ -83,11 +90,13 @@ const loadConfiguredPrices = async (
 
 const serveUntilStopped = async ({
   clean,
+  limits,
   log,
   options,
   signal,
 }: {
   clean: (message: string) => string;
+  limits: ConditionLimits;
   log: RuntimeLog;
   options: Parameters<ActionHandler<typeof serve>>[0]['options'];
   signal: AbortSignal;
@@ -167,7 +176,8 @@ const serveUntilStopped = async ({
         onError: (error) => {
           void log.warn(clean(`Could not judge Conditions: ${describeError(error)}`));
         },
-        task: () => evaluateConditions(sql, Date.now, SYSTEM_CONDITION_THRESHOLDS),
+        task: () =>
+          evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits }),
       });
       stopProjecting = every({
         intervalMs: PROJECT_INTERVAL_MS,

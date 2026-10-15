@@ -9,6 +9,69 @@ import { startTestServer, testDatabase } from './testing/postgres.ts';
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
 
+test('Condition levels preserve legacy occurrences and identify backfilled history', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 22),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await db.sql`
+    INSERT INTO conditions (system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, cleared_at)
+    VALUES ('laptop-1', 'low_disk', '/', '2026-10-01Z', 'disk raised', '2026-10-02Z', 'disk latest', NULL),
+           ('laptop-1', 'drift', '/a', '2026-09-01Z', 'file raised', '2026-09-02Z', 'file latest', '2026-09-03Z')
+  `;
+  const before: Record<string, unknown>[] = await db.sql`SELECT * FROM conditions ORDER BY id`;
+
+  await migrate(db.sql);
+
+  const after: Record<string, unknown>[] = await db.sql`SELECT * FROM conditions ORDER BY id`;
+  expect(after.map(({ level: _level, ...row }) => row)).toEqual(before);
+  expect(after.map((row) => row.level)).toEqual(['alert', 'warning']);
+  const events: {
+    kind: string;
+    action: string;
+    level: string;
+    previous_level: string | null;
+    backfilled: boolean;
+    reason: string;
+    at: Date;
+  }[] = await db.sql`
+    SELECT c.kind, e.action, e.level, e.previous_level, e.backfilled, e.reason, e.at
+    FROM condition_transitions e JOIN conditions c ON c.id = e.condition
+    ORDER BY c.id, e.id
+  `;
+  expect(events).toEqual([
+    {
+      action: 'raised',
+      at: new Date('2026-10-01Z'),
+      backfilled: true,
+      kind: 'low_disk',
+      level: 'alert',
+      previous_level: null,
+      reason: 'disk raised',
+    },
+    {
+      action: 'raised',
+      at: new Date('2026-09-01Z'),
+      backfilled: true,
+      kind: 'drift',
+      level: 'warning',
+      previous_level: null,
+      reason: 'file raised',
+    },
+    {
+      action: 'cleared',
+      at: new Date('2026-09-03Z'),
+      backfilled: true,
+      kind: 'drift',
+      level: 'warning',
+      previous_level: null,
+      reason: 'file latest',
+    },
+  ]);
+});
+
 test('migrate brings an empty database to the latest version', async () => {
   await using db = await testDatabase();
 

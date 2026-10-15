@@ -1,30 +1,63 @@
+import type { ConditionLevel } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { describeError } from './errors.ts';
 import type { ConditionKind } from './store.ts';
 
-// Raises the Condition of `kind` about `subject`, or gives the one already
-// open this reason. An open Condition keeps the time it was raised.
-export const raise = (
-  tx: SQL,
-  {
-    kind,
-    now,
-    reason,
-    subject,
-    system,
-  }: { kind: ConditionKind; now: Date; reason: string; subject: string; system: string },
-) => tx`
-  INSERT INTO conditions (system, kind, subject, raised_at, raised_reason, latest_at, latest_reason)
-  VALUES (${system}, ${kind}, ${subject}, ${now}, ${reason}, ${now}, ${reason})
-  ON CONFLICT (system, kind, subject) WHERE cleared_at IS NULL DO UPDATE SET
-    latest_at = excluded.latest_at,
-    latest_reason = excluded.latest_reason
-  WHERE conditions.latest_reason <> excluded.latest_reason
-`;
+export const FIXED_LEVELS = {
+  drift: 'warning',
+  job_failing: 'alert',
+  job_overdue: 'warning',
+  reports_rejected: 'alert',
+  service_down: 'alert',
+  system_stale: 'alert',
+} as const satisfies Record<Exclude<ConditionKind, 'low_disk'>, ConditionLevel>;
+
+type Judgment = {
+  now: Date;
+  reason: string;
+  subject: string;
+  system: string;
+} & ({ kind: 'low_disk'; level: ConditionLevel } | { kind: keyof typeof FIXED_LEVELS });
+
+// Callers hold the System's row lock in this transaction. Level and history
+// must commit together, including when the Hub's wall clock moves backwards.
+export const raise = async (tx: SQL, judgment: Judgment) => {
+  const { kind, now, reason, subject, system } = judgment;
+  const level = kind === 'low_disk' ? judgment.level : FIXED_LEVELS[kind];
+  const [held]: { id: string; level: ConditionLevel; at: Date }[] = await tx`
+    SELECT c.id, c.level, GREATEST(c.raised_at, (
+      SELECT max(at) FROM condition_transitions WHERE condition = c.id
+    )) AS at
+    FROM conditions c
+    WHERE system = ${system} AND kind = ${kind} AND subject = ${subject} AND cleared_at IS NULL
+  `;
+  // Each rejection is new evidence even with the same reason. Routine
+  // reevaluation of other Conditions does not refresh their evidence.
+  const [changed]: { id: string }[] = await tx`
+    INSERT INTO conditions (system, kind, subject, level, raised_at, raised_reason, latest_at, latest_reason)
+    VALUES (${system}, ${kind}, ${subject}, ${level}, ${now}, ${reason}, ${now}, ${reason})
+    ON CONFLICT (system, kind, subject) WHERE cleared_at IS NULL DO UPDATE SET
+      level = excluded.level,
+      latest_at = excluded.latest_at,
+      latest_reason = excluded.latest_reason
+    WHERE conditions.latest_reason <> excluded.latest_reason OR conditions.level <> excluded.level
+      OR conditions.kind = 'reports_rejected'
+    RETURNING id
+  `;
+  if (changed === undefined || held?.level === level) {
+    return;
+  }
+  const at = new Date(Math.max(now.getTime(), held?.at.getTime() ?? now.getTime()));
+  await tx`
+    INSERT INTO condition_transitions (condition, action, level, previous_level, at, reason)
+    VALUES (${changed.id}, ${held === undefined ? 'raised' : 'level_changed'}, ${level},
+            ${held?.level ?? null}, ${at}, ${reason})
+  `;
+};
 
 // Clears the open Condition of `kind` about `subject`, if there is one.
-export const clear = (
+export const clear = async (
   tx: SQL,
   {
     kind,
@@ -32,10 +65,19 @@ export const clear = (
     subject,
     system,
   }: { kind: ConditionKind; now: Date; subject: string; system: string },
-) => tx`
-  UPDATE conditions SET cleared_at = GREATEST(raised_at, ${now})
-  WHERE system = ${system} AND kind = ${kind} AND subject = ${subject} AND cleared_at IS NULL
-`;
+) => {
+  await tx`
+    WITH cleared AS (
+      UPDATE conditions c SET cleared_at = GREATEST(raised_at, ${now}, (
+        SELECT max(at) FROM condition_transitions WHERE condition = c.id
+      ))
+      WHERE system = ${system} AND kind = ${kind} AND subject = ${subject} AND cleared_at IS NULL
+      RETURNING id, level, cleared_at, latest_reason
+    )
+    INSERT INTO condition_transitions (condition, action, level, at, reason)
+    SELECT id, 'cleared', level, cleared_at, latest_reason FROM cleared
+  `;
+};
 
 // Runs `evaluate` for each System in turn. A System that cannot be judged does
 // not stop the rest; one error then names each such System and why.

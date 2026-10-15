@@ -1,17 +1,11 @@
+import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
+
 import type { ConditionKind } from '../server/fleet-overview-types.ts';
 
-export type Severity = 'critical' | 'serious' | 'warning';
-
-// How much a Condition matters on the overview. The Hub does not rank
-// Conditions; this is the dashboard's own reading.
-export const SEVERITY: Record<ConditionKind, Severity> = {
-  drift: 'warning',
-  job_failing: 'serious',
-  job_overdue: 'warning',
-  low_disk: 'critical',
-  reports_rejected: 'serious',
-  service_down: 'critical',
-  system_stale: 'critical',
+export const LEVEL_FILL: Record<ConditionLevel, string> = {
+  alert: 'bg-status-critical',
+  note: 'bg-status-warning',
+  warning: 'bg-status-serious',
 };
 
 export const KIND_NAMES: Record<ConditionKind, string> = {
@@ -22,4 +16,22 @@ export const KIND_NAMES: Record<ConditionKind, string> = {
   reports_rejected: 'Reports rejected',
   service_down: 'Service down',
   system_stale: 'Stale System',
+};
+
+export const transitionLabel = (transition: ConditionTransition): string => {
+  switch (transition.kind) {
+    case 'raised': {
+      return `Raised at ${transition.level}`;
+    }
+    case 'level_changed': {
+      return `${transition.previousLevel} → ${transition.level}`;
+    }
+    case 'cleared': {
+      return `Cleared at ${transition.level}`;
+    }
+    default: {
+      const _exhaustive: never = transition;
+      return _exhaustive;
+    }
+  }
 };

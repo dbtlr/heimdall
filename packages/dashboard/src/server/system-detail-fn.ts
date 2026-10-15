@@ -1,15 +1,8 @@
 import { notFound } from '@tanstack/react-router';
 import { createServerFn } from '@tanstack/react-start';
 
-import { readAttention } from './attention.ts';
 import { database } from './database.ts';
-import {
-  parseDetailInput,
-  parseSampleInput,
-  readSample,
-  readSystemDetail,
-  readSystemRecords,
-} from './system-detail.ts';
+import { parseDetailInput, parseSampleInput, readSample, readSystemPage } from './system-detail.ts';
 
 // One System's detail over `range` (12h when none is given) with what its
 // provisioner recorded and its Timeline, read at the server's clock. An unpaired
@@ -19,18 +12,11 @@ export const getSystemDetail = createServerFn({ method: 'GET' })
   .handler(async ({ data: { name, range } }) => {
     const sql = await database();
     const now = Date.now();
-    const [detail, records] = await Promise.all([
-      readSystemDetail(sql, { name, now, range }),
-      readSystemRecords(sql, { name, now }),
-    ]);
-    if (detail === undefined) {
+    const page = await readSystemPage(sql, { name, now, range });
+    if (page === undefined) {
       throw notFound();
     }
-    const attention = await readAttention(sql, {
-      now,
-      systems: [{ name, paired: detail.paired }],
-    });
-    return { attention, detail, records };
+    return page;
   });
 
 // The sample of a System nearest `at`, or its newest, for the inspector;

@@ -165,6 +165,7 @@ describe('Drift', () => {
       evidence: 'current',
       firstDetected: NOW - HOUR,
       kind: 'drift',
+      level: 'warning',
       othersMatching: 2,
       record: 'dotfiles',
       sha256: 'b'.repeat(64),

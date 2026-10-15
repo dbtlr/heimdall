@@ -1786,6 +1786,41 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 22,
   },
+  {
+    // Legacy occurrences retain their identity and evidence. Their assigned
+    // levels are marked as backfilled, since no levels were observed then.
+    sql: `
+      ALTER TABLE conditions ADD COLUMN level text;
+      UPDATE conditions SET level = CASE
+        WHEN kind IN ('drift', 'job_overdue') THEN 'warning'
+        ELSE 'alert'
+      END;
+      ALTER TABLE conditions ALTER COLUMN level SET NOT NULL;
+      ALTER TABLE conditions ADD CHECK (level IN ('note', 'warning', 'alert'));
+
+      CREATE TABLE condition_transitions (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        condition bigint NOT NULL REFERENCES conditions (id),
+        action text NOT NULL CHECK (action IN ('raised', 'level_changed', 'cleared')),
+        level text NOT NULL CHECK (level IN ('note', 'warning', 'alert')),
+        previous_level text CHECK (previous_level IN ('note', 'warning', 'alert')),
+        at timestamptz NOT NULL,
+        reason text NOT NULL,
+        backfilled boolean NOT NULL DEFAULT false,
+        CHECK ((action = 'level_changed') = (previous_level IS NOT NULL)),
+        CHECK (previous_level IS NULL OR previous_level <> level)
+      );
+      CREATE INDEX condition_transitions_by_condition ON condition_transitions (condition, id);
+
+      INSERT INTO condition_transitions (condition, action, level, at, reason, backfilled)
+      SELECT id, 'raised', level, raised_at, raised_reason, true
+      FROM conditions ORDER BY id;
+      INSERT INTO condition_transitions (condition, action, level, at, reason, backfilled)
+      SELECT id, 'cleared', level, GREATEST(raised_at, cleared_at), latest_reason, true
+      FROM conditions WHERE cleared_at IS NOT NULL ORDER BY id;
+    `,
+    version: 23,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

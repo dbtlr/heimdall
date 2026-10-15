@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import type { ConditionLevel } from '@heimdall/schema';
+
 import type { Attention, AttentionFacts } from '../server/attention-types.ts';
 import {
   ATTENTION_NAMES,
@@ -33,19 +35,36 @@ const DRIFT: AttentionFacts = {
 };
 
 // An item with sensible defaults: current evidence, checked a minute ago.
-const attention = (
-  facts: AttentionFacts,
-  over: Partial<Omit<Attention, keyof AttentionFacts>> = {},
-): Attention => ({
-  checkedAt: NOW - MINUTE,
-  evidence: 'current',
-  firstDetected: NOW - HOUR,
-  subject: '',
-  system: 'valhalla',
-  unpaired: false,
-  ...over,
-  ...facts,
-});
+type AttentionCommon = Pick<
+  Attention,
+  'checkedAt' | 'evidence' | 'firstDetected' | 'subject' | 'system' | 'unpaired'
+>;
+type AttentionOverrides = Partial<AttentionCommon> & { level?: ConditionLevel };
+
+function attention<F extends AttentionFacts>(
+  facts: F,
+  over?: AttentionOverrides,
+): Extract<Attention, { kind: F['kind'] }>;
+function attention(facts: AttentionFacts, over: AttentionOverrides = {}): Attention {
+  const { level, ...overrides } = over;
+  const common: AttentionCommon = {
+    checkedAt: NOW - MINUTE,
+    evidence: 'current',
+    firstDetected: NOW - HOUR,
+    subject: '',
+    system: 'valhalla',
+    unpaired: false,
+    ...overrides,
+  };
+  if (facts.kind === 'checks_missing' || facts.kind === 'file_unreadable') {
+    return { ...common, ...facts };
+  }
+  return {
+    ...common,
+    ...facts,
+    level: level ?? (facts.kind === 'drift' || facts.kind === 'job_overdue' ? 'warning' : 'alert'),
+  };
+}
 
 const drift = (over: Partial<Extract<AttentionFacts, { kind: 'drift' }>> = {}, subject = '/f') =>
   attention({ ...DRIFT, ...over }, { subject });
@@ -105,7 +124,7 @@ const lowDisk = (disk: { mount: string; totalBytes: number; usedBytes: number } 
 const stale = (lastSeenAt: number | undefined, sleeps = false) =>
   attention({ kind: 'system_stale', lastSeenAt, reason: 'No Report.', sleeps });
 
-const unreadable = (over: Partial<Omit<Attention, keyof AttentionFacts>> = {}) =>
+const unreadable = (over: AttentionOverrides = {}) =>
   attention(
     { kind: 'file_unreadable', record: 'dotfiles', sha256: 'a71c000000000000000009d4' },
     { evidence: 'unknown', subject: '/etc/sudoers.d/fleet', ...over },
@@ -118,6 +137,14 @@ const neverChecked = (set: 'checks' | 'runs') =>
   attention({ kind: 'checks_missing', set }, { checkedAt: undefined, evidence: 'old' });
 
 describe('names and marks', () => {
+  test('keeps a stored level when its evidence becomes old or unknown', () => {
+    const item = { ...lowDisk(undefined), level: 'alert' as const };
+    expect(attentionMark(item)).toBe('alert');
+    expect(attentionMark({ ...item, evidence: 'old' })).toBe('alert');
+    expect(attentionMark({ ...item, evidence: 'unknown' })).toBe('alert');
+    expect(attentionMark({ ...item, level: 'note' })).toBe('note');
+  });
+
   test('Condition kinds keep their names and the two dashboard-only kinds get theirs', () => {
     expect(ATTENTION_NAMES.drift).toBe('Drift');
     expect(ATTENTION_NAMES.system_stale).toBe('Stale System');
@@ -136,14 +163,14 @@ describe('names and marks', () => {
     expect(isConfirmed(missing('checks'))).toBe(false);
   });
 
-  test('a confirmed item takes its Condition severity as its mark', () => {
-    expect(attentionMark(service('systemd', 'caddy.service'))).toBe('critical');
-    expect(attentionMark(failing('launchd', 'x'))).toBe('serious');
+  test('an item takes its stored Condition level as its mark', () => {
+    expect(attentionMark(service('systemd', 'caddy.service'))).toBe('alert');
+    expect(attentionMark(failing('launchd', 'x'))).toBe('alert');
     expect(attentionMark(drift())).toBe('warning');
   });
 
-  test('an unconfirmed item is marked unknown whatever its kind', () => {
-    expect(attentionMark(attention(DRIFT, { evidence: 'old' }))).toBe('unknown');
+  test('only evidence without a Hub Condition is marked unknown', () => {
+    expect(attentionMark(attention(DRIFT, { evidence: 'old' }))).toBe('warning');
     expect(attentionMark(unreadable())).toBe('unknown');
     expect(attentionMark(missing('runs'))).toBe('unknown');
   });
@@ -184,10 +211,10 @@ describe('anchorOf', () => {
 });
 
 describe('rankAttention', () => {
-  test('orders confirmed items by severity, then newest first', () => {
+  test('orders confirmed items by stored level, then newest first', () => {
     const oldDrift = attention(DRIFT, { firstDetected: 1, subject: 'a' });
     const newDrift = attention(DRIFT, { firstDetected: 2, subject: 'b' });
-    const down = service('systemd', 'caddy.service');
+    const down = { ...service('systemd', 'caddy.service'), firstDetected: NOW };
     const failingJob = failing('launchd', 'x');
     const { confirmed } = rankAttention([oldDrift, failingJob, newDrift, down]);
     expect(confirmed).toEqual([down, failingJob, newDrift, oldDrift]);
@@ -233,6 +260,36 @@ describe('rankAttention', () => {
 });
 
 describe('laneSummary', () => {
+  test('counts actionable current Conditions apart from old evidence and notes', () => {
+    const alert = { ...lowDisk(undefined), level: 'alert' as const };
+    const warning = { ...lowDisk(undefined), level: 'warning' as const };
+    const note = { ...lowDisk(undefined), level: 'note' as const };
+    expect(laneSummary([alert, { ...warning, evidence: 'old' }])).toEqual({
+      lead: alert,
+      more: 0,
+      unconfirmed: 1,
+    });
+    const oldAlert = { ...alert, evidence: 'old' as const };
+    expect(laneSummary([oldAlert, warning, note])).toEqual({
+      lead: oldAlert,
+      more: 1,
+      unconfirmed: 1,
+    });
+    expect(laneSummary([alert, note, { ...note, subject: '/data' }])).toEqual({
+      lead: alert,
+      more: 0,
+      unconfirmed: 0,
+    });
+  });
+
+  test('names the worst open level despite old evidence, and leaves notes healthy', () => {
+    const note = { ...lowDisk(undefined), level: 'note' as const };
+    const alert = { ...lowDisk(undefined), evidence: 'old' as const, level: 'alert' as const };
+    const warning = { ...lowDisk(undefined), level: 'warning' as const };
+    expect(laneSummary([warning, note, alert]).lead).toBe(alert);
+    expect(laneSummary([note]).lead).toBeUndefined();
+  });
+
   test('leads with the top confirmed item and counts the rest', () => {
     const down = service('systemd', 'caddy.service');
     const summary = laneSummary([drift(), down, drift({}, '/g'), unreadable(), missing('runs')]);
@@ -444,11 +501,11 @@ describe('evidenceWords: jobs', () => {
 });
 
 describe('evidenceWords: System Conditions', () => {
-  test('low_disk expects 10% free and explains the thresholds in the long form', () => {
+  test('low_disk refers to the Hub limits instead of assuming fleet defaults', () => {
     const words = evidenceWords(lowDisk(undefined), NOW);
-    expect(utc(words.expectedShort)).toBe('At least 10% free');
+    expect(utc(words.expectedShort)).toBe('Within the Hub disk limits');
     expect(utc(words.expected)).toBe(
-      'At least 10% free. The Hub raises this below 10% and clears it above 15%.',
+      'Disk use within the limits configured in the Hub for this System.',
     );
   });
 

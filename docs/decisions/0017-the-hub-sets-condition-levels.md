@@ -82,10 +82,9 @@ The roadmap's later delivery silencing concerns notifications, not hiding Condit
 
 ## Consequences
 
-This ADR establishes the M7 contract ahead of implementation.
-HMD-109 adds stored levels and transitions, Hub limits, graded disk judgments, and dashboard readers in one change, consistent with [ADR-0015](0015-dashboard-is-its-own-app-reading-the-hubs-database.md).
-Until then, the runtime still uses the dashboard's severity table and the raised-and-cleared history described in the [spec](../spec.md).
+Stored levels and transitions, Hub disk limits, graded disk judgments, and dashboard readers implement this contract together, consistent with [ADR-0015](0015-dashboard-is-its-own-app-reading-the-hubs-database.md).
+The [spec](../spec.md#condition-levels-and-history) describes the runtime rules.
 
-HMD-109 must settle migration of existing `low_disk` occurrences and their history before changing the kind or subject that identifies them.
-Existing history has no recorded levels; migration must distinguish a backfilled level from an observed transition rather than inventing past level changes.
+Migration keeps existing `low_disk` identities and occurrence history, assigns alert to legacy disk occurrences, and marks their historical levels as backfilled.
+Subsequent judgments use the graded limits without replacing an open occurrence.
 The configuration shape, migration schema, and dashboard layout are not prescribed here.

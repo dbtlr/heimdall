@@ -1,3 +1,6 @@
+export { ConditionLevelSchema, OLD_EVIDENCE_MS } from './conditions.ts';
+export type { ConditionLevel, ConditionTransition } from './conditions.ts';
+
 export {
   MAX_REPORT_BYTES,
   MAX_SAMPLES_PER_REPORT,
