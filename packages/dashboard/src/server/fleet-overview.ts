@@ -117,6 +117,7 @@ export type BucketRow = {
 
 type LatestRow = {
   cpu_busy_percent: number;
+  disks: NonNullable<Lane['latest']>['disks'];
   memory_used_percent: number | null;
   system: string;
   t: Date;
@@ -277,10 +278,10 @@ const readFleetOverviewSnapshot = async (
     `,
     // One newest sample per System, read through the (system, t) key.
     sql`
-      SELECT s.name AS system, v.t, v.cpu_busy_percent, v.memory_used_percent
+      SELECT s.name AS system, v.t, v.cpu_busy_percent, v.memory_used_percent, v.disks
       FROM systems s
       CROSS JOIN LATERAL (
-        SELECT t, cpu_busy_percent,
+        SELECT t, cpu_busy_percent, disks,
                memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
         FROM vitals_samples
         WHERE system = s.name
@@ -331,7 +332,8 @@ const readFleetOverviewSnapshot = async (
           ? undefined
           : {
               cpuBusyPercent: newest.cpu_busy_percent,
-              memoryUsedPercent: newest.memory_used_percent ?? 0,
+              disks: newest.disks,
+              memoryUsedPercent: newest.memory_used_percent ?? undefined,
               t: newest.t.getTime(),
             },
       name: system.name,

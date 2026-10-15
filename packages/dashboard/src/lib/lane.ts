@@ -71,9 +71,9 @@ const vitalsText = ({
   memoryUsedPercent,
 }: {
   cpuBusyPercent: number;
-  memoryUsedPercent: number;
+  memoryUsedPercent: number | undefined;
 }) =>
-  `CPU ${String(Math.round(cpuBusyPercent))}%, memory ${String(Math.round(memoryUsedPercent))}%`;
+  `CPU ${String(Math.round(cpuBusyPercent))}%, memory ${memoryUsedPercent === undefined ? 'unknown' : `${String(Math.round(memoryUsedPercent))}%`}`;
 
 // The line under a lane's status: its newest CPU and memory, or since when it
 // has been asleep or silent, so old Vitals never read as current. An unpaired

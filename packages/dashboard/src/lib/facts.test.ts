@@ -1,9 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 
-import { diskUsage, formatLoad } from './facts.ts';
+import { diskUsage, formatLoad, fullestDisk } from './facts.ts';
 
 const GIB = 1024 ** 3;
 const TIB = 1024 ** 4;
+
+test('the fullest disk uses exact fractions, ignoring unknown capacities', () => {
+  expect(
+    fullestDisk([
+      { mount: '/unknown', totalBytes: 0, usedBytes: 1 },
+      { mount: '/first', totalBytes: 1000, usedBytes: 802 },
+      { mount: '/fullest', totalBytes: 1000, usedBytes: 804 },
+    ])?.mount,
+  ).toBe('/fullest');
+  expect(fullestDisk([{ mount: '/unknown', totalBytes: 0, usedBytes: 0 }])).toBeUndefined();
+  expect(fullestDisk([])).toBeUndefined();
+});
 
 describe('diskUsage', () => {
   test('gives used of total in GiB, with the percent used', () => {
