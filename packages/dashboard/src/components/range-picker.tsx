@@ -17,7 +17,7 @@ export function RangePicker({ current }: { current: Range }) {
         <Link
           aria-current={range === current ? 'page' : undefined}
           className={cn(
-            'px-[11px] py-1 text-muted-foreground',
+            'flex min-h-11 items-center px-[11px] py-1 text-muted-foreground',
             range === current && 'bg-[#2d3a5c] text-foreground',
           )}
           key={range}

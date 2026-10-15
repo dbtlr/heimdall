@@ -11,6 +11,7 @@ import type { RecordState } from '../lib/recorded.ts';
 import { cn } from '../lib/utils.ts';
 import type { Recorded } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
+import { MoreItems } from './more-items.tsx';
 
 const DOT: Record<RecordState, string> = {
   bad: 'bg-status-critical',
@@ -31,13 +32,22 @@ function Row({
   return (
     <li className="grid grid-cols-[8px_1fr] items-baseline gap-x-3 gap-y-0.5 py-[3px] sm:grid-cols-[8px_minmax(130px,auto)_1fr]">
       <span className={cn('size-2 self-center rounded-full', state !== undefined && DOT[state])} />
-      <b className="font-semibold">{name}</b>
-      <span className="col-start-2 text-muted-foreground sm:col-start-auto">{children}</span>
+      <b className="min-w-0 font-semibold wrap-anywhere">{name}</b>
+      <span className="col-start-2 min-w-0 wrap-anywhere text-muted-foreground sm:col-start-auto">
+        {children}
+      </span>
     </li>
   );
 }
 
-function Group({ children, title }: { children: ReactNode; title: string }) {
+function Group({ children, count, title }: { children: ReactNode; count: number; title: string }) {
+  if (count > 3) {
+    return (
+      <MoreItems label={`${title} (${String(count)})`}>
+        <ul>{children}</ul>
+      </MoreItems>
+    );
+  }
   return (
     <>
       <h3 className="mt-3 mb-0.5 border-t pt-2 text-xs font-normal tracking-[0.06em] text-muted-foreground uppercase first-of-type:mt-0 first-of-type:border-t-0 first-of-type:pt-0">
@@ -60,7 +70,7 @@ export function RecordedPanel({ now, recorded }: { now: number; recorded: Record
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">Recorded</h2>
       {empty && <p>Its provisioner has recorded nothing.</p>}
       {services.length > 0 && (
-        <Group title="Services">
+        <Group count={services.length} title="Services">
           {services.map((service) => {
             const { state, text } = serviceLine(service, now);
             return (
@@ -72,7 +82,7 @@ export function RecordedPanel({ now, recorded }: { now: number; recorded: Record
         </Group>
       )}
       {jobs.length > 0 && (
-        <Group title="Jobs">
+        <Group count={jobs.length} title="Jobs">
           {jobs.map((job) => {
             const { state, text } = jobLine(job, now);
             return (
@@ -84,7 +94,7 @@ export function RecordedPanel({ now, recorded }: { now: number; recorded: Record
         </Group>
       )}
       {files.length > 0 && (
-        <Group title="Files">
+        <Group count={files.length} title="Files">
           {files.map((record) => {
             const { issues, rest, state } = filesLine(record, now);
             return (
@@ -104,7 +114,7 @@ export function RecordedPanel({ now, recorded }: { now: number; recorded: Record
         </Group>
       )}
       {applications.length > 0 && (
-        <Group title="Applications">
+        <Group count={applications.length} title="Applications">
           {applications.map((application) => (
             <Row key={application.name} name={application.name}>
               {applicationLine(application)}

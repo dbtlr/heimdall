@@ -29,6 +29,39 @@ const GIB = 1024 ** 3;
 // Seconds after NOW, as the Hub's fixtures take them.
 const { addCondition, addProcess, addSession } = timeline(NOW);
 
+test('System navigation lists paired Systems with Hub health and keeps the current unpaired System', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await hear(h, 'laptop-1');
+  await addCondition(h.db.sql, {
+    kind: 'low_disk',
+    level: 'note',
+    raisedAt: -60,
+    subject: '/',
+    system: 'laptop-1',
+  });
+  await addCondition(h.db.sql, {
+    kind: 'low_disk',
+    level: 'alert',
+    raisedAt: -60,
+    subject: '/',
+    system: 'server-1',
+  });
+  const page = await readSystemPage(h.db.sql, { name: 'server-1', now: NOW, range: '12h' });
+  expect(page?.navigation).toEqual([
+    { level: undefined, name: 'laptop-1', status: 'up' },
+    { level: 'alert', name: 'server-1', status: 'needs_you' },
+  ]);
+  await unpair(h.db.sql, 'server-1');
+  const retained = await readSystemPage(h.db.sql, { name: 'server-1', now: NOW, range: '12h' });
+  expect(retained?.navigation).toEqual([
+    { level: undefined, name: 'laptop-1', status: 'up' },
+    { level: 'alert', name: 'server-1', status: 'unpaired' },
+  ]);
+  const other = await readSystemPage(h.db.sql, { name: 'laptop-1', now: NOW, range: '12h' });
+  expect(other?.navigation.map(({ name }) => name)).toEqual(['laptop-1']);
+});
+
 test('a System page keeps health, history, and attention in one snapshot during a concurrent level change', async () => {
   await using h = await startHub();
   await hear(h, 'server-1');
