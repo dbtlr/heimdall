@@ -30,3 +30,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0015 — The dashboard is its own app, reading the Hub's database](0015-dashboard-is-its-own-app-reading-the-hubs-database.md)
 - [ADR-0016 — Session stretches and totals are stored, and the Hub refreshes them](0016-session-stretches-and-totals-are-stored-and-refreshed.md)
 - [ADR-0017 — The Hub sets each Condition's level](0017-the-hub-sets-condition-levels.md)
+- [ADR-0018 — The Collector checks package managers on a schedule](0018-collector-checks-package-managers-on-a-schedule.md)
