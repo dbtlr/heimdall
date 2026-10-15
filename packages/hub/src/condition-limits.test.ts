@@ -9,6 +9,36 @@ import { configArgs, configFile, invoke } from './testing/cli.ts';
 import { migrate, report, storeReport, storeToken } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 
+test('hot-process limits inherit individual core and rolling duration settings per System', () => {
+  const limits = parseConditionLimits({
+    process: { cores: 0.75 },
+    systems: { 'laptop-1': { process: { noteMinutes: 20 } } },
+  });
+  expect(limits.process).toEqual({
+    cores: 0.75,
+    noteMinutes: 30,
+    noteWindowMinutes: 60,
+    warningMinutes: 120,
+    warningWindowMinutes: 240,
+  });
+  expect(limits.systems.get('laptop-1')?.process).toEqual({
+    ...limits.process,
+    noteMinutes: 20,
+  });
+  expect(parseConditionLimits(undefined).process.cores).toBe(0.5);
+  for (const process of [
+    { cores: 0 },
+    { cores: Number.POSITIVE_INFINITY },
+    { noteMinutes: 61 },
+    { warningMinutes: 20 },
+    { warningWindowMinutes: 30_000 },
+    { unknown: 1 },
+  ]) {
+    expect(() => parseConditionLimits({ process })).toThrow();
+  }
+  expect(() => parseConditionLimits({ process: { cores: 4 } })).not.toThrow();
+});
+
 test('load limits inherit fleet values and validate the complete System override', () => {
   const limits = parseConditionLimits({
     cpu: { percent: 85 },

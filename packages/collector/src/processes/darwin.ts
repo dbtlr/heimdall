@@ -1,8 +1,10 @@
+import { basename } from 'node:path';
+
 import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import type { Harness } from '../harnesses.ts';
-import { runCommand } from '../subprocess.ts';
+import { readCommand, runCommand } from '../subprocess.ts';
 import { darwinCwd, darwinKernelStart, darwinPath } from './darwin-libproc.ts';
-import type { ProcessEntry, ProcessReader } from './table.ts';
+import type { ProcessEntry, ProcessSamplingReader } from './table.ts';
 
 // The columns the Collector asks `ps` for on macOS. `ucomm` is the accounting
 // name: the file name of the executable the process runs, cut to 16 bytes,
@@ -95,16 +97,19 @@ export const parsePs = (output: string, nowMs: number): ProcessEntry[] =>
 // A reader of the macOS process table: one `ps` run per table, and, through
 // libproc, the working directory of a process, which `ps` cannot print. For a
 // process whose accounting name is a Harness's or a version, it asks for the
-// executable's path to confirm the name, and for each process named as a
-// Harness then, the start the kernel recorded, which no wall-clock step moves.
+// executable's path to confirm the name, and for every process, the start the
+// kernel recorded, which no wall-clock step moves.
 // A process whose kernel start cannot be read keeps the start `ps` implies.
 export const createDarwinReader = ({
+  bootId = async () =>
+    (await readCommand(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'])).trim(),
   cwdOf,
   kernelStartOf,
   now,
   pathOf,
   ps,
 }: {
+  bootId?: () => Promise<string>;
   cwdOf: (pid: number) => Promise<string | null>;
   // Microseconds since the epoch, or null when it cannot be read.
   kernelStartOf: (pid: number) => Promise<number | null>;
@@ -112,33 +117,44 @@ export const createDarwinReader = ({
   // The executable's path, or null when it cannot be read.
   pathOf: (pid: number) => Promise<string | null>;
   ps: (cmd: readonly string[]) => Promise<string>;
-}): ProcessReader => ({
-  cwdOf,
-  table: async () => {
+}): ProcessSamplingReader => {
+  const snapshot = async () => {
     const at = now();
-    const entries = parsePs(await ps(['/bin/ps', '-axww', '-o', PS_COLUMNS]), at);
+    const output = await ps(['/bin/ps', '-axww', '-o', PS_COLUMNS]);
+    const entries = parsePs(output, at);
     // The entries are this read's own, so each candidate is named and takes its
     // kernel start in place.
     await Promise.all(
-      entries
-        .filter(
-          (entry) => harnessNamed(entry.name) !== undefined || VERSION_SHAPED.test(entry.name),
-        )
-        .map(async (entry) => {
+      entries.map(async (entry) => {
+        if (harnessNamed(entry.name) !== undefined || VERSION_SHAPED.test(entry.name)) {
           entry.name = confirmedName(entry.name, await pathOf(entry.pid));
-          if (harnessNamed(entry.name) === undefined) {
-            return;
-          }
-          const kernelStart = await kernelStartOf(entry.pid);
-          if (kernelStart !== null) {
-            entry.kernelStart = kernelStart;
-            entry.startedAt = toSecond(kernelStart / MICROS_PER_MS);
-          }
-        }),
+        }
+        const kernelStart = await kernelStartOf(entry.pid);
+        if (kernelStart !== null) {
+          entry.kernelStart = kernelStart;
+          entry.startedAt = toSecond(kernelStart / MICROS_PER_MS);
+        }
+      }),
     );
-    return entries;
-  },
-});
+    return {
+      entries,
+      presentPids: output.split('\n').flatMap((line) => {
+        const pid = /^\s*(\d+)\s/u.exec(line)?.[1];
+        return pid === undefined ? [] : [Number(pid)];
+      }),
+    };
+  };
+  return {
+    bootId,
+    cwdOf,
+    nameOf: async (pid) => {
+      const path = await pathOf(pid);
+      return path === null ? null : basename(path);
+    },
+    snapshot,
+    table: async () => (await snapshot()).entries,
+  };
+};
 
 const runPs = async (cmd: readonly string[]) => {
   const result = await runCommand(cmd);
@@ -148,7 +164,7 @@ const runPs = async (cmd: readonly string[]) => {
   return result.stdout;
 };
 
-export const darwinReader = (): ProcessReader =>
+export const darwinReader = (): ProcessSamplingReader =>
   createDarwinReader({
     cwdOf: darwinCwd,
     kernelStartOf: darwinKernelStart,

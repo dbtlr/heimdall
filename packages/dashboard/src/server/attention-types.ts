@@ -31,6 +31,7 @@ export type JobTarget = { scheduler: string; target: string };
 
 export type AttentionFacts =
   | { kind: 'high_cpu' | 'high_memory'; reason: string }
+  | { kind: 'hot_process'; reason: string }
   | {
       kind: 'drift';
       // The files record that holds the path, and the hash it records, when
@@ -87,9 +88,10 @@ export type Attention = (
   // When it was first detected: the Condition's raised_at, the unreadable
   // file's since, or when the missing set became old.
   firstDetected: number;
-  // The Condition's subject: a file path, Service, job, or mount; '' for one
-  // about the whole System. A file's path for file_unreadable; '' for
-  // checks_missing.
+  // The Condition's subject: a file path, Service, job, mount, or encoded
+  // process lifetime identity; '' for one about the whole System. Display
+  // process subjects through conditionSubject so their identity stays internal.
+  // A file's path for file_unreadable; '' for checks_missing.
   subject: string;
   system: string;
   // Whether the System it is on is no longer paired.

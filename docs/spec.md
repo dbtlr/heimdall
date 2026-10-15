@@ -186,6 +186,48 @@ Each duration must fit its window. CPU's note duration must be less than its war
 Unknown fields and invalid inherited combinations stop `serve` before it opens the database.
 Restarting the Hub applies changed limits to subsequent judgments, including its latest stored window, without rewriting recorded history.
 
+### Hot processes
+
+The Hub raises `hot_process` for an individual process above 0.5 CPU core for 30 measured minutes within an hour at note,
+or 120 measured minutes within four hours at warning.
+One core means one CPU second per elapsed second, regardless of the System's core count.
+Equality with the core limit is quiet. Duration equality qualifies.
+Only the process's own user and system CPU time counts, excluding descendants and reaped children.
+Each subject identifies a boot, PID, exact kernel start, and executable name. Separate lifetimes never share busy time.
+Reasons and dashboard labels name the executable and PID.
+
+The Collector shares one process-table pass with Harness tracking per Vitals sample.
+An optional `processes` field carries the five hottest measured processes, each with its executable name, PID, kernel start, CPU cores, and resident bytes.
+It never carries arguments or environment variables.
+Executable lookup falls back to the platform's accounting name when unreadable, which can be truncated.
+Linux uses its boot ID and kernel start ticks. macOS uses `kern.bootsessionuuid` and libproc's exact kernel start time.
+CPU rates use monotonic elapsed time. A baseline, a counter decrease, changed identity, or invalid interval contributes no busy time.
+Credited intervals cannot exceed 15 seconds, the monotonic interval, the wall-time interval, or the increase in uptime.
+A wall-time or monotonic gap over 30 seconds is unknown. Failed probes omit process evidence while preserving host Vitals.
+
+A complete census includes every enumerated PID, unreadable PIDs, and the highest measured CPU rate omitted from the top five.
+An omitted process is known quiet only when its PID was readable and the omitted ceiling does not exceed the Hub's core limit.
+Otherwise its CPU is unknown. Absence from the top five alone never establishes recovery or exit.
+Each census list is limited to 4,096 PIDs. Overflow makes the census partial, disabling absence and omitted-quiet inference.
+Top-five readings remain usable with a partial census.
+Report delivery splits batches by encoded bytes as well as sample count, preserving the Report size cap.
+
+Measured busy time, unknown intervals, freshness, level changes, historical replay, and recovery follow the load rules above.
+An alive process can step down or clear after enough measured quiet time rules out its held level.
+A fresh complete census that no longer contains its PID confirms exit and clears immediately.
+A changed boot or an observed replacement start or executable also ends the previous subject.
+A present PID outside the top five does not confirm reuse. Its earlier lifetime can remain uncertain until replacement or absence is observed.
+Old evidence cannot lower or clear a current Condition, including by exit.
+The Hub stores coverage for each subject, and the dashboard uses it only when it matches the latest Vitals sample.
+Silence, missing fields from older Collectors, and unreadable processes never establish recovery.
+
+`[conditions.process]` configures `cores = 0.5`, `noteMinutes = 30`, `noteWindowMinutes = 60`,
+`warningMinutes = 120`, and `warningWindowMinutes = 240` by default.
+`[conditions.systems.<System>.process]` overrides individual fields, inheriting the rest.
+The core limit must be finite and positive. Durations and windows use the load bounds and ordering rules above.
+Invalid inherited combinations stop startup before database access. Restarting the Hub applies changed limits without rewriting history.
+Process evidence remains in raw Vitals samples and does not change Vitals rollups or Session insight.
+
 ## Drift
 
 The Collector hashes every file in its `files` records with SHA-256 when it starts, right after the `files` records change, and an hour after the last time it hashed them. Recording a run, an application, or the same `files` record again does not start a pass. It follows symbolic links and hashes one file at a time, reading each as a stream, so a large file is never held in memory, and reading no more than the file's size when it opened it, so a file that keeps growing cannot stall a pass. It reads no file a provisioner keeps as its own record, and hashes only the paths its own `files` records name. A pass stops between chunks when the Collector stops. A read that hangs, as on an unreachable network mount, cannot be cancelled and holds the pass until the operating system returns. Each file is in one of four states:

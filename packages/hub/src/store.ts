@@ -61,7 +61,7 @@ export const storeReport = (
         INSERT INTO vitals_samples (
           system, t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
           load_1, load_5, load_15, uptime_seconds, disks,
-          collector_cpu_percent, collector_rss_bytes, memory_pressure, collector_platform
+          collector_cpu_percent, collector_rss_bytes, memory_pressure, collector_platform, processes
         )
         SELECT
           ${report.system},
@@ -81,7 +81,7 @@ export const storeReport = (
           s->'disks',
           (s->'collector'->>'cpuPercent')::double precision,
           (s->'collector'->>'rssBytes')::bigint,
-          s->'memory'->>'pressure', ${report.collector.platform}
+          s->'memory'->>'pressure', ${report.collector.platform}, s->'processes'
         FROM jsonb_array_elements(${storableJson(report.samples)}::text::jsonb) AS s
         ON CONFLICT (system, t) DO NOTHING
         RETURNING *, date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00') AS bucket
@@ -143,6 +143,10 @@ export const storeReport = (
       const first = new Date(Math.min(...stored.map((row) => row.t.getTime())));
       await tx`
         UPDATE load_evaluations SET dirty_from = LEAST(COALESCE(dirty_from, ${first}), ${first})
+        WHERE system = ${report.system} AND through >= ${first}
+      `;
+      await tx`
+        UPDATE hot_process_evaluations SET dirty_from = LEAST(COALESCE(dirty_from, ${first}), ${first})
         WHERE system = ${report.system} AND through >= ${first}
       `;
     }
@@ -392,6 +396,7 @@ const storeChecks = async (
 // empty, as are high CPU and memory, a Drift Condition's the file's path, and a Service down Condition's
 // the Service's name.
 export type ConditionKind =
+  | 'hot_process'
   | 'high_cpu'
   | 'high_memory'
   | 'drift'

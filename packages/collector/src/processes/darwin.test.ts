@@ -126,7 +126,7 @@ test('a start from the elapsed time is to the second, however far into the secon
   expect(launchd?.startedAt).toBe(NOW - ((12 * 24 + 3) * 3600 + 4 * 60 + 5) * 1000);
 });
 
-test("a Harness process's start is the kernel's, to the second, and the elapsed time stands in when the kernel will not say", async () => {
+test("every process's start is the kernel's, to the second, and the elapsed time stands in when the kernel will not say", async () => {
   const asked: number[] = [];
   // 2 hours and 10.4 seconds before NOW, in microseconds.
   const kernel = (NOW - 7_210_400) * 1000;
@@ -143,7 +143,7 @@ test("a Harness process's start is the kernel's, to the second, and the elapsed 
 
   const table = await reader.table();
 
-  expect(asked).toEqual([612, 700]);
+  expect(asked.toSorted((a, b) => a - b)).toEqual([1, 612, 613, 700, 801]);
   expect(table.find((p) => p.pid === 612)).toMatchObject({
     kernelStart: kernel,
     startedAt: NOW - 7_211_000,

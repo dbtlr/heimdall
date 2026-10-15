@@ -13,6 +13,7 @@ import {
   bySystem,
   byCheck,
   conditionKind,
+  field,
   filesOf,
   judgedFilesRecords,
   scheduleOf,
@@ -51,6 +52,7 @@ type SampleRow = {
   t: Date;
   cpu_known: boolean | null;
   memory_known: boolean | null;
+  process_coverage: unknown;
 };
 
 // Everything the Hub holds about one System that bears on what needs the operator.
@@ -250,6 +252,15 @@ const conditionFound = (
       facts: { kind, reason: row.latest_reason },
     };
   }
+  if (kind === 'hot_process') {
+    const checkedAt = held.sample?.t.getTime();
+    const known = field(held.sample?.process_coverage, row.subject) === true;
+    return {
+      checkedAt,
+      evidence: evidenceAt(checkedAt, now, known ? 'current' : 'unknown'),
+      facts: { kind, reason: row.latest_reason },
+    };
+  }
   if (kind === 'system_stale') {
     return {
       checkedAt: held.lastSeenAt,
@@ -421,7 +432,8 @@ export const readAttention = async (
     sql`SELECT name AS system, last_seen_at, sleeps FROM systems WHERE name IN ${sql(names)}`,
     // One newest sample per System, read through the (system, t) key.
     sql`
-      SELECT s.name AS system, v.t, v.disks, e.cpu_known, e.memory_known
+      SELECT s.name AS system, v.t, v.disks, e.cpu_known, e.memory_known,
+             p.coverage AS process_coverage
       FROM systems s
       CROSS JOIN LATERAL (
         SELECT t, disks FROM vitals_samples
@@ -429,6 +441,7 @@ export const readAttention = async (
         ORDER BY t DESC LIMIT 1
       ) v
       LEFT JOIN load_evaluations e ON e.system = s.name AND e.through = v.t
+      LEFT JOIN hot_process_evaluations p ON p.system = s.name AND p.through = v.t
       WHERE s.name IN ${sql(names)}
     `,
   ]);

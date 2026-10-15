@@ -1,5 +1,13 @@
 export { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS } from './conditions.ts';
 export type { ConditionLevel, ConditionTransition } from './conditions.ts';
+export {
+  MAX_PROCESS_CENSUS,
+  MAX_TOP_PROCESSES,
+  ProcessObservationSchema,
+  processSubject,
+  parseProcessSubject,
+} from './process-observation.ts';
+export type { ProcessObservation } from './process-observation.ts';
 
 export {
   MAX_REPORT_BYTES,

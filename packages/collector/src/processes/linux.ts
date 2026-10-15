@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 
 import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import { readCommand } from '../subprocess.ts';
-import type { ProcessEntry, ProcessReader } from './table.ts';
+import type { ProcessEntry, ProcessSamplingReader } from './table.ts';
 
 // All the Collector may do to /proc: list a directory, read a text file, and
 // read where a link points.
@@ -122,7 +122,7 @@ export const createLinuxReader = ({
   fs?: ProcFs;
   pageSize: number;
   root?: string;
-}): ProcessReader => {
+}): ProcessSamplingReader => {
   const nameOf = async (pid: number, comm: string) => {
     const harness = harnessNamed(comm);
     if (harness === undefined) {
@@ -176,7 +176,22 @@ export const createLinuxReader = ({
     }
   };
 
+  const snapshot = async () => {
+    const [boot, names] = await Promise.all([bootSeconds(), fs.listDir(root)]);
+    const pids = names.filter((name) => /^[1-9]\d*$/u.test(name));
+    return {
+      entries: (await mapBounded(pids, MAX_OPEN_READS, (pid) => entryOf(pid, boot))).flat(),
+      presentPids: pids.map(Number),
+    };
+  };
   return {
+    bootId: async () => {
+      const id = (await fs.readText(`${root}/sys/kernel/random/boot_id`)).trim();
+      if (!id) {
+        throw new Error('The kernel returned no boot identity.');
+      }
+      return id;
+    },
     cwdOf: async (pid) => {
       try {
         return await linkTarget(fs, `${root}/${String(pid)}/cwd`);
@@ -184,11 +199,15 @@ export const createLinuxReader = ({
         return null;
       }
     },
-    table: async () => {
-      const [boot, names] = await Promise.all([bootSeconds(), fs.listDir(root)]);
-      const pids = names.filter((name) => /^[1-9]\d*$/u.test(name));
-      return (await mapBounded(pids, MAX_OPEN_READS, (pid) => entryOf(pid, boot))).flat();
+    nameOf: async (pid) => {
+      try {
+        return basename(await linkTarget(fs, `${root}/${String(pid)}/exe`));
+      } catch {
+        return null;
+      }
     },
+    snapshot,
+    table: async () => (await snapshot()).entries,
   };
 };
 
@@ -200,7 +219,7 @@ const sysconf = async (name: string, fallback: number) => {
 
 // The reader of this System, with the kernel's page size and clock ticks per
 // second, which /proc counts in and which hold for the life of a boot.
-export const linuxReader = async (): Promise<ProcessReader> =>
+export const linuxReader = async (): Promise<ProcessSamplingReader> =>
   createLinuxReader({
     clockTicks: await sysconf('CLK_TCK', 100),
     pageSize: await sysconf('PAGESIZE', 4096),

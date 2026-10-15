@@ -48,6 +48,7 @@ export type Stretch = {
 export type ConditionKind =
   | 'high_cpu'
   | 'high_memory'
+  | 'hot_process'
   | 'drift'
   | 'job_failing'
   | 'job_overdue'

@@ -18,7 +18,7 @@ type Interval = { from: number; to: number; busy: boolean };
 
 // Only measured intervals count. Missing intervals remain unknown, so sleep
 // or a failed pressure probe cannot supply evidence of recovery.
-class Window {
+export class Window {
   private readonly intervals: Interval[] = [];
   private head = 0;
   busy = 0;
@@ -139,8 +139,19 @@ export const selectedRule = (
   kind: Kind,
   current: Level | undefined,
   old = false,
+) =>
+  chooseWindowRule(
+    rules.filter((rule) => rule.kind === kind),
+    current,
+    old,
+  );
+
+// Unknown time can retain a held level, but only measured busy time can raise it.
+export const chooseWindowRule = <Rule extends { level: Level; duration: number; window: Window }>(
+  candidates: Rule[],
+  current: Level | undefined,
+  old = false,
 ) => {
-  const candidates = rules.filter((rule) => rule.kind === kind);
   const ranks = { note: 0, warning: 1 };
   const rank = current === undefined ? -1 : ranks[current];
   return candidates.find((rule) => {

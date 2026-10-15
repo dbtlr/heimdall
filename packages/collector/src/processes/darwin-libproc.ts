@@ -1,7 +1,8 @@
 // Asks the macOS kernel, through libproc's `proc_pidinfo` and `proc_pidpath`,
 // for what `ps` cannot give exactly: a process's working directory, its
 // executable's path, and the start time the kernel recorded for it. The calls are made in the Collector's own
-// process and start nothing, and only for the few Harness processes. Each
+// process and start nothing. Exact starts distinguish every sampled process;
+// working directories and executable paths are read only for candidates. Each
 // answers null for a process it may not inspect, which belongs to another
 // user, and when libproc cannot be loaded.
 

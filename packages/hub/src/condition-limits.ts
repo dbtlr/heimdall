@@ -15,6 +15,13 @@ export const CPU_LIMITS = {
   warningWindowMinutes: 240,
 };
 export const MEMORY_LIMITS = { percent: 90, warningMinutes: 30, warningWindowMinutes: 60 };
+export const PROCESS_LIMITS = {
+  cores: 0.5,
+  noteMinutes: 30,
+  noteWindowMinutes: 60,
+  warningMinutes: 120,
+  warningWindowMinutes: 240,
+};
 
 const percentage = z.number().finite().min(0).max(100);
 const partialDisk = z.strictObject({
@@ -39,15 +46,20 @@ const partialCpu = partialMemory.extend({
   noteMinutes: minutes.optional(),
   noteWindowMinutes: minutes.optional(),
 });
+const partialProcess = partialCpu.omit({ percent: true }).extend({
+  cores: z.number().finite().positive().optional(),
+});
 const systemOverrides = z.strictObject({
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
+  process: partialProcess.optional(),
 });
 const section = z.strictObject({
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
+  process: partialProcess.optional(),
   systems: z.record(z.string().regex(SYSTEM_NAME), systemOverrides).optional(),
 });
 
@@ -80,6 +92,7 @@ export const parseConditionLimits = (value: unknown) => {
       cpu: typeof CPU_LIMITS;
       disk: DiskLimits;
       memory: typeof MEMORY_LIMITS;
+      process: typeof PROCESS_LIMITS;
     },
     override: z.infer<typeof systemOverrides>,
     name: string,
@@ -97,6 +110,14 @@ export const parseConditionLimits = (value: unknown) => {
       warningWindowMinutes:
         override.memory?.warningWindowMinutes ?? defaults.memory.warningWindowMinutes,
     };
+    const process = {
+      cores: override.process?.cores ?? defaults.process.cores,
+      noteMinutes: override.process?.noteMinutes ?? defaults.process.noteMinutes,
+      noteWindowMinutes: override.process?.noteWindowMinutes ?? defaults.process.noteWindowMinutes,
+      warningMinutes: override.process?.warningMinutes ?? defaults.process.warningMinutes,
+      warningWindowMinutes:
+        override.process?.warningWindowMinutes ?? defaults.process.warningWindowMinutes,
+    };
     if (
       cpu.noteMinutes > cpu.noteWindowMinutes ||
       cpu.warningMinutes > cpu.warningWindowMinutes ||
@@ -110,14 +131,25 @@ export const parseConditionLimits = (value: unknown) => {
     if (memory.warningMinutes > memory.warningWindowMinutes) {
       throw new Error(`${name}.memory: warningMinutes must fit warningWindowMinutes.`);
     }
+    if (
+      process.noteMinutes > process.noteWindowMinutes ||
+      process.warningMinutes > process.warningWindowMinutes ||
+      process.noteMinutes >= process.warningMinutes ||
+      process.noteWindowMinutes > process.warningWindowMinutes
+    ) {
+      throw new Error(
+        `${name}.process: durations must fit their windows and note must precede warning.`,
+      );
+    }
     return {
       cpu,
       disk: validateDisk(mergeDisk(defaults.disk, override.disk), `${name}.disk`),
       memory,
+      process,
     };
   };
   const defaults = resolve(
-    { cpu: CPU_LIMITS, disk: DISK_LIMITS, memory: MEMORY_LIMITS },
+    { cpu: CPU_LIMITS, disk: DISK_LIMITS, memory: MEMORY_LIMITS, process: PROCESS_LIMITS },
     parsed,
     'conditions',
   );

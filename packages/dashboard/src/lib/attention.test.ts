@@ -66,6 +66,25 @@ function attention(facts: AttentionFacts, over: AttentionOverrides = {}): Attent
   };
 }
 
+test('hot process attention names the process and offers investigation without a stop command', () => {
+  const item = attention(
+    {
+      kind: 'hot_process',
+      reason: 'compiler (PID 42) above 0.5 cores for 30 minutes in 60 minutes.',
+    },
+    { level: 'note', subject: JSON.stringify(['boot-1', 42, '123', 'compiler']) },
+  );
+  expect(subjectText(item)).toBe('compiler (PID 42)');
+  expect(evidenceWords(item, NOW).observed).toEqual([item.reason]);
+  expect(nextSteps(item)).toMatchObject({
+    short: "Inspect this process's CPU use",
+    steps: [{ commands: [] }],
+  });
+  expect(nextSteps(item).steps[0]?.text).toContain('compiler (PID 42)');
+  expect(nextSteps(item).steps[0]?.text).toContain('valhalla');
+  expect(utc(evidenceNote({ ...item, evidence: 'old' }, NOW) ?? [])).toContain('Vitals sample');
+});
+
 const drift = (over: Partial<Extract<AttentionFacts, { kind: 'drift' }>> = {}, subject = '/f') =>
   attention({ ...DRIFT, ...over }, { subject });
 

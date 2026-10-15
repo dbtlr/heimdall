@@ -1,4 +1,4 @@
-import { KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
+import { conditionSubject, KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
 import { timelineWhen } from '../lib/detail.ts';
 import { cn } from '../lib/utils.ts';
 import type { TimelineEntry } from '../server/system-detail-types.ts';
@@ -19,7 +19,7 @@ export function ConditionOccurrence({ entry, now }: { entry: TimelineEntry; now:
       <div className="min-w-0">
         <p className="break-words">
           <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
-          {entry.subject !== '' && ` ${entry.subject}`}
+          {entry.subject !== '' && ` ${conditionSubject(entry)}`}
         </p>
         <p className="text-muted-foreground">
           <PhraseText phrase={timelineWhen(entry, now)} />

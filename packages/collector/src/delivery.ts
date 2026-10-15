@@ -133,8 +133,7 @@ export const flushQueue = async ({
   const rejected: Rejection[] = [];
   for (;;) {
     const samples = queue.oldest(batchSize);
-    const last = samples.at(-1);
-    if (last === undefined) {
+    if (samples.length === 0) {
       return { delivered, kind: 'drained', rejected };
     }
     // oxlint-disable-next-line no-await-in-loop -- batches go one at a time, oldest first.
@@ -148,6 +147,11 @@ export const flushQueue = async ({
       ...(zone === undefined ? {} : { timeZone: zone }),
       transcripts: transcripts(),
     };
+    // Censuses vary with the process count. Keep their queued history intact
+    // by shrinking the oldest-first batch until its encoded body fits.
+    while (base.samples.length > 1 && Buffer.byteLength(JSON.stringify(base)) > MAX_REPORT_BYTES) {
+      base.samples = base.samples.slice(0, Math.ceil(base.samples.length / 2));
+    }
     const reportWith = (
       carried: Pick<Report, 'checks' | 'harnesses' | 'harnessProcesses' | 'records' | 'runs'>,
     ): Report => ({
@@ -185,11 +189,11 @@ export const flushQueue = async ({
     }
     switch (outcome.kind) {
       case 'delivered': {
-        delivered += samples.length;
+        delivered += base.samples.length;
         break;
       }
       case 'rejected': {
-        rejected.push({ detail: outcome.detail, samples: samples.length });
+        rejected.push({ detail: outcome.detail, samples: base.samples.length });
         break;
       }
       case 'failed': {
@@ -200,6 +204,9 @@ export const flushQueue = async ({
         return _exhaustive;
       }
     }
-    queue.removeThrough(last.t);
+    const last = base.samples.at(-1);
+    if (last !== undefined) {
+      queue.removeThrough(last.t);
+    }
   }
 };

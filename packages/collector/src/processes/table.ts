@@ -1,7 +1,8 @@
 // One process as the Collector reads it from the process table. This is all it
 // reads: the executable's name, never the command line or the environment.
 export type ProcessEntry = {
-  // CPU time the process has used, user plus system, in microseconds.
+  // User plus system CPU time including reaped children, in microseconds.
+  // Subtract `reapedCpuMicros` to measure this process alone.
   cpuMicros: number;
   // The executable's file name, such as `claude`.
   name: string;
@@ -28,4 +29,14 @@ export type ProcessEntry = {
 export type ProcessReader = {
   cwdOf: (pid: number) => Promise<string | null>;
   table: () => Promise<ProcessEntry[]>;
+};
+
+export type ProcessSnapshot = { entries: ProcessEntry[]; presentPids: number[] };
+
+// The full enumeration remains available even when a process's accounting
+// fields cannot be read, so an unreadable process is never reported exited.
+export type ProcessSamplingReader = ProcessReader & {
+  bootId: () => Promise<string>;
+  nameOf: (pid: number) => Promise<string | null>;
+  snapshot: () => Promise<ProcessSnapshot>;
 };

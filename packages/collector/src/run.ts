@@ -19,7 +19,8 @@ import { fileReader } from './harness-installs.ts';
 import { startHarnessScan } from './harness-scan.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
-import { startProcessTracking } from './processes/loop.ts';
+import { systemReader } from './processes/loop.ts';
+import { createProcessSampling } from './processes/sampling.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
 import { openRecords } from './records.ts';
 import { createSectionsReporter } from './sections-report.ts';
@@ -205,10 +206,14 @@ export const runAction: ActionHandler<typeof run> = async ({
     // Harness root processes are read from the process table once per Vitals
     // interval: names, parents, start, CPU, memory, and working directories,
     // never arguments or environment (ADR-0002).
-    const processTracking = await startProcessTracking({
+    const probe = hostProbe(platform);
+    const processTracking = createProcessSampling({
       log: runtime,
+      monotonicMs: probe.monotonicMs,
       now: Date.now,
-      platform,
+      reader: await systemReader(platform),
+      sampler: createSampler(probe),
+      uptimeSeconds: probe.uptimeSeconds,
     });
     const sections = createSectionsReporter({
       checks: combineParts([fileChecks, serviceChecks]),
@@ -230,7 +235,7 @@ export const runAction: ActionHandler<typeof run> = async ({
         identity,
         log: runtime,
         queue,
-        sampler: createSampler(hostProbe(platform)),
+        sampler: processTracking,
         sections,
         send: (report) => sendReport({ hub: options.hub, report, signal, token }),
         signal,
@@ -239,7 +244,6 @@ export const runAction: ActionHandler<typeof run> = async ({
       });
     } finally {
       await stopCapture();
-      await processTracking.stop();
       await harnessScan.stop();
       await serviceChecks.stop();
       await fileChecks.stop();

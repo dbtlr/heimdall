@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import type { ProcessObservation } from './process-observation.ts';
 import { ReportSchema, VitalsSampleSchema } from './report.ts';
 import type { Report } from './report.ts';
 import { sample } from './testing.ts';
@@ -10,6 +11,32 @@ const report = (): Report => ({
   schemaVersion: 1,
   sentAt: 1_759_700_030_000,
   system: 'laptop-1',
+});
+
+test('process evidence preserves bounded CPU readings and discards malformed evidence alone', () => {
+  const processes = {
+    bootId: 'boot-a',
+    census: { kind: 'complete', presentPids: [42], remainderMaxCores: 0, unknownPids: [] },
+    intervalMs: 15_000,
+    top: [{ cpuCores: 1.5, name: 'bun', pid: 42, rssBytes: 1024, start: '1234' }],
+  } satisfies ProcessObservation;
+  expect(VitalsSampleSchema.parse({ ...sample(0), processes }).processes).toEqual(processes);
+  for (const invalid of [
+    { ...processes, intervalMs: 15_001 },
+    { ...processes, top: Array.from({ length: 6 }, () => processes.top[0]) },
+    { ...processes, top: [processes.top[0], processes.top[0]] },
+    { ...processes, census: { ...processes.census, presentPids: [] } },
+    { ...processes, census: { ...processes.census, unknownPids: [99] } },
+    { ...processes, census: { ...processes.census, unknownPids: [42] } },
+    {
+      ...processes,
+      census: { ...processes.census, presentPids: Array.from({ length: 4097 }, () => 1) },
+    },
+  ]) {
+    const parsed = VitalsSampleSchema.parse({ ...sample(0), processes: invalid });
+    expect(parsed.processes).toBeUndefined();
+    expect(parsed.cpu).toEqual(sample(0).cpu);
+  }
 });
 
 test('optional memory pressure survives a v1 Report without costing older or unknown readings', () => {

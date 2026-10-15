@@ -7,7 +7,7 @@ import type {
   ServiceTarget,
 } from '../server/attention-types.ts';
 import type { Disk, JobRun, ServiceCheck } from '../server/system-detail-types.ts';
-import { KIND_NAMES } from './conditions.ts';
+import { conditionSubject, KIND_NAMES } from './conditions.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { scheduleWords } from './recorded.ts';
@@ -102,6 +102,9 @@ export const subjectText = (item: Attention): string => {
     case 'reports_rejected':
     case 'system_stale': {
       return '';
+    }
+    case 'hot_process': {
+      return conditionSubject(item);
     }
     default: {
       return item.subject;
@@ -368,7 +371,8 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
       );
     }
     case 'high_cpu':
-    case 'high_memory': {
+    case 'high_memory':
+    case 'hot_process': {
       return evidence(same('Load within the rolling limits configured in the Hub'), {
         long: [item.reason],
         short: [truncate(item.reason, SHORT_LIMIT)],
@@ -398,7 +402,10 @@ const arrivedThing = (item: Attention) => {
   if (item.kind === 'job_failing' || item.kind === 'job_overdue') {
     return 'run';
   }
-  return item.kind === 'low_disk' || item.kind === 'high_cpu' || item.kind === 'high_memory'
+  return item.kind === 'low_disk' ||
+    item.kind === 'high_cpu' ||
+    item.kind === 'high_memory' ||
+    item.kind === 'hot_process'
     ? 'Vitals sample'
     : 'check';
 };
@@ -658,6 +665,17 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
           step(
             `Inspect ${resource} use`,
             `On ${item.system}, inspect the processes using ${resource} and compare the Vitals history with the work running at those times.`,
+          ),
+        ],
+      };
+    }
+    case 'hot_process': {
+      return {
+        short: "Inspect this process's CPU use",
+        steps: [
+          step(
+            'Inspect the process',
+            `On ${item.system}, inspect ${subjectText(item)} and compare its CPU use with the work expected at those times. Confirm its name and start time before taking action, since PIDs are reused.`,
           ),
         ],
       };

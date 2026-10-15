@@ -12,7 +12,7 @@ export const FIXED_LEVELS = {
   service_down: 'alert',
   system_stale: 'alert',
 } as const satisfies Record<
-  Exclude<ConditionKind, 'low_disk' | 'high_cpu' | 'high_memory'>,
+  Exclude<ConditionKind, 'low_disk' | 'high_cpu' | 'high_memory' | 'hot_process'>,
   ConditionLevel
 >;
 
@@ -22,7 +22,7 @@ type Judgment = {
   subject: string;
   system: string;
 } & (
-  | { kind: 'low_disk' | 'high_cpu' | 'high_memory'; level: ConditionLevel }
+  | { kind: 'low_disk' | 'high_cpu' | 'high_memory' | 'hot_process'; level: ConditionLevel }
   | { kind: keyof typeof FIXED_LEVELS }
 );
 
