@@ -9,7 +9,7 @@ export function AppHeader({ children }: { children?: ReactNode }) {
         <span className="text-base font-bold tracking-[0.02em]">Heimdall</span>
         <nav aria-label="Main navigation" className="flex gap-4">
           <Link
-            activeOptions={{ exact: true }}
+            activeOptions={{ exact: true, includeSearch: false }}
             activeProps={{ 'aria-current': 'page', className: 'font-semibold' }}
             className="text-muted-foreground aria-[current=page]:text-foreground"
             to="/"
@@ -17,7 +17,7 @@ export function AppHeader({ children }: { children?: ReactNode }) {
             Fleet
           </Link>
           <Link
-            activeOptions={{ exact: true }}
+            activeOptions={{ exact: true, includeSearch: false }}
             activeProps={{ 'aria-current': 'page', className: 'font-semibold' }}
             className="text-muted-foreground aria-[current=page]:text-foreground"
             to="/agents"

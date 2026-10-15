@@ -34,6 +34,7 @@ test('Agents period links preserve the viewer zone and Fleet navigation remains 
   const html = renderToStaticMarkup(<RouterProvider router={router} />);
   expect(html).toContain('href="/"');
   expect(html).toContain('>Agents</a>');
+  expect(html).toMatch(/<a(?=[^>]*href="\/agents")(?=[^>]*aria-current="page")[^>]*>/u);
   expect(html).toContain('href="/agents?range=today&amp;zone=Europe%2FBerlin"');
   expect(html).toContain('href="/agents?range=30d&amp;zone=Europe%2FBerlin"');
   expect(html).toContain('Today');
