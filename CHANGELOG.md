@@ -8,6 +8,12 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.6.4 - 2026-10-15
+
+### Fixed
+
+- **The dashboard's favicon is served as files for mobile Safari** (HMD-105). Safari on iPhone showed no icon for the SVG inlined in the page. The icon is now served at `/favicon.ico`, `/favicon.svg`, and `/apple-touch-icon.png`, the last for iPhone tabs, Favorites, and the home screen.
+
 ## v0.6.3 - 2026-10-14
 
 ### Added
