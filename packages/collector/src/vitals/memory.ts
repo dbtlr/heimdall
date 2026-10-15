@@ -2,6 +2,42 @@ import type { VitalsSample } from '@heimdall/schema';
 
 export type Memory = VitalsSample['memory'];
 
+// XNU exposes dispatch pressure flags, rather than its internal pressure enum.
+export const darwinMemoryPressure = (text: string): Memory['pressure'] => {
+  switch (text.trim()) {
+    case '1': {
+      return 'normal';
+    }
+    case '2': {
+      return 'warning';
+    }
+    case '4': {
+      return 'critical';
+    }
+    default: {
+      return undefined;
+    }
+  }
+};
+
+// A missing pressure probe leaves the rest of a Vitals sample usable.
+export const readDarwinMemory = async ({
+  read,
+  totalBytes,
+}: {
+  read: (command: string[]) => Promise<string>;
+  totalBytes: number;
+}): Promise<Memory> => {
+  const [vmStat, pressure] = await Promise.all([
+    read(['/usr/bin/vm_stat']),
+    read(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level']).then(
+      darwinMemoryPressure,
+      () => undefined,
+    ),
+  ]);
+  return { ...darwinMemory(vmStat, totalBytes), ...(pressure === undefined ? {} : { pressure }) };
+};
+
 const KIB = 1024;
 
 // Reads `<label>: <digits>` from a line-per-field report such as /proc/meminfo or vm_stat.

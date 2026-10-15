@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const OLD_EVIDENCE_MS = 2 * 60 * 60_000;
 
+// Keeps one wrongly future-dated sample from hiding usable current evidence.
+export const FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60_000;
+
 export const ConditionLevelSchema = z.enum(['note', 'warning', 'alert']);
 export type ConditionLevel = z.infer<typeof ConditionLevelSchema>;
 

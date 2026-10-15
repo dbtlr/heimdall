@@ -123,6 +123,27 @@ alert = 95
 
 Unspecified System limits inherit the fleet's limits. Restart the Hub after changing them. Invalid limits stop startup before database access. [Condition levels and history](docs/spec.md#condition-levels-and-history) describes levels, migration, and recovery rules.
 
+CPU and memory Conditions count busy time across sustained work or recurring bursts. CPU above 90% for 30 minutes within an hour raises a note, and 120 minutes within four hours raises a warning. Memory above 90% for 30 minutes within an hour raises a warning. macOS also requires warning or critical memory pressure. These defaults are configurable:
+
+```toml
+[conditions.cpu]
+percent = 90
+noteMinutes = 30
+noteWindowMinutes = 60
+warningMinutes = 120
+warningWindowMinutes = 240
+
+[conditions.memory]
+percent = 90
+warningMinutes = 30
+warningWindowMinutes = 60
+
+[conditions.systems.laptop-1.cpu]
+percent = 95
+```
+
+Quiet readings can leave a recent pattern open. Missing samples never establish recovery. Completed episodes remain in the Timeline, including those found in delayed Reports. See [sustained and recurring load](docs/spec.md#sustained-and-recurring-load) for sample coverage, recovery, and configuration rules. Upgrade the Hub before the dashboard and Collectors so its migration has applied and it can store macOS pressure. Older Collectors remain compatible, but macOS high-memory judgments need the new pressure field.
+
 ### Pairing a System
 
 Each System pairs with the Hub once, and the Hub keeps only SHA-256 hashes of the tokens and codes it issues ([ADR-0009](docs/decisions/0009-collectors-pair-with-the-hub.md)). Pairing works whether `serve` runs or not, and needs no restart.

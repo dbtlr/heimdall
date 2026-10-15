@@ -1,4 +1,4 @@
-import { ConditionLevelSchema } from '@heimdall/schema';
+import { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
@@ -45,7 +45,13 @@ type MirroredRecordRow = RecordRow & { system: string };
 
 type SystemRow = { last_seen_at: Date | null; sleeps: boolean | null; system: string };
 
-type SampleRow = { disks: Disk[]; system: string; t: Date };
+type SampleRow = {
+  disks: Disk[];
+  system: string;
+  t: Date;
+  cpu_known: boolean | null;
+  memory_known: boolean | null;
+};
 
 // Everything the Hub holds about one System that bears on what needs the operator.
 type Held = {
@@ -234,6 +240,16 @@ const conditionFound = (
   if (kind === 'low_disk') {
     return lowDiskFacts(held, row, now);
   }
+  if (kind === 'high_cpu' || kind === 'high_memory') {
+    const checkedAt = held.sample?.t.getTime();
+    const unknown =
+      (kind === 'high_cpu' ? held.sample?.cpu_known : held.sample?.memory_known) !== true;
+    return {
+      checkedAt,
+      evidence: evidenceAt(checkedAt, now, unknown ? 'unknown' : 'current'),
+      facts: { kind, reason: row.latest_reason },
+    };
+  }
   if (kind === 'system_stale') {
     return {
       checkedAt: held.lastSeenAt,
@@ -405,11 +421,14 @@ export const readAttention = async (
     sql`SELECT name AS system, last_seen_at, sleeps FROM systems WHERE name IN ${sql(names)}`,
     // One newest sample per System, read through the (system, t) key.
     sql`
-      SELECT s.name AS system, v.t, v.disks
+      SELECT s.name AS system, v.t, v.disks, e.cpu_known, e.memory_known
       FROM systems s
       CROSS JOIN LATERAL (
-        SELECT t, disks FROM vitals_samples WHERE system = s.name ORDER BY t DESC LIMIT 1
+        SELECT t, disks FROM vitals_samples
+        WHERE system = s.name AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
+        ORDER BY t DESC LIMIT 1
       ) v
+      LEFT JOIN load_evaluations e ON e.system = s.name AND e.through = v.t
       WHERE s.name IN ${sql(names)}
     `,
   ]);

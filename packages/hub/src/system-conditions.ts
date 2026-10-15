@@ -1,17 +1,15 @@
-import { OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
+import { FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
 import type { ConditionLevel, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { DISK_LIMITS } from './condition-limits.ts';
+import { parseConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits, DiskLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
-// Stale time limits and disk limits used by each evaluation pass.
-export type SystemConditionThresholds = {
-  disk: DiskLimits;
-  systems: ConditionLimits['systems'];
+// Stale time limits and measurement limits used by each evaluation pass.
+export type SystemConditionThresholds = ConditionLimits & {
   // How long a System that sleeps may go unheard from before it is stale.
   sleepingStaleAfterMs: number;
   // How long an always-on System may go unheard from before it is stale.
@@ -19,10 +17,9 @@ export type SystemConditionThresholds = {
 };
 
 export const SYSTEM_CONDITION_THRESHOLDS: SystemConditionThresholds = {
-  disk: DISK_LIMITS,
+  ...parseConditionLimits(undefined),
   sleepingStaleAfterMs: 7 * 24 * 60 * 60_000,
   staleAfterMs: 10 * 60_000,
-  systems: new Map(),
 };
 
 // What the Hub should do with one Condition: raise it with a reason (or update
@@ -129,12 +126,6 @@ const diskVerdict = (
 };
 
 const DISKS_SCHEMA = VitalsSampleSchema.shape.disks;
-
-// How far ahead of the Hub's clock a sample's time may be and still count as
-// the System's latest: a System with a wrong clock stamps its samples far in
-// the future, and the newest of those would otherwise stay the latest sample
-// for as long as the clock is wrong.
-export const FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60_000;
 
 // The mounts in the System's latest Vitals sample stamped no later than
 // `now` plus the tolerance, or undefined when it has none the Hub can read.
@@ -258,7 +249,7 @@ export const evaluateSystem = (
     }
     const subjects = new Set([...mounts.keys(), ...open.map((condition) => condition.subject)]);
     const levels = new Map(open.map(({ subject, level }) => [subject, level]));
-    const limits = thresholds.systems.get(system) ?? thresholds.disk;
+    const limits = thresholds.systems.get(system)?.disk ?? thresholds.disk;
     for (const subject of subjects) {
       const disk = mounts.get(subject);
       // A mount that left the samples recovered or was unmounted.

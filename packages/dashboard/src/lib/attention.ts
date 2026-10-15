@@ -367,6 +367,13 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
         staleObserved(item.lastSeenAt, now),
       );
     }
+    case 'high_cpu':
+    case 'high_memory': {
+      return evidence(same('Load within the rolling limits configured in the Hub'), {
+        long: [item.reason],
+        short: [truncate(item.reason, SHORT_LIMIT)],
+      });
+    }
     case 'reports_rejected': {
       return evidence(same('Reports the Hub accepts'), {
         long: [item.reason],
@@ -391,7 +398,9 @@ const arrivedThing = (item: Attention) => {
   if (item.kind === 'job_failing' || item.kind === 'job_overdue') {
     return 'run';
   }
-  return item.kind === 'low_disk' ? 'Vitals sample' : 'check';
+  return item.kind === 'low_disk' || item.kind === 'high_cpu' || item.kind === 'high_memory'
+    ? 'Vitals sample'
+    : 'check';
 };
 
 // Why the item's evidence is weaker than a current check, or undefined when it
@@ -636,6 +645,19 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
           step(
             'Check the System and its Collector',
             `Check that ${item.system} is on and online and that its Collector runs.${item.sleeps ? ' It may be asleep; wake it so it can report.' : ''}`,
+          ),
+        ],
+      };
+    }
+    case 'high_cpu':
+    case 'high_memory': {
+      const resource = item.kind === 'high_cpu' ? 'CPU' : 'memory';
+      return {
+        short: `Find what keeps using ${resource}`,
+        steps: [
+          step(
+            `Inspect ${resource} use`,
+            `On ${item.system}, inspect the processes using ${resource} and compare the Vitals history with the work running at those times.`,
           ),
         ],
       };

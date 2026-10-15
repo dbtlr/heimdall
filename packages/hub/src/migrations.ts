@@ -1821,6 +1821,29 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 23,
   },
+  {
+    sql: `
+      ALTER TABLE vitals_samples ADD COLUMN memory_pressure text
+        CHECK (memory_pressure IN ('normal', 'warning', 'critical'));
+      ALTER TABLE vitals_samples ADD COLUMN collector_platform text
+        CHECK (collector_platform IN ('darwin', 'linux'));
+      CREATE TABLE load_evaluations (
+        system text PRIMARY KEY REFERENCES systems (name),
+        through timestamptz NOT NULL,
+        dirty_from timestamptz,
+        pending_from timestamptz,
+        cpu_known boolean NOT NULL DEFAULT false,
+        memory_known boolean NOT NULL DEFAULT false
+      );
+      CREATE TABLE load_episode_samples (
+        condition bigint PRIMARY KEY REFERENCES conditions (id),
+        sample_from timestamptz NOT NULL,
+        sample_until timestamptz NOT NULL,
+        CHECK (sample_until >= sample_from)
+      );
+    `,
+    version: 24,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

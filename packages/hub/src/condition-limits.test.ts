@@ -9,6 +9,31 @@ import { configArgs, configFile, invoke } from './testing/cli.ts';
 import { migrate, report, storeReport, storeToken } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 
+test('load limits inherit fleet values and validate the complete System override', () => {
+  const limits = parseConditionLimits({
+    cpu: { percent: 85 },
+    systems: { 'laptop-1': { cpu: { noteMinutes: 20 }, memory: { percent: 95 } } },
+  });
+  expect(limits.cpu).toEqual({
+    noteMinutes: 30,
+    noteWindowMinutes: 60,
+    percent: 85,
+    warningMinutes: 120,
+    warningWindowMinutes: 240,
+  });
+  expect(limits.systems.get('laptop-1')?.cpu).toEqual({ ...limits.cpu, noteMinutes: 20 });
+  expect(limits.systems.get('laptop-1')?.memory).toEqual({
+    percent: 95,
+    warningMinutes: 30,
+    warningWindowMinutes: 60,
+  });
+  expect(() => parseConditionLimits({ cpu: { noteMinutes: 61 } })).toThrow();
+  expect(() => parseConditionLimits({ memory: { warningWindowMinutes: 30_000 } })).toThrow();
+  expect(() =>
+    parseConditionLimits({ systems: { 'laptop-1': { cpu: { warningMinutes: 10 } } } }),
+  ).toThrow();
+});
+
 test.each(['toml', 'json'])(
   'disk limits read the selected %s file and inherit fields per System',
   async (extension) => {
@@ -21,14 +46,30 @@ test.each(['toml', 'json'])(
 [conditions.disk]
 note = 60
 warning = 75
+[conditions.cpu]
+percent = 85
+[conditions.memory]
+warningMinutes = 20
 [conditions.systems.laptop-1.disk]
 alert = 95
 hysteresis = 3
+[conditions.systems.laptop-1.cpu]
+noteMinutes = 15
+[conditions.systems.laptop-1.memory]
+percent = 95
 `
         : JSON.stringify({
             conditions: {
+              cpu: { percent: 85 },
               disk: { note: 60, warning: 75 },
-              systems: { 'laptop-1': { disk: { alert: 95, hysteresis: 3 } } },
+              memory: { warningMinutes: 20 },
+              systems: {
+                'laptop-1': {
+                  cpu: { noteMinutes: 15 },
+                  disk: { alert: 95, hysteresis: 3 },
+                  memory: { percent: 95 },
+                },
+              },
             },
           }),
     );
@@ -36,13 +77,25 @@ hysteresis = 3
     const limits = await readConditionLimits({ cwd: home.path, env: {}, named });
 
     expect(limits.disk).toEqual({ alert: 90, hysteresis: 5, note: 60, warning: 75 });
-    expect(limits.systems.get('laptop-1')).toEqual({
+    expect(limits.systems.get('laptop-1')?.disk).toEqual({
       alert: 95,
       hysteresis: 3,
       note: 60,
       warning: 75,
     });
     expect(limits.systems.has('server-1')).toBe(false);
+    expect(limits.systems.get('laptop-1')?.cpu).toEqual({
+      noteMinutes: 15,
+      noteWindowMinutes: 60,
+      percent: 85,
+      warningMinutes: 120,
+      warningWindowMinutes: 240,
+    });
+    expect(limits.systems.get('laptop-1')?.memory).toEqual({
+      percent: 95,
+      warningMinutes: 20,
+      warningWindowMinutes: 60,
+    });
   },
 );
 
@@ -56,6 +109,10 @@ test.each([
   { systems: { 'bad.name': { disk: { alert: 95 } } } },
   { systems: { 'laptop-1': { disk: { warning: 88 } } } },
   { systems: { 'laptop-1': { service_down: 'note' } } },
+  { cpu: { percent: 0 } },
+  { memory: { percent: 101 } },
+  { cpu: { noteWindowMinutes: 500 } },
+  { systems: { 'laptop-1': { memory: { warningWindowMinutes: 10 } } } },
 ])('invalid limits are refused: %j', (value) => {
   expect(() => parseConditionLimits(value)).toThrow();
 });
@@ -72,6 +129,19 @@ test('serve refuses invalid inherited System limits before touching its database
 
   expect(result.code).toBe(1);
   expect(result.stderr).toContain('conditions.systems.laptop-1.disk');
+  expect(result.stderr).not.toContain('Could not prepare the database');
+});
+
+test('serve refuses invalid load windows before touching its database', async () => {
+  await using config = await configFile([
+    '[database]',
+    'url = "postgres://nobody@127.0.0.1:1/never"',
+    '[conditions.systems.laptop-1.cpu]',
+    'noteWindowMinutes = 10',
+  ]);
+  const result = await invoke(['serve', ...configArgs(config)]);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain('conditions.systems.laptop-1.cpu');
   expect(result.stderr).not.toContain('Could not prepare the database');
 });
 

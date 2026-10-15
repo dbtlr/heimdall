@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 
-import { darwinMemory, linuxMemory } from './memory.ts';
+import { darwinMemory, darwinMemoryPressure, linuxMemory, readDarwinMemory } from './memory.ts';
+
+test('macOS pressure distinguishes normal, warning, critical, and an unreadable signal', () => {
+  expect(darwinMemoryPressure('1\n')).toBe('normal');
+  expect(darwinMemoryPressure('2\n')).toBe('warning');
+  expect(darwinMemoryPressure('4\n')).toBe('critical');
+  expect(darwinMemoryPressure('')).toBeUndefined();
+  expect(darwinMemoryPressure('3')).toBeUndefined();
+});
 
 describe('Linux memory', () => {
   const meminfo = [
@@ -48,5 +56,24 @@ describe('macOS memory', () => {
 
   test('vm_stat output without a page size is an error', () => {
     expect(() => darwinMemory('Pages free: 1.\n', 1024)).toThrow('page size');
+  });
+
+  test('a failed pressure probe preserves memory readings and the probe is read-only', async () => {
+    const commands: string[][] = [];
+    const memory = await readDarwinMemory({
+      read: async (command) => {
+        commands.push(command);
+        if (command[0] === '/usr/bin/vm_stat') {
+          return vmStat;
+        }
+        throw new Error('Unavailable sysctl');
+      },
+      totalBytes: 34_359_738_368,
+    });
+    expect(memory).toEqual(darwinMemory(vmStat, 34_359_738_368));
+    expect(commands).toEqual([
+      ['/usr/bin/vm_stat'],
+      ['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'],
+    ]);
   });
 });

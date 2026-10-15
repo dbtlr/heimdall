@@ -6,7 +6,7 @@ import type { VitalsSample } from '@heimdall/schema';
 import { readCommand } from '../subprocess.ts';
 import { darwinMounts, diskUsage, linuxMounts } from './disks.ts';
 import type { Disk } from './disks.ts';
-import { darwinMemory, linuxMemory } from './memory.ts';
+import { readDarwinMemory, linuxMemory } from './memory.ts';
 import type { HostProbe } from './sampler.ts';
 
 // Usage for each mount point. A mount that vanished since it was listed is skipped.
@@ -28,7 +28,7 @@ const platformReadings = (platform: NodeJS.Platform): Pick<HostProbe, 'disks' | 
     case 'darwin': {
       return {
         disks: async () => usage(darwinMounts(await readCommand(['/sbin/mount']))),
-        memory: async () => darwinMemory(await readCommand(['/usr/bin/vm_stat']), totalmem()),
+        memory: () => readDarwinMemory({ read: readCommand, totalBytes: totalmem() }),
       };
     }
     case 'linux': {
