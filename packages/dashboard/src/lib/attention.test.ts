@@ -260,6 +260,28 @@ describe('rankAttention', () => {
 });
 
 describe('laneSummary', () => {
+  test('counts actionable current Conditions apart from old evidence and notes', () => {
+    const alert = { ...lowDisk(undefined), level: 'alert' as const };
+    const warning = { ...lowDisk(undefined), level: 'warning' as const };
+    const note = { ...lowDisk(undefined), level: 'note' as const };
+    expect(laneSummary([alert, { ...warning, evidence: 'old' }])).toEqual({
+      lead: alert,
+      more: 0,
+      unconfirmed: 1,
+    });
+    const oldAlert = { ...alert, evidence: 'old' as const };
+    expect(laneSummary([oldAlert, warning, note])).toEqual({
+      lead: oldAlert,
+      more: 1,
+      unconfirmed: 1,
+    });
+    expect(laneSummary([alert, note, { ...note, subject: '/data' }])).toEqual({
+      lead: alert,
+      more: 0,
+      unconfirmed: 0,
+    });
+  });
+
   test('names the worst open level despite old evidence, and leaves notes healthy', () => {
     const note = { ...lowDisk(undefined), level: 'note' as const };
     const alert = { ...lowDisk(undefined), evidence: 'old' as const, level: 'alert' as const };

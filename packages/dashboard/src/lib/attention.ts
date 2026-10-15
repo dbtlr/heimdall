@@ -80,11 +80,14 @@ export const rankAttention = (
 export const laneSummary = (
   items: readonly Attention[],
 ): { lead: Attention | undefined; more: number; unconfirmed: number } => {
-  const open = items.filter((item) => item.level !== undefined).toSorted(byPriority);
+  const actionable = items
+    .filter((item) => item.level === 'warning' || item.level === 'alert')
+    .toSorted(byPriority);
+  const lead = actionable[0];
   const unconfirmed = items.filter((item) => !isConfirmed(item));
   return {
-    lead: open.find((item) => item.level !== 'note'),
-    more: Math.max(0, open.length - 1),
+    lead,
+    more: actionable.filter((item) => item !== lead && isConfirmed(item)).length,
     unconfirmed: unconfirmed.length,
   };
 };
