@@ -139,13 +139,55 @@ test.each([
   { from: Date.UTC(2026, 9, 24, 22), now: Date.UTC(2026, 9, 25, 12), timeZone: 'Europe/Berlin' },
   { from: Date.UTC(2026, 2, 8, 5), now: Date.UTC(2026, 2, 8, 12), timeZone: 'America/New_York' },
   { from: Date.UTC(2026, 9, 5, 18, 15), now: NOW, timeZone: 'Asia/Kathmandu' },
+  { from: Date.UTC(2026, 10, 1, 4), now: Date.UTC(2026, 10, 1, 12), timeZone: 'America/Havana' },
+  { from: Date.UTC(2026, 9, 25), now: Date.UTC(2026, 9, 25, 12), timeZone: 'Atlantic/Azores' },
+  { from: Date.UTC(2026, 8, 6, 4), now: Date.UTC(2026, 8, 6, 12), timeZone: 'America/Santiago' },
 ])(
   'Today starts at local midnight across clock changes ($timeZone, $now)',
   async ({ from, now, timeZone }) => {
     await using h = await start();
-    expect((await readAgentsOverview(h.db.sql, { now, range: 'today', timeZone })).from).toBe(from);
+    await timeline(now).addSession(h.db.sql, {
+      id: 'first-hour',
+      inputTokens: 1_000_000,
+      model: 'test-model',
+      outputTokens: 0,
+      requests: [(from + 30 * 60_000 - now) / 1000],
+      system: 'server-1',
+    });
+    const result = await readAgentsOverview(h.db.sql, { now, range: 'today', timeZone });
+    expect(result.from).toBe(from);
+    expect(result.totals).toEqual({ pricedCostUsd: 1, requests: 1, unpricedRequests: 0 });
   },
 );
+
+test('a price refresh lag can mix stored and current prices while the total still matches displayed amounts', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'fits',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-10],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'crosses',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-691_200, -10],
+    system: 'server-1',
+  });
+  await h.db.sql`UPDATE model_prices SET input_per_mtok = 10 WHERE model = 'test-model'`;
+  const result = await view(h);
+  expect(
+    result.sessions.map(({ pricedCostUsd, sessionId }) => ({ pricedCostUsd, sessionId })),
+  ).toEqual([
+    { pricedCostUsd: 10, sessionId: 'crosses' },
+    { pricedCostUsd: 1, sessionId: 'fits' },
+  ]);
+  expect(result.totals).toEqual({ pricedCostUsd: 11, requests: 2, unpricedRequests: 0 });
+});
 
 test.each(['7d', '30d'] as const)(
   'the %s range is a trailing duration even across the database time zone clock change',

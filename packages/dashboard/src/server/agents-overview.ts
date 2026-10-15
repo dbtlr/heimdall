@@ -23,15 +23,14 @@ const readSnapshot = async (
   { now, range, timeZone }: { now: number; range: AgentsRange; timeZone: string },
 ): Promise<AgentsOverview> => {
   const to = new Date(now);
-  const [bounds]: { from_at: Date }[] = await sql`
-    SELECT CASE WHEN ${range} = 'today'
-      THEN date_trunc('day', ${to}::timestamptz AT TIME ZONE ${timeZone}) AT TIME ZONE ${timeZone}
-      ELSE ${to}::timestamptz - make_interval(hours => ${24 * (range === '7d' ? 7 : 30)}) END AS from_at
-  `;
-  if (bounds === undefined) {
-    throw new Error('No Agents period bounds.');
-  }
-  const from = bounds.from_at;
+  // startOfDay chooses the first instant of a local day, including repeated
+  // or skipped midnight. PostgreSQL's AT TIME ZONE picks a repeated one later.
+  const from = new Date(
+    range === 'today'
+      ? Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(timeZone).startOfDay()
+          .epochMilliseconds
+      : now - 86_400_000 * (range === '7d' ? 7 : 30),
+  );
   // Stored stretches include subagents. Only Sessions crossing a boundary need
   // request pricing; whole-Session totals retain the Hub's refresh semantics.
   const rows: SessionRow[] = await sql`
@@ -96,6 +95,7 @@ const readSnapshot = async (
   };
 };
 
-// The cards and fleet total must describe the same archive and price snapshot.
+// Read one database snapshot. Stored totals can lag request pricing until the
+// Hub refreshes them (ADR-0016); the fleet total sums the displayed amounts.
 export const readAgentsOverview = (sql: SQL, input: Parameters<typeof readSnapshot>[1]) =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readSnapshot(tx, input));
