@@ -3,7 +3,12 @@ import { basename } from 'node:path';
 import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import type { Harness } from '../harnesses.ts';
 import { readCommand, runCommand } from '../subprocess.ts';
-import { darwinCwd, darwinKernelStart, darwinPath } from './darwin-libproc.ts';
+import {
+  darwinCwd,
+  darwinKernelStart,
+  darwinPath,
+  darwinProcessIdentity,
+} from './darwin-libproc.ts';
 import type { ProcessEntry, ProcessSamplingReader } from './table.ts';
 
 // The columns the Collector asks `ps` for on macOS. `ucomm` is the accounting
@@ -107,6 +112,7 @@ export const createDarwinReader = ({
   kernelStartOf,
   now,
   pathOf,
+  processIdentityOf = darwinProcessIdentity,
   ps,
 }: {
   bootId?: () => Promise<string>;
@@ -116,6 +122,7 @@ export const createDarwinReader = ({
   now: () => number;
   // The executable's path, or null when it cannot be read.
   pathOf: (pid: number) => Promise<string | null>;
+  processIdentityOf?: (pid: number) => Promise<string | null>;
   ps: (cmd: readonly string[]) => Promise<string>;
 }): ProcessSamplingReader => {
   const snapshot = async () => {
@@ -134,6 +141,7 @@ export const createDarwinReader = ({
           entry.kernelStart = kernelStart;
           entry.startedAt = toSecond(kernelStart / MICROS_PER_MS);
         }
+        entry.observationStart = await processIdentityOf(entry.pid);
       }),
     );
     return {

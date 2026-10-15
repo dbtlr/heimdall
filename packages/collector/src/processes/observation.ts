@@ -1,6 +1,8 @@
 import { MAX_PROCESS_CENSUS, MAX_TOP_PROCESSES, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
 import type { ProcessObservation } from '@heimdall/schema';
 
+import { memoryProcessNames, processNameKey } from './names.ts';
+import type { ProcessName, ProcessNameStore } from './names.ts';
 import type { ProcessEntry } from './table.ts';
 
 type Reading = {
@@ -14,24 +16,47 @@ type Reading = {
 };
 
 const ownCpu = (entry: ProcessEntry) => entry.cpuMicros - entry.reapedCpuMicros;
+const validName = (name: string) => name.length > 0 && name.length <= 1024;
+const startOf = (entry: ProcessEntry) => {
+  if (entry.observationStart !== undefined) {
+    return entry.observationStart;
+  }
+  return entry.kernelStart === null ? null : String(entry.kernelStart);
+};
 
 // Keeps one table baseline. Unmeasured processes remain explicitly unknown;
 // a complete PID census can still prove that a formerly observed process exited.
-export const createProcessObserver = () => {
+export const createProcessObserver = ({
+  names = memoryProcessNames(),
+}: { names?: ProcessNameStore } = {}) => {
   let previous: Reading | undefined;
-  let resolved = new Map<string, string>();
+  const resolved = new Map(names.list().map((name) => [processNameKey(name), name]));
   return {
     observe: async (reading: Reading): Promise<ProcessObservation> => {
       const before = previous;
       previous = reading;
       const identityOf = (entry: { pid: number; start: string }) =>
-        `${reading.bootId}:${String(entry.pid)}:${entry.start}`;
-      const live = new Set(
-        reading.entries.map((entry) =>
-          identityOf({ pid: entry.pid, start: String(entry.kernelStart) }),
-        ),
+        processNameKey({ bootId: reading.bootId, ...entry });
+      const presentPids = [...new Set(reading.presentPids)].toSorted((a, b) => a - b);
+      const present = new Set(presentPids);
+      const live = new Map(
+        reading.entries.flatMap((entry) => {
+          const start = startOf(entry);
+          return start === null
+            ? []
+            : [[entry.pid, identityOf({ pid: entry.pid, start })] satisfies [number, string]];
+        }),
       );
-      resolved = new Map([...resolved].filter(([identity]) => live.has(identity)));
+      for (const [identity, name] of resolved) {
+        if (
+          name.bootId !== reading.bootId ||
+          !present.has(name.pid) ||
+          (live.has(name.pid) && live.get(name.pid) !== identity)
+        ) {
+          names.forget(name);
+          resolved.delete(identity);
+        }
+      }
       const elapsed = before === undefined ? 0 : reading.monotonicMs - before.monotonicMs;
       const wall = before === undefined ? 0 : reading.at - before.at;
       const awake =
@@ -46,18 +71,17 @@ export const createProcessObserver = () => {
           ? Math.min(SAMPLE_INTERVAL_MS, wall, awake, elapsed)
           : 0;
       const held = new Map(before?.entries.map((entry) => [entry.pid, entry]));
-      const presentPids = [...new Set(reading.presentPids)].toSorted((a, b) => a - b);
       const unknown = new Set(presentPids);
       const measured: ProcessObservation['top'] = [];
       for (const entry of reading.entries) {
         const previousEntry = held.get(entry.pid);
+        const start = startOf(entry);
         const delta = previousEntry === undefined ? -1 : ownCpu(entry) - ownCpu(previousEntry);
         if (
           intervalMs === 0 ||
           previousEntry === undefined ||
-          entry.kernelStart === null ||
-          entry.kernelStart !== previousEntry.kernelStart ||
-          entry.name !== previousEntry.name ||
+          start === null ||
+          start !== startOf(previousEntry) ||
           delta < 0
         ) {
           continue;
@@ -68,17 +92,40 @@ export const createProcessObserver = () => {
           name: entry.name,
           pid: entry.pid,
           rssBytes: entry.rssBytes,
-          start: String(entry.kernelStart),
+          start,
         });
       }
       const ordered = measured.toSorted((a, b) => b.cpuCores - a.cpuCores || a.pid - b.pid);
       const candidates = await Promise.all(
         ordered.slice(0, MAX_TOP_PROCESSES).map(async (entry) => {
           const identity = identityOf(entry);
-          const name = (await reading.nameOf?.(entry.pid)) ?? entry.name;
-          const oldName = resolved.get(identity);
-          resolved.set(identity, name);
-          if (oldName !== undefined && oldName !== name) {
+          const executable = (await reading.nameOf?.(entry.pid)) ?? null;
+          const heldName = resolved.get(identity);
+          const changed =
+            heldName?.kind === 'confirmed' &&
+            executable !== null &&
+            heldName.executable !== executable;
+          const name = changed ? executable : (heldName?.label ?? executable ?? entry.name);
+          if (!validName(name) || (executable !== null && !validName(executable))) {
+            unknown.add(entry.pid);
+            return [];
+          }
+          const lifetime = { bootId: reading.bootId, pid: entry.pid, start: entry.start };
+          const next: ProcessName =
+            executable === null
+              ? (heldName ?? { ...lifetime, kind: 'fallback', label: name })
+              : { ...lifetime, executable, kind: 'confirmed', label: name };
+          const unchanged =
+            heldName !== undefined &&
+            heldName.label === next.label &&
+            heldName.kind === next.kind &&
+            (heldName.kind === 'fallback' ||
+              (next.kind === 'confirmed' && heldName.executable === next.executable));
+          if (!unchanged) {
+            names.save(next);
+          }
+          resolved.set(identity, next);
+          if (changed) {
             unknown.add(entry.pid);
             return [];
           }
@@ -104,7 +151,6 @@ export const createProcessObserver = () => {
     },
     reset: () => {
       previous = undefined;
-      resolved.clear();
     },
   };
 };

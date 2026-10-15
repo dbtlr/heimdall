@@ -231,6 +231,51 @@ test('missing process readings and unreadable PIDs preserve the stored level', a
   });
 });
 
+test('fresh host-only Vitals cannot turn an old exit census into recovery', async () => {
+  await using h = await startHub();
+  await send(h, readings(NOW, 1));
+  expect((await evaluate(h, shortLimits()))[0]?.level).toBe('warning');
+  h.clock.now = NOW + 3 * 60 * MINUTE;
+  const gone = readings(NOW + 1.25 * MINUTE, 0).map((row) =>
+    Object.assign(row, {
+      processes:
+        row.processes === undefined
+          ? undefined
+          : {
+              ...row.processes,
+              census: {
+                kind: 'complete' as const,
+                presentPids: [],
+                remainderMaxCores: 0,
+                unknownPids: [],
+              },
+              top: [],
+            },
+    }),
+  );
+  await send(h, gone);
+  expect((await evaluate(h, shortLimits()))[0]).toMatchObject({
+    evidence: 'old',
+    level: 'warning',
+  });
+  const hostOnly = readings(h.clock.now, 0).map(({ processes: _processes, ...row }) => row);
+  await send(h, hostOnly);
+  expect((await evaluate(h, shortLimits()))[0]).toMatchObject({
+    evidence: 'unknown',
+    level: 'warning',
+  });
+  await send(
+    h,
+    gone.map((row) =>
+      Object.assign(row, {
+        t: h.clock.now + STEP,
+        uptimeSeconds: 1000 + (h.clock.now + STEP - NOW) / 1000,
+      }),
+    ),
+  );
+  expect(await evaluate(h, shortLimits())).toEqual([]);
+});
+
 test('sleep and reboot cannot supply busy time or combine different process lifetimes', async () => {
   await using h = await startHub();
   await send(h, readings(NOW, 0.25));

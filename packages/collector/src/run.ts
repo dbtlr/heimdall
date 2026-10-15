@@ -20,6 +20,7 @@ import { startHarnessScan } from './harness-scan.ts';
 import { readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { systemReader } from './processes/loop.ts';
+import { openProcessNames } from './processes/names.ts';
 import { createProcessSampling } from './processes/sampling.ts';
 import { openQueue, QUEUE_CAPACITY } from './queue.ts';
 import { openRecords } from './records.ts';
@@ -207,9 +208,11 @@ export const runAction: ActionHandler<typeof run> = async ({
     // interval: names, parents, start, CPU, memory, and working directories,
     // never arguments or environment (ADR-0002).
     const probe = hostProbe(platform);
+    const processNames = await openProcessNames({ stateDir });
     const processTracking = createProcessSampling({
       log: runtime,
       monotonicMs: probe.monotonicMs,
+      names: processNames,
       now: Date.now,
       reader: await systemReader(platform),
       sampler: createSampler(probe),
@@ -249,6 +252,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       await fileChecks.stop();
       spool.close();
       sections.close();
+      processNames.close();
       queue.close();
     }
   } finally {

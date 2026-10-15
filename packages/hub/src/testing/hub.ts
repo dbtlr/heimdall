@@ -117,10 +117,11 @@ export const sendChunk = async (
     offset,
     token,
   }: { content: string | Uint8Array; offset?: number | string; token?: string },
-) =>
-  hub.fetch(
+) => {
+  const body = new Uint8Array(typeof content === 'string' ? await gzip(content) : content);
+  return hub.fetch(
     new Request(`http://hub.test/api/v1/transcripts/generations/${String(generation)}/chunks`, {
-      body: typeof content === 'string' ? await gzip(content) : content,
+      body,
       headers: {
         'content-type': 'application/gzip',
         ...bearer(token),
@@ -129,6 +130,7 @@ export const sendChunk = async (
       method: 'POST',
     }),
   );
+};
 
 // Redeems a Pairing code the way the Collector does.
 export const redeem = (hub: ReturnType<typeof createHub>, body: unknown) =>

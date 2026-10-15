@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
 
+import { ProcessObservationSchema } from '@heimdall/schema';
+
 import { createProcessObserver } from './observation.ts';
 import type { ProcessEntry } from './table.ts';
 
@@ -79,6 +81,38 @@ test('an executable change with the same accounting name cannot label the previo
   expect((await observe(145_000, 45_000_000)).top[0]?.name).toBe('new-name');
 });
 
+test('mutable accounting names and executable permissions retain the lifetime label until a confirmed exec change', async () => {
+  const observer = createProcessObserver();
+  let fallback = 'worker';
+  let executable: string | null = null;
+  const observe = (at: number) =>
+    observer.observe({
+      at,
+      bootId: 'boot-a',
+      entries: [entry(1, (at - 100_000) * 1000, { name: fallback })],
+      monotonicMs: at,
+      nameOf: () => Promise.resolve(executable),
+      presentPids: [1],
+      uptimeSeconds: at / 1000,
+    });
+  await observe(100_000);
+  expect((await observe(115_000)).top[0]?.name).toBe('worker');
+  fallback = 'renamed-by-prctl';
+  const renamed = await observe(130_000);
+  expect(renamed.top[0]).toMatchObject({ cpuCores: 1, name: 'worker' });
+  executable = 'actual-worker';
+  expect((await observe(145_000)).top[0]?.name).toBe('worker');
+  executable = null;
+  expect((await observe(160_000)).top[0]?.name).toBe('worker');
+  executable = 'actual-worker';
+  expect((await observe(175_000)).top[0]?.name).toBe('worker');
+  executable = 'replacement';
+  const replaced = await observe(190_000);
+  expect(replaced.top).toEqual([]);
+  expect(replaced.census).toMatchObject({ kind: 'complete', unknownPids: [1] });
+  expect((await observe(205_000)).top[0]?.name).toBe('replacement');
+});
+
 test.each([
   { at: 145_000, monotonicMs: 115_000, uptimeSeconds: 115 },
   { at: 99_000, monotonicMs: 115_000, uptimeSeconds: 115 },
@@ -88,12 +122,6 @@ test.each([
   {
     at: 115_000,
     entries: [entry(1, 20_000_000, { kernelStart: 101 })],
-    monotonicMs: 115_000,
-    uptimeSeconds: 115,
-  },
-  {
-    at: 115_000,
-    entries: [entry(1, 20_000_000, { name: 'new' })],
     monotonicMs: 115_000,
     uptimeSeconds: 115,
   },
@@ -159,4 +187,81 @@ test('credited time never exceeds the monotonic interval that measured the CPU d
   });
   expect(current.intervalMs).toBe(5000);
   expect(current.top[0]?.cpuCores).toBe(1);
+});
+
+test.each([
+  { description: 'empty', name: '' },
+  { description: 'oversized', name: 'x'.repeat(1025) },
+])(
+  'an $description process name leaves only its PID unknown and can later recover',
+  async ({ name: invalidName }) => {
+    const observer = createProcessObserver();
+    let name = invalidName;
+    const observe = (at: number) =>
+      observer.observe({
+        at,
+        bootId: 'boot-a',
+        entries: [entry(1, (at - 100_000) * 2000, { name }), entry(2, (at - 100_000) * 1000)],
+        monotonicMs: at,
+        nameOf: async () => null,
+        presentPids: [1, 2],
+        uptimeSeconds: at / 1000,
+      });
+    await observe(100_000);
+    const observed = await observe(115_000);
+    expect(ProcessObservationSchema.safeParse(observed).success).toBe(true);
+    expect(observed.top.map((process) => process.pid)).toEqual([2]);
+    expect(observed.census).toMatchObject({ kind: 'complete', unknownPids: [1] });
+    name = 'valid-later';
+    expect((await observe(130_000)).top.find((process) => process.pid === 1)?.name).toBe(
+      'valid-later',
+    );
+  },
+);
+
+test('an unreadable-but-present process and a discarded CPU baseline do not forget its fallback label', async () => {
+  const observer = createProcessObserver();
+  let visible = true;
+  let name = 'original-label';
+  const observe = (at: number) =>
+    observer.observe({
+      at,
+      bootId: 'boot-a',
+      entries: visible ? [entry(1, (at - 100_000) * 1000, { name })] : [],
+      monotonicMs: at,
+      nameOf: async () => null,
+      presentPids: [1],
+      uptimeSeconds: at / 1000,
+    });
+  await observe(100_000);
+  expect((await observe(115_000)).top[0]?.name).toBe('original-label');
+  visible = false;
+  await observe(130_000);
+  name = 'renamed';
+  visible = true;
+  expect((await observe(145_000)).top).toEqual([]);
+  expect((await observe(160_000)).top[0]?.name).toBe('original-label');
+  observer.reset();
+  expect((await observe(175_000)).top).toEqual([]);
+  expect((await observe(190_000)).top[0]?.name).toBe('original-label');
+});
+
+test('exact observation identities preserve all uint64 digits and take precedence over BSD wall-clock starts', async () => {
+  const observer = createProcessObserver();
+  const observe = (at: number, observationStart: string | null, kernelStart: number) =>
+    observer.observe({
+      at,
+      bootId: 'boot-a',
+      entries: [entry(1, (at - 100_000) * 1000, { kernelStart, observationStart })],
+      monotonicMs: at,
+      presentPids: [1],
+      uptimeSeconds: at / 1000,
+    });
+  await observe(100_000, '18446744073709551614', 100);
+  expect((await observe(115_000, '18446744073709551614', 200)).top[0]).toMatchObject({
+    cpuCores: 1,
+    start: '18446744073709551614',
+  });
+  expect((await observe(130_000, '18446744073709551615', 200)).top).toEqual([]);
+  expect((await observe(145_000, null, 200)).top).toEqual([]);
 });

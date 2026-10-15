@@ -23,7 +23,7 @@ const prune = (states: Map<string, ProcessWindow>, held: ReadonlyMap<string, unk
   for (const [subject, state] of states) {
     if (
       !held.has(subject) &&
-      (state.ended || state.rules.every((rule) => rule.window.busy === 0))
+      (state.endedAt !== undefined || state.rules.every((rule) => rule.window.busy === 0))
     ) {
       states.delete(subject);
     }
@@ -200,8 +200,8 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
         if (old && level === undefined) {
           continue;
         }
-        // Old backlog cannot lower a current occurrence, including by exit.
-        if (old && state.ended) {
+        // A later host-only sample cannot make an old exit observation fresh.
+        if (state.endedAt !== undefined && now - state.endedAt.getTime() > OLD_EVIDENCE_MS) {
           continue;
         }
         const rule = selectProcessRule(state, level, old);

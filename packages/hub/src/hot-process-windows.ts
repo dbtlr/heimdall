@@ -14,7 +14,7 @@ export type ProcessReading = {
 type Identity = NonNullable<ReturnType<typeof parseProcessSubject>>;
 export type ProcessWindow = {
   identity: Identity;
-  ended: boolean;
+  endedAt: Date | undefined;
   known: boolean;
   rules: ReturnType<typeof rulesFor>;
 };
@@ -42,7 +42,7 @@ export const addProcessWindow = (
   if (!states.has(subject)) {
     const identity = parseProcessSubject(subject);
     if (identity !== undefined) {
-      states.set(subject, { ended: false, identity, known: false, rules: rulesFor(limits) });
+      states.set(subject, { endedAt: undefined, identity, known: false, rules: rulesFor(limits) });
     }
   }
 };
@@ -81,9 +81,12 @@ export const feedProcessWindows = (
       observation !== null &&
       (observation.bootId !== identity.bootId ||
         (entry !== undefined && (entry.start !== identity.start || entry.name !== identity.name)));
-    state.ended ||= replaced || (census?.kind === 'complete' && !present.has(identity.pid));
+    const confirmedExit = replaced || (census?.kind === 'complete' && !present.has(identity.pid));
+    if (confirmedExit) {
+      state.endedAt = row.t;
+    }
     let busy: boolean | undefined;
-    if (!state.ended && duration > 0) {
+    if (state.endedAt === undefined && duration > 0) {
       if (entry !== undefined) {
         busy = entry.cpuCores > limits.cores;
       } else if (
@@ -94,7 +97,7 @@ export const feedProcessWindows = (
         busy = false;
       }
     }
-    state.known = state.ended || busy !== undefined;
+    state.known = confirmedExit || busy !== undefined;
     for (const rule of state.rules) {
       rule.window.add(busy === undefined ? undefined : { busy, from: at - duration, to: at }, at);
     }
@@ -102,7 +105,7 @@ export const feedProcessWindows = (
 };
 
 export const selectProcessRule = (state: ProcessWindow, held: Level | undefined, old = false) =>
-  state.ended ? undefined : chooseWindowRule(state.rules, held, old);
+  state.endedAt === undefined ? chooseWindowRule(state.rules, held, old) : undefined;
 
 export const processReason = (
   state: ProcessWindow,
