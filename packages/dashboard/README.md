@@ -58,10 +58,21 @@ The database statement timeout remains 30 seconds. The Hub retains its 10-second
 
   The `tab`, `range`, and `at` search parameters share the current view. Older links with `at` and no `tab` open Vitals. Changing tabs reuses the loaded history. Selecting a time opens a sample sheet on phones, with Close and Escape dismissal. Desktop shows the inspector beside the charts. Long expanded lists scroll within their sections. An unpaired System retains its history under an explanatory banner. An unknown System name is not found.
 - **Session** (`/systems/<name>/sessions/<harness>/<source>/<session id>`): one Session's Timeline, Cost, and Trace.
+- **Agents** (`/agents`): list-price cost across the archived fleet for Today, the last 7 days, or the last 30 days. Today starts at midnight in the viewer's time zone, including on days when clocks change. The other periods are trailing durations of 168 and 720 hours. Only requests inside the period count, including subagents' requests and history from unpaired Systems. The total, Claude Code and Codex split, and Session amounts use that same period. Any unpriced request labels the amount "At least" and adds an unpriced-request count. Sessions sort by their priced amount, highest first, and link to their Session pages. "Active recently" means a request was recorded within the past 60 seconds; it does not assert that a Session is running. Other rows show when their last request was recorded.
+
+The Agents view reads stored totals for Sessions whose request spans fit inside the period. Sessions crossing either boundary read and price only requests inside it. Its stored spans and totals have the same refresh lag as other pages. After a price change, boundary amounts can reflect the new prices while stored totals still use the old prices. A refresh brings them into agreement; a backlog can take several refreshes. The fleet total always sums the displayed amounts. The page waits for the browser's time zone before displaying totals, and the range and zone travel in its URL.
 
 The Hub sets every Condition's level: note, warning, or alert ([ADR-0017](../../docs/decisions/0017-the-hub-sets-condition-levels.md)). The dashboard reads stored levels and transitions from one consistent database snapshot. Disk limits and per-System overrides belong in the Hub configuration.
 
 Every page but the Session page reads its data again every 15 seconds while its tab is visible, through the router's invalidation, and at once when the tab becomes visible again. A tick that finds the previous load still running is skipped.
+
+The Agents query benchmark runs against a disposable test database with 800 Sessions and 200,000 requests:
+
+```sh
+bun packages/dashboard/scripts/benchmark-agents.ts
+```
+
+It checks request counts against the fixture facts and reports the first read, warm median, and worst duration for each period. It uses the test PostgreSQL harness and never reads `HEIMDALL_DATABASE_URL`.
 
 ## Seed a scratch database
 
