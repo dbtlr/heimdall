@@ -89,6 +89,8 @@ export const judgedFilesRecords = async (
 
 const CONDITION_KINDS: Record<ConditionKind, true> = {
   drift: true,
+  high_cpu: true,
+  high_memory: true,
   job_failing: true,
   job_overdue: true,
   low_disk: true,

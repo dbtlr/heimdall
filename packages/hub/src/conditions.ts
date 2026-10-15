@@ -11,20 +11,26 @@ export const FIXED_LEVELS = {
   reports_rejected: 'alert',
   service_down: 'alert',
   system_stale: 'alert',
-} as const satisfies Record<Exclude<ConditionKind, 'low_disk'>, ConditionLevel>;
+} as const satisfies Record<
+  Exclude<ConditionKind, 'low_disk' | 'high_cpu' | 'high_memory'>,
+  ConditionLevel
+>;
 
 type Judgment = {
   now: Date;
   reason: string;
   subject: string;
   system: string;
-} & ({ kind: 'low_disk'; level: ConditionLevel } | { kind: keyof typeof FIXED_LEVELS });
+} & (
+  | { kind: 'low_disk' | 'high_cpu' | 'high_memory'; level: ConditionLevel }
+  | { kind: keyof typeof FIXED_LEVELS }
+);
 
 // Callers hold the System's row lock in this transaction. Level and history
 // must commit together, including when the Hub's wall clock moves backwards.
 export const raise = async (tx: SQL, judgment: Judgment) => {
   const { kind, now, reason, subject, system } = judgment;
-  const level = kind === 'low_disk' ? judgment.level : FIXED_LEVELS[kind];
+  const level = 'level' in judgment ? judgment.level : FIXED_LEVELS[judgment.kind];
   const [held]: { id: string; level: ConditionLevel; at: Date }[] = await tx`
     SELECT c.id, c.level, GREATEST(c.raised_at, (
       SELECT max(at) FROM condition_transitions WHERE condition = c.id
@@ -77,6 +83,57 @@ export const clear = async (
     INSERT INTO condition_transitions (condition, action, level, at, reason)
     SELECT id, 'cleared', level, cleared_at, latest_reason FROM cleared
   `;
+};
+
+type RecordedLevel = { level: ConditionLevel; reason: string };
+
+// Records a recovered episode without touching another occurrence that is
+// currently open. Callers hold the System lock, as they do for raise and clear.
+export const recordClosedOccurrence = async (
+  tx: SQL,
+  {
+    kind,
+    now,
+    steps,
+    subject,
+    system,
+  }: {
+    kind: ConditionKind;
+    now: Date;
+    steps: [RecordedLevel, ...RecordedLevel[]];
+    subject: string;
+    system: string;
+  },
+) => {
+  const first = steps[0];
+  const last = steps.at(-1) ?? first;
+  const [saved]: { id: string }[] = await tx`
+    INSERT INTO conditions (
+      system, kind, subject, level, raised_at, raised_reason,
+      latest_at, latest_reason, cleared_at
+    )
+    VALUES (${system}, ${kind}, ${subject}, ${last.level}, ${now}, ${first.reason},
+            ${now}, ${last.reason}, ${now})
+    RETURNING id
+  `;
+  if (saved === undefined) {
+    throw new Error('A recovered Condition was not stored.');
+  }
+  let previous: ConditionLevel | undefined;
+  for (const step of steps) {
+    // oxlint-disable-next-line no-await-in-loop -- transition IDs preserve the sampled level order.
+    await tx`
+      INSERT INTO condition_transitions (condition, action, level, previous_level, at, reason)
+      VALUES (${saved.id}, ${previous === undefined ? 'raised' : 'level_changed'}, ${step.level},
+              ${previous ?? null}, ${now}, ${step.reason})
+    `;
+    previous = step.level;
+  }
+  await tx`
+    INSERT INTO condition_transitions (condition, action, level, at, reason)
+    VALUES (${saved.id}, 'cleared', ${last.level}, ${now}, ${last.reason})
+  `;
+  return saved.id;
 };
 
 // Runs `evaluate` for each System in turn. A System that cannot be judged does

@@ -10,6 +10,8 @@ export const LEVEL_FILL: Record<ConditionLevel, string> = {
 
 export const KIND_NAMES: Record<ConditionKind, string> = {
   drift: 'Drift',
+  high_cpu: 'High CPU',
+  high_memory: 'High memory',
   job_failing: 'Job failing',
   job_overdue: 'Job overdue',
   low_disk: 'Low disk',

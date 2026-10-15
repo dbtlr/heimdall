@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ReportSchema } from './report.ts';
+import { ReportSchema, VitalsSampleSchema } from './report.ts';
 import type { Report } from './report.ts';
 import { sample } from './testing.ts';
 
@@ -10,6 +10,23 @@ const report = (): Report => ({
   schemaVersion: 1,
   sentAt: 1_759_700_030_000,
   system: 'laptop-1',
+});
+
+test('optional memory pressure survives a v1 Report without costing older or unknown readings', () => {
+  const pressures: NonNullable<Report['samples'][number]['memory']['pressure']>[] = [
+    'normal',
+    'warning',
+    'critical',
+  ];
+  for (const pressure of pressures) {
+    const reading = { ...sample(0), memory: { ...sample(0).memory, pressure } };
+    expect(VitalsSampleSchema.parse(reading).memory).toEqual(reading.memory);
+  }
+  expect(VitalsSampleSchema.parse(sample(0))).toEqual(sample(0));
+  expect(
+    VitalsSampleSchema.parse({ ...sample(0), memory: { ...sample(0).memory, pressure: 'future' } })
+      .memory.pressure,
+  ).toBeUndefined();
 });
 
 describe('a Report', () => {

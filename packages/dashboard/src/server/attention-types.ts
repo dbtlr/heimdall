@@ -30,6 +30,7 @@ export type ServiceTarget = {
 export type JobTarget = { scheduler: string; target: string };
 
 export type AttentionFacts =
+  | { kind: 'high_cpu' | 'high_memory'; reason: string }
   | {
       kind: 'drift';
       // The files record that holds the path, and the hash it records, when
@@ -79,7 +80,7 @@ export type Attention = (
 ) & {
   // When the check, run, sample, or rejection the item rests on arrived:
   // check_sets or run_sets received_at for Services, files, and jobs; the
-  // newest Vitals sample for low disk; last seen for a stale System; the latest
+  // newest Vitals sample for disk and load; last seen for a stale System; the latest
   // rejection for Reports rejected. Undefined when none has arrived.
   checkedAt: number | undefined;
   evidence: Evidence;

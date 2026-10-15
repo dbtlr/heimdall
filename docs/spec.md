@@ -114,16 +114,75 @@ A job Condition stays as it is while what decides it is unknown: while the Syste
 
 ## System Conditions
 
-Once a minute, in the same pass as the job Conditions and one after the other, the Hub judges every paired System for two Conditions about the System itself.
+Once a minute, in the same pass as the job Conditions and one after the other, the Hub judges every paired System for stale System, disk, and rolling load Conditions.
 
 - **Stale System** is raised when the Hub last heard from the System more than 10 minutes ago, or more than 7 days ago when the System sleeps. Any Report counts as hearing from it, including one the Hub rejects, and so does any transcript upload. A paired System the Hub has never heard from counts from when it was paired, so a Collector that never starts is stale too. The Hub then holds a row for that System with no last seen, and the dashboard shows it as never seen. A System with a last seen counts from that time even if it was paired again since, so pairing it again does not clear the Condition. The Condition has no subject, its reason names the time the System was last heard from (or paired, if never), and it clears at the next judgment after the System is heard from again.
 - **Low disk** is graded per mount: note at 70% used, warning at 80%, and alert at 90%. Raising or escalating includes equality. Recovery uses a five-percentage-point margin: alert steps down below 85%, warning below 75%, and note clears below 65%. Equality retains the level. A large change moves directly to the resulting level or clears, without fabricated intermediate transitions. The subject remains the mount and the stored kind remains `low_disk`. Its latest reason gives free space, such as `9.9 GiB free of 100.0 GiB (9.9%).` A mount missing from a fresh sample clears. A sample older than two hours cannot lower or clear an open disk Condition, including a missing mount. A mount with a size of 0 is left as it is. Duplicate mounts use the entry with the least free fraction, then least free bytes. A System with no readable sample is not judged for disk.
 - **The latest sample** is the newest one stamped no later than 5 minutes after the Hub's clock, since the Hub does not store when it received a sample, and a System whose clock runs ahead would otherwise keep its newest, wrongly stamped sample as the latest for as long as the clock is wrong.
-- **A System that is no longer paired** is no longer judged for stale System or low disk, and the next judgment clears those Conditions. Its other Conditions and its history stay. Its job, Drift, and Service down Conditions stay open, since no new Report arrives to change what they are judged on, and they show in the status of the dashboard's unpaired view. They change again only once new Reports arrive after it is paired again.
+- **A System that is no longer paired** is no longer judged for stale System, disk, or rolling load, and the next judgment clears those Conditions. Its other Conditions and its history stay. Its job, Drift, and Service down Conditions stay open, since no new Report arrives to change what they are judged on, and they show in the status of the dashboard's unpaired view. They change again only once new Reports arrive after it is paired again.
 
 Disk limits are percentages in `[conditions.disk]` in `hub.toml`, or the equivalent JSON `conditions.disk` object. All fields are optional: `note = 70`, `warning = 80`, `alert = 90`, and `hysteresis = 5` are the defaults. `[conditions.systems.<System>.disk]` overrides individual fields for that System, inheriting unspecified fleet limits. `hysteresis` is a positive number of percentage points. Limits must satisfy `0 < hysteresis < note < warning < alert <= 100`, with each adjacent level gap greater than hysteresis. Unknown settings, invalid System names, invalid values, and invalid inherited combinations stop `serve` before it opens the database. Fixed levels cannot be configured. Changed limits take effect after restarting the Hub and change subsequent judgments, never recorded history. Stale time limits retain their fixed defaults.
 
 The Collector says whether its System sleeps with `sleeps = true` in `collector.toml`, `--sleeps`, or `HEIMDALL_SLEEPS`, and false when left out, and puts that in every Report as the boolean `sleeps`. The Hub stores the latest value it received. A Report without `sleeps`, from a Collector that predates it, leaves the stored value as it is, and so does one whose `sleeps` is not a boolean, which the Hub drops without rejecting the Report. A System that has never sent it counts as always on. Upgrade the Hub, then the Collectors: a laptop whose Collector predates `sleeps` is stale after 10 minutes until it is upgraded and configured.
+
+### Sustained and recurring load
+
+The Hub counts measured busy time within rolling windows, so sustained work and recurring bursts can both qualify:
+
+| Condition | Busy reading | Busy time | Window | Level |
+| --- | --- | --- | --- | --- |
+| High CPU (`high_cpu`) | Above 90% | 30 minutes | 60 minutes | note |
+| High CPU (`high_cpu`) | Above 90% | 120 minutes | 240 minutes | warning |
+| High memory (`high_memory`) | Above 90% | 30 minutes | 60 minutes | warning |
+
+Both Conditions have an empty subject and name their resource in their reason.
+The CPU percentage covers all cores. Equality with the percentage limit does not count as busy.
+Duration equality qualifies. Reasons give the measured busy minutes, the window, and its ending sample time.
+A quiet newest reading can leave a qualifying pattern in its window.
+
+Each sample bounds an interval ending at its timestamp.
+The interval counts at most 15 seconds and no more than either the time since its predecessor or the increase in uptime.
+A first sample, a gap over 30 seconds, or a non-increasing uptime contributes no known interval.
+Timing jitter and whole-second uptime can make this count conservative, delaying qualification beyond the same elapsed wall time.
+Missing intervals remain unknown. Sleep, a reboot, and Collector silence never create busy time.
+Windows end at sample time, not the Hub's wall clock. Samples more than five minutes ahead of the Hub are left for a later pass.
+
+Linux memory use subtracts the kernel's `MemAvailable`, so reclaimable cache is already excluded.
+On macOS, high use also requires `memory.pressure` of `warning` or `critical` on the same sample.
+The Collector reads `kern.memorystatus_vm_pressure_level` with a read-only `sysctl` query, mapping 1 to `normal`, 2 to `warning`, and 4 to `critical`.
+These values follow [XNU's pressure notification mapping](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c).
+The optional field keeps Report schema version 1.
+An unavailable probe or an unknown pressure value omits pressure and preserves the other Vitals.
+A macOS sample above the usage limit without pressure is unknown for this judgment. A normal pressure reading is known non-busy evidence.
+A zero memory total is unknown. Older samples without a recorded platform cannot establish high memory use.
+
+Raising and escalation require enough measured busy time.
+A new current Condition also requires a latest sample no older than two hours.
+Old backlogs can add completed historical episodes while incomplete old episodes wait for fresh evidence.
+An open level is retained while unobserved intervals could still make that level qualify.
+Recovery therefore requires enough known non-busy time to rule out the old level, even if every unknown interval were busy.
+CPU can step down from warning to note or clear. A latest sample older than two hours cannot lower or clear an existing current Condition.
+Historical replay still records already completed episodes from an old backlog.
+Silence alone does not move a window or change the judgment.
+If a clock rollback leaves every eligible sample behind the evaluated cursor, current judgments hold until the sample timeline catches up.
+
+The Hub replays newly stored readings in sample order and records qualifying episodes even when later readings in the batch establish recovery.
+Transitions use the Hub's evaluation time, following ADR-0017. Their reasons identify the sampled window.
+A durable per-System cursor commits with the Conditions, preventing repeated evaluation or Report retries from recreating completed episodes.
+Newly stored readings behind that cursor mark the System for historical replay. Sample-time spans identify recorded episodes, so replay adds unseen completed episodes without duplicating overlapping history or changing a later open occurrence.
+On first evaluation, the Hub scans the raw samples it still holds. Raw retention bounds retrospective detection.
+The Hub stores whether the latest evaluated CPU and memory intervals were known.
+The dashboard uses that coverage only when it matches the newest sample, keeping unknown evidence distinct from the stored level.
+Only raw samples carry pressure. Existing Vitals rollups and insight views keep their current shape.
+
+Load limits live in `[conditions.cpu]` and `[conditions.memory]` in `hub.toml`, or the equivalent JSON objects.
+CPU fields default to `percent = 90`, `noteMinutes = 30`, `noteWindowMinutes = 60`, `warningMinutes = 120`, and `warningWindowMinutes = 240`.
+Memory fields default to `percent = 90`, `warningMinutes = 30`, and `warningWindowMinutes = 60`.
+`[conditions.systems.<System>.cpu]` and `[conditions.systems.<System>.memory]` override individual fields, inheriting the rest.
+Percentages must be greater than zero and at most 100. Durations and windows range from 0.25 to 18,720 minutes, within raw retention.
+Each duration must fit its window. CPU's note duration must be less than its warning duration, and its note window cannot exceed its warning window.
+Unknown fields and invalid inherited combinations stop `serve` before it opens the database.
+Restarting the Hub applies changed limits to subsequent judgments, including its latest stored window, without rewriting recorded history.
 
 ## Drift
 

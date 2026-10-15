@@ -56,12 +56,12 @@ export const storeReport = (
     // The samples travel as one JSON parameter, so a Report of any size is one
     // statement. The samples the insert stored, and only those, roll up into
     // their 5-minute buckets, so a resent sample never counts twice (ADR-0008).
-    const stored: unknown[] = await tx`
+    const stored: { t: Date }[] = await tx`
       WITH stored AS (
         INSERT INTO vitals_samples (
           system, t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
           load_1, load_5, load_15, uptime_seconds, disks,
-          collector_cpu_percent, collector_rss_bytes
+          collector_cpu_percent, collector_rss_bytes, memory_pressure, collector_platform
         )
         SELECT
           ${report.system},
@@ -80,7 +80,8 @@ export const storeReport = (
           (s->>'uptimeSeconds')::double precision,
           s->'disks',
           (s->'collector'->>'cpuPercent')::double precision,
-          (s->'collector'->>'rssBytes')::bigint
+          (s->'collector'->>'rssBytes')::bigint,
+          s->'memory'->>'pressure', ${report.collector.platform}
         FROM jsonb_array_elements(${storableJson(report.samples)}::text::jsonb) AS s
         ON CONFLICT (system, t) DO NOTHING
         RETURNING *, date_bin('5 minutes', t, timestamptz '2000-01-01 00:00:00+00') AS bucket
@@ -138,6 +139,13 @@ export const storeReport = (
       )
       SELECT t FROM stored
     `;
+    if (stored.length > 0) {
+      const first = new Date(Math.min(...stored.map((row) => row.t.getTime())));
+      await tx`
+        UPDATE load_evaluations SET dirty_from = LEAST(COALESCE(dirty_from, ${first}), ${first})
+        WHERE system = ${report.system} AND through >= ${first}
+      `;
+    }
     if (report.transcripts !== undefined) {
       await storeTranscriptSources(tx, {
         receivedAt: seenAt,
@@ -381,9 +389,11 @@ const storeChecks = async (
 
 // The kinds of Condition the Hub derives. A job Condition's subject is the
 // job's name, a low disk Condition's the mount, a stale System Condition's is
-// empty, a Drift Condition's the file's path, and a Service down Condition's
+// empty, as are high CPU and memory, a Drift Condition's the file's path, and a Service down Condition's
 // the Service's name.
 export type ConditionKind =
+  | 'high_cpu'
+  | 'high_memory'
   | 'drift'
   | 'job_failing'
   | 'job_overdue'

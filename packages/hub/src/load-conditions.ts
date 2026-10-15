@@ -1,0 +1,149 @@
+import { OLD_EVIDENCE_MS, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
+import type { SQL } from 'bun';
+
+import type { ConditionLimits } from './condition-limits.ts';
+import { clear, evaluateEach, raise } from './conditions.ts';
+import { recordHistoricalLoad } from './load-history.ts';
+import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
+import type { Kind, Level, Reading } from './load-windows.ts';
+import { FUTURE_SAMPLE_TOLERANCE_MS } from './system-conditions.ts';
+import { pairedSystems, whenPaired } from './tokens.ts';
+
+const KINDS: Kind[] = ['high_cpu', 'high_memory'];
+
+const trackSample = (tx: SQL, system: string, kind: Kind, at: Date) => tx`
+  INSERT INTO load_episode_samples (condition, sample_from, sample_until)
+  SELECT id, ${at}, ${at} FROM conditions
+  WHERE system = ${system} AND kind = ${kind} AND cleared_at IS NULL
+  ON CONFLICT (condition) DO UPDATE SET sample_until = GREATEST(load_episode_samples.sample_until, excluded.sample_until)
+`;
+
+const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: ConditionLimits) =>
+  sql.begin(async (tx) => {
+    const paired = await whenPaired(tx, system);
+    await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
+    const now = clock();
+    const held: { kind: Kind; level: Level }[] = await tx`
+      SELECT kind, level FROM conditions
+      WHERE system = ${system} AND kind IN ${tx(KINDS)} AND cleared_at IS NULL
+    `;
+    if (paired === undefined) {
+      for (const kind of KINDS) {
+        // oxlint-disable-next-line no-await-in-loop -- the System lock orders every transition.
+        await clear(tx, { kind, now: new Date(now), subject: '', system });
+      }
+      return;
+    }
+    const selected = limits.systems.get(system) ?? limits;
+    const rules = rulesFor(selected);
+    const largestWindow = Math.max(...rules.map((rule) => rule.window.minutes)) * 60_000;
+    const [cursor]: { through: Date; dirty_from: Date | null }[] = await tx`
+      SELECT through, dirty_from FROM load_evaluations WHERE system = ${system}
+    `;
+    const after =
+      cursor === undefined || cursor.dirty_from !== null
+        ? null
+        : new Date(cursor.through.getTime() - largestWindow - SAMPLE_INTERVAL_MS);
+    const rows: Reading[] = await tx`
+      SELECT t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
+             memory_pressure, collector_platform, uptime_seconds
+      FROM vitals_samples
+      WHERE system = ${system} AND (${after}::timestamptz IS NULL OR t >= ${after})
+        AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
+      ORDER BY t
+    `;
+    const latest = rows.at(-1);
+    if (latest === undefined || (cursor !== undefined && latest.t < cursor.through)) {
+      return;
+    }
+    const old = now - latest.t.getTime() > OLD_EVIDENCE_MS;
+    if (
+      cursor?.dirty_from != null ||
+      (old && (cursor === undefined || latest.t > cursor.through))
+    ) {
+      await recordHistoricalLoad(tx, {
+        limits: selected,
+        now: new Date(now),
+        rows,
+        system,
+        through: old ? latest.t : (cursor?.through ?? latest.t),
+      });
+    }
+    const current = new Map(held.map(({ kind, level }) => [kind, level]));
+    let previous: Reading | undefined;
+    let coverage = { cpuKnown: false, memoryKnown: false };
+    for (const row of rows) {
+      const at = row.t.getTime();
+      coverage = feedRules(rules, row, previous);
+      previous = row;
+      // A durable cursor prevents a completed historical episode from being
+      // raised again. The newest reading is still rejudged after limit changes.
+      if (row !== latest && ((cursor !== undefined && at <= cursor.through.getTime()) || old)) {
+        continue;
+      }
+      for (const kind of KINDS) {
+        const level = current.get(kind);
+        if (old && level === undefined) {
+          continue;
+        }
+        const qualifying = selectedRule(rules, kind, level, old);
+        if (
+          qualifying?.level === level &&
+          qualifying !== undefined &&
+          qualifying.window.busy < qualifying.duration
+        ) {
+          continue;
+        }
+        if (qualifying === undefined) {
+          if (level === undefined) {
+            continue;
+          }
+          // oxlint-disable-next-line no-await-in-loop -- all changes share the System transaction.
+          await trackSample(tx, system, kind, row.t);
+          // oxlint-disable-next-line no-await-in-loop -- record recovery with its sampled span.
+          await clear(tx, { kind, now: new Date(now), subject: '', system });
+          current.delete(kind);
+        } else {
+          if (qualifying.level === level && row !== latest) {
+            continue;
+          }
+          const reason = reasonFor(qualifying, row);
+          // oxlint-disable-next-line no-await-in-loop -- level and history commit with the replay cursor.
+          await raise(tx, {
+            kind,
+            level: qualifying.level,
+            now: new Date(now),
+            reason,
+            subject: '',
+            system,
+          });
+          // oxlint-disable-next-line no-await-in-loop -- metadata shares the Condition transaction.
+          await trackSample(tx, system, kind, row.t);
+          current.set(kind, qualifying.level);
+        }
+      }
+    }
+    for (const kind of KINDS) {
+      // oxlint-disable-next-line no-await-in-loop -- extend open spans through unknown evidence too.
+      await trackSample(tx, system, kind, latest.t);
+    }
+    await tx`
+      INSERT INTO load_evaluations (system, through, cpu_known, memory_known)
+      VALUES (${system}, ${latest.t}, ${coverage.cpuKnown}, ${coverage.memoryKnown})
+      ON CONFLICT (system) DO UPDATE SET through = GREATEST(load_evaluations.through, excluded.through), dirty_from = NULL, cpu_known = excluded.cpu_known, memory_known = excluded.memory_known
+    `;
+  });
+
+// Replays new readings in sample order, including episodes already quiet by
+// delivery. Each System's judgments and replay cursor commit under its row lock.
+export const evaluateLoadConditions = async (
+  sql: SQL,
+  clock: () => number,
+  limits: ConditionLimits,
+) => {
+  const open: { system: string }[] = await sql`
+    SELECT DISTINCT system FROM conditions WHERE kind IN ${sql(KINDS)} AND cleared_at IS NULL
+  `;
+  const systems = new Set([...(await pairedSystems(sql)), ...open.map((row) => row.system)]);
+  await evaluateEach([...systems].toSorted(), (system) => judgeSystem(sql, system, clock, limits));
+};

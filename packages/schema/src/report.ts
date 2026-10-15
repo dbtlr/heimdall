@@ -53,7 +53,13 @@ export const VitalsSampleSchema = z.object({
   cpu: z.object({ busyPercent: amount }),
   disks: z.array(DiskSchema).min(1),
   load: z.tuple([amount, amount, amount]),
-  memory: z.object({ totalBytes: bytes, usedBytes: bytes }),
+  memory: z.object({
+    // Optional macOS evidence. Unknown pressure must not discard good Vitals.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
+    pressure: z.enum(['normal', 'warning', 'critical']).optional().catch(undefined),
+    totalBytes: bytes,
+    usedBytes: bytes,
+  }),
   t: epochMs,
   uptimeSeconds: amount,
 });
