@@ -486,3 +486,48 @@ test('a Collector drain split at its 1000-sample Report limit preserves an episo
   `;
   expect(rows).toEqual([{ n: 1, open: 0 }]);
 });
+
+test.each([
+  ['dirty', 0, 1],
+  ['dirty', 40, 2],
+  ['memory', 0, 1],
+] satisfies ['dirty' | 'memory', number, number][])(
+  '%s replay with %d quiet minutes counts each live CPU episode once',
+  async (trigger, quiet, expected) => {
+    await using h = await startHub();
+    await send(
+      h,
+      readings(NOW, 40, () => 95),
+    );
+    await evaluate(h);
+    const old = readings(NOW + 40 * MINUTE, 60, () => 10);
+    if (trigger === 'memory') {
+      for (const row of old) {
+        if (row.t > NOW + 60 * MINUTE) {
+          row.memory = { totalBytes: 1000, usedBytes: 950 };
+        }
+      }
+    }
+    await send(h, old);
+    h.clock.now = NOW + 480 * MINUTE;
+    expect((await evaluate(h))[0]?.level).toBe('note');
+    if (trigger === 'dirty') {
+      await send(
+        h,
+        readings(NOW + 70.1 * MINUTE, 0, () => 10),
+      );
+    }
+    await send(
+      h,
+      readings(NOW + 480 * MINUTE, quiet + 100, (minute) =>
+        minute > quiet && minute <= quiet + 35 ? 95 : 10,
+      ),
+    );
+    expect(await evaluate(h)).toEqual([]);
+    const rows: { n: number; open: number }[] = await h.db.sql`
+      SELECT count(*)::int AS n, count(*) FILTER (WHERE cleared_at IS NULL)::int AS open
+      FROM conditions WHERE kind = 'high_cpu'
+    `;
+    expect(rows).toEqual([{ n: expected, open: 0 }]);
+  },
+);

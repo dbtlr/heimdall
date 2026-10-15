@@ -10,11 +10,27 @@ import { pairedSystems, whenPaired } from './tokens.ts';
 
 const KINDS: Kind[] = ['high_cpu', 'high_memory'];
 
-const trackSample = (tx: SQL, system: string, kind: Kind, at: Date) => tx`
+const trackSample = (
+  tx: SQL,
+  {
+    system,
+    kind,
+    at,
+    terminal = false,
+  }: {
+    system: string;
+    kind: Kind;
+    at: Date;
+    terminal?: boolean;
+  },
+) => tx`
   INSERT INTO load_episode_samples (condition, sample_from, sample_until)
   SELECT id, ${at}, ${at} FROM conditions
   WHERE system = ${system} AND kind = ${kind} AND cleared_at IS NULL
-  ON CONFLICT (condition) DO UPDATE SET sample_until = GREATEST(load_episode_samples.sample_until, excluded.sample_until)
+  ON CONFLICT (condition) DO UPDATE SET
+    sample_from = LEAST(load_episode_samples.sample_from, excluded.sample_from),
+    sample_until = CASE WHEN ${terminal} THEN excluded.sample_until
+      ELSE GREATEST(load_episode_samples.sample_until, excluded.sample_until) END
 `;
 
 const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: ConditionLimits) =>
@@ -70,6 +86,12 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       cursor?.dirty_from != null ||
       ((old || pendingFrom !== undefined) && (cursor === undefined || latest.t > cursor.through))
     ) {
+      // Historical replay must see the whole live span it could otherwise
+      // duplicate. A subsequent live recovery trims it to the actual sample.
+      for (const { kind } of held) {
+        // oxlint-disable-next-line no-await-in-loop -- all spans share the System lock.
+        await trackSample(tx, { at: latest.t, kind, system });
+      }
       const history = await recordHistoricalLoad(tx, {
         limits: selected,
         now: new Date(now),
@@ -126,7 +148,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
             continue;
           }
           // oxlint-disable-next-line no-await-in-loop -- all changes share the System transaction.
-          await trackSample(tx, system, kind, row.t);
+          await trackSample(tx, { at: row.t, kind, system, terminal: true });
           // oxlint-disable-next-line no-await-in-loop -- record recovery with its sampled span.
           await clear(tx, { kind, now: new Date(now), subject: '', system });
           current.delete(kind);
@@ -145,14 +167,14 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
             system,
           });
           // oxlint-disable-next-line no-await-in-loop -- metadata shares the Condition transaction.
-          await trackSample(tx, system, kind, row.t);
+          await trackSample(tx, { at: row.t, kind, system });
           current.set(kind, qualifying.level);
         }
       }
     }
     for (const kind of KINDS) {
       // oxlint-disable-next-line no-await-in-loop -- extend open spans through unknown evidence too.
-      await trackSample(tx, system, kind, latest.t);
+      await trackSample(tx, { at: latest.t, kind, system });
     }
     await tx`
       INSERT INTO load_evaluations (system, through, cpu_known, memory_known, pending_from)
