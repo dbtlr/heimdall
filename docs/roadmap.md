@@ -1,5 +1,5 @@
 ---
-description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, and the dashboard, with the settled scope of v1."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1."
 ---
 
 # Roadmap
@@ -101,6 +101,19 @@ The full UI, designed before it is built, as its own app that reads the Hub's da
 - Readable on a phone.
 
 Size: large. M1's plain page carried the project until the dashboard showed everything it showed, and the Hub no longer serves a page. Session facts come from M5's `insight` views.
+
+## M7: System health
+
+The dashboard answers "is any System unhealthy, and what needs me?" first, on a phone.
+
+- Every Condition carries a level the Hub sets: a note to know about, a warning to act on this week, or an alert to act on now. A Condition keeps its identity as its level changes, and the Timeline records each change. A System's health is its worst open level, never a score, so notes never make a System look unhealthy.
+- Every Condition names its culprit, such as the mount and how fast it fills, the process, or the package, and the dashboard shows that evidence with a next step.
+- Low disk becomes graded disk: a note at 70% used, a warning at 80%, and an alert at 90%. Limits live in the Hub's configuration, with overrides per System; there is no muting.
+- New Conditions: sustained CPU and memory (spikes stay in the charts), a hot process that holds a lot of CPU for a long time, named by its executable, and pending updates. The Collector checks pending apt, Homebrew, and macOS updates and whether a reboot is required, on an occasional schedule from local caches. Whether a provisioner's Application is behind its channel stays the provisioner's own check.
+- The dashboard is rebuilt from a chosen mock: the Fleet page opens with a verdict and the Conditions that need you, ordered by level, then a compact card per System. A System page has a way back, a switcher between Systems, and tabs that each fit about one phone screen. An Agents view shows the fleet's list-price cost and Sessions across Systems. The shared-time-axis lanes move to a Compare view one tap from the Fleet page.
+- Order: levels in the Hub first, with an ADR, since every health screen reads them. Dashboard navigation and the Agents view need no levels and run beside it. Load, hot-process, and update Conditions follow; the Collector running package managers gets its own ADR.
+
+Size: large. Sharp edges: tuning limits so notes stay quiet, per-process CPU across sleeps, and running `brew` when the Collector's account does not own the Homebrew install.
 
 ## Later
 
