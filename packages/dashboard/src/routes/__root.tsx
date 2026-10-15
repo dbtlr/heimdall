@@ -2,7 +2,6 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react';
 
 import { AutoRefresh } from '../components/auto-refresh.tsx';
-import favicon from '../favicon.svg?url';
 
 import appCss from '../styles.css?url';
 
@@ -14,9 +13,13 @@ export const Route = createRootRoute({
     </>
   ),
   head: () => ({
+    // The icons are files in public/ at fixed paths: mobile Safari showed no
+    // icon for an SVG inlined in the page, and wants the PNG apple-touch-icon.
     links: [
       { href: appCss, rel: 'stylesheet' },
-      { href: favicon, rel: 'icon', type: 'image/svg+xml' },
+      { href: '/favicon.ico', rel: 'icon', sizes: '32x32' },
+      { href: '/favicon.svg', rel: 'icon', type: 'image/svg+xml' },
+      { href: '/apple-touch-icon.png', rel: 'apple-touch-icon' },
     ],
     meta: [
       // oxlint-disable-next-line unicorn/text-encoding-identifier-case -- HTML wants the name "utf-8".

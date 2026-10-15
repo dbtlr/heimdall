@@ -70,3 +70,4 @@ HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packag
 - `src/server/`: server-only code. Query functions take a `SQL` and are tested against the Hub's own test harness; a server function is a thin wrapper around one.
 - `src/components/ui/`: shadcn/ui components, added with `bunx shadcn@latest add <name>`. They are excluded from the repository's lint.
 - `src/styles.css`: the theme, as Tailwind and shadcn CSS variables, and the Barlow Semi Condensed font from Fontsource.
+- `public/`: the icons, served at fixed paths. `favicon.svg` is the source. `favicon.ico` holds its 32 px render, and `apple-touch-icon.png` is a 180 px render of it as a full square, without the rounded corners and border, since iOS rounds the corners itself. Render both again when the SVG changes.
