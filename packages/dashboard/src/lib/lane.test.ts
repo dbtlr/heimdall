@@ -96,7 +96,7 @@ test('the now line says what each status knows', () => {
       nowLine(
         lane({
           lastSeenAt: NOW - MINUTE,
-          latest: { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW },
+          latest: { cpuBusyPercent: 11.6, disks: [], memoryUsedPercent: 58.2, t: NOW },
         }),
         NOW,
       ),
@@ -109,7 +109,7 @@ test('the now line says what each status knows', () => {
 });
 
 test('the now line needs no time zone unless it names a time', () => {
-  const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW };
+  const latest = { cpuBusyPercent: 11.6, disks: [], memoryUsedPercent: 58.2, t: NOW };
   expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW - MINUTE, latest }), NOW))).toBe(
     'CPU 12%, memory 58%',
   );
@@ -121,6 +121,7 @@ test('the now line needs no time zone unless it names a time', () => {
 test('the now line of an unpaired System leads with when it was last seen, then its Vitals', () => {
   const latest = {
     cpuBusyPercent: 17.6,
+    disks: [],
     memoryUsedPercent: 41.2,
     t: Date.UTC(2026, 9, 13, 4, 35),
   };
@@ -139,7 +140,12 @@ test('the now line of an unpaired System seen without a sample still has its dat
 });
 
 test('the now line of a System silent over 2 minutes says since when, not old Vitals', () => {
-  const latest = { cpuBusyPercent: 11.6, memoryUsedPercent: 58.2, t: NOW - 6 * 60 * MINUTE };
+  const latest = {
+    cpuBusyPercent: 11.6,
+    disks: [],
+    memoryUsedPercent: 58.2,
+    t: NOW - 6 * 60 * MINUTE,
+  };
   const silent = lane({ lastSeenAt: NOW - 6 * 60 * MINUTE, latest, status: 'needs_you' });
   expect(text(nowLine(silent, NOW))).toBe('silent since 10:00');
 });

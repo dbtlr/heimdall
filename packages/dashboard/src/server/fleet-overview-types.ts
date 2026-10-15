@@ -5,6 +5,7 @@
 import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
 import type { Attention } from './attention-types.ts';
+import type { Disk } from './system-detail-types.ts';
 
 export const RANGES = ['6h', '12h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];
@@ -71,7 +72,9 @@ export type Lane = {
   gaps: Gap[];
   lastSeenAt: number | undefined;
   // The newest Vitals sample, undefined for a System that never sent one.
-  latest: { cpuBusyPercent: number; memoryUsedPercent: number; t: number } | undefined;
+  latest:
+    | { cpuBusyPercent: number; disks: Disk[]; memoryUsedPercent: number | undefined; t: number }
+    | undefined;
   name: string;
   sleeps: boolean;
   status: LaneStatus;

@@ -3,6 +3,17 @@ import type { Disk } from '../server/system-detail-types.ts';
 const GIB = 1024 ** 3;
 const TIB = 1024 ** 4;
 
+export const fullestDisk = (disks: readonly Disk[]): Disk | undefined =>
+  disks.reduce<Disk | undefined>((highest, candidate) => {
+    if (candidate.totalBytes <= 0) {
+      return highest;
+    }
+    return highest === undefined ||
+      candidate.usedBytes / candidate.totalBytes > highest.usedBytes / highest.totalBytes
+      ? candidate
+      : highest;
+  }, undefined);
+
 // A size to one decimal, without a trailing zero, or whole from 100 up.
 const size = (value: number) =>
   value >= 100 ? value.toFixed(0) : String(Number(value.toFixed(1)));

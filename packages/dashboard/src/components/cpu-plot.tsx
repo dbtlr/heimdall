@@ -72,7 +72,7 @@ export function CpuPlot({
     >
       <ComposedChart data={cpuSeries(buckets, bucketMs)} margin={NO_MARGIN}>
         <XAxis allowDataOverflow dataKey="t" domain={[window.from, window.to]} hide type="number" />
-        <YAxis domain={[0, 100]} hide />
+        <YAxis allowDataOverflow domain={[0, 100]} hide />
         <ChartTooltip
           content={({ active, label: at }) => (
             <BucketTooltip active={active} bucketMs={bucketMs} buckets={buckets} label={at} />

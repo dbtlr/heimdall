@@ -242,6 +242,7 @@ describe('latest', () => {
 
     expect((await lane(h, 'server-1')).latest).toEqual({
       cpuBusyPercent: 70,
+      disks: [{ mount: '/System/Volumes/Data', totalBytes: 994662584320, usedBytes: 412316860416 }],
       memoryUsedPercent: 37.5, // 12 GiB of 32 GiB
       t: NOW - MINUTE,
     });
@@ -251,6 +252,18 @@ describe('latest', () => {
     await using h = await startHub();
 
     expect((await lane(h, 'laptop-1')).latest).toBeUndefined();
+  });
+
+  test('preserves unknown memory use when a sample reports no capacity', async () => {
+    await using h = await startHub();
+    const sent = report('server-1', [NOW]);
+    const sample = sent.samples[0];
+    if (sample === undefined) {
+      throw new Error('fixture has no sample');
+    }
+    sample.memory = { totalBytes: 0, usedBytes: 0 };
+    expect((await push(h.hub, sent, { token: 'server-token' })).status).toBe(200);
+    expect((await lane(h, 'server-1')).latest?.memoryUsedPercent).toBeUndefined();
   });
 });
 

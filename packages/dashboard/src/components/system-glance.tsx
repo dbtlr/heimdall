@@ -1,11 +1,10 @@
 import { formatGiB } from '../lib/detail.ts';
-import { diskUsage } from '../lib/facts.ts';
+import { diskUsage, fullestDisk } from '../lib/facts.ts';
 import { formatSpan } from '../lib/time.ts';
-import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemDetail } from '../server/system-detail-types.ts';
 import { DateTime } from './date-time.tsx';
 
-// A stale sample remains useful, but its readings never claim to be current.
+// Samples use each System's clock, so date readings without inferring freshness.
 export function SystemGlance({
   detail: { latest, now },
 }: {
@@ -14,14 +13,7 @@ export function SystemGlance({
   if (latest === undefined) {
     return <p className="py-4 text-muted-foreground">No Vitals sample has arrived.</p>;
   }
-  const stale = now - latest.t > QUIET_AFTER_MS;
-  const disk = latest.disks.reduce<(typeof latest.disks)[number] | undefined>(
-    (highest, candidate) =>
-      highest === undefined || diskUsage(candidate).percent > diskUsage(highest).percent
-        ? candidate
-        : highest,
-    undefined,
-  );
+  const disk = fullestDisk(latest.disks);
   const facts = [
     { label: 'CPU', value: `${String(Math.round(latest.cpuBusyPercent))}%` },
     {
@@ -35,13 +27,11 @@ export function SystemGlance({
     { label: 'up', value: formatSpan(latest.uptimeSeconds * 1000) },
   ];
   return (
-    <section aria-label={stale ? 'Last reported Vitals' : 'Right now'} className="my-4">
-      <h2 className="mb-2 text-lg font-semibold">{stale ? 'Last reported' : 'Right now'}</h2>
-      {stale && (
-        <p className="mb-2 text-sm text-muted-foreground">
-          Sample from <DateTime at={latest.t} format="when" now={now} />.
-        </p>
-      )}
+    <section aria-label="Last reported Vitals" className="my-4">
+      <h2 className="mb-2 text-lg font-semibold">Last reported</h2>
+      <p className="mb-2 text-sm text-muted-foreground">
+        Sample time <DateTime at={latest.t} format="when" now={now} />.
+      </p>
       <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {facts.map(({ label, value }) => (
           <div className="rounded-xl bg-card px-3 py-2.5" key={label}>
