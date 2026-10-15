@@ -24,7 +24,7 @@ export function FleetSystems({
           params={{ name: lane.name }}
           to="/systems/$name"
         >
-          <h3 className="truncate text-xl font-semibold">{lane.name}</h3>
+          <h3 className="text-xl font-semibold break-all">{lane.name}</h3>
           <p className="text-base">
             <AttentionStatus
               items={attention.filter((item) => item.system === lane.name)}
