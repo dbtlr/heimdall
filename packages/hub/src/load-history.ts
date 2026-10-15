@@ -18,7 +18,7 @@ const KINDS: Kind[] = ['high_cpu', 'high_memory'];
 
 // Historical recovery follows sampled evidence; wall-clock age must not turn
 // an already completed episode into a new current problem.
-const recoveredEpisodes = (
+const replayEpisodes = (
   rows: Reading[],
   limits: Omit<ConditionLimits, 'systems'>,
   through: Date,
@@ -50,7 +50,7 @@ const recoveredEpisodes = (
       }
     }
   }
-  return recovered;
+  return { open, recovered };
 };
 
 // Sample spans identify previously recorded episodes even when new readings
@@ -71,10 +71,12 @@ export const recordHistoricalLoad = async (
     now: Date;
   },
 ) => {
-  const episodes = recoveredEpisodes(rows, limits, through);
+  const episodes = replayEpisodes(rows, limits, through);
+  const inserted: Span[] = [];
+  let pendingFrom: Date | undefined;
   const first = rows[0];
-  if (episodes.length === 0 || first === undefined) {
-    return;
+  if ((episodes.recovered.length === 0 && episodes.open.size === 0) || first === undefined) {
+    return { inserted, pendingFrom };
   }
   const spans: Span[] = await tx`
     SELECT c.kind, e.sample_from, e.sample_until
@@ -85,16 +87,21 @@ export const recordHistoricalLoad = async (
   `;
   const existing = new Map(KINDS.map((kind) => [kind, spans.filter((span) => span.kind === kind)]));
   const positions = new Map<Kind, number>();
-  for (const episode of episodes) {
-    const candidates = existing.get(episode.kind) ?? [];
-    let position = positions.get(episode.kind) ?? 0;
+  // Each kind's recovered episodes precede its remaining open episode, so
+  // overlap checks advance once through the recorded sample spans.
+  const overlaps = (kind: Kind, from: Date, until: Date) => {
+    const candidates = existing.get(kind) ?? [];
+    let position = positions.get(kind) ?? 0;
     let span = candidates[position];
-    while (span !== undefined && span.sample_until < episode.from) {
+    while (span !== undefined && span.sample_until < from) {
       position += 1;
       span = candidates[position];
     }
-    positions.set(episode.kind, position);
-    if (span !== undefined && span.sample_from <= episode.until) {
+    positions.set(kind, position);
+    return span !== undefined && span.sample_from <= until;
+  };
+  for (const episode of episodes.recovered) {
+    if (overlaps(episode.kind, episode.from, episode.until)) {
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- the System lock serializes occurrence insertion.
@@ -110,5 +117,17 @@ export const recordHistoricalLoad = async (
       INSERT INTO load_episode_samples (condition, sample_from, sample_until)
       VALUES (${condition}, ${episode.from}, ${episode.until})
     `;
+    inserted.push({ kind: episode.kind, sample_from: episode.from, sample_until: episode.until });
   }
+  // Keep unrecorded episodes in the next replay even after their measured
+  // busy time has left the rolling window and only unknown time retains them.
+  for (const [kind, episode] of episodes.open) {
+    if (
+      !overlaps(kind, episode.from, through) &&
+      (pendingFrom === undefined || episode.from < pendingFrom)
+    ) {
+      pendingFrom = episode.from;
+    }
+  }
+  return { inserted, pendingFrom };
 };

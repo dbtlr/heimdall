@@ -1,4 +1,4 @@
-import { ConditionLevelSchema } from '@heimdall/schema';
+import { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
@@ -425,7 +425,8 @@ export const readAttention = async (
       FROM systems s
       CROSS JOIN LATERAL (
         SELECT t, disks FROM vitals_samples
-        WHERE system = s.name ORDER BY t DESC LIMIT 1
+        WHERE system = s.name AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
+        ORDER BY t DESC LIMIT 1
       ) v
       LEFT JOIN load_evaluations e ON e.system = s.name AND e.through = v.t
       WHERE s.name IN ${sql(names)}

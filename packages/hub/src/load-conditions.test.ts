@@ -401,3 +401,88 @@ test('several old backlog batches preserve separate episodes without raising a c
   `;
   expect(rows).toEqual([{ n: 2, open: 0 }]);
 });
+
+test('a far-future sample does not hide the load evidence the Hub actually judged', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 30, () => 95),
+  );
+  await evaluate(h);
+  const judgedAt = h.clock.now;
+  await send(
+    h,
+    readings(NOW + 24 * 60 * MINUTE, 0, () => 10),
+  );
+  h.clock.now = judgedAt;
+  expect(await evaluate(h)).toEqual([
+    expect.objectContaining({
+      checkedAt: judgedAt,
+      evidence: 'current',
+      kind: 'high_cpu',
+      level: 'note',
+    }),
+  ]);
+});
+
+test('an incomplete old episode survives until fresh quiet samples establish its historical recovery', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 60, (minute) => (minute <= 40 ? 95 : 10)),
+  );
+  h.clock.now = NOW + 8 * 60 * MINUTE;
+  expect(await evaluate(h)).toEqual([]);
+  await send(
+    h,
+    readings(NOW + 8 * 60 * MINUTE, 61, () => 10),
+  );
+  expect(await evaluate(h)).toEqual([]);
+  const rows: { n: number; open: number }[] = await h.db.sql`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE cleared_at IS NULL)::int AS open
+    FROM conditions WHERE kind = 'high_cpu'
+  `;
+  expect(rows).toEqual([{ n: 1, open: 0 }]);
+});
+
+test('a delayed episode held at the dirty replay cutoff survives into a later fresh batch', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW + 95 * MINUTE, 5, () => 10),
+  );
+  await evaluate(h);
+  await send(
+    h,
+    readings(NOW, 40, (minute) => (minute <= 35 ? 95 : 10)),
+  );
+  await evaluate(h);
+  await send(
+    h,
+    readings(NOW + 100 * MINUTE, 120, () => 10),
+  );
+  expect(await evaluate(h)).toEqual([]);
+  const rows: { n: number; open: number }[] = await h.db.sql`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE cleared_at IS NULL)::int AS open
+    FROM conditions WHERE kind = 'high_cpu'
+  `;
+  expect(rows).toEqual([{ n: 1, open: 0 }]);
+});
+
+test('a Collector drain split at its 1000-sample Report limit preserves an episode across sleep', async () => {
+  await using h = await startHub();
+  const queued = [
+    ...readings(NOW, 220, (minute) => (minute > 170 && minute <= 210 ? 95 : 10)),
+    ...readings(NOW + 280 * MINUTE, 200, () => 10),
+  ];
+  await send(h, queued.slice(0, 1000));
+  h.clock.now = NOW + 480 * MINUTE;
+  await evaluate(h);
+  await send(h, queued.slice(1000));
+  expect(await evaluate(h)).toEqual([]);
+  const rows: { n: number; open: number }[] = await h.db.sql`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE cleared_at IS NULL)::int AS open
+    FROM conditions WHERE kind = 'high_cpu'
+  `;
+  expect(rows).toEqual([{ n: 1, open: 0 }]);
+});

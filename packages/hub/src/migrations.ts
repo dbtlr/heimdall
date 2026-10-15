@@ -1831,6 +1831,7 @@ export const MIGRATIONS: readonly Migration[] = [
         system text PRIMARY KEY REFERENCES systems (name),
         through timestamptz NOT NULL,
         dirty_from timestamptz,
+        pending_from timestamptz,
         cpu_known boolean NOT NULL DEFAULT false,
         memory_known boolean NOT NULL DEFAULT false
       );

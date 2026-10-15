@@ -171,6 +171,8 @@ Transitions use the Hub's evaluation time, following ADR-0017. Their reasons ide
 A durable per-System cursor commits with the Conditions, preventing repeated evaluation or Report retries from recreating completed episodes.
 Newly stored readings behind that cursor mark the System for historical replay. Sample-time spans identify recorded episodes, so replay adds unseen completed episodes without duplicating overlapping history or changing a later open occurrence.
 On first evaluation, the Hub scans the raw samples it still holds. Raw retention bounds retrospective detection.
+An unfinished historical episode keeps a pending sample-time boundary across evaluation passes.
+Later batches replay from before that boundary until observed recovery records the episode, including when an old backlog meets fresh quiet samples.
 The Hub stores whether the latest evaluated CPU and memory intervals were known.
 The dashboard uses that coverage only when it matches the newest sample, keeping unknown evidence distinct from the stored level.
 Only raw samples carry pressure. Existing Vitals rollups and insight views keep their current shape.

@@ -1,4 +1,4 @@
-import { OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
+import { FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
 import type { ConditionLevel, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
@@ -126,12 +126,6 @@ const diskVerdict = (
 };
 
 const DISKS_SCHEMA = VitalsSampleSchema.shape.disks;
-
-// How far ahead of the Hub's clock a sample's time may be and still count as
-// the System's latest: a System with a wrong clock stamps its samples far in
-// the future, and the newest of those would otherwise stay the latest sample
-// for as long as the clock is wrong.
-export const FUTURE_SAMPLE_TOLERANCE_MS = 5 * 60_000;
 
 // The mounts in the System's latest Vitals sample stamped no later than
 // `now` plus the tolerance, or undefined when it has none the Hub can read.

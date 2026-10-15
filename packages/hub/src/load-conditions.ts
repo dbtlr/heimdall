@@ -1,4 +1,4 @@
-import { OLD_EVIDENCE_MS, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
+import { FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import type { ConditionLimits } from './condition-limits.ts';
@@ -6,7 +6,6 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 import { recordHistoricalLoad } from './load-history.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
-import { FUTURE_SAMPLE_TOLERANCE_MS } from './system-conditions.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
 const KINDS: Kind[] = ['high_cpu', 'high_memory'];
@@ -37,13 +36,21 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
     const selected = limits.systems.get(system) ?? limits;
     const rules = rulesFor(selected);
     const largestWindow = Math.max(...rules.map((rule) => rule.window.minutes)) * 60_000;
-    const [cursor]: { through: Date; dirty_from: Date | null }[] = await tx`
-      SELECT through, dirty_from FROM load_evaluations WHERE system = ${system}
+    const [cursor]: { through: Date; dirty_from: Date | null; pending_from: Date | null }[] =
+      await tx`
+      SELECT through, dirty_from, pending_from FROM load_evaluations WHERE system = ${system}
     `;
     const after =
       cursor === undefined || cursor.dirty_from !== null
         ? null
-        : new Date(cursor.through.getTime() - largestWindow - SAMPLE_INTERVAL_MS);
+        : new Date(
+            Math.min(
+              cursor.through.getTime(),
+              cursor.pending_from?.getTime() ?? cursor.through.getTime(),
+            ) -
+              largestWindow -
+              SAMPLE_INTERVAL_MS,
+          );
     const rows: Reading[] = await tx`
       SELECT t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
              memory_pressure, collector_platform, uptime_seconds
@@ -57,18 +64,26 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       return;
     }
     const old = now - latest.t.getTime() > OLD_EVIDENCE_MS;
+    let pendingFrom = cursor?.pending_from ?? undefined;
+    let backfilled: { kind: Kind; sample_from: Date; sample_until: Date }[] = [];
     if (
       cursor?.dirty_from != null ||
-      (old && (cursor === undefined || latest.t > cursor.through))
+      ((old || pendingFrom !== undefined) && (cursor === undefined || latest.t > cursor.through))
     ) {
-      await recordHistoricalLoad(tx, {
+      const history = await recordHistoricalLoad(tx, {
         limits: selected,
         now: new Date(now),
         rows,
         system,
-        through: old ? latest.t : (cursor?.through ?? latest.t),
+        through: latest.t,
       });
+      pendingFrom = history.pendingFrom;
+      backfilled = history.inserted;
     }
+    const spans = new Map(
+      KINDS.map((kind) => [kind, backfilled.filter((span) => span.kind === kind)]),
+    );
+    const positions = new Map<Kind, number>();
     const current = new Map(held.map(({ kind, level }) => [kind, level]));
     let previous: Reading | undefined;
     let coverage = { cpuKnown: false, memoryKnown: false };
@@ -83,6 +98,18 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       }
       for (const kind of KINDS) {
         const level = current.get(kind);
+        const covered = spans.get(kind) ?? [];
+        let position = positions.get(kind) ?? 0;
+        let span = covered[position];
+        while (span !== undefined && span.sample_until < row.t) {
+          position += 1;
+          span = covered[position];
+        }
+        positions.set(kind, position);
+        if (level === undefined && span !== undefined && span.sample_from <= row.t) {
+          continue;
+        }
+
         if (old && level === undefined) {
           continue;
         }
@@ -128,9 +155,9 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       await trackSample(tx, system, kind, latest.t);
     }
     await tx`
-      INSERT INTO load_evaluations (system, through, cpu_known, memory_known)
-      VALUES (${system}, ${latest.t}, ${coverage.cpuKnown}, ${coverage.memoryKnown})
-      ON CONFLICT (system) DO UPDATE SET through = GREATEST(load_evaluations.through, excluded.through), dirty_from = NULL, cpu_known = excluded.cpu_known, memory_known = excluded.memory_known
+      INSERT INTO load_evaluations (system, through, cpu_known, memory_known, pending_from)
+      VALUES (${system}, ${latest.t}, ${coverage.cpuKnown}, ${coverage.memoryKnown}, ${pendingFrom ?? null})
+      ON CONFLICT (system) DO UPDATE SET through = GREATEST(load_evaluations.through, excluded.through), dirty_from = NULL, cpu_known = excluded.cpu_known, memory_known = excluded.memory_known, pending_from = excluded.pending_from
     `;
   });
 
