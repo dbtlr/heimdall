@@ -1,5 +1,5 @@
-<!-- Heimdall's H, its uprights standing on a heartbeat trace. Uprights sit on whole pixels at 16 px. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Heimdall's H, its uprights standing on a heartbeat trace. Uprights sit on whole pixels at 16 px. -->
   <rect width="32" height="32" rx="7" fill="#151b2a"/>
   <rect x=".75" y=".75" width="30.5" height="30.5" rx="6.25" fill="none" stroke="#2b3450" stroke-width="1.5"/>
   <path d="M1.5 16H11L14 9.5L18 22.5L21 16H30.5" fill="none" stroke="#4a90ea" stroke-width="3" stroke-miterlimit="10"/>
