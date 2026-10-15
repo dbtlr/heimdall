@@ -21,7 +21,7 @@ export function UnpairedLink({ count, shown }: { count: number; shown: boolean }
         className={LINK}
         resetScroll={false}
         search={(previous) => ({ ...previous, unpaired: shown ? undefined : true })}
-        to="."
+        to={shown && count === 0 ? '/' : '.'}
       >
         {unpairedLinkText(count, shown)}
       </Link>

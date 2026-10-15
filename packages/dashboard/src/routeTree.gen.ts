@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as CompareRouteImport } from './routes/compare'
+import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
 import { Route as ApiV1RecordsRouteImport } from './routes/api.v1.records'
@@ -24,6 +26,16 @@ const IndexRoute = IndexRouteImport.update({
 const AgentsRoute = AgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimelineRoute = TimelineRouteImport.update({
+  id: '/timeline',
+  path: '/timeline',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
@@ -51,6 +63,8 @@ const SystemsNameSessionsHarnessSourceSessionIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
+  '/compare': typeof CompareRoute
+  '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -59,6 +73,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
+  '/compare': typeof CompareRoute
+  '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -68,6 +84,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
+  '/compare': typeof CompareRoute
+  '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -78,6 +96,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/agents'
+    | '/compare'
+    | '/timeline'
     | '/api/health'
     | '/systems/$name'
     | '/api/v1/records'
@@ -86,6 +106,8 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/agents'
+    | '/compare'
+    | '/timeline'
     | '/api/health'
     | '/systems/$name'
     | '/api/v1/records'
@@ -94,6 +116,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/agents'
+    | '/compare'
+    | '/timeline'
     | '/api/health'
     | '/systems/$name'
     | '/api/v1/records'
@@ -103,6 +127,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentsRoute: typeof AgentsRoute
+  CompareRoute: typeof CompareRoute
+  TimelineRoute: typeof TimelineRoute
   ApiHealthRoute: typeof ApiHealthRoute
   SystemsNameRoute: typeof SystemsNameRoute
   ApiV1RecordsRoute: typeof ApiV1RecordsRoute
@@ -123,6 +149,20 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents'
       preLoaderRoute: typeof AgentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/timeline': {
+      id: '/timeline'
+      path: '/timeline'
+      fullPath: '/timeline'
+      preLoaderRoute: typeof TimelineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/health': {
@@ -159,6 +199,8 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
+  CompareRoute: CompareRoute,
+  TimelineRoute: TimelineRoute,
   ApiHealthRoute: ApiHealthRoute,
   SystemsNameRoute: SystemsNameRoute,
   ApiV1RecordsRoute: ApiV1RecordsRoute,

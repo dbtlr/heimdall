@@ -7,7 +7,7 @@ import { DateTime, PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
 // An occurrence keeps the Hub's transition order, including backfilled levels.
-function Occurrence({ entry, now }: { entry: TimelineEntry; now: number }) {
+export function ConditionOccurrence({ entry, now }: { entry: TimelineEntry; now: number }) {
   return (
     <li
       className={cn(
@@ -58,14 +58,14 @@ export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry
       ) : (
         <ol className="border-l-2 pl-1">
           {entries.slice(0, 3).map((entry) => (
-            <Occurrence entry={entry} key={entry.id} now={now} />
+            <ConditionOccurrence entry={entry} key={entry.id} now={now} />
           ))}
           {entries.length > 3 && (
             <li>
               <MoreItems label={`Show ${String(entries.length - 3)} more occurrences`}>
                 <ol>
                   {entries.slice(3).map((entry) => (
-                    <Occurrence entry={entry} key={entry.id} now={now} />
+                    <ConditionOccurrence entry={entry} key={entry.id} now={now} />
                   ))}
                 </ol>
               </MoreItems>

@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
+import { AppNavigation } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
 
 import appCss from '../styles.css?url';
@@ -10,6 +11,9 @@ export const Route = createRootRoute({
     <>
       <AutoRefresh />
       <Outlet />
+      <div className="sm:hidden">
+        <AppNavigation />
+      </div>
     </>
   ),
   head: () => ({
@@ -33,7 +37,7 @@ export const Route = createRootRoute({
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body className="pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">
         {children}
         <Scripts />
       </body>
