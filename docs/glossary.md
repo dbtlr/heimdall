@@ -1,10 +1,11 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
 
 Heimdall observes a fleet and the agent work done on it, whatever provisions its Systems. The terms below are Heimdall's own.
+Condition levels and level-change history describe the M7 model in [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md), ahead of runtime implementation.
 
 ## Language
 
@@ -105,15 +106,19 @@ A running Harness root process as the Collector observes it from the process tab
 _Avoid_: Session (the conversation, not the process), agent process
 
 **Condition**:
-A problem state the Hub derives for a System from what it receives, such as Reports rejected, a Service down, a job failing or overdue, Drift, a stale System, or low disk. The dashboard shows open Conditions and the Timeline records each one raised and cleared; a later alerting phase delivers them.
-_Avoid_: alert (delivery, not the state), finding, incident
+A state that needs notice or action, derived by the Hub for a System from what it receives and carrying a level. The same Condition stays open through level changes until it is cleared.
+_Avoid_: alert (a level, not the Condition itself), finding, incident
+
+**level**:
+A Condition's urgency, set by the Hub: note means something to know about, warning means act this week, and alert means act now. A System's health is its worst open level; notes alone leave it healthy.
+_Avoid_: severity, priority, score, notification (delivery, not a level)
 
 **Last seen**:
 The most recent time the Hub heard from a System under that System's token, whether it stored the Report, rejected it, or took a transcript upload. A sleeping System shows its last-seen time and a gap.
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
 **Timeline**:
-A System's history of Conditions being raised and cleared, newest Condition first. It shows where a System failed and when it recovered, while the dashboard shows where it stands now.
+A System's history of Conditions being raised, changing level, and being cleared, grouped by each raised Condition with the most recently raised first. A recurrence forms a separate group, while the dashboard shows where the System stands now.
 _Avoid_: event feed, event log (a Report is never an event)
 
 **Pairing**:
