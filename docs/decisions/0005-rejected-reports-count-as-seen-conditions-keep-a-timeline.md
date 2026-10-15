@@ -4,7 +4,7 @@ title: ADR-0005 - A rejected Report still counts as seeing its System, and Condi
 description: "Last seen moves on every request whose token names a System, whether the Hub stores or rejects the Report. A rejection raises that System's Reports-rejected Condition; each Condition records when it was raised and cleared, and those records form the System's Timeline."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-10
+modified: 2026-10-15
 ---
 
 # A rejected Report still counts as seeing its System, and Conditions keep a Timeline
@@ -17,6 +17,9 @@ If last seen moved only when a Report was stored, the dashboard would show such 
 A dropped Report is lost for good, so a single bad batch between good ones must stay visible after the Collector recovers.
 
 ## Decision
+
+For M7, [ADR-0017](0017-the-hub-sets-condition-levels.md) supersedes this decision's raised-and-cleared-only history with Hub-set levels and recorded level changes.
+The rest of this decision holds, including Condition identity, receipt ordering, Last seen, and the Reports-rejected raise and clear rules.
 
 **Last seen counts every attributable Report.** A System is seen whenever the Hub receives a request carrying that System's token, whether it stores the Report or rejects it with 422 or with 403 for naming another System. The time is credited to the token's System, never to the System the body names. A request with no token or a token no System holds is not attributable and counts for nothing.
 
@@ -42,3 +45,4 @@ Going quiet, including sleep, adds nothing to the Timeline until M3's stale-Syst
 - 2026-10-09: Clarification. A transcript upload under a System's token also counts toward its Last seen, and a refused upload does not raise Reports rejected ([ADR-0013](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)). The decision is unchanged.
 - 2026-10-10: Clarification. The dashboard's normal view lists only paired Systems; an unpaired System's status, with the Conditions still open on it, shows in the unpaired view, and its Timeline is kept. The decision is unchanged.
 - 2026-10-13: Clarification. Where this decision says the page shows a System's status and Timeline, the dashboard shows them; the Hub serves no page (HMD-92). The decision is unchanged.
+- 2026-10-15: Partial supersession. [ADR-0017](0017-the-hub-sets-condition-levels.md) adds Hub-set levels and level-change transitions to the Timeline for M7. The rest of this decision holds. Runtime implementation follows in HMD-109.
