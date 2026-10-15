@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { pathWith, uniqueIdWith } from './darwin-libproc.ts';
+import { darwinProcessIdentity, pathWith, uniqueIdWith } from './darwin-libproc.ts';
 import type { ProcPidInfo, ProcPidPath } from './darwin-libproc.ts';
 
 // A `proc_pidpath` that writes `path` and returns `result`, as libproc does:
@@ -44,3 +44,16 @@ test('a denied, short, or zero unique identifier remains unknown', () => {
   expect(uniqueIdWith(() => 24, 42)).toBeNull();
   expect(uniqueIdWith(() => 56, 42)).toBeNull();
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'native macOS reads stable lifetime identifiers for this process and root-owned launchd',
+  async () => {
+    const own = await darwinProcessIdentity(process.pid);
+    const rootOwned = await darwinProcessIdentity(1);
+    expect(own).toMatch(/^[1-9]\d*$/u);
+    expect(rootOwned).toMatch(/^[1-9]\d*$/u);
+    expect(rootOwned).not.toBe(own);
+    expect(await darwinProcessIdentity(process.pid)).toBe(own);
+    expect(await darwinProcessIdentity(2_147_483_647)).toBeNull();
+  },
+);
