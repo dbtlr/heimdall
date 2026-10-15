@@ -14,7 +14,6 @@ function Occurrence({ entry, now }: { entry: TimelineEntry; now: number }) {
         '-ml-[7px] flex items-start gap-2.5 py-1.5 pl-3',
         entry.clearedAt === undefined && 'rounded-md bg-[rgba(250,178,25,0.08)]',
       )}
-      key={entry.id}
     >
       <ConditionGlyph className="mt-1" kind={entry.level} />
       <div className="min-w-0">

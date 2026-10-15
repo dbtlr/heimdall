@@ -69,11 +69,7 @@ export function SampleSheet({
         </button>
       </div>
       <div className="p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-        {loading ? (
-          <p role="status">Reading sample…</p>
-        ) : (
-          <SampleInspector failed={failed} sample={sample} />
-        )}
+        <SampleInspector failed={failed} loading={loading} sample={sample} />
       </div>
     </dialog>
   );
