@@ -75,20 +75,19 @@ const vitalsText = ({
 }) =>
   `CPU ${String(Math.round(cpuBusyPercent))}%, memory ${memoryUsedPercent === undefined ? 'unknown' : `${String(Math.round(memoryUsedPercent))}%`}`;
 
-// The line under a lane's status: its newest CPU and memory, or since when it
-// has been asleep or silent, so old Vitals never read as current. An unpaired
-// System sends no more, so its line dates when it was last seen. Only the
-// lines that name a time need the viewer's zone.
+const vitalsPhrase = (latest: Lane['latest'], now: number): Phrase =>
+  latest === undefined
+    ? ['no Vitals']
+    : [`${vitalsText(latest)} · sample time `, whenAt(latest.t, now)];
+
+// Last seen can advance without new Vitals, and sample times use the System's
+// clock. Date readings by their sample time without inferring freshness.
 export const nowLine = (lane: Lane, now: number): Phrase => {
   if (lane.status === 'unpaired') {
     if (lane.lastSeenAt === undefined) {
       return ['never seen'];
     }
-    return [
-      'last seen ',
-      whenAt(lane.lastSeenAt, now),
-      `, ${lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)}`,
-    ];
+    return ['last seen ', whenAt(lane.lastSeenAt, now), ', ', ...vitalsPhrase(lane.latest, now)];
   }
   if (lane.status === 'never_seen') {
     return ['never seen'];
@@ -101,7 +100,7 @@ export const nowLine = (lane: Lane, now: number): Phrase => {
   if (lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS) {
     return ['silent since ', whenAt(lane.lastSeenAt, now)];
   }
-  return [lane.latest === undefined ? 'no Vitals' : vitalsText(lane.latest)];
+  return vitalsPhrase(lane.latest, now);
 };
 
 const HARNESS_NAMES: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
