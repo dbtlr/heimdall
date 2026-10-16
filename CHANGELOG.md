@@ -8,6 +8,30 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.7.0 - 2026-10-16
+
+### Added
+
+- **Hub-owned Condition levels and history** (HMD-109). Every Condition carries note, warning, or alert. Disk levels start at 70%, 80%, and 90% used, with configurable recovery margins and per-System overrides in `hub.toml`. Level changes keep the same Condition and appear in its Timeline. Existing history is preserved with explicitly backfilled levels.
+- **The Agents view shows list-price cost across the fleet** (HMD-112). Today, 7-day, and 30-day periods count only requests made within that period, including subagents, with a Claude Code and Codex split and Sessions ordered by cost. Unpriced requests label amounts "At least"; recent requests mark a Session "Active recently". Each Session opens its existing detail page.
+- **Phone navigation and fleet Timeline** (HMD-111). A bottom bar links to Fleet, Agents, and Timeline on narrow screens. The fleet Timeline keeps raised, level-changed, and cleared transitions together by Condition occurrence, including labelled unpaired history.
+- **Sustained and recurring CPU and memory Conditions** (HMD-115). CPU above 90% for 30 minutes within an hour raises a note, and two hours within four hours raises a warning. Memory above 90% for 30 minutes within an hour raises a warning, with macOS memory pressure required to exclude full cache. Fleet and per-System limits live in `hub.toml`. Quiet readings can preserve a recurring pattern, missing evidence never establishes recovery, and delayed Reports retain completed episodes in the Timeline.
+- **Hot-process Conditions name the executable and PID** (HMD-116). One process above half a CPU core for 30 measured minutes within an hour raises a note, and two hours within four hours raises a warning. The Collector reports its five hottest processes without arguments or environment variables. Missing evidence preserves the stored level, confirmed exit clears immediately, and delayed Reports retain completed episodes in the Timeline. Fleet and per-System limits live in `hub.toml`.
+- **Pending-update and reboot-required Conditions** (HMD-118). The Collector checks existing local package metadata on a configurable six-hour schedule and reports coverage and observation times. Pending updates raise notes; confirmed security updates become warnings after three days, and a required reboot after seven days. Stale or unavailable evidence preserves open Conditions. Homebrew requires the owning account and supported local metadata; macOS Software Update coverage remains unavailable. Hub age limits support fleet defaults and per-System overrides.
+
+### Changed
+
+- The dashboard reads stored Hub levels for Condition marks and System health. Notes remain visible without making a System unhealthy, and old evidence does not lower an open Condition's level.
+- **System navigation fits a phone** (HMD-110). System pages have a sticky Fleet back link, status pills to switch Systems, and Now, Vitals, Sessions, Records, and Timeline tabs. Now leads with Conditions and a compact Vitals glance. Long lists collapse, and tapping a chart opens a sample sheet on phones. Tabs and ranges share through the URL, including older sample links.
+- Fleet shows compact System summaries and links to Compare, which preserves the shared-axis lanes, range controls, and optional unpaired lanes.
+- **Fleet opens with what needs attention** (HMD-113). A verdict identifies the worst open Hub level and the number of Systems at that level, followed by alert and warning cards with their culprit, evidence, and next step. Notes collapse separately. Compact System cards show counts by level, dated CPU, memory, and disk readings, and CPU history on a stated 0–100% scale. Sleeping Systems stay dimmed while their open Conditions keep contributing to the verdict.
+- **Hub skips unchanged CPU and memory load windows** (HMD-121). Idle evaluations check the latest eligible sample without replaying the raw window. Changed limits, late samples, and re-pairing still trigger rejudgment.
+
+### Fixed
+
+- **Compare dates Vitals by their sample time** (HMD-120). CPU and memory readings carry the System's sample timestamp independently of Last seen, including on unpaired Systems.
+- **Hub rejudges cached hot-process evidence** (HMD-125). A busy process judged while its evidence was old now raises its Condition once a clock correction makes the same evidence fresh. Re-pairing a System rejudges its processes without waiting for a new sample.
+
 ## v0.6.4 - 2026-10-15
 
 ### Fixed
