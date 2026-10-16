@@ -145,10 +145,12 @@ export const observeHomebrew = async ({
   prefix,
   cacheDir,
   observedAt,
+  ownerOf = async (path) => (await stat(path)).uid,
 }: {
   prefix: string;
   cacheDir: string;
   observedAt: number;
+  ownerOf?: (path: string) => Promise<number>;
 }): Promise<UpdateManager> => {
   const manager: UpdateManager = {
     installation: prefix,
@@ -158,10 +160,15 @@ export const observeHomebrew = async ({
   };
   try {
     const executable = await realpath(join(prefix, 'bin/brew'));
-    const [owner, installationOwner] = await Promise.all([stat(executable), stat(prefix)]);
-    if (owner.uid !== process.getuid?.() || installationOwner.uid !== process.getuid?.()) {
-      throw new Error('Homebrew installation belongs to another account');
-    }
+    const repository = dirname(dirname(executable));
+    const uid = process.getuid?.();
+    const requireOwner = async (path: string) => {
+      if ((await ownerOf(path)) !== uid) {
+        throw new Error('Homebrew installation belongs to another account');
+      }
+    };
+    // Shared prefixes such as /usr/local need not belong to Homebrew's owner.
+    await Promise.all([requireOwner(executable), requireOwner(repository)]);
     const installed: {
       kind: 'formula' | 'cask';
       name: string;
@@ -169,6 +176,14 @@ export const observeHomebrew = async ({
     }[] = [];
     for (const kind of ['formula', 'cask'] as const) {
       const root = join(prefix, kind === 'formula' ? 'Cellar' : 'Caskroom');
+      try {
+        await requireOwner(root);
+      } catch (error) {
+        if (object(error) && error.code === 'ENOENT') {
+          continue;
+        }
+        throw error;
+      }
       const names = await directories(root, true);
       for (const name of names) {
         const versions = await directories(join(root, name));
@@ -232,7 +247,6 @@ export const observeHomebrew = async ({
           : [{ name: `${kind}:${name}`, version: confirmedVersion }],
       ),
     };
-    const repository = dirname(dirname(executable));
     const key = await read(join(repository, 'Library/Homebrew/api/homebrew-1.pem'));
     const updates: Extract<UpdateManager['result'], { kind: 'available' }>['updates'] = [];
     const timestamps: number[] = [];

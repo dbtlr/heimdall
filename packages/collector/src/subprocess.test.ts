@@ -124,8 +124,15 @@ test('bounded commands kill descendants that retain output pipes', async () => {
   expect(result).toEqual({ kind: 'timed out' });
   expect(Date.now() - start).toBeLessThan(1000);
   const pid = Number(await readFile(pidFile, 'utf8'));
-  // A killed orphan may remain a zombie until the container's init reaps it.
-  const status = await readFile(`/proc/${String(pid)}/stat`, 'utf8').catch(() => '');
+  // Signal delivery is asynchronous; a killed orphan may then remain a zombie.
+  const deadline = Date.now() + 1000;
+  let status = await readFile(`/proc/${String(pid)}/stat`, 'utf8').catch(() => '');
+  while (status !== '' && !status.includes(') Z ') && Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- Wait for the OS to deliver SIGKILL.
+    await Bun.sleep(10);
+    // oxlint-disable-next-line no-await-in-loop -- Recheck the process until it exits or the deadline passes.
+    status = await readFile(`/proc/${String(pid)}/stat`, 'utf8').catch(() => '');
+  }
   expect(status === '' || status.includes(') Z ')).toBe(true);
 });
 

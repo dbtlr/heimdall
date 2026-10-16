@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
+import { observeHomebrew } from './homebrew.ts';
 import {
   createUpdatesSource,
   parseUpdatesConfig,
@@ -251,6 +252,39 @@ test('Homebrew reads signed local metadata for its owning account without runnin
     },
     result: { kind: 'unavailable' },
   });
+});
+
+test('Homebrew accepts a shared prefix but requires ownership of its repository and package roots', async () => {
+  await using dir = await tempStateDir();
+  const prefix = join(await realpath(dir.path), 'shared-prefix');
+  const repository = join(prefix, 'Homebrew');
+  const cellar = join(prefix, 'Cellar');
+  const caskroom = join(prefix, 'Caskroom');
+  await mkdir(join(repository, 'bin'), { recursive: true });
+  await mkdir(join(prefix, 'bin'));
+  await mkdir(join(cellar, 'foo/1.0'), { recursive: true });
+  await writeFile(join(repository, 'bin/brew'), '#!/bin/false');
+  await symlink(join(repository, 'bin/brew'), join(prefix, 'bin/brew'));
+  await writeFile(
+    join(cellar, 'foo/1.0/INSTALL_RECEIPT.json'),
+    JSON.stringify({ source: { tap: 'homebrew/core' } }),
+  );
+  const uid = process.getuid?.() ?? 1000;
+  // Ownership is an OS boundary: simulate a shared root-owned prefix without
+  // requiring privileged chown in the test runner.
+  const observe = (foreign: string) =>
+    observeHomebrew({
+      cacheDir: join(dir.path, 'cache'),
+      observedAt: 1000,
+      ownerOf: async (path) => (path === foreign ? uid + 1 : uid),
+      prefix,
+    });
+  expect((await observe(prefix)).installed?.names).toEqual(['formula:foo']);
+  expect((await observe(repository)).installed).toBeUndefined();
+  expect((await observe(join(repository, 'bin/brew'))).installed).toBeUndefined();
+  expect((await observe(cellar)).installed).toBeUndefined();
+  await mkdir(caskroom);
+  expect((await observe(caskroom)).installed).toBeUndefined();
 });
 
 test('update configuration follows the selected collector.toml and rejects unusable settings', async () => {
