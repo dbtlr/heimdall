@@ -26,6 +26,26 @@ test('load cache migration preserves replay progress and invalidates existing ju
   expect(after).toEqual(before.map((row) => Object.assign(row, { fingerprint: null })));
 });
 
+test('hot-process cache migration preserves replay progress and invalidates existing judgments', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 27),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await db.sql`
+    INSERT INTO hot_process_evaluations (system, through, dirty_from, pending_from, coverage, limits)
+    VALUES ('laptop-1', '2026-10-01T12:00:00Z', '2026-10-01T11:00:00Z', '2026-10-01T10:00:00Z', '{"a":true}', '{"cores":0.5}')
+  `;
+  const before: Record<string, unknown>[] = await db.sql`SELECT * FROM hot_process_evaluations`;
+  await migrate(db.sql);
+  const after: Record<string, unknown>[] = await db.sql`SELECT * FROM hot_process_evaluations`;
+  for (const row of before) {
+    Reflect.deleteProperty(row, 'limits');
+  }
+  expect(after).toEqual(before.map((row) => Object.assign(row, { fingerprint: null })));
+});
+
 test('Condition levels preserve legacy occurrences and identify backfilled history', async () => {
   await using db = await testDatabase();
   await migrate(

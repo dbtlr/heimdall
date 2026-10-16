@@ -8,7 +8,7 @@ import { parseConditionLimits } from './condition-limits.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { unpair } from './pairing.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
-import { NOW, push, report, startHub } from './testing/hub.ts';
+import { NOW, push, report, startHub, storeToken } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { startTestServer } from './testing/postgres.ts';
 
@@ -369,6 +369,20 @@ test('an unfinished old episode survives separate batches until fresh quiet evid
   expect(count[0]?.n).toBe(1);
 });
 
+test('a clock rollback rejudges a cached old process episode when it becomes fresh', async () => {
+  await using h = await startHub();
+  h.clock.now = NOW + 3 * 60 * MINUTE;
+  await send(h, readings(NOW, 1));
+  expect(await evaluate(h, shortLimits())).toEqual([]);
+  h.clock.now = NOW + 1.25 * MINUTE;
+  expect((await evaluate(h, shortLimits()))[0]).toMatchObject({
+    evidence: 'current',
+    kind: 'hot_process',
+    level: 'warning',
+    subject,
+  });
+});
+
 test('late historical episodes preserve a later live occurrence of the same process', async () => {
   await using h = await startHub();
   const live = readings(NOW + 10 * MINUTE, 0.5);
@@ -412,4 +426,18 @@ test('per-System core limits change the next judgment and unpairing withdraws pr
   expect((await evaluate(h, shortLimits()))[0]?.level).toBe('note');
   await unpair(h.db.sql, 'laptop-1');
   expect(await evaluate(h, shortLimits())).toEqual([]);
+});
+
+test('re-pairing rejudges unchanged process evidence after withdrawal', async () => {
+  await using h = await startHub();
+  await send(h, readings(NOW, 1));
+  const [first] = await evaluate(h, shortLimits());
+  expect(first?.level).toBe('warning');
+  await unpair(h.db.sql, 'laptop-1');
+  expect(await evaluate(h, shortLimits())).toEqual([]);
+  await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
+  h.clock.now += 0.25 * MINUTE;
+  const [next] = await evaluate(h, shortLimits());
+  expect(next?.level).toBe('warning');
+  expect(next?.firstDetected).not.toBe(first?.firstDetected);
 });

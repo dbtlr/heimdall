@@ -84,31 +84,41 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
         // oxlint-disable-next-line no-await-in-loop -- transitions share the System lock.
         await clear(tx, { kind: KIND, now: new Date(now), subject, system });
       }
+      // Re-pairing must rejudge evidence after withdrawal without losing history.
+      await tx`UPDATE hot_process_evaluations SET fingerprint = NULL WHERE system = ${system}`;
       return;
     }
     const selectedLimits = (limits.systems.get(system) ?? limits).process;
-    const [cursor]: {
-      through: Date;
-      dirty_from: Date | null;
-      pending_from: Date | null;
-      limits: ConditionLimits['process'];
-    }[] = await tx`
-      SELECT through, dirty_from, pending_from, limits FROM hot_process_evaluations WHERE system = ${system}
-    `;
     const [newest]: { t: Date }[] = await tx`
       SELECT t FROM vitals_samples WHERE system = ${system} AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
       ORDER BY t DESC LIMIT 1
     `;
-    if (newest === undefined || (cursor !== undefined && newest.t < cursor.through)) {
+    if (newest === undefined) {
       return;
     }
+    // Judgment changes must invalidate stored fingerprints on upgrade.
+    const fingerprint = JSON.stringify({
+      limits: selectedLimits,
+      old: now - newest.t.getTime() > OLD_EVIDENCE_MS,
+    });
+    const [cursor]: {
+      through: Date;
+      dirty_from: Date | null;
+      pending_from: Date | null;
+      fingerprint_match: boolean | null;
+    }[] = await tx`
+      SELECT through, dirty_from, pending_from, fingerprint = ${fingerprint}::jsonb AS fingerprint_match
+      FROM hot_process_evaluations WHERE system = ${system}
+    `;
+    if (cursor !== undefined && newest.t < cursor.through) {
+      return;
+    }
+    // The age mode keeps a clock rollback from hiding newly fresh evidence.
     if (
       cursor !== undefined &&
       newest.t.getTime() === cursor.through.getTime() &&
       cursor.dirty_from === null &&
-      Object.entries(selectedLimits).every(
-        ([key, value]) => Reflect.get(cursor.limits, key) === value,
-      )
+      cursor.fingerprint_match === true
     ) {
       return;
     }
@@ -246,10 +256,10 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       [...states].map(([subject, state]) => [subject, state.known]),
     );
     await tx`
-      INSERT INTO hot_process_evaluations (system, through, pending_from, coverage, limits)
-      VALUES (${system}, ${latest.t}, ${pendingFrom ?? null}, ${storableJson(coverage)}::text::jsonb, ${storableJson(selectedLimits)}::text::jsonb)
+      INSERT INTO hot_process_evaluations (system, through, pending_from, coverage, fingerprint)
+      VALUES (${system}, ${latest.t}, ${pendingFrom ?? null}, ${storableJson(coverage)}::text::jsonb, ${fingerprint}::jsonb)
       ON CONFLICT (system) DO UPDATE SET through = GREATEST(hot_process_evaluations.through, excluded.through),
-        dirty_from = NULL, pending_from = excluded.pending_from, coverage = excluded.coverage, limits = excluded.limits
+        dirty_from = NULL, pending_from = excluded.pending_from, coverage = excluded.coverage, fingerprint = excluded.fingerprint
     `;
   });
 

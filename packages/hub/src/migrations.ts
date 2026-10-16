@@ -1896,6 +1896,15 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: `ALTER TABLE load_evaluations ADD COLUMN fingerprint jsonb;`,
     version: 27,
   },
+  {
+    // Cached hot-process judgments must also depend on old or fresh evidence.
+    sql: `
+      ALTER TABLE hot_process_evaluations RENAME COLUMN limits TO fingerprint;
+      ALTER TABLE hot_process_evaluations ALTER COLUMN fingerprint DROP NOT NULL;
+      UPDATE hot_process_evaluations SET fingerprint = NULL;
+    `,
+    version: 28,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
