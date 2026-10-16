@@ -1,4 +1,14 @@
-import { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS } from '@heimdall/schema';
+import {
+  ConditionLevelSchema,
+  FUTURE_SAMPLE_TOLERANCE_MS,
+  UpdateManagerSchema,
+  updateSubject,
+  RebootObservationSchema,
+  freshUpdateTime,
+  UPDATE_OBSERVATION_MAX_AGE_MS,
+  UPDATE_METADATA_MAX_AGE_MS,
+} from '@heimdall/schema';
+import type { UpdateManager, RebootObservation } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
@@ -33,6 +43,8 @@ type ConditionRow = {
   system: string;
 };
 
+type ObservationRow = { system: string; observation: unknown };
+
 type ChecksSetRow = ChecksRow & { received_at: Date; system: string };
 
 type RunSetRow = { received_at: Date; system: string };
@@ -65,6 +77,8 @@ type Held = {
   runSet: RunSetRow | undefined;
   sample: SampleRow | undefined;
   sleeps: boolean;
+  updateManagers: UpdateManager[];
+  reboot: RebootObservation | undefined;
 };
 
 // What the item rests on and how far that holds, with the facts of its kind.
@@ -222,6 +236,54 @@ const lowDiskFacts = (held: Held, row: ConditionRow, now: number): Found => ({
   },
 });
 
+// Update evidence uses the package query and repository metadata, never Vitals.
+const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
+  const kind = conditionKind(row.kind);
+  if (kind === 'reboot_required') {
+    const observation = held.reboot;
+    const checkedAt = observation?.observedAt;
+    let evidence: Evidence =
+      observation?.kind === 'available' && observation.required ? 'current' : 'unknown';
+    if (
+      checkedAt === undefined ||
+      !freshUpdateTime(checkedAt, now, UPDATE_OBSERVATION_MAX_AGE_MS)
+    ) {
+      evidence = 'old';
+    }
+    return {
+      checkedAt,
+      evidence,
+      facts: { kind, reason: row.latest_reason },
+    };
+  }
+  const observation = held.updateManagers.find((manager) => {
+    try {
+      const identity: unknown = JSON.parse(row.subject);
+      return (
+        Array.isArray(identity) &&
+        identity.length === 3 &&
+        identity[0] === manager.manager &&
+        identity[1] === manager.installation
+      );
+    } catch {
+      return false;
+    }
+  });
+  const checkedAt = observation?.observedAt;
+  let evidence: Evidence = 'unknown';
+  if (checkedAt === undefined || !freshUpdateTime(checkedAt, now, UPDATE_OBSERVATION_MAX_AGE_MS)) {
+    evidence = 'old';
+  } else if (observation?.result.kind === 'available') {
+    const { metadataAt, updates } = observation.result;
+    if (metadataAt === null || !freshUpdateTime(metadataAt, now, UPDATE_METADATA_MAX_AGE_MS)) {
+      evidence = 'old';
+    } else if (updates.some(({ name }) => updateSubject(observation, name) === row.subject)) {
+      evidence = 'current';
+    }
+  }
+  return { checkedAt, evidence, facts: { kind: 'pending_update', reason: row.latest_reason } };
+};
+
 // The facts and evidence behind an open Condition, by its kind.
 const conditionFound = (
   held: Held,
@@ -230,6 +292,9 @@ const conditionFound = (
   now: number,
 ): Found => {
   const kind = conditionKind(row.kind);
+  if (kind === 'pending_update' || kind === 'reboot_required') {
+    return updateFacts(held, row, now);
+  }
   if (kind === 'drift') {
     return driftFacts(held, judged, row.subject, now);
   }
@@ -376,16 +441,24 @@ const heldOf = (
     runSets: Map<string, RunSetRow[]>;
     samples: Map<string, SampleRow[]>;
     systems: Map<string, SystemRow[]>;
+    updateManagers: Map<string, ObservationRow[]>;
+    reboots: Map<string, ObservationRow[]>;
   },
 ): Held => ({
   checks: rows.checks.get(name)?.[0],
   conditions: rows.conditions.get(name) ?? [],
   jobRuns: new Map((rows.runs.get(name) ?? []).map((row) => [row.job, row])),
   lastSeenAt: rows.systems.get(name)?.[0]?.last_seen_at?.getTime(),
+  reboot: rows.reboots
+    .get(name)
+    ?.map(({ observation }) => RebootObservationSchema.parse(observation))[0],
   records: rows.records.get(name) ?? [],
   runSet: rows.runSets.get(name)?.[0],
   sample: rows.samples.get(name)?.[0],
   sleeps: rows.systems.get(name)?.[0]?.sleeps === true,
+  updateManagers: (rows.updateManagers.get(name) ?? []).map(({ observation }) =>
+    UpdateManagerSchema.parse(observation),
+  ),
 });
 
 // Everything that needs the operator on `systems`, with the evidence behind
@@ -401,7 +474,7 @@ export const readAttention = async (
     return [];
   }
   const names = systems.map(({ name }) => name);
-  const [conditions, checks, runSets, runs, records, held, samples]: [
+  const [conditions, checks, runSets, runs, records, held, samples, updateManagers, reboots]: [
     ConditionRow[],
     ChecksSetRow[],
     RunSetRow[],
@@ -409,6 +482,8 @@ export const readAttention = async (
     MirroredRecordRow[],
     SystemRow[],
     SampleRow[],
+    ObservationRow[],
+    ObservationRow[],
   ] = await Promise.all([
     sql`
       SELECT system, kind, level, subject, raised_at, latest_at, latest_reason
@@ -444,15 +519,19 @@ export const readAttention = async (
       LEFT JOIN hot_process_evaluations p ON p.system = s.name AND p.through = v.t
       WHERE s.name IN ${sql(names)}
     `,
+    sql`SELECT system, observation FROM update_managers WHERE system IN ${sql(names)}`,
+    sql`SELECT system, observation FROM reboot_observations WHERE system IN ${sql(names)}`,
   ]);
   const grouped = {
     checks: bySystem(checks),
     conditions: bySystem(conditions),
+    reboots: bySystem(reboots),
     records: bySystem(records),
     runSets: bySystem(runSets),
     runs: bySystem(runs),
     samples: bySystem(samples),
     systems: bySystem(held),
+    updateManagers: bySystem(updateManagers),
   };
   const items = await Promise.all(
     systems.map(({ name, paired }) =>

@@ -34,6 +34,7 @@ import { startCapture } from './transcripts/loop.ts';
 import { findSharedDirectory, parseSources } from './transcripts/sources.ts';
 import type { Source } from './transcripts/sources.ts';
 import { openSpool } from './transcripts/spool.ts';
+import { readUpdatesConfig, startUpdates } from './updates/source.ts';
 import { hostProbe } from './vitals/host.ts';
 import { createSampler } from './vitals/sampler.ts';
 
@@ -149,6 +150,11 @@ export const runAction: ActionHandler<typeof run> = async ({
     // declared options do not name it.
     const named =
       'config' in options && typeof options.config === 'string' ? options.config : undefined;
+    const updatesConfig = await readUpdatesConfig({
+      cwd: host.cwd,
+      home: configHome(host.env),
+      named,
+    });
     const configured = parseSources(
       await readSessionsSection({ cwd: host.cwd, home: configHome(host.env), named }),
       home,
@@ -177,6 +183,13 @@ export const runAction: ActionHandler<typeof run> = async ({
       spool,
     });
     const identity = reportIdentity({ platform, sleeps: options.sleeps, system });
+    const updates = startUpdates({
+      config: updatesConfig,
+      log: runtime,
+      now: Date.now,
+      platform,
+      signal,
+    });
     const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
     // The daemon only reads the store; `record` and `forget` write it. The
     // checks and the reporter each open it on first use, through a connection
@@ -225,6 +238,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      updates,
     });
     try {
       await log.info(
@@ -246,6 +260,7 @@ export const runAction: ActionHandler<typeof run> = async ({
         transcripts: capture.section,
       });
     } finally {
+      await updates.stop();
       await stopCapture();
       await harnessScan.stop();
       await serviceChecks.stop();

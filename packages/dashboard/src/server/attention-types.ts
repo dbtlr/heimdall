@@ -32,6 +32,7 @@ export type JobTarget = { scheduler: string; target: string };
 export type AttentionFacts =
   | { kind: 'high_cpu' | 'high_memory'; reason: string }
   | { kind: 'hot_process'; reason: string }
+  | { kind: 'pending_update' | 'reboot_required'; reason: string }
   | {
       kind: 'drift';
       // The files record that holds the path, and the hash it records, when

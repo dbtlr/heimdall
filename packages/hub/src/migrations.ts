@@ -1858,6 +1858,39 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 25,
   },
+  {
+    sql: `
+      CREATE TABLE update_managers (
+        system text NOT NULL REFERENCES systems (name),
+        manager text NOT NULL,
+        installation text NOT NULL,
+        observed_at timestamptz NOT NULL,
+        observation jsonb NOT NULL,
+        withdrawn boolean NOT NULL DEFAULT false,
+        PRIMARY KEY (system, manager, installation)
+      );
+      CREATE TABLE update_subjects (
+        system text NOT NULL REFERENCES systems (name),
+        subject text NOT NULL,
+        manager text NOT NULL,
+        installation text NOT NULL,
+        name text NOT NULL,
+        first_seen_at timestamptz NOT NULL,
+        security_since timestamptz,
+        observed_at timestamptz NOT NULL,
+        pending_update jsonb NOT NULL,
+        PRIMARY KEY (system, subject)
+      );
+      CREATE TABLE reboot_observations (
+        system text PRIMARY KEY REFERENCES systems (name),
+        observed_at timestamptz NOT NULL,
+        observation jsonb NOT NULL,
+        withdrawn boolean NOT NULL DEFAULT false,
+        first_required_at timestamptz
+      );
+    `,
+    version: 26,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

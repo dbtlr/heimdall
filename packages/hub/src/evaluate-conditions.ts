@@ -8,6 +8,7 @@ import { evaluateLoadConditions } from './load-conditions.ts';
 import { evaluateServiceConditions } from './service-conditions.ts';
 import { evaluateSystemConditions } from './system-conditions.ts';
 import type { SystemConditionThresholds } from './system-conditions.ts';
+import { evaluateUpdateConditions } from './update-conditions.ts';
 
 // Runs each evaluator after the one before it, so they never compete for a
 // System's lock. One that fails does not stop the others; the one error that
@@ -40,6 +41,7 @@ export const evaluateConditions = (
     () => evaluateSystemConditions(sql, clock, thresholds),
     () => evaluateLoadConditions(sql, clock, thresholds),
     () => evaluateHotProcessConditions(sql, clock, thresholds),
+    () => evaluateUpdateConditions(sql, clock, thresholds),
     () => evaluateDrift(sql, clock),
     () => evaluateServiceConditions(sql, clock),
   ]);

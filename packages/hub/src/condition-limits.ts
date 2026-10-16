@@ -22,6 +22,7 @@ export const PROCESS_LIMITS = {
   warningMinutes: 120,
   warningWindowMinutes: 240,
 };
+export const UPDATE_LIMITS = { rebootWarningDays: 7, securityWarningDays: 3 };
 
 const percentage = z.number().finite().min(0).max(100);
 const partialDisk = z.strictObject({
@@ -49,11 +50,16 @@ const partialCpu = partialMemory.extend({
 const partialProcess = partialCpu.omit({ percent: true }).extend({
   cores: z.number().finite().positive().optional(),
 });
+const partialUpdates = z.strictObject({
+  rebootWarningDays: z.number().finite().positive().max(3650).optional(),
+  securityWarningDays: z.number().finite().positive().max(3650).optional(),
+});
 const systemOverrides = z.strictObject({
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
   process: partialProcess.optional(),
+  updates: partialUpdates.optional(),
 });
 const section = z.strictObject({
   cpu: partialCpu.optional(),
@@ -61,6 +67,7 @@ const section = z.strictObject({
   memory: partialMemory.optional(),
   process: partialProcess.optional(),
   systems: z.record(z.string().regex(SYSTEM_NAME), systemOverrides).optional(),
+  updates: partialUpdates.optional(),
 });
 
 // Non-overlapping recovery bands make a lower level's meaning independent
@@ -93,6 +100,7 @@ export const parseConditionLimits = (value: unknown) => {
       disk: DiskLimits;
       memory: typeof MEMORY_LIMITS;
       process: typeof PROCESS_LIMITS;
+      updates: typeof UPDATE_LIMITS;
     },
     override: z.infer<typeof systemOverrides>,
     name: string,
@@ -146,10 +154,22 @@ export const parseConditionLimits = (value: unknown) => {
       disk: validateDisk(mergeDisk(defaults.disk, override.disk), `${name}.disk`),
       memory,
       process,
+      updates: {
+        rebootWarningDays:
+          override.updates?.rebootWarningDays ?? defaults.updates.rebootWarningDays,
+        securityWarningDays:
+          override.updates?.securityWarningDays ?? defaults.updates.securityWarningDays,
+      },
     };
   };
   const defaults = resolve(
-    { cpu: CPU_LIMITS, disk: DISK_LIMITS, memory: MEMORY_LIMITS, process: PROCESS_LIMITS },
+    {
+      cpu: CPU_LIMITS,
+      disk: DISK_LIMITS,
+      memory: MEMORY_LIMITS,
+      process: PROCESS_LIMITS,
+      updates: UPDATE_LIMITS,
+    },
     parsed,
     'conditions',
   );

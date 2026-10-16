@@ -100,10 +100,12 @@ export const subjectText = (item: Attention): string => {
       return item.set === 'checks' ? 'Service and file checks' : 'Job runs';
     }
     case 'reports_rejected':
-    case 'system_stale': {
+    case 'system_stale':
+    case 'reboot_required': {
       return '';
     }
-    case 'hot_process': {
+    case 'hot_process':
+    case 'pending_update': {
       return conditionSubject(item);
     }
     default: {
@@ -378,6 +380,16 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
         short: [truncate(item.reason, SHORT_LIMIT)],
       });
     }
+    case 'pending_update':
+    case 'reboot_required': {
+      return evidence(
+        same(item.kind === 'pending_update' ? 'Packages kept up to date' : 'No reboot required'),
+        {
+          long: [item.reason],
+          short: [truncate(item.reason, SHORT_LIMIT)],
+        },
+      );
+    }
     case 'reports_rejected': {
       return evidence(same('Reports the Hub accepts'), {
         long: [item.reason],
@@ -417,6 +429,21 @@ const arrivedThing = (item: Attention) => {
 export const evidenceNote = (item: Attention, now: number): Phrase | undefined => {
   if (item.evidence === 'current') {
     return undefined;
+  }
+  if (item.kind === 'pending_update' || item.kind === 'reboot_required') {
+    const thing =
+      item.kind === 'pending_update' ? 'package-manager observation' : 'reboot observation';
+    const limits =
+      item.kind === 'pending_update'
+        ? 'A current package query must be within 24 hours, with repository metadata within 7 days.'
+        : 'A current reboot observation must be within 24 hours.';
+    return item.checkedAt === undefined
+      ? [`No ${thing} has arrived, so this may be out of date. ${limits}`]
+      : [
+          `The latest ${thing} was `,
+          whenAt(item.checkedAt, now),
+          `. It cannot confirm the current state. ${limits}`,
+        ];
   }
   if (item.evidence === 'old') {
     const thing = arrivedThing(item);
@@ -676,6 +703,28 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
           step(
             'Inspect the process',
             `On ${item.system}, inspect ${subjectText(item)} and compare its CPU use with the work expected at those times. Confirm its name and start time before taking action, since PIDs are reused.`,
+          ),
+        ],
+      };
+    }
+    case 'pending_update': {
+      return {
+        short: 'Review and install the update',
+        steps: [
+          step(
+            'Review and install the update',
+            `On ${item.system}, review ${subjectText(item)} with its package manager and install the update when appropriate.`,
+          ),
+        ],
+      };
+    }
+    case 'reboot_required': {
+      return {
+        short: 'Plan a reboot',
+        steps: [
+          step(
+            'Plan a reboot',
+            `On ${item.system}, review the pending reboot and restart the System when its work can pause.`,
           ),
         ],
       };

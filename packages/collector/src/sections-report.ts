@@ -12,6 +12,7 @@ import type {
   HarnessProcessesSection,
   RecordsSection,
   RunsSection,
+  UpdatesSection,
 } from '@heimdall/schema';
 
 import type { CheckParts, CheckPartsSource } from './checks/parts.ts';
@@ -21,6 +22,7 @@ import { describeError } from './errors.ts';
 import type { HarnessesSource } from './harness-scan.ts';
 import type { HarnessProcessesSource } from './processes/loop.ts';
 import type { RecordStore } from './records.ts';
+import type { UpdatesSource } from './updates/source.ts';
 
 // How long a delivered section may stand before it is sent again, so a Hub
 // restored from backup gets the System's records, runs, and checks back (ADR-0011).
@@ -236,6 +238,7 @@ const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
 // nothing.
 export const createSectionsReporter = ({
   checks,
+  updates = { latest: () => undefined },
   harnesses = NO_HARNESSES,
   harnessProcesses = NO_HARNESS_PROCESSES,
   log,
@@ -247,6 +250,7 @@ export const createSectionsReporter = ({
   refreshMs = SECTIONS_REFRESH_MS,
 }: {
   checks: ChecksSource;
+  updates?: UpdatesSource;
   harnesses?: HarnessesSource;
   harnessProcesses?: HarnessProcessesSource;
   log: Log;
@@ -263,6 +267,14 @@ export const createSectionsReporter = ({
   let seenHarnesses: HarnessesSection | undefined;
   let seenProcesses: HarnessProcessesSection | undefined;
   let failing = false;
+  let seenUpdates: UpdatesSection | undefined;
+  const updated = createSectionState<UpdatesSection, UpdatesSection>({
+    build: (section) => ({ digest: digestOf(section), section }),
+    label: 'updates',
+    log,
+    now,
+    refreshMs,
+  });
 
   const records = createSectionState<RecordsSection, RecordStore>({
     build: (held) => buildRecords(held, maxRecordsBytes, log),
@@ -319,6 +331,12 @@ export const createSectionsReporter = ({
   const pendingHarnesses = () => {
     const latest = harnesses.latest();
     const latestProcesses = harnessProcesses.latest();
+    const latestUpdates = updates.latest();
+    const pendingUpdates =
+      latestUpdates === undefined
+        ? undefined
+        : updated.pending(latestUpdates, latestUpdates !== seenUpdates);
+    seenUpdates = latestUpdates;
     const due = {
       harnessProcesses:
         latestProcesses === undefined
@@ -330,6 +348,7 @@ export const createSectionsReporter = ({
     seenHarnesses = latest;
     seenProcesses = latestProcesses;
     return {
+      ...(pendingUpdates === undefined ? {} : { updates: pendingUpdates }),
       ...(due.harnesses === undefined ? {} : { harnesses: due.harnesses }),
       ...(due.harnessProcesses === undefined ? {} : { harnessProcesses: due.harnessProcesses }),
     };

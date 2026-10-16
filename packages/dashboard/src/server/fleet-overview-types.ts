@@ -53,6 +53,8 @@ export type ConditionKind =
   | 'job_failing'
   | 'job_overdue'
   | 'low_disk'
+  | 'pending_update'
+  | 'reboot_required'
   | 'reports_rejected'
   | 'service_down'
   | 'system_stale';

@@ -7,6 +7,7 @@ import { ProcessObservationSchema } from './process-observation.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
 import { TranscriptsSectionSchema } from './transcripts.ts';
+import { UpdatesSectionSchema } from './updates-section.ts';
 import { bytes, epochMs } from './values.ts';
 
 // The Report wire schema version this build speaks. The Hub rejects versions it
@@ -126,6 +127,7 @@ export const ReportSchema = z.object({
   timeZone: z.string().regex(TIME_ZONE).optional().catch(undefined),
   // In every Report; optional for Collectors that predate it (ADR-0013).
   transcripts: TranscriptsSectionSchema.optional(),
+  updates: UpdatesSectionSchema.optional(),
 });
 
 export type VitalsSample = z.infer<typeof VitalsSampleSchema>;

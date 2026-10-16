@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// PostgreSQL text cannot carry NUL or lone surrogates. Identity schemas use
+// the same normalization as storage so their keys match their observations.
+export const storableText = (text: string) => text.toWellFormed().replaceAll('\0', '�');
+
 // A count of bytes.
 export const bytes = z.int().nonnegative();
 

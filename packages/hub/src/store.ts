@@ -13,6 +13,7 @@ import type { SQL } from 'bun';
 import { clear, raise } from './conditions.ts';
 import { storeHarnessProcesses } from './harness-processes.ts';
 import { storable, storableJson } from './storable.ts';
+import { storeUpdates } from './update-observations.ts';
 
 export type StoreResult = { skipped: number; stored: number };
 
@@ -180,6 +181,9 @@ export const storeReport = (
     }
     if (report.checks !== undefined) {
       await storeChecks(tx, { receivedAt: seenAt, report, section: report.checks });
+    }
+    if (report.updates !== undefined) {
+      await storeUpdates(tx, { receivedAt, section: report.updates, system: report.system });
     }
     // A stored Report ends a run of rejections (ADR-0005).
     await clear(tx, { kind: REPORTS_REJECTED, now: seenAt, subject: '', system: report.system });
@@ -396,6 +400,8 @@ const storeChecks = async (
 // empty, as are high CPU and memory, a Drift Condition's the file's path, and a Service down Condition's
 // the Service's name.
 export type ConditionKind =
+  | 'pending_update'
+  | 'reboot_required'
   | 'hot_process'
   | 'high_cpu'
   | 'high_memory'

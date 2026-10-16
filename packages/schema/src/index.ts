@@ -1,5 +1,6 @@
 export { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS } from './conditions.ts';
 export type { ConditionLevel, ConditionTransition } from './conditions.ts';
+export { storableText } from './values.ts';
 export {
   MAX_PROCESS_CENSUS,
   MAX_TOP_PROCESSES,
@@ -111,3 +112,20 @@ export {
   SAME_HARNESS_PROCESS_MS,
 } from './harness-processes-section.ts';
 export type { HarnessProcess, HarnessProcessesSection } from './harness-processes-section.ts';
+export {
+  MAX_UPDATES_SECTION_BYTES,
+  UPDATE_OBSERVATION_MAX_AGE_MS,
+  UPDATE_METADATA_MAX_AGE_MS,
+  freshUpdateTime,
+  PendingUpdateSchema,
+  UpdateManagerSchema,
+  UpdatesSectionSchema,
+  RebootObservationSchema,
+  updateSubject,
+} from './updates-section.ts';
+export type {
+  PendingUpdate,
+  UpdateManager,
+  RebootObservation,
+  UpdatesSection,
+} from './updates-section.ts';

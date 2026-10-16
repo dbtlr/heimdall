@@ -7,6 +7,7 @@ import type {
   Report,
   RunsSection,
   TranscriptsSection,
+  UpdatesSection,
 } from '@heimdall/schema';
 
 import { describeError } from './errors.ts';
@@ -82,6 +83,7 @@ export type PendingSection<Section> = {
 
 // The sections that are due, each ready to ride on a Report.
 export type PendingSections = {
+  updates?: PendingSection<UpdatesSection>;
   checks?: PendingSection<ChecksSection>;
   harnesses?: PendingSection<HarnessesSection>;
   harnessProcesses?: PendingSection<HarnessProcessesSection>;
@@ -153,13 +155,17 @@ export const flushQueue = async ({
       base.samples = base.samples.slice(0, Math.ceil(base.samples.length / 2));
     }
     const reportWith = (
-      carried: Pick<Report, 'checks' | 'harnesses' | 'harnessProcesses' | 'records' | 'runs'>,
+      carried: Pick<
+        Report,
+        'checks' | 'harnesses' | 'harnessProcesses' | 'records' | 'runs' | 'updates'
+      >,
     ): Report => ({
       ...base,
       ...carried,
     });
-    const { checks, harnesses, harnessProcesses, records, runs } = waiting;
+    const { checks, harnesses, harnessProcesses, records, runs, updates } = waiting;
     const withSections = reportWith({
+      ...(updates === undefined ? {} : { updates: updates.section }),
       ...(checks === undefined ? {} : { checks: checks.section }),
       ...(harnesses === undefined ? {} : { harnesses: harnesses.section }),
       ...(harnessProcesses === undefined ? {} : { harnessProcesses: harnessProcesses.section }),
@@ -167,7 +173,8 @@ export const flushQueue = async ({
       ...(runs === undefined ? {} : { runs: runs.section }),
     });
     const carrying =
-      (checks !== undefined ||
+      (updates !== undefined ||
+        checks !== undefined ||
         harnesses !== undefined ||
         harnessProcesses !== undefined ||
         records !== undefined ||
@@ -177,6 +184,7 @@ export const flushQueue = async ({
     let outcome = await send(carrying ? withSections : reportWith({}));
     if (carrying && outcome.kind !== 'failed') {
       waiting = {};
+      updates?.settle(outcome);
       checks?.settle(outcome);
       harnesses?.settle(outcome);
       harnessProcesses?.settle(outcome);
