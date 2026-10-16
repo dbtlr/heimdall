@@ -186,8 +186,8 @@ test.each([
     [JSON.stringify(['boot-1', 43, '123', 'compiler'])]: true,
   });
   await h.db.sql`
-    INSERT INTO hot_process_evaluations (system, through, coverage, limits)
-    VALUES ('server-1', ${new Date(through)}, ${coverage}::text::jsonb, '{}'::jsonb)
+    INSERT INTO hot_process_evaluations (system, through, coverage)
+    VALUES ('server-1', ${new Date(through)}, ${coverage}::text::jsonb)
   `;
   expect(await only(h, 'hot_process')).toMatchObject({
     checkedAt: latest,
