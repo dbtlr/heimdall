@@ -114,12 +114,12 @@ A job Condition stays as it is while what decides it is unknown: while the Syste
 
 ## System Conditions
 
-Once a minute, in the same pass as the job Conditions and one after the other, the Hub judges every paired System for stale System, disk, and rolling load Conditions.
+Once a minute, in the same pass as the job Conditions and one after the other, the Hub judges every paired System for stale System, disk, rolling load, and update Conditions.
 
 - **Stale System** is raised when the Hub last heard from the System more than 10 minutes ago, or more than 7 days ago when the System sleeps. Any Report counts as hearing from it, including one the Hub rejects, and so does any transcript upload. A paired System the Hub has never heard from counts from when it was paired, so a Collector that never starts is stale too. The Hub then holds a row for that System with no last seen, and the dashboard shows it as never seen. A System with a last seen counts from that time even if it was paired again since, so pairing it again does not clear the Condition. The Condition has no subject, its reason names the time the System was last heard from (or paired, if never), and it clears at the next judgment after the System is heard from again.
 - **Low disk** is graded per mount: note at 70% used, warning at 80%, and alert at 90%. Raising or escalating includes equality. Recovery uses a five-percentage-point margin: alert steps down below 85%, warning below 75%, and note clears below 65%. Equality retains the level. A large change moves directly to the resulting level or clears, without fabricated intermediate transitions. The subject remains the mount and the stored kind remains `low_disk`. Its latest reason gives free space, such as `9.9 GiB free of 100.0 GiB (9.9%).` A mount missing from a fresh sample clears. A sample older than two hours cannot lower or clear an open disk Condition, including a missing mount. A mount with a size of 0 is left as it is. Duplicate mounts use the entry with the least free fraction, then least free bytes. A System with no readable sample is not judged for disk.
 - **The latest sample** is the newest one stamped no later than 5 minutes after the Hub's clock, since the Hub does not store when it received a sample, and a System whose clock runs ahead would otherwise keep its newest, wrongly stamped sample as the latest for as long as the clock is wrong.
-- **A System that is no longer paired** is no longer judged for stale System, disk, or rolling load, and the next judgment clears those Conditions. Its other Conditions and its history stay. Its job, Drift, and Service down Conditions stay open, since no new Report arrives to change what they are judged on, and they show in the status of the dashboard's unpaired view. They change again only once new Reports arrive after it is paired again.
+- **A System that is no longer paired** is no longer judged for stale System, disk, rolling load, or updates, and the next judgment clears those Conditions. Its other Conditions and its history stay. Its job, Drift, and Service down Conditions stay open, since no new Report arrives to change what they are judged on, and they show in the status of the dashboard's unpaired view. They change again only once new Reports arrive after it is paired again.
 
 Disk limits are percentages in `[conditions.disk]` in `hub.toml`, or the equivalent JSON `conditions.disk` object. All fields are optional: `note = 70`, `warning = 80`, `alert = 90`, and `hysteresis = 5` are the defaults. `[conditions.systems.<System>.disk]` overrides individual fields for that System, inheriting unspecified fleet limits. `hysteresis` is a positive number of percentage points. Limits must satisfy `0 < hysteresis < note < warning < alert <= 100`, with each adjacent level gap greater than hysteresis. Unknown settings, invalid System names, invalid values, and invalid inherited combinations stop `serve` before it opens the database. Fixed levels cannot be configured. Changed limits take effect after restarting the Hub and change subsequent judgments, never recorded history. Stale time limits retain their fixed defaults.
 
@@ -238,6 +238,89 @@ Silence, missing fields from older Collectors, and unreadable processes never es
 The core limit must be finite and positive. Durations and windows use the load bounds and ordering rules above.
 Invalid inherited combinations stop startup before database access. Restarting the Hub applies changed limits without rewriting history.
 Process evidence remains in raw Vitals samples and does not change Vitals rollups or Session insight.
+
+## Update Conditions
+
+The Collector observes package-manager metadata independently of provisioner records, following [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md).
+It never installs software, refreshes repository metadata, changes ownership, or reboots a System.
+A provisioner's Application records retain their recorded versions.
+
+Checks run at startup and every six hours after the preceding pass finishes, independently of Vitals and Report delivery.
+They never overlap or replay intervals missed during sleep.
+`[updates]` in `collector.toml`, or its JSON equivalent, accepts `intervalHours = 6` by default.
+The interval must be finite, at least one second (`1/3600` hours), and at most 596 hours.
+Local path settings are `apt`, `aptListsDir`, `dpkgQuery`, `osRelease`, `rebootMarker`, `homebrewPrefixes`, and `homebrewCacheDir`.
+Paths must be absolute. Homebrew prefixes list at most 14 distinct installations.
+The defaults use standard operating-system locations and the Collector account's Homebrew cache.
+Removing a prefix from configuration does not prove that its packages were uninstalled.
+
+On Debian-family Linux, APT lists upgradable packages using existing local package indexes, with a separate complete `dpkg-query` census of installed packages.
+APT identities include package architecture.
+A security suite explicitly named by APT establishes security status. Other packages retain unknown security status.
+Missing indexes, malformed output, command failure, or inaccessible metadata produce unavailable coverage, never an empty successful list.
+The metadata timestamp is the oldest local package-index modification time, not the time Heimdall queried it or proof of a recent refresh.
+The Debian-family reboot-required marker reports an already required reboot. Its absence on another operating system establishes nothing.
+
+Homebrew coverage requires the Collector account to own the installation.
+The Collector reads installed receipts and verifies cached signed API metadata locally, without running Homebrew or triggering its network fallback.
+Unsupported cache layouts, receipt provenance, or version comparisons produce unavailable coverage.
+A separate account requires a different execution arrangement before it can be observed. The Collector performs no automatic account switching.
+macOS Software Update coverage remains unavailable because no supported cache-only query has been verified.
+A pending operating-system update that requires a restart is distinct from an already required reboot.
+
+### Report evidence and freshness
+
+The optional v1 `updates` section carries `managers` and `reboot`, bounded to 1 MiB of JSON.
+Each manager identifies its `manager` and `installation`, retains `observedAt`, and carries an available or unavailable `result`.
+An available result holds `metadataAt` and pending `updates`, each with `name`, `installed`, `available`, and `security`.
+Unknown versions, metadata age, and security status are `null`.
+An optional complete `installed` census carries its own `observedAt` and package `names`.
+Its optional `versions` entries carry a package `name` and confirmed fully installed `version`; every entry names a package in the census.
+Partly installed or partly configured packages remain present in `names` but have no confirmed installed-version entry.
+The reboot observation carries `observedAt` and either an available `required` boolean or an unavailable reason.
+The schema lives in `packages/schema/src/updates-section.ts`.
+
+The Collector sends changed observations and repeats them hourly using their original observation times.
+Failed delivery retries the section. Resending a cached observation does not make it new evidence.
+An oversized observation becomes unavailable coverage, with no truncated successful package list or census.
+The Hub orders observations independently per manager installation and for reboot-required, ignoring repeated or older observations.
+After unpairing withdraws a Condition, re-pairing can reconfirm an identical cached observation with a new pending age.
+Evidence more than five minutes ahead of the Hub's clock is ignored.
+
+Repository-based recovery requires a successful query observed within 24 hours and known metadata no older than seven days, including equality at both boundaries.
+A complete local census observed within 24 hours can independently prove that a previously pending package was uninstalled.
+The same census can prove installation of the previously reported candidate when its confirmed installed version exactly matches that candidate.
+This evidence does not depend on repository metadata age or on a successful repository query.
+The census must be at least as recent as the package's last positive observation.
+A newer observation still listing the package as pending prevents either local recovery inference.
+An unknown candidate or installed version cannot prove installation.
+An installed version that differs from the previous candidate, including a newer version, cannot use this recovery exception.
+Unknown, stale, failed, inaccessible, missing, disabled, or unsupported evidence alone cannot clear or lower an open update Condition.
+Metadata maintenance remains outside the Collector, so a quiet update list is not proof that a System is current.
+
+### Identity, age, and clearing
+
+The Hub raises and grades update Conditions once a minute under each System's lock.
+It commits fresh recovery and clearing with the Report, so a later observation cannot erase recovery before the next judgment.
+`pending_update` has the subject `JSON.stringify([manager, installation, packageName])`, independent of the available version.
+A newer candidate version preserves the open occurrence and its pending age.
+Ordinary pending updates raise notes. Confirmed security updates become warnings after more than three calendar days.
+The security age starts when the Hub first receives positive security evidence, rather than a package release date or a backlogged observation's time.
+Unknown security evidence preserves an established security age.
+Fresh evidence explicitly identifying a pending update as non-security can reset that age and lower its level.
+
+`reboot_required` has an empty subject. It raises a note and becomes a warning after more than seven calendar days from Hub confirmation.
+Sleep and Collector silence do not pause either age.
+The defaults are `securityWarningDays = 3` and `rebootWarningDays = 7` in `[conditions.updates]` in `hub.toml`.
+`[conditions.systems.<System>.updates]` overrides individual fields and inherits the rest.
+Each value must be finite, positive, and no greater than 3650 days. Restarting the Hub applies changed limits without rewriting history.
+
+A fresh successful update list that omits a pending package clears its Condition.
+Authoritative fresh local proof of uninstallation or exact installation of its previously reported candidate also clears it.
+A fresh explicit absence of the Debian reboot-required marker clears reboot-required.
+A missing executable, removed configuration entry, failed lookup, or lost installation access does not establish subject removal.
+Unpairing clears update Conditions at the next judgment. A later recurrence starts a new occurrence and age.
+The dashboard uses stored Hub levels and dates update evidence independently of Vitals and Last seen.
 
 ## Drift
 

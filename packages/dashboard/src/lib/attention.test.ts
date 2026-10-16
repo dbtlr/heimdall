@@ -903,3 +903,29 @@ describe('nextSteps: System and file kinds', () => {
     }
   });
 });
+
+test('update and reboot cards retain the Hub reason and offer manual next steps', () => {
+  const pending = attention(
+    { kind: 'pending_update', reason: 'openssl 1 → 2 (apt, system).' },
+    {
+      evidence: 'old',
+      level: 'warning',
+      subject: '["apt","system","openssl"]',
+    },
+  );
+  expect(subjectText(pending)).toBe('openssl (apt, system)');
+  expect(evidenceWords(pending, NOW).observed).toEqual(['openssl 1 → 2 (apt, system).']);
+  expect(nextSteps(pending)).toMatchObject({
+    short: 'Review and install the update',
+    steps: [{ commands: [] }],
+  });
+  expect(utc(evidenceNote(pending, NOW) ?? [])).toContain('24 hours');
+  expect(utc(evidenceNote(pending, NOW) ?? [])).not.toContain('2 hours');
+  const reboot = attention(
+    { kind: 'reboot_required', reason: 'A reboot is required.' },
+    { level: 'note' },
+  );
+  expect(subjectText(reboot)).toBe('');
+  expect(evidenceWords(reboot, NOW).observed).toEqual(['A reboot is required.']);
+  expect(nextSteps(reboot)).toMatchObject({ short: 'Plan a reboot', steps: [{ commands: [] }] });
+});

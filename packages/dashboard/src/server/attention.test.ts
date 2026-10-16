@@ -759,3 +759,114 @@ describe('order', () => {
     ]);
   });
 });
+
+test('update attention reads actual observations independently of fresh Vitals and keeps stored levels', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await addCondition(h.db.sql, {
+    kind: 'pending_update',
+    level: 'warning',
+    raisedAt: -3600,
+    reason: 'openssl 1 → 2 (apt, system).',
+    subject: '["apt","system","openssl"]',
+    system: 'server-1',
+  });
+  await addCondition(h.db.sql, {
+    kind: 'reboot_required',
+    level: 'note',
+    raisedAt: -3600,
+    reason: 'A reboot is required.',
+    subject: '',
+    system: 'server-1',
+  });
+  const manager = {
+    installation: 'system',
+    manager: 'apt',
+    observedAt: NOW - 25 * HOUR,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: [{ available: '2', installed: '1', name: 'openssl', security: true }],
+    },
+  };
+  await h.db
+    .sql`INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+    VALUES ('server-1', 'apt', 'system', ${new Date(manager.observedAt)}, ${JSON.stringify(manager)}::text::jsonb)`;
+  const reboot = { kind: 'unavailable', observedAt: NOW - MINUTE, reason: 'Permission denied' };
+  await h.db.sql`INSERT INTO reboot_observations (system, observed_at, observation)
+    VALUES ('server-1', ${new Date(reboot.observedAt)}, ${JSON.stringify(reboot)}::text::jsonb)`;
+  expect(await only(h, 'pending_update')).toMatchObject({
+    checkedAt: NOW - 25 * HOUR,
+    evidence: 'old',
+    level: 'warning',
+  });
+  expect(await only(h, 'reboot_required')).toMatchObject({
+    checkedAt: NOW - MINUTE,
+    evidence: 'unknown',
+    level: 'note',
+  });
+  const fleet = await readFleetOverview(h.db.sql, { now: NOW, range: '6h' });
+  expect(fleet.lanes.find(({ name }) => name === 'server-1')).toMatchObject({
+    status: 'needs_you',
+  });
+  const systemRecords = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+  expect(systemRecords.timeline.map(({ kind }) => kind)).toEqual(
+    expect.arrayContaining(['pending_update', 'reboot_required']),
+  );
+});
+
+test.each([
+  { evidence: 'current', label: 'fresh query and metadata', metadataAt: NOW, observedAt: NOW },
+  {
+    evidence: 'current',
+    label: 'query at its freshness boundary',
+    metadataAt: NOW,
+    observedAt: NOW - 24 * HOUR,
+  },
+  {
+    evidence: 'current',
+    label: 'metadata at its freshness boundary',
+    metadataAt: NOW - 7 * 24 * HOUR,
+    observedAt: NOW,
+  },
+  { evidence: 'old', label: 'old metadata', metadataAt: NOW - 7 * 24 * HOUR - 1, observedAt: NOW },
+  { evidence: 'old', label: 'unknown metadata', metadataAt: null, observedAt: NOW },
+  {
+    evidence: 'old',
+    label: 'future query beyond clock tolerance',
+    metadataAt: NOW,
+    observedAt: NOW + 5 * MINUTE + 1,
+  },
+])(
+  'pending update evidence is $evidence with $label',
+  async ({ observedAt, metadataAt, evidence }) => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -3600,
+      reason: 'An update is pending.',
+      subject: '["apt","system","openssl"]',
+      system: 'server-1',
+    });
+    const manager = {
+      installation: 'system',
+      manager: 'apt',
+      observedAt,
+      result: {
+        kind: 'available',
+        metadataAt,
+        updates: [{ available: '2', installed: '1', name: 'openssl', security: null }],
+      },
+    };
+    await h.db
+      .sql`INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+    VALUES ('server-1', 'apt', 'system', ${new Date(observedAt)}, ${JSON.stringify(manager)}::text::jsonb)`;
+    expect(await only(h, 'pending_update')).toMatchObject({
+      checkedAt: observedAt,
+      evidence,
+      level: 'note',
+    });
+  },
+);

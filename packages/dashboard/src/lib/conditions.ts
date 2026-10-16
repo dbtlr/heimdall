@@ -17,6 +17,8 @@ export const KIND_NAMES: Record<ConditionKind, string> = {
   job_failing: 'Job failing',
   job_overdue: 'Job overdue',
   low_disk: 'Low disk',
+  pending_update: 'Pending update',
+  reboot_required: 'Reboot required',
   reports_rejected: 'Reports rejected',
   service_down: 'Service down',
   system_stale: 'Stale System',
@@ -25,6 +27,21 @@ export const KIND_NAMES: Record<ConditionKind, string> = {
 // A process's stored subject carries its lifetime identity; only its name and
 // PID belong in the labels shown to the operator.
 export const conditionSubject = ({ kind, subject }: { kind: ConditionKind; subject: string }) => {
+  if (kind === 'pending_update') {
+    try {
+      const identity: unknown = JSON.parse(subject);
+      if (
+        Array.isArray(identity) &&
+        identity.length === 3 &&
+        identity.every((part) => typeof part === 'string')
+      ) {
+        return `${String(identity[2])} (${String(identity[0])}, ${String(identity[1])})`;
+      }
+    } catch {
+      return 'Unknown package';
+    }
+    return 'Unknown package';
+  }
   if (kind !== 'hot_process') {
     return subject;
   }

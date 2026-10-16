@@ -2,7 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { COMMAND_TIMEOUT_MS, readCommand, runCommand } from './subprocess.ts';
+import { COMMAND_TIMEOUT_MS, readCommand, runBoundedCommand, runCommand } from './subprocess.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
 const isAlive = (pid: number) => {
@@ -102,3 +102,77 @@ test('reading a command answers its output, and throws when it exits non-zero', 
   expect(await readCommand(['/bin/sh', '-c', 'echo hello'])).toBe('hello\n');
   expect(failure).toMatchObject({ message: expect.stringContaining('exited 2: bad') });
 });
+
+test('bounded commands reject excess output and stop on cancellation', async () => {
+  expect(await runBoundedCommand(['/bin/sh', '-c', 'yes output'], { maxOutputBytes: 128 })).toEqual(
+    { kind: 'output exceeded' },
+  );
+  const controller = new AbortController();
+  const pending = runBoundedCommand(['/bin/sleep', '30'], { signal: controller.signal });
+  controller.abort();
+  expect(await pending).toEqual({ kind: 'cancelled' });
+});
+
+test('bounded commands kill descendants that retain output pipes', async () => {
+  await using dir = await tempStateDir();
+  const pidFile = join(dir.path, 'descendant');
+  const start = Date.now();
+  const result = await runBoundedCommand(
+    ['/bin/sh', '-c', `sleep 30 & echo $! > ${pidFile}; wait`],
+    { timeoutMs: 100 },
+  );
+  expect(result).toEqual({ kind: 'timed out' });
+  expect(Date.now() - start).toBeLessThan(1000);
+  const pid = Number(await readFile(pidFile, 'utf8'));
+  // Signal delivery is asynchronous; a killed orphan may then remain a zombie.
+  const deadline = Date.now() + 1000;
+  let status = await readFile(`/proc/${String(pid)}/stat`, 'utf8').catch(() => '');
+  while (status !== '' && !status.includes(') Z ') && Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- Wait for the OS to deliver SIGKILL.
+    await Bun.sleep(10);
+    // oxlint-disable-next-line no-await-in-loop -- Recheck the process until it exits or the deadline passes.
+    status = await readFile(`/proc/${String(pid)}/stat`, 'utf8').catch(() => '');
+  }
+  expect(status === '' || status.includes(') Z ')).toBe(true);
+});
+
+test('bounded command budget includes stdout and stderr together', async () => {
+  expect(
+    await runBoundedCommand(['/bin/sh', '-c', 'printf 123456789; printf 123456789 >&2'], {
+      maxOutputBytes: 16,
+    }),
+  ).toEqual({ kind: 'output exceeded' });
+});
+
+for (const mode of ['timeout', 'abort'] as const) {
+  test(`bounded command ${mode} releases pipes inherited by a detached descendant`, async () => {
+    await using dir = await tempStateDir();
+    const pidFile = join(dir.path, 'escaped-descendant');
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = runBoundedCommand(
+      [
+        process.execPath,
+        '--eval',
+        "const child = Bun.spawn({ cmd: ['/bin/sleep', '2'], detached: true, stderr: 'inherit', stdout: 'inherit' }); await Bun.write(Bun.argv.at(-1), String(child.pid)); child.unref();",
+        pidFile,
+      ],
+      { signal: controller.signal, timeoutMs: 300 },
+    );
+    if (mode === 'abort') {
+      await Bun.sleep(150);
+      controller.abort();
+    }
+    try {
+      expect(await pending).toEqual({ kind: mode === 'abort' ? 'cancelled' : 'timed out' });
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* It may have already exited. */
+      }
+    }
+  });
+}

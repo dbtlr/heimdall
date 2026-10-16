@@ -9,6 +9,24 @@ import { configArgs, configFile, invoke } from './testing/cli.ts';
 import { migrate, report, storeReport, storeToken } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
 
+test('update warning ages inherit fields per System and reject invalid limits', () => {
+  const limits = parseConditionLimits({
+    systems: { 'laptop-1': { updates: { rebootWarningDays: 10 } } },
+    updates: { securityWarningDays: 5 },
+  });
+  expect(limits.updates).toEqual({ rebootWarningDays: 7, securityWarningDays: 5 });
+  expect(limits.systems.get('laptop-1')?.updates).toEqual({
+    rebootWarningDays: 10,
+    securityWarningDays: 5,
+  });
+  for (const value of [0, -1, Number.POSITIVE_INFINITY, 3651, '3']) {
+    expect(() => parseConditionLimits({ updates: { securityWarningDays: value } })).toThrow();
+    expect(() =>
+      parseConditionLimits({ systems: { 'laptop-1': { updates: { rebootWarningDays: value } } } }),
+    ).toThrow();
+  }
+});
+
 test('hot-process limits inherit individual core and rolling duration settings per System', () => {
   const limits = parseConditionLimits({
     process: { cores: 0.75 },

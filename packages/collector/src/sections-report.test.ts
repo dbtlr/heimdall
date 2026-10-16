@@ -1297,3 +1297,27 @@ test('a records file that cannot be opened costs the Harness processes nothing',
   expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
   expect(watch.acknowledged).toEqual([{ processes: [RUNNING] }]);
 });
+
+test('updates retry unchanged evidence and refresh hourly even when records cannot open', async () => {
+  let now = 1000;
+  const evidence = {
+    managers: [],
+    reboot: { kind: 'unavailable' as const, observedAt: 1000, reason: 'unsupported' },
+  };
+  const reporter = createSectionsReporter({
+    checks: { latest: () => undefined },
+    log: { info: () => 0, warn: () => 0 },
+    now: () => now,
+    open: async () => {
+      throw new Error('records unavailable');
+    },
+    updates: { latest: () => ({ ...evidence, managers: [] }) },
+  });
+  const first = (await reporter.pending()).updates;
+  expect(first?.section).toEqual(evidence);
+  expect((await reporter.pending()).updates?.section).toEqual(evidence);
+  first?.settle({ kind: 'delivered' });
+  expect((await reporter.pending()).updates).toBeUndefined();
+  now += SECTIONS_REFRESH_MS;
+  expect((await reporter.pending()).updates?.section).toEqual(evidence);
+});

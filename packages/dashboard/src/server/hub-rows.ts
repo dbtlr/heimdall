@@ -95,6 +95,8 @@ const CONDITION_KINDS: Record<ConditionKind, true> = {
   job_failing: true,
   job_overdue: true,
   low_disk: true,
+  pending_update: true,
+  reboot_required: true,
   reports_rejected: true,
   service_down: true,
   system_stale: true,
