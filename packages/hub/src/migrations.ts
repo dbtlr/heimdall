@@ -1891,6 +1891,11 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 26,
   },
+  {
+    // Existing cursors need one replay before their judgment can be cached.
+    sql: `ALTER TABLE load_evaluations ADD COLUMN fingerprint jsonb;`,
+    version: 27,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

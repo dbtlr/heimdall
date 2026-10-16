@@ -2,14 +2,16 @@ import { beforeAll, expect, test } from 'bun:test';
 
 import type { VitalsSample } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
+import { SQL } from 'bun';
 
 import { nextSteps } from '../../dashboard/src/lib/attention.ts';
 import { readAttention } from '../../dashboard/src/server/attention.ts';
 import { parseConditionLimits } from './condition-limits.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
+import { evaluateLoadConditions } from './load-conditions.ts';
 import { unpair } from './pairing.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
-import { NOW, push, report, startHub } from './testing/hub.ts';
+import { NOW, push, report, startHub, storeToken } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { startTestServer } from './testing/postgres.ts';
 
@@ -51,6 +53,48 @@ const evaluate = async (h: Hub, limits = parseConditionLimits(undefined)) => {
       item.system === 'laptop-1' && (item.kind === 'high_cpu' || item.kind === 'high_memory'),
   );
 };
+
+// Flush this connection's table counters before reading them from a new snapshot.
+const vitalsReads = async (sql: SQL) => {
+  await sql`SELECT pg_stat_force_next_flush()`;
+  await sql`SELECT pg_stat_clear_snapshot()`;
+  const [row]: { reads: string }[] = await sql`
+    SELECT (seq_tup_read + idx_tup_fetch)::text AS reads
+    FROM pg_stat_user_tables WHERE relname = 'vitals_samples'
+  `;
+  return Number(row?.reads ?? 0);
+};
+
+test('idle load evaluations read at most the latest eligible sample across connections', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 240, () => 95),
+  );
+  const limits = parseConditionLimits(undefined);
+  await evaluate(h, limits);
+  // A visibility map can let the newest-sample lookup avoid heap fetches too.
+  await h.db.sql`VACUUM vitals_samples`;
+  // A fresh pool also proves the skip survives a Hub restart. One connection
+  // keeps all table counters on the backend whose statistics we flush.
+  await using sql = new SQL({ max: 1, url: h.db.url.href });
+  const before = await vitalsReads(sql);
+  h.clock.now += MINUTE;
+  await evaluateLoadConditions(sql, () => h.clock.now, limits);
+  expect((await vitalsReads(sql)) - before).toBeLessThanOrEqual(1);
+  const unchanged = await vitalsReads(sql);
+  await evaluateLoadConditions(
+    sql,
+    () => h.clock.now,
+    parseConditionLimits({
+      disk: { note: 71 },
+      process: { cores: 2 },
+      systems: { 'laptop-1': { updates: { rebootWarningDays: 10 } } },
+    }),
+  );
+  expect((await vitalsReads(sql)) - unchanged).toBeLessThanOrEqual(1);
+  expect((await evaluate(h, limits))[0]?.level).toBe('warning');
+});
 
 test('recurring CPU bursts raise a note even when the newest reading is quiet', async () => {
   await using h = await startHub();
@@ -151,6 +195,56 @@ test('sleep, reboot, and future samples cannot invent enough measured busy time'
   expect(await evaluate(h)).toEqual([]);
 });
 
+test('a cached quiet window is rejudged when future samples become eligible', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 30, () => 10),
+  );
+  expect(await evaluate(h)).toEqual([]);
+  const quietAt = h.clock.now;
+  await send(
+    h,
+    readings(NOW + 120 * MINUTE, 30, () => 95),
+  );
+  const futureAt = h.clock.now;
+  h.clock.now = quietAt;
+  expect(await evaluate(h)).toEqual([]);
+  h.clock.now = futureAt;
+  expect((await evaluate(h))[0]).toMatchObject({ kind: 'high_cpu', level: 'note' });
+});
+
+test('a clock rollback rejudges cached old load evidence when it becomes fresh', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 30, () => 95),
+  );
+  const latestAt = h.clock.now;
+  h.clock.now += 8 * 60 * MINUTE;
+  expect(await evaluate(h)).toEqual([]);
+  h.clock.now = latestAt + MINUTE;
+  expect((await evaluate(h))[0]).toMatchObject({ kind: 'high_cpu', level: 'note' });
+});
+
+test('changed memory limits rejudge cached evidence independently of CPU limits', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 30, () => 10).map((row) =>
+      Object.assign(row, {
+        memory: { totalBytes: 1000, usedBytes: 850 },
+      }),
+    ),
+  );
+  expect(await evaluate(h)).toEqual([]);
+  const configured = parseConditionLimits({ memory: { percent: 80 } });
+  expect((await evaluate(h, configured))[0]).toMatchObject({
+    kind: 'high_memory',
+    level: 'warning',
+  });
+});
+
 test('silence holds warning; fresh recovery clears it and recurrence has a new occurrence', async () => {
   await using h = await startHub();
   await send(
@@ -205,6 +299,27 @@ test('per-System limits change the next judgment and unpairing withdraws load Co
   expect((await evaluate(h, configured))[0]?.level).toBe('note');
   await unpair(h.db.sql, 'laptop-1');
   expect(await evaluate(h, configured)).toEqual([]);
+});
+
+test('re-pairing rejudges unchanged load evidence after withdrawal', async () => {
+  await using h = await startHub();
+  await send(
+    h,
+    readings(NOW, 120, () => 95),
+  );
+  const [first] = await evaluate(h);
+  expect(first?.level).toBe('warning');
+  await unpair(h.db.sql, 'laptop-1');
+  expect(await evaluate(h)).toEqual([]);
+  await storeToken(h.db.sql, {
+    pairedAt: NOW,
+    system: 'laptop-1',
+    token: 'laptop-token',
+  });
+  h.clock.now += MINUTE;
+  const [next] = await evaluate(h);
+  expect(next?.level).toBe('warning');
+  expect(next?.firstDetected).not.toBe(first?.firstDetected);
 });
 
 test('missing macOS pressure preserves a warning and makes its latest evidence unknown', async () => {

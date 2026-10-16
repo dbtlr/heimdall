@@ -9,6 +9,23 @@ import { startTestServer, testDatabase } from './testing/postgres.ts';
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
 
+test('load cache migration preserves replay progress and invalidates existing judgments', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 26),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await db.sql`
+    INSERT INTO load_evaluations (system, through, dirty_from, pending_from, cpu_known, memory_known)
+    VALUES ('laptop-1', '2026-10-01T12:00:00Z', '2026-10-01T11:00:00Z', '2026-10-01T10:00:00Z', true, false)
+  `;
+  const before: Record<string, unknown>[] = await db.sql`SELECT * FROM load_evaluations`;
+  await migrate(db.sql);
+  const after: Record<string, unknown>[] = await db.sql`SELECT * FROM load_evaluations`;
+  expect(after).toEqual(before.map((row) => Object.assign(row, { fingerprint: null })));
+});
+
 test('Condition levels preserve legacy occurrences and identify backfilled history', async () => {
   await using db = await testDatabase();
   await migrate(

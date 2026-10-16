@@ -25,15 +25,49 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
         // oxlint-disable-next-line no-await-in-loop -- the System lock orders every transition.
         await clear(tx, { kind, now: new Date(now), subject: '', system });
       }
+      // Re-pairing must rejudge evidence after withdrawal without losing history.
+      await tx`UPDATE load_evaluations SET fingerprint = NULL WHERE system = ${system}`;
       return;
     }
     const selected = limits.systems.get(system) ?? limits;
+    const [newest]: { t: Date }[] = await tx`
+      SELECT t FROM vitals_samples
+      WHERE system = ${system} AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
+      ORDER BY t DESC LIMIT 1
+    `;
+    if (newest === undefined) {
+      return;
+    }
+    // Judgment changes must invalidate stored fingerprints on upgrade.
+    const fingerprint = JSON.stringify({
+      cpu: selected.cpu,
+      memory: selected.memory,
+      old: now - newest.t.getTime() > OLD_EVIDENCE_MS,
+    });
+    const [cursor]: {
+      through: Date;
+      dirty_from: Date | null;
+      pending_from: Date | null;
+      fingerprint_match: boolean | null;
+    }[] = await tx`
+      SELECT through, dirty_from, pending_from, fingerprint = ${fingerprint}::jsonb AS fingerprint_match
+      FROM load_evaluations WHERE system = ${system}
+    `;
+    if (cursor !== undefined && newest.t < cursor.through) {
+      return;
+    }
+    // Sample-time windows stay unchanged while idle. The age mode also keeps
+    // a clock rollback from hiding newly fresh evidence.
+    if (
+      cursor !== undefined &&
+      newest.t.getTime() === cursor.through.getTime() &&
+      cursor.dirty_from === null &&
+      cursor.fingerprint_match === true
+    ) {
+      return;
+    }
     const rules = rulesFor(selected);
     const largestWindow = Math.max(...rules.map((rule) => rule.window.minutes)) * 60_000;
-    const [cursor]: { through: Date; dirty_from: Date | null; pending_from: Date | null }[] =
-      await tx`
-      SELECT through, dirty_from, pending_from FROM load_evaluations WHERE system = ${system}
-    `;
     const after =
       cursor === undefined || cursor.dirty_from !== null
         ? null
@@ -50,7 +84,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
              memory_pressure, collector_platform, uptime_seconds
       FROM vitals_samples
       WHERE system = ${system} AND (${after}::timestamptz IS NULL OR t >= ${after})
-        AND t <= ${new Date(now + FUTURE_SAMPLE_TOLERANCE_MS)}
+        AND t <= ${newest.t}
       ORDER BY t
     `;
     const latest = rows.at(-1);
@@ -155,9 +189,9 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       await trackEpisodeSample(tx, { at: latest.t, kind, subject: '', system });
     }
     await tx`
-      INSERT INTO load_evaluations (system, through, cpu_known, memory_known, pending_from)
-      VALUES (${system}, ${latest.t}, ${coverage.cpuKnown}, ${coverage.memoryKnown}, ${pendingFrom ?? null})
-      ON CONFLICT (system) DO UPDATE SET through = GREATEST(load_evaluations.through, excluded.through), dirty_from = NULL, cpu_known = excluded.cpu_known, memory_known = excluded.memory_known, pending_from = excluded.pending_from
+      INSERT INTO load_evaluations (system, through, cpu_known, memory_known, pending_from, fingerprint)
+      VALUES (${system}, ${latest.t}, ${coverage.cpuKnown}, ${coverage.memoryKnown}, ${pendingFrom ?? null}, ${fingerprint}::jsonb)
+      ON CONFLICT (system) DO UPDATE SET through = GREATEST(load_evaluations.through, excluded.through), dirty_from = NULL, cpu_known = excluded.cpu_known, memory_known = excluded.memory_known, pending_from = excluded.pending_from, fingerprint = excluded.fingerprint
     `;
   });
 
