@@ -101,7 +101,7 @@ test('the now line says what each status knows', () => {
         NOW,
       ),
     ),
-  ).toBe('CPU 12%, memory 58%');
+  ).toBe('CPU 12%, memory 58% · sample time 16:00');
   expect(
     text(nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 12, 48), status: 'asleep' }), NOW)),
   ).toBe('asleep since 12:48');
@@ -110,26 +110,41 @@ test('the now line says what each status knows', () => {
 
 test('the now line needs no time zone unless it names a time', () => {
   const latest = { cpuBusyPercent: 11.6, disks: [], memoryUsedPercent: 58.2, t: NOW };
-  expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW - MINUTE, latest }), NOW))).toBe(
-    'CPU 12%, memory 58%',
+  expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW - MINUTE, latest }), NOW))).toBeUndefined();
+  expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW, latest: undefined }), NOW))).toBe(
+    'no Vitals',
   );
   expect(zoneFreeText(nowLine(lane({ status: 'never_seen' }), NOW))).toBe('never seen');
   expect(zoneFreeText(nowLine(lane({ status: 'unpaired' }), NOW))).toBe('never seen');
   expect(zoneFreeText(nowLine(lane({ lastSeenAt: NOW, status: 'asleep' }), NOW))).toBeUndefined();
 });
 
-test('the now line of an unpaired System leads with when it was last seen, then its Vitals', () => {
+test.each([
+  [Date.UTC(2026, 9, 12, 10, 0), 'Mon 10:00'],
+  [Date.UTC(2026, 9, 13, 16, 5), '16:05'],
+])('recent Last seen does not make sample time %d current', (t, sampleTime) => {
+  const phrase = nowLine(
+    lane({
+      lastSeenAt: NOW,
+      latest: { cpuBusyPercent: 24, disks: [], memoryUsedPercent: 63, t },
+    }),
+    NOW,
+  );
+  expect(text(phrase)).toBe(`CPU 24%, memory 63% · sample time ${sampleTime}`);
+});
+
+test('an unpaired System dates Last seen and its Vitals independently', () => {
   const latest = {
     cpuBusyPercent: 17.6,
     disks: [],
     memoryUsedPercent: 41.2,
-    t: Date.UTC(2026, 9, 13, 4, 35),
+    t: Date.UTC(2026, 9, 12, 4, 35),
   };
   expect(
     text(
       nowLine(lane({ lastSeenAt: Date.UTC(2026, 9, 13, 4, 36), latest, status: 'unpaired' }), NOW),
     ),
-  ).toBe('last seen 04:36, CPU 18%, memory 41%');
+  ).toBe('last seen 04:36, CPU 18%, memory 41% · sample time Mon 04:35');
 });
 
 test('the now line of an unpaired System seen without a sample still has its date', () => {
