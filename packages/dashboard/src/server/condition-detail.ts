@@ -38,18 +38,23 @@ type OccurrenceRow = {
   subject: string;
 };
 
-type Window = { from: number; to: number };
+// `cleared` when the window ends at the occurrence's clearing.
+type Window = { cleared: boolean; from: number; to: number };
 
 // The chart's window: 7 days of disk history, 24 hours of anything else.
-const windowOf = (kind: ConditionKind, to: number): Window => ({
+const windowOf = (kind: ConditionKind, to: number, cleared: boolean): Window => ({
+  cleared,
   from: to - (kind === 'low_disk' ? 7 * DAY_MS : DAY_MS),
   to,
 });
 
 // Readings whose bucket starts within the window; the first rollup bucket
-// fetched may begin before it.
-const withinWindow = <Row extends { bucket: Date }>(rows: Row[], { from }: Window) =>
-  rows.filter((row) => row.bucket.getTime() >= from);
+// fetched may begin before it. A cleared window also leaves out the bucket it
+// cleared in, which can hold readings from after the clearing.
+const withinWindow = <Row extends { bucket: Date }>(rows: Row[], { cleared, from, to }: Window) =>
+  rows.filter(
+    (row) => row.bucket.getTime() >= from && (!cleared || row.bucket.getTime() < bucketStart(to)),
+  );
 
 // Rollup buckets overlapping the window: the one holding `from` through the
 // one holding `to`.
@@ -204,7 +209,7 @@ export const readConditionDetail = async (
   }
   const kind = conditionKind(row.kind);
   const clearedAt = row.cleared_at?.getTime();
-  const window = windowOf(kind, clearedAt ?? now);
+  const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
   const [transitions, limits, series, attention] = await Promise.all([
     readConditionTransitions(sql, [row]),
     readLimits(sql, name),

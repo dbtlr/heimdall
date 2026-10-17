@@ -226,6 +226,29 @@ describe('a cleared Condition', () => {
       points: [{ t: bucketOf(-2 * HOUR), totalBytes: 1000, usedBytes: 500 }],
     });
   });
+  test('leaves out the bucket it cleared in, which can hold readings from after it cleared', async () => {
+    await using h = await startHub();
+    // Seconds from NOW: two minutes into a bucket an hour or so back.
+    const cleared = (bucketOf(-HOUR) - NOW) / 1000 + 2 * MINUTE;
+    await hear(h, 'server-1', [
+      diskSample(-2 * HOUR, { mount: '/data', usedBytes: 500 }),
+      diskSample(cleared + MINUTE, { mount: '/data', usedBytes: 900 }),
+    ]);
+    const id = await addCondition(h.db.sql, {
+      clearedAt: cleared,
+      kind: 'low_disk',
+      raisedAt: -3 * HOUR,
+      subject: '/data',
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.series).toEqual({
+      kind: 'disk',
+      points: [{ t: bucketOf(-2 * HOUR), totalBytes: 1000, usedBytes: 500 }],
+    });
+  });
 });
 
 describe('an occurrence that is not there', () => {
