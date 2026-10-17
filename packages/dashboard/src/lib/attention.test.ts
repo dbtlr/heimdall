@@ -905,21 +905,44 @@ describe('nextSteps: System and file kinds', () => {
   });
 });
 
+test.each([
+  ['apt', '/var/lib/apt/lists', 'Install with apt upgrade', ['apt upgrade']],
+  ['homebrew', '/opt/homebrew', 'Install with brew upgrade', ['/opt/homebrew/bin/brew upgrade']],
+  [
+    'homebrew',
+    "/Users/o'neil/brew",
+    'Install with brew upgrade',
+    [String.raw`'/Users/o'\''neil/brew/bin/brew' upgrade`],
+  ],
+  ['macos', 'system', 'Install from Software Update', []],
+  ['other', 'system', 'Review and install the updates', []],
+])(
+  'a %s update Condition at %s says how to install its packages',
+  (manager, installation, short, installCommands) => {
+    const pending = attention(
+      { kind: 'pending_update', reason: '3 packages are out of date.' },
+      { subject: JSON.stringify([manager, installation]) },
+    );
+    const steps = nextSteps(pending);
+    expect(steps.short).toBe(short);
+    expect(steps.short.length).toBeLessThanOrEqual(45);
+    expect(steps.steps).toHaveLength(1);
+    expect(steps.steps[0]?.commands).toEqual(installCommands);
+    expect(steps.steps[0]?.text).toMatch(/^On \S+, review the pending packages/u);
+  },
+);
+
 test('update and reboot cards retain the Hub reason and offer manual next steps', () => {
   const pending = attention(
-    { kind: 'pending_update', reason: 'openssl 1 → 2 (apt, system).' },
+    { kind: 'pending_update', reason: '2 APT packages are out of date.' },
     {
       evidence: 'old',
       level: 'warning',
-      subject: '["apt","system","openssl"]',
+      subject: '["apt","system"]',
     },
   );
-  expect(subjectText(pending)).toBe('openssl (apt, system)');
-  expect(evidenceWords(pending, NOW).observed).toEqual(['openssl 1 → 2 (apt, system).']);
-  expect(nextSteps(pending)).toMatchObject({
-    short: 'Review and install the update',
-    steps: [{ commands: [] }],
-  });
+  expect(subjectText(pending)).toBe('APT (system)');
+  expect(evidenceWords(pending, NOW).observed).toEqual(['2 APT packages are out of date.']);
   expect(utc(evidenceNote(pending, NOW) ?? [])).toContain('24 hours');
   expect(utc(evidenceNote(pending, NOW) ?? [])).not.toContain('2 hours');
   const reboot = attention(

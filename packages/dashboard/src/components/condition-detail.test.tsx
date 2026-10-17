@@ -58,6 +58,7 @@ const diskView: ConditionDetailView = {
       },
     ],
   },
+  packages: undefined,
   provenance: 'Used space is the highest reading in each 5 minutes. Updated 2 min ago.',
   rate: {
     estimate: true,
@@ -160,4 +161,42 @@ test('chart captions and the rule wrap a long unbroken process name', () => {
       new RegExp(`<[a-z]+ class="[^"]*min-w-0[^"]*wrap-anywhere[^"]*">${text}<`, 'u'),
     );
   }
+});
+
+const updateView: ConditionDetailView = {
+  ...diskView,
+  chart: undefined,
+  hero: { text: ['open. 3 APT packages are out of date.'], unit: 'days', value: '3' },
+  nextStep: {
+    clears: undefined,
+    steps: [
+      {
+        commands: ['apt upgrade'],
+        text: 'On gateway-1, review the pending packages and install them when appropriate.',
+        title: 'Install the updates',
+      },
+    ],
+  },
+  packages: [
+    { name: 'openssl', pending: '2 d 3 h', security: 'yes', versions: '1.0 → 3.0' },
+    { name: 'wget', pending: undefined, security: 'no', versions: 'unknown → 2.0' },
+  ],
+  rate: undefined,
+  title: 'Pending update APT (/usr/bin/apt)',
+};
+
+test('lists the packages of a pending update with versions, security, and how long a security update waited', () => {
+  const page = html(updateView);
+  expect(page).toContain('<table');
+  for (const text of ['openssl', '1.0 → 3.0', 'yes', '2 d 3 h', 'wget', 'unknown → 2.0', 'no']) {
+    expect(page).toContain(text);
+  }
+  expect(page).toContain('apt upgrade');
+});
+
+test('says when a source has no update pending, and draws no table for other Conditions', () => {
+  expect(html({ ...updateView, packages: [] })).toContain('No updates pending.');
+  expect(html({ ...updateView, packages: [] })).not.toContain('<table');
+  expect(html({ ...updateView, packages: undefined })).not.toContain('<table');
+  expect(html({ ...updateView, packages: undefined })).not.toContain('No updates pending.');
 });

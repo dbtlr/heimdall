@@ -1,5 +1,7 @@
 import {
   FUTURE_SAMPLE_TOLERANCE_MS,
+  parseUpdateSubject,
+  updateSourceSubject,
   updateSubject,
   freshUpdateTime,
   UPDATE_METADATA_MAX_AGE_MS,
@@ -59,6 +61,26 @@ export const updateRecovered = ({
   return removed || applied || fresh;
 };
 
+// A package source's Condition ends with its last pending package. Report
+// storage and the periodic judgment both end it here, so a later observation
+// cannot erase the recovery.
+export const clearEmptySource = async (
+  tx: SQL,
+  { now, subject, system }: { now: Date; subject: string; system: string },
+) => {
+  const source = parseUpdateSubject(subject);
+  if (source === undefined) {
+    return;
+  }
+  const [remaining]: { count: number }[] = await tx`
+    SELECT count(*)::int AS count FROM update_subjects
+    WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+  `;
+  if (remaining?.count === 0) {
+    await clear(tx, { kind: 'pending_update', now, subject, system });
+  }
+};
+
 // Per-manager observation time orders cached Reports. Failure replaces coverage,
 // but never discards positive evidence or restarts its Hub-confirmed age.
 export const storeUpdates = async (
@@ -104,17 +126,16 @@ export const storeUpdates = async (
       ) {
         continue;
       }
-      // oxlint-disable-next-line no-await-in-loop -- occurrence and evidence clear atomically.
-      await clear(tx, {
-        kind: 'pending_update',
-        now: new Date(receivedAt),
-        subject: subject.subject,
-        system,
-      });
       // oxlint-disable-next-line no-await-in-loop -- the next positive observation starts a new age.
       await tx`DELETE FROM update_subjects WHERE system = ${system} AND subject = ${subject.subject}`;
     }
     if (manager.result.kind !== 'available') {
+      // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
+      await clearEmptySource(tx, {
+        now: new Date(receivedAt),
+        subject: updateSourceSubject(manager),
+        system,
+      });
       continue;
     }
     const fresh =
@@ -140,6 +161,12 @@ export const storeUpdates = async (
           END
       `;
     }
+    // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
+    await clearEmptySource(tx, {
+      now: new Date(receivedAt),
+      subject: updateSourceSubject(manager),
+      system,
+    });
   }
   const reboot = section.reboot;
   if (reboot.observedAt > receivedAt + FUTURE_SAMPLE_TOLERANCE_MS) {

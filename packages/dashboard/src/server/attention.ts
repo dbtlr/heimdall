@@ -2,7 +2,7 @@ import {
   ConditionLevelSchema,
   FUTURE_SAMPLE_TOLERANCE_MS,
   UpdateManagerSchema,
-  updateSubject,
+  updateSourceSubject,
   RebootObservationSchema,
   freshUpdateTime,
   UPDATE_OBSERVATION_MAX_AGE_MS,
@@ -257,19 +257,9 @@ const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
       facts: { kind, reason: row.latest_reason },
     };
   }
-  const observation = held.updateManagers.find((manager) => {
-    try {
-      const identity: unknown = JSON.parse(row.subject);
-      return (
-        Array.isArray(identity) &&
-        identity.length === 3 &&
-        identity[0] === manager.manager &&
-        identity[1] === manager.installation
-      );
-    } catch {
-      return false;
-    }
-  });
+  const observation = held.updateManagers.find(
+    (manager) => updateSourceSubject(manager) === row.subject,
+  );
   const checkedAt = observation?.observedAt;
   let evidence: Evidence = 'unknown';
   if (checkedAt === undefined || !freshUpdateTime(checkedAt, now, UPDATE_OBSERVATION_MAX_AGE_MS)) {
@@ -278,7 +268,7 @@ const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
     const { metadataAt, updates } = observation.result;
     if (metadataAt === null || !freshUpdateTime(metadataAt, now, UPDATE_METADATA_MAX_AGE_MS)) {
       evidence = 'old';
-    } else if (updates.some(({ name }) => updateSubject(observation, name) === row.subject)) {
+    } else if (updates.length > 0) {
       evidence = 'current';
     }
   }

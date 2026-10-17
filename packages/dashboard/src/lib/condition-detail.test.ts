@@ -80,6 +80,7 @@ const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail =
   latestReason: '91% used',
   level: 'warning',
   limits: LIMITS,
+  packages: undefined,
   raisedAt: NOW - 3 * DAY,
   series: diskSeries(),
   subject: '/',
@@ -266,6 +267,7 @@ const cpuDetail = (): ConditionDetail => ({
   latestReason: 'CPU 93% for 32 of 60 min',
   level: 'note',
   limits: LIMITS,
+  packages: undefined,
   raisedAt: NOW - 2 * HOUR,
   series: percentSeries(93),
   subject: '',
@@ -368,7 +370,7 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
     kind: 'pending_update',
     level: 'note',
     reason: '3 updates',
-    subject: '["apt","system","openssl"]',
+    subject: '["apt","system"]',
   },
   clearedAt: undefined,
   from: NOW - 7 * DAY,
@@ -378,9 +380,10 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
   latestReason: '3 updates',
   level: 'note',
   limits: LIMITS,
+  packages: undefined,
   raisedAt: NOW - 3 * DAY,
   series: undefined,
-  subject: '["apt","system","openssl"]',
+  subject: '["apt","system"]',
   system: 'gateway-1',
   to: NOW,
   transitions: [
@@ -390,7 +393,7 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
 });
 
 test.each([
-  ['pending_update', 'Pending update openssl (apt, system)'],
+  ['pending_update', 'Pending update APT (system)'],
   ['reboot_required', 'Reboot required'],
   ['reports_rejected', 'Reports rejected'],
 ] as const)('%s has no chart and leads with how long it has been open', (kind, title) => {
@@ -398,7 +401,7 @@ test.each([
     updateDetail({
       attention: { ...updateDetail().attention, kind } as Attention,
       kind,
-      subject: kind === 'pending_update' ? '["apt","system","openssl"]' : '',
+      subject: kind === 'pending_update' ? '["apt","system"]' : '',
     }),
     NOW,
   );
@@ -562,4 +565,37 @@ test('a reading with no neighbour on either side is marked lone, so the chart st
   ];
   const lone = withGaps(points).map((point, index, all) => isLone(all, index));
   expect(lone).toEqual([true, false, false, false, false, true]);
+});
+
+test('an open pending_update Condition lists its packages with versions, security, and age', () => {
+  const view = conditionDetailView(
+    updateDetail({
+      packages: [
+        {
+          available: '3.0',
+          installed: '1.0',
+          name: 'openssl',
+          security: true,
+          securitySince: NOW - 2 * DAY - 3 * HOUR,
+        },
+        { available: null, installed: null, name: 'wget', security: false, securitySince: null },
+        { available: '2', installed: '1', name: 'zlib', security: null, securitySince: NOW - HOUR },
+        { available: '9', installed: '8', name: 'curl', security: null, securitySince: null },
+      ],
+      subject: '["apt","system"]',
+    }),
+    NOW,
+  );
+  expect(view.title).toBe('Pending update APT (system)');
+  expect(view.packages).toEqual([
+    { name: 'openssl', pending: '2 d 3 h', security: 'yes', versions: '1.0 → 3.0' },
+    { name: 'wget', pending: undefined, security: 'no', versions: 'unknown → unknown' },
+    { name: 'zlib', pending: '1 h', security: 'yes', versions: '1 → 2' },
+    { name: 'curl', pending: undefined, security: 'unknown', versions: '8 → 9' },
+  ]);
+});
+
+test('a Condition with no packages to list has no table', () => {
+  expect(conditionDetailView(updateDetail({ packages: undefined }), NOW).packages).toBeUndefined();
+  expect(conditionDetailView(updateDetail({ packages: [] }), NOW).packages).toEqual([]);
 });

@@ -5,7 +5,11 @@
 
 import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@heimdall/schema';
 
-import type { ConditionDetail, ConditionSeries } from '../server/condition-detail-types.ts';
+import type {
+  ConditionDetail,
+  ConditionSeries,
+  PendingPackage,
+} from '../server/condition-detail-types.ts';
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
 import { conditionSubject, transitionLabel } from './conditions.ts';
@@ -53,6 +57,15 @@ export type HistoryRow = {
   reason: string | undefined;
 };
 
+// One package of a pending_update Condition's source.
+export type PackageRow = {
+  name: string;
+  // How long a security update has waited since the Hub confirmed it.
+  pending: string | undefined;
+  security: 'yes' | 'no' | 'unknown';
+  versions: string;
+};
+
 export type ConditionDetailView = {
   chart: ChartView | undefined;
   cleared: boolean;
@@ -62,6 +75,9 @@ export type ConditionDetailView = {
   level: ConditionLevel;
   // Undefined once cleared.
   nextStep: { clears: string | undefined; steps: NextStep[] } | undefined;
+  // The packages a pending_update Condition's source has pending, security
+  // updates first; empty when none is; undefined for any other Condition.
+  packages: PackageRow[] | undefined;
   // How the reading is taken and how fresh it is; '' when there is nothing to say.
   provenance: string;
   rate: { estimate: true; text: string } | undefined;
@@ -427,6 +443,22 @@ const clearsBelow = (detail: ConditionDetail): string | undefined => {
   return `The ${detail.level} eases below ${String(disk[detail.level] - disk.hysteresis)}%, and the Condition clears below ${clears}%.`;
 };
 
+// A package the Hub holds a security age for is a security update, whatever the
+// latest observation reports; otherwise the latest report stands.
+const securityWord = ({ security, securitySince }: PendingPackage) => {
+  if (securitySince !== null || security === true) {
+    return 'yes';
+  }
+  return security === null ? 'unknown' : 'no';
+};
+
+const packageRow = (item: PendingPackage, now: number): PackageRow => ({
+  name: item.name,
+  pending: item.securitySince === null ? undefined : formatSpan(now - item.securitySince),
+  security: securityWord(item),
+  versions: `${item.installed ?? 'unknown'} → ${item.available ?? 'unknown'}`,
+});
+
 // The page for one Condition occurrence, at `now` (epoch milliseconds).
 export const conditionDetailView = (detail: ConditionDetail, now: number): ConditionDetailView => {
   const { attention } = detail;
@@ -444,6 +476,7 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
       attention === undefined
         ? undefined
         : { clears: clearsBelow(detail), steps: nextSteps(attention).steps },
+    packages: detail.packages?.map((item) => packageRow(item, now)),
     provenance: [leading.provenance, updatedAgo(attention?.checkedAt, now)]
       .filter((part) => part !== '')
       .join(' '),

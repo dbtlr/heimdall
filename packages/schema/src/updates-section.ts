@@ -89,8 +89,45 @@ export type UpdateManager = z.infer<typeof UpdateManagerSchema>;
 export type RebootObservation = z.infer<typeof RebootObservationSchema>;
 export type UpdatesSection = z.infer<typeof UpdatesSectionSchema>;
 
+// How the dashboard and the Hub's reasons name a package manager.
+export const UPDATE_MANAGER_NAMES = {
+  apt: 'APT',
+  homebrew: 'Homebrew',
+  macos: 'macOS',
+} as const satisfies Record<UpdateManager['manager'], string>;
+
+// A package's own identity, the key of the Hub's evidence for it.
 export const updateSubject = (
   manager: Pick<UpdateManager, 'manager' | 'installation'>,
   packageName: string,
 ) =>
   JSON.stringify([manager.manager, storableText(manager.installation), storableText(packageName)]);
+
+// The `pending_update` Condition's subject: one package source, such as a
+// Homebrew prefix, whatever packages are pending in it.
+export const updateSourceSubject = (source: Pick<UpdateManager, 'manager' | 'installation'>) =>
+  JSON.stringify([source.manager, storableText(source.installation)]);
+
+const isStrings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((part) => typeof part === 'string');
+
+// What a `pending_update` subject names: the package source, and the package
+// for the per-package subjects older occurrences carry. Undefined for a subject
+// of neither shape.
+export const parseUpdateSubject = (
+  subject: string,
+): { installation: string; manager: string; name: string | undefined } | undefined => {
+  let identity: unknown;
+  try {
+    identity = JSON.parse(subject);
+  } catch {
+    return undefined;
+  }
+  if (!isStrings(identity) || (identity.length !== 2 && identity.length !== 3)) {
+    return undefined;
+  }
+  const [manager, installation, packageName] = identity;
+  return manager === undefined || installation === undefined
+    ? undefined
+    : { installation, manager, name: packageName };
+};

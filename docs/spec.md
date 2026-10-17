@@ -97,7 +97,7 @@ An open Condition keeps its identity, System, kind, and subject, through level c
 
 The Timeline groups transitions by occurrence, with the most recently raised occurrence first in recording order. Level changes never reorder occurrences. Transitions within an occurrence keep their recording order, even when their times are equal. Each transition time is at least the previous transition's time, including clearing after a clock reversal.
 
-Migration preserves existing occurrence IDs, kinds, subjects, times, and reasons. Legacy disk occurrences receive alert; other kinds receive their fixed levels. Their historical levels are explicitly backfilled, not observed. Normal evaluation subsequently grades existing open disk occurrences without replacing them. See [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
+The level migration preserves existing occurrence IDs, kinds, subjects, times, and reasons. Legacy disk occurrences receive alert; other kinds receive their fixed levels. Their historical levels are explicitly backfilled, not observed. Normal evaluation subsequently grades existing open disk occurrences without replacing them. See [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
 
 ### Job Conditions
 
@@ -302,12 +302,14 @@ Metadata maintenance remains outside the Collector, so a quiet update list is no
 
 The Hub raises and grades update Conditions once a minute under each System's lock.
 It commits fresh recovery and clearing with the Report, so a later observation cannot erase recovery before the next judgment.
-`pending_update` has the subject `JSON.stringify([manager, installation, packageName])`, independent of the available version.
-A newer candidate version preserves the open occurrence and its pending age.
-Ordinary pending updates raise notes. Confirmed security updates become warnings after more than three calendar days.
-The security age starts when the Hub first receives positive security evidence, rather than a package release date or a backlogged observation's time.
+`pending_update` has the subject `JSON.stringify([manager, installation])`: one Condition for each package source on a System, however many packages are pending in it.
+The Hub keeps one row of evidence for each pending package, with its own security age, and the Condition's reason counts them, such as "6 APT packages are out of date, 2 of them are security updates."
+A package joining or leaving the source changes the reason's counts and preserves the open occurrence and its pending age. A newer candidate version keeps the occurrence and its age; it changes the reason only when it changes the security count.
+Ordinary pending updates raise notes. A source is a warning when any of its packages is a confirmed security update that has waited more than three calendar days; otherwise it is a note.
+The security age of a package starts when the Hub first receives positive security evidence for it, rather than a package release date or a backlogged observation's time.
 Unknown security evidence preserves an established security age.
-Fresh evidence explicitly identifying a pending update as non-security can reset that age and lower its level.
+Fresh evidence explicitly identifying a pending update as non-security can reset that package's age.
+An open warning is lowered only when no package qualifies and fresh evidence establishes the security of every package left in the source.
 
 `reboot_required` has an empty subject. It raises a note and becomes a warning after more than seven calendar days from Hub confirmation.
 Sleep and Collector silence do not pause either age.
@@ -315,10 +317,11 @@ The defaults are `securityWarningDays = 3` and `rebootWarningDays = 7` in `[cond
 `[conditions.systems.<System>.updates]` overrides individual fields and inherits the rest.
 Each value must be finite, positive, and no greater than 3650 days. Restarting the Hub applies changed limits without rewriting history.
 
-A fresh successful update list that omits a pending package clears its Condition.
-Authoritative fresh local proof of uninstallation or exact installation of its previously reported candidate also clears it.
+A fresh successful update list that omits a pending package removes that package from its source, and the Condition clears with the last package it lists.
+Authoritative fresh local proof of uninstallation or exact installation of a package's previously reported candidate also removes it.
 A fresh explicit absence of the Debian reboot-required marker clears reboot-required.
 A missing executable, removed configuration entry, failed lookup, or lost installation access does not establish subject removal.
+Database migration 30 merged each System's open per-package occurrences into one for each source: the earliest-raised occurrence stayed open under the source subject at the worst level of the group, and the rest closed with a note that they were merged.
 Unpairing clears update Conditions at the next judgment. A later recurrence starts a new occurrence and age.
 The dashboard uses stored Hub levels and dates update evidence independently of Vitals and Last seen.
 

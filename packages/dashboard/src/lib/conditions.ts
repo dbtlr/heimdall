@@ -1,4 +1,4 @@
-import { parseProcessSubject } from '@heimdall/schema';
+import { parseProcessSubject, parseUpdateSubject, UPDATE_MANAGER_NAMES } from '@heimdall/schema';
 import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
 import type { ConditionKind } from '../server/fleet-overview-types.ts';
@@ -31,23 +31,24 @@ export const KIND_NAMES: Record<ConditionKind, string> = {
   system_stale: 'Stale System',
 };
 
+// A package manager's display name; an unrecognized one reads as stored.
+export const updateManagerName = (manager: string): string => {
+  const names: Record<string, string> = UPDATE_MANAGER_NAMES;
+  return names[manager] ?? manager;
+};
+
 // A process's stored subject carries its lifetime identity; only its name and
 // PID belong in the labels shown to the operator.
 export const conditionSubject = ({ kind, subject }: { kind: ConditionKind; subject: string }) => {
   if (kind === 'pending_update') {
-    try {
-      const identity: unknown = JSON.parse(subject);
-      if (
-        Array.isArray(identity) &&
-        identity.length === 3 &&
-        identity.every((part) => typeof part === 'string')
-      ) {
-        return `${String(identity[2])} (${String(identity[0])}, ${String(identity[1])})`;
-      }
-    } catch {
+    const source = parseUpdateSubject(subject);
+    if (source === undefined) {
       return 'Unknown package';
     }
-    return 'Unknown package';
+    // An occurrence from before packages were grouped names its one package.
+    return source.name === undefined
+      ? `${updateManagerName(source.manager)} (${source.installation})`
+      : `${source.name} (${updateManagerName(source.manager)}, ${source.installation})`;
   }
   if (kind !== 'hot_process') {
     return subject;

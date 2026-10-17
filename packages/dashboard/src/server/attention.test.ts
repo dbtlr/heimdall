@@ -768,8 +768,8 @@ test('update attention reads actual observations independently of fresh Vitals a
     kind: 'pending_update',
     level: 'warning',
     raisedAt: -3600,
-    reason: 'openssl 1 → 2 (apt, system).',
-    subject: '["apt","system","openssl"]',
+    reason: '1 APT package is out of date, 1 of them is a security update.',
+    subject: '["apt","system"]',
     system: 'server-1',
   });
   await addCondition(h.db.sql, {
@@ -848,7 +848,7 @@ test.each([
       level: 'note',
       raisedAt: -3600,
       reason: 'An update is pending.',
-      subject: '["apt","system","openssl"]',
+      subject: '["apt","system"]',
       system: 'server-1',
     });
     const manager = {

@@ -1,3 +1,4 @@
+import { parseUpdateSubject } from '@heimdall/schema';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type {
@@ -585,6 +586,44 @@ const driftSteps = (item: Attention & { kind: 'drift' }) => {
   ];
 };
 
+// How to install a package source's updates, by its package manager.
+const updateSteps = (item: { subject: string; system: string }) => {
+  const { installation, manager } = parseUpdateSubject(item.subject) ?? {};
+  const review = `On ${item.system}, review the pending packages and install them when appropriate.`;
+  switch (manager) {
+    case 'apt': {
+      return {
+        short: 'Install with apt upgrade',
+        steps: [step('Install the updates', review, ['apt upgrade'])],
+      };
+    }
+    case 'homebrew': {
+      return {
+        short: 'Install with brew upgrade',
+        steps: [
+          // The prefix names the installation, so its own brew upgrades it,
+          // whichever brew is first on PATH.
+          step('Install the updates', `${review} Run it as the installation's owner.`, [
+            `${shellWord(`${installation ?? ''}/bin/brew`)} upgrade`,
+          ]),
+        ],
+      };
+    }
+    case 'macos': {
+      return {
+        short: 'Install from Software Update',
+        steps: [step('Install the updates', `${review} Use Software Update.`)],
+      };
+    }
+    default: {
+      return {
+        short: 'Review and install the updates',
+        steps: [step('Install the updates', review)],
+      };
+    }
+  }
+};
+
 const serviceSteps = (item: Attention & { kind: 'service_down' }) => {
   const { log, start } = serviceCommands(item.service);
   const supervisorCheck = item.checks.find(({ check }) => check !== 'health');
@@ -708,15 +747,7 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
       };
     }
     case 'pending_update': {
-      return {
-        short: 'Review and install the update',
-        steps: [
-          step(
-            'Review and install the update',
-            `On ${item.system}, review ${subjectText(item)} with its package manager and install the update when appropriate.`,
-          ),
-        ],
-      };
+      return updateSteps(item);
     }
     case 'reboot_required': {
       return {

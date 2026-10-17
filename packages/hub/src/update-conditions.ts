@@ -3,27 +3,49 @@ import {
   UpdateManagerSchema,
   RebootObservationSchema,
   freshUpdateTime,
+  UPDATE_MANAGER_NAMES,
   UPDATE_METADATA_MAX_AGE_MS,
+  updateSourceSubject,
 } from '@heimdall/schema';
-import type { ConditionLevel } from '@heimdall/schema';
+import type { ConditionLevel, UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import type { ConditionLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
-import { updateRecovered } from './update-observations.ts';
+import { clearEmptySource, updateRecovered } from './update-observations.ts';
 
 const KINDS = ['pending_update', 'reboot_required'] as const;
 const DAY = 86400000;
 type Subject = {
   subject: string;
-  manager: string;
+  manager: UpdateManager['manager'];
   installation: string;
   name: string;
   first_seen_at: Date;
   security_since: Date | null;
   observed_at: Date;
   pending_update: unknown;
+};
+
+// What the Hub has judged so far about one package source's pending packages.
+type SourceState = {
+  // Whether fresh evidence knows the security of every package.
+  canLower: boolean;
+  manager: UpdateManager['manager'];
+  packages: number;
+  // How many of the packages are security updates.
+  security: number;
+  // Whether a security update has waited longer than the System's limit.
+  warning: boolean;
+};
+
+const sourceReason = ({ manager, packages, security }: SourceState) => {
+  const outOfDate = `${String(packages)} ${UPDATE_MANAGER_NAMES[manager]} ${packages === 1 ? 'package is' : 'packages are'} out of date`;
+  if (security === 0) {
+    return `${outOfDate}.`;
+  }
+  return `${outOfDate}, ${security === 1 ? '1 of them is a security update' : `${String(security)} of them are security updates`}.`;
 };
 
 // Observation time belongs to the Collector. Age thresholds start only when
@@ -59,6 +81,8 @@ export const evaluateUpdateSystem = (
     SELECT manager, installation, observation FROM update_managers WHERE system = ${system}
   `;
     const subjects: Subject[] = await tx`SELECT * FROM update_subjects WHERE system = ${system}`;
+    // One Condition per package source; its packages are the evidence.
+    const sources = new Map<string, SourceState>();
     for (const subject of subjects) {
       const update = PendingUpdateSchema.parse(subject.pending_update);
       const observation = managers.find(
@@ -91,31 +115,47 @@ export const evaluateUpdateSystem = (
           );
       }
       if (recovered) {
-        // oxlint-disable-next-line no-await-in-loop -- recovery and evidence removal commit together.
-        await clear(tx, { kind: 'pending_update', now: at, subject: subject.subject, system });
         // oxlint-disable-next-line no-await-in-loop -- a later recurrence starts its own age.
         await tx`DELETE FROM update_subjects WHERE system = ${system} AND subject = ${subject.subject}`;
         continue;
       }
-      const warning =
-        subject.security_since !== null &&
-        now - subject.security_since.getTime() > effective.securityWarningDays * DAY;
-      const held = open.find(
-        (item) => item.kind === 'pending_update' && item.subject === subject.subject,
-      );
+      const key = updateSourceSubject(subject);
+      const state = sources.get(key) ?? {
+        canLower: true,
+        manager: subject.manager,
+        packages: 0,
+        security: 0,
+        warning: false,
+      };
+      state.canLower &&= canLower;
+      state.packages += 1;
+      if (subject.security_since !== null) {
+        state.security += 1;
+        state.warning ||=
+          now - subject.security_since.getTime() > effective.securityWarningDays * DAY;
+      }
+      sources.set(key, state);
+    }
+    for (const [subject, state] of sources) {
+      const held = open.find((item) => item.kind === 'pending_update' && item.subject === subject);
       // Unknown security or lost coverage must not lower an already open warning.
-      const level = warning || (!canLower && held?.level === 'warning') ? 'warning' : 'note';
-      const security = subject.security_since !== null ? 'Security update' : 'Update';
-      const reason = `${security} pending for ${subject.name} (${subject.manager}): ${update.installed ?? 'unknown'} → ${update.available ?? 'unknown'}.`;
+      const level =
+        state.warning || (!state.canLower && held?.level === 'warning') ? 'warning' : 'note';
       // oxlint-disable-next-line no-await-in-loop -- each judgment shares the System lock.
       await raise(tx, {
         kind: 'pending_update',
         level,
         now: at,
-        reason,
-        subject: subject.subject,
+        reason: sourceReason(state),
+        subject,
         system,
       });
+    }
+    for (const held of open) {
+      if (held.kind === 'pending_update' && !sources.has(held.subject)) {
+        // oxlint-disable-next-line no-await-in-loop -- clearing shares the System transaction.
+        await clearEmptySource(tx, { now: at, subject: held.subject, system });
+      }
     }
     const [reboot]: { observation: unknown; first_required_at: Date | null }[] = await tx`
     SELECT observation, first_required_at FROM reboot_observations WHERE system = ${system}
