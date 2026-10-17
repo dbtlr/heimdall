@@ -34,6 +34,7 @@ import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import type { Disk } from './system-detail-types.ts';
 
 type ConditionRow = {
+  id: string;
   kind: string;
   level: string;
   latest_at: Date;
@@ -413,6 +414,7 @@ const itemsOf = async (held: Held, place: Place, now: number): Promise<Attention
       ...facts,
       ...place,
       checkedAt,
+      conditionId: row.id,
       evidence,
       firstDetected: row.raised_at.getTime(),
       level: ConditionLevelSchema.parse(row.level),
@@ -486,7 +488,7 @@ export const readAttention = async (
     ObservationRow[],
   ] = await Promise.all([
     sql`
-      SELECT system, kind, level, subject, raised_at, latest_at, latest_reason
+      SELECT id, system, kind, level, subject, raised_at, latest_at, latest_reason
       FROM conditions
       WHERE system IN ${sql(names)} AND cleared_at IS NULL
     `,

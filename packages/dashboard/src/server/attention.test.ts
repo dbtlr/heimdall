@@ -247,6 +247,7 @@ describe('Drift', () => {
 
     expect(await only(h, 'drift')).toEqual({
       checkedAt: NOW,
+      conditionId: '1',
       evidence: 'current',
       firstDetected: NOW - HOUR,
       kind: 'drift',

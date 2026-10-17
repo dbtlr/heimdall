@@ -1,4 +1,5 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
+import type { ConditionLimitSet } from '@heimdall/schema';
 import { configHome, readConfigSection } from '@heimdall/service';
 import type { SQL } from 'bun';
 import { z } from 'zod';
@@ -106,7 +107,7 @@ export const parseConditionLimits = (value: unknown) => {
     },
     override: z.infer<typeof systemOverrides>,
     name: string,
-  ) => {
+  ): ConditionLimitSet => {
     const cpu = {
       noteMinutes: override.cpu?.noteMinutes ?? defaults.cpu.noteMinutes,
       noteWindowMinutes: override.cpu?.noteWindowMinutes ?? defaults.cpu.noteWindowMinutes,

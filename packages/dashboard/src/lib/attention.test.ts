@@ -62,6 +62,7 @@ function attention(facts: AttentionFacts, over: AttentionOverrides = {}): Attent
   return {
     ...common,
     ...facts,
+    conditionId: 'condition-1',
     level: level ?? (facts.kind === 'drift' || facts.kind === 'job_overdue' ? 'warning' : 'alert'),
   };
 }

@@ -15,6 +15,7 @@ import { OpenNow } from './open-now.tsx';
 test('the status counts an old Condition once and keeps notes out of the action count', () => {
   const alert: Attention = {
     checkedAt: 100,
+    conditionId: 'c-alert',
     disk: undefined,
     evidence: 'current',
     firstDetected: 0,
@@ -25,8 +26,14 @@ test('the status counts an old Condition once and keeps notes out of the action 
     system: 'gateway-1',
     unpaired: false,
   };
-  const oldWarning: Attention = { ...alert, evidence: 'old', level: 'warning', subject: '/data' };
-  const note: Attention = { ...alert, level: 'note', subject: '/backup' };
+  const oldWarning: Attention = {
+    ...alert,
+    conditionId: 'c-warning',
+    evidence: 'old',
+    level: 'warning',
+    subject: '/data',
+  };
+  const note: Attention = { ...alert, conditionId: 'c-note', level: 'note', subject: '/backup' };
   const html = renderToStaticMarkup(
     <AttentionStatus items={[alert, oldWarning, note]} status="needs_you" />,
   );
@@ -46,6 +53,7 @@ test('the status counts an old Condition once and keeps notes out of the action 
 test('a note-only System stays Up while its note remains visible in Open now', async () => {
   const note: Attention = {
     checkedAt: 100,
+    conditionId: 'c-note',
     disk: undefined,
     evidence: 'current',
     firstDetected: 0,
@@ -75,4 +83,6 @@ test('a note-only System stays Up while its note remains visible in Open now', a
   expect(html).toContain('Low disk');
   expect(html).toContain('Hub level: note');
   expect(html).not.toContain('Needs you');
+  // Its Condition links to the Condition's own page.
+  expect(html).toContain('href="/systems/gateway-1/conditions/c-note"');
 });

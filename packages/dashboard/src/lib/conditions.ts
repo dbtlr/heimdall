@@ -9,6 +9,13 @@ export const LEVEL_FILL: Record<ConditionLevel, string> = {
   warning: 'bg-status-serious',
 };
 
+// A level's colour in a chart, the same as its glyph.
+export const LEVEL_STROKE: Record<ConditionLevel, string> = {
+  alert: 'var(--status-critical)',
+  note: 'var(--status-warning)',
+  warning: 'var(--status-serious)',
+};
+
 export const KIND_NAMES: Record<ConditionKind, string> = {
   drift: 'Drift',
   high_cpu: 'High CPU',

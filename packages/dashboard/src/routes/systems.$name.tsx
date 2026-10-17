@@ -197,7 +197,7 @@ function SystemPage() {
         {search.tab === 'timeline' && (
           <>
             <h2 className="text-lg font-semibold">Timeline</h2>
-            <TimelineRail entries={records.timeline} now={detail.now} />
+            <TimelineRail entries={records.timeline} now={detail.now} system={detail.name} />
           </>
         )}
       </main>
