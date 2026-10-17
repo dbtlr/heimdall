@@ -195,6 +195,24 @@ test('a low disk falls back to the Vitals on the attention when no readings came
   expect(view.rate).toBeUndefined();
 });
 
+test('a low disk falls back to the Vitals on the attention when its readings came back empty', () => {
+  const view = conditionDetailView(diskDetail({ series: { kind: 'disk', points: [] } }), NOW);
+  expect(view.hero.value).toBe('91');
+  expect(view.hero.unit).toBe('%');
+});
+
+test('a low disk whose newest reading has no total falls back to the Vitals, never to load wording', () => {
+  const series = diskSeries();
+  const points = series.kind === 'disk' ? series.points : [];
+  const newest = points.at(-1);
+  if (newest !== undefined) {
+    points[points.length - 1] = { ...newest, totalBytes: 0 };
+  }
+  const view = conditionDetailView(diskDetail({ series: { kind: 'disk', points } }), NOW);
+  expect(view.hero.value).toBe('91');
+  expect(words(view.hero.text)).not.toContain('busy');
+});
+
 test('a cleared Condition keeps its last level, adds the clearing row, and has no next step', () => {
   const view = conditionDetailView(
     diskDetail({

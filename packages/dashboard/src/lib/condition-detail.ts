@@ -339,8 +339,12 @@ const leadingOf = (detail: ConditionDetail): Leading => {
   const latest = reading.points.findLast((point) => point.value !== null)?.value ?? undefined;
   const chart = values.length >= 2 ? chartOf(detail, reading, values) : undefined;
   const lead = { chart, provenance: reading.provenance, rate: rateOf(detail) };
-  const newest = series.kind === 'disk' ? series.points.at(-1) : undefined;
-  if (newest !== undefined && newest.totalBytes > 0) {
+  if (series.kind === 'disk') {
+    // No newest reading with a size leads with the Vitals instead.
+    const newest = series.points.at(-1);
+    if (newest === undefined || newest.totalBytes <= 0) {
+      return { ...lead, hero: diskFallback(detail).hero };
+    }
     return {
       ...lead,
       hero: {
@@ -365,8 +369,8 @@ const leadingOf = (detail: ConditionDetail): Leading => {
   };
 };
 
-// A mount whose readings did not come back still leads with the share used the
-// Hub's latest Vitals show.
+// A mount whose readings did not come back, or came back without a size,
+// still leads with the share used the Hub's latest Vitals show.
 const diskFallback = (detail: ConditionDetail): Leading => {
   const disk = detail.attention?.kind === 'low_disk' ? detail.attention.disk : undefined;
   if (disk === undefined || disk.totalBytes <= 0) {
