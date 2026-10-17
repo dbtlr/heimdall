@@ -1917,6 +1917,51 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 29,
   },
+  {
+    // One pending_update Condition per System and package source replaces one
+    // per package. In each group of open per-package occurrences the earliest
+    // stays open under the source's subject at the group's worst level, and
+    // the others close. A closing time is never earlier than an occurrence's
+    // last transition (ADR-0017). Cleared occurrences keep their subjects.
+    sql: `
+      CREATE TEMP TABLE merged_updates ON COMMIT DROP AS
+      WITH open AS (
+        SELECT c.id, c.system, c.level, c.raised_at,
+               '[' || to_json(c.subject::jsonb ->> 0)::text || ',' ||
+                      to_json(c.subject::jsonb ->> 1)::text || ']' AS source,
+               GREATEST(now(), c.raised_at, (
+                 SELECT max(t.at) FROM condition_transitions t WHERE t.condition = c.id
+               )) AS at
+        FROM conditions c
+        WHERE c.kind = 'pending_update' AND c.cleared_at IS NULL
+          AND CASE WHEN jsonb_typeof(c.subject::jsonb) = 'array'
+                   THEN jsonb_array_length(c.subject::jsonb) END = 3
+      )
+      SELECT id, system, level, source, at,
+             id = first_value(id) OVER (
+               PARTITION BY system, source ORDER BY raised_at, id
+             ) AS survivor,
+             CASE max(CASE level WHEN 'alert' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END)
+               OVER (PARTITION BY system, source)
+               WHEN 3 THEN 'alert' WHEN 2 THEN 'warning' ELSE 'note'
+             END AS worst
+      FROM open;
+
+      INSERT INTO condition_transitions (condition, action, level, at, reason)
+      SELECT id, 'cleared', level, at, 'Merged into one Condition for its package source.'
+      FROM merged_updates WHERE NOT survivor ORDER BY id;
+      UPDATE conditions c SET cleared_at = m.at
+      FROM merged_updates m WHERE c.id = m.id AND NOT m.survivor;
+
+      INSERT INTO condition_transitions (condition, action, level, previous_level, at, reason)
+      SELECT id, 'level_changed', worst, level, at,
+             'Merged with the other pending updates of its package source.'
+      FROM merged_updates WHERE survivor AND worst <> level ORDER BY id;
+      UPDATE conditions c SET subject = m.source, level = m.worst
+      FROM merged_updates m WHERE c.id = m.id AND m.survivor;
+    `,
+    version: 30,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -5,6 +5,11 @@ import { SQL } from 'bun';
 import { STATEMENT_TIMEOUT_MS } from './database.ts';
 import { migrate, MIGRATION_LOCK_TIMEOUT_MS, MIGRATIONS } from './migrations.ts';
 import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { timeline } from './testing/timeline.ts';
+
+const DAY = 86_400;
+const apt = (name: string) => JSON.stringify(['apt', '/usr/bin/apt', name]);
+const brew = (name: string) => JSON.stringify(['homebrew', '/opt/hom"ebrew', name]);
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
@@ -305,4 +310,134 @@ test('migration 12 keeps the size of checks that were over budget as that of the
       services_over_budget_bytes: null,
     },
   ]);
+});
+
+test('per-package update Conditions merge into one open Condition for each package source', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 29),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1'), ('server-1')`;
+  const { addCondition, at } = timeline(Date.UTC(2026, 9, 6, 12, 0, 0));
+  const common = { kind: 'pending_update', system: 'laptop-1' } as const;
+  // The earliest apt occurrence is a note; a later one went warning, then back.
+  const first = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -3 * DAY,
+    subject: apt('curl'),
+  });
+  const second = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -2 * DAY,
+    subject: apt('openssl'),
+    transitions: [{ at: -DAY, level: 'warning', reason: 'security' }],
+  });
+  const third = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -DAY,
+    subject: apt('wget'),
+  });
+  // A group of one, whose last transition is in the future of the migration.
+  const lone = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -DAY,
+    subject: brew('jq'),
+    transitions: [{ at: 20 * 365 * DAY, level: 'warning', reason: 'security' }],
+  });
+  const other = await addCondition(db.sql, {
+    kind: 'pending_update',
+    level: 'note',
+    raisedAt: -DAY,
+    subject: apt('curl'),
+    system: 'server-1',
+  });
+  const history = await addCondition(db.sql, {
+    ...common,
+    clearedAt: -2 * DAY,
+    level: 'note',
+    raisedAt: -4 * DAY,
+    subject: apt('curl'),
+  });
+  const before: { condition: string; id: string }[] = await db.sql`
+    SELECT condition, id FROM condition_transitions ORDER BY id
+  `;
+
+  await migrate(db.sql);
+
+  const conditions: {
+    cleared_at: Date | null;
+    id: string;
+    level: string;
+    raised_at: Date;
+    subject: string;
+    system: string;
+  }[] = await db.sql`
+    SELECT id, system, subject, level, raised_at, cleared_at FROM conditions ORDER BY id
+  `;
+  const byId = new Map(conditions.map((row) => [row.id, row]));
+  expect(byId.get(first)).toMatchObject({
+    cleared_at: null,
+    level: 'warning',
+    raised_at: new Date(at(-3 * DAY)),
+    subject: JSON.stringify(['apt', '/usr/bin/apt']),
+  });
+  expect(byId.get(lone)).toMatchObject({
+    cleared_at: null,
+    level: 'warning',
+    subject: JSON.stringify(['homebrew', '/opt/hom"ebrew']),
+  });
+  expect(byId.get(other)).toMatchObject({
+    cleared_at: null,
+    subject: JSON.stringify(['apt', '/usr/bin/apt']),
+  });
+  for (const id of [second, third]) {
+    expect(byId.get(id)?.cleared_at).not.toBeNull();
+    expect(byId.get(id)?.subject).toBe(apt(id === second ? 'openssl' : 'wget'));
+  }
+  expect(byId.get(history)).toMatchObject({
+    cleared_at: new Date(at(-2 * DAY)),
+    subject: apt('curl'),
+  });
+
+  const transitions: {
+    action: string;
+    at: Date;
+    condition: string;
+    id: string;
+    level: string;
+    previous_level: string | null;
+    reason: string;
+  }[] = await db.sql`SELECT * FROM condition_transitions ORDER BY id`;
+  expect(
+    transitions.slice(0, before.length).map(({ condition, id }) => ({ condition, id })),
+  ).toEqual(before);
+  const added = transitions.slice(before.length);
+  const summarize = (id: string) =>
+    added
+      .filter((row) => row.condition === id)
+      .map(({ action, level, previous_level: previous }) => [action, level, previous]);
+  expect(summarize(first)).toEqual([['level_changed', 'warning', 'note']]);
+  expect(summarize(second)).toEqual([['cleared', 'warning', null]]);
+  expect(summarize(third)).toEqual([['cleared', 'note', null]]);
+  expect(summarize(lone)).toEqual([]);
+  expect(summarize(other)).toEqual([]);
+  expect(summarize(history)).toEqual([]);
+  const closing = added.filter((row) => row.action === 'cleared');
+  expect(closing.map((row) => row.reason)).toEqual([
+    'Merged into one Condition for its package source.',
+    'Merged into one Condition for its package source.',
+  ]);
+  // No transition is earlier than the one before it in its occurrence.
+  for (const row of added) {
+    const earlier = transitions.filter((t) => t.condition === row.condition && t.id < row.id);
+    expect(row.at.getTime()).toBeGreaterThanOrEqual(
+      Math.max(...earlier.map((t) => t.at.getTime())),
+    );
+  }
+  expect(byId.get(second)?.cleared_at).toEqual(closing.find((row) => row.condition === second)?.at);
 });
