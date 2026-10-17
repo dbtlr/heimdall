@@ -16,7 +16,16 @@ test.each([
   expect(KIND_NAMES[kind]).toBe(name);
 });
 
-test('pending updates display the package and manager instead of their identity', () => {
+test('pending updates display the package source, and older occurrences the package too', () => {
+  expect(
+    conditionSubject({ kind: 'pending_update', subject: '["homebrew","/opt/homebrew"]' }),
+  ).toBe('Homebrew (/opt/homebrew)');
+  expect(conditionSubject({ kind: 'pending_update', subject: '["apt","system"]' })).toBe(
+    'APT (system)',
+  );
+  expect(conditionSubject({ kind: 'pending_update', subject: '["macos","system"]' })).toBe(
+    'macOS (system)',
+  );
   expect(conditionSubject({ kind: 'pending_update', subject: '["apt","system","openssl"]' })).toBe(
     'openssl (apt, system)',
   );

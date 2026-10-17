@@ -16,6 +16,17 @@ export type ConditionSeries =
   | { kind: 'percent'; points: { t: number; percent: number | null }[] }
   | { kind: 'cores'; points: { cores: number | null; t: number }[] };
 
+// One package a pending_update Condition's source has pending: the versions it
+// would move between (null when unknown), whether it is a security update
+// (null when unknown), and when the Hub first confirmed a security update.
+export type PendingPackage = {
+  available: string | null;
+  installed: string | null;
+  name: string;
+  security: boolean | null;
+  securitySince: number | null;
+};
+
 export type ConditionDetail = {
   // The open item's evidence and next steps, as the System page builds them;
   // undefined once the occurrence has cleared.
@@ -34,6 +45,9 @@ export type ConditionDetail = {
   // Undefined when the Hub has stored none, as before it first starts on a
   // version that stores them.
   limits: ConditionLimitSet | undefined;
+  // The packages an open pending_update Condition's source has pending, security
+  // updates first; undefined for any other Condition and once cleared.
+  packages: PendingPackage[] | undefined;
   raisedAt: number;
   series: ConditionSeries | undefined;
   subject: string;

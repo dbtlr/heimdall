@@ -768,7 +768,7 @@ test('update attention reads actual observations independently of fresh Vitals a
     kind: 'pending_update',
     level: 'warning',
     raisedAt: -3600,
-    reason: 'openssl 1 → 2 (apt, system).',
+    reason: '1 APT package is out of date, 1 of them is a security update.',
     subject: '["apt","system"]',
     system: 'server-1',
   });

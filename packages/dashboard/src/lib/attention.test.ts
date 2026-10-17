@@ -905,21 +905,35 @@ describe('nextSteps: System and file kinds', () => {
   });
 });
 
+test.each([
+  ['apt', 'Install with apt upgrade', ['apt upgrade']],
+  ['homebrew', 'Install with brew upgrade', ['brew upgrade']],
+  ['macos', 'Install from Software Update', []],
+  ['other', 'Review and install the updates', []],
+])('a %s update Condition says how to install its packages', (manager, short, installCommands) => {
+  const pending = attention(
+    { kind: 'pending_update', reason: '3 packages are out of date.' },
+    { subject: JSON.stringify([manager, '/usr/bin/apt']) },
+  );
+  const steps = nextSteps(pending);
+  expect(steps.short).toBe(short);
+  expect(steps.short.length).toBeLessThanOrEqual(45);
+  expect(steps.steps).toHaveLength(1);
+  expect(steps.steps[0]?.commands).toEqual(installCommands);
+  expect(steps.steps[0]?.text).toMatch(/^On \S+, review the pending packages/u);
+});
+
 test('update and reboot cards retain the Hub reason and offer manual next steps', () => {
   const pending = attention(
-    { kind: 'pending_update', reason: 'openssl 1 → 2 (apt, system).' },
+    { kind: 'pending_update', reason: '2 APT packages are out of date.' },
     {
       evidence: 'old',
       level: 'warning',
-      subject: '["apt","system","openssl"]',
+      subject: '["apt","system"]',
     },
   );
-  expect(subjectText(pending)).toBe('openssl (apt, system)');
-  expect(evidenceWords(pending, NOW).observed).toEqual(['openssl 1 → 2 (apt, system).']);
-  expect(nextSteps(pending)).toMatchObject({
-    short: 'Review and install the update',
-    steps: [{ commands: [] }],
-  });
+  expect(subjectText(pending)).toBe('APT (system)');
+  expect(evidenceWords(pending, NOW).observed).toEqual(['2 APT packages are out of date.']);
   expect(utc(evidenceNote(pending, NOW) ?? [])).toContain('24 hours');
   expect(utc(evidenceNote(pending, NOW) ?? [])).not.toContain('2 hours');
   const reboot = attention(

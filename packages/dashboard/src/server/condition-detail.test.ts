@@ -11,6 +11,7 @@ import {
 } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { processSubject } from '@heimdall/schema';
+import type { PendingUpdate } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { parseConditionDetailInput, readConditionDetail } from './condition-detail.ts';
@@ -365,5 +366,91 @@ describe('a kind with nothing to chart', () => {
     expect(detail?.series).toBeUndefined();
     expect(detail).toMatchObject({ from: NOW - DAY * 1000, to: NOW });
     expect(detail?.attention).toMatchObject({ conditionId: id, kind: 'reboot_required' });
+  });
+});
+
+const addPackage = (
+  h: Hub,
+  {
+    installation = '/usr/bin/apt',
+    name,
+    securitySince,
+    ...update
+  }: PendingUpdate & {
+    installation?: string;
+    securitySince?: number;
+  },
+) =>
+  h.db.sql`
+    INSERT INTO update_subjects (
+      system, subject, manager, installation, name, first_seen_at, security_since, observed_at,
+      pending_update
+    ) VALUES ('server-1', ${JSON.stringify(['apt', installation, name])}, 'apt', ${installation},
+              ${name}, ${new Date(NOW)}, ${securitySince === undefined ? null : new Date(securitySince)},
+              ${new Date(NOW)}, ${JSON.stringify({ ...update, name })}::text::jsonb)
+  `;
+
+describe('a package source with pending updates', () => {
+  const source = JSON.stringify(['apt', '/usr/bin/apt']);
+  test('lists the packages pending in that source, security updates first', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addPackage(h, { available: '2.0', installed: '1.0', name: 'wget', security: false });
+    await addPackage(h, {
+      available: '3.0',
+      installed: null,
+      name: 'openssl',
+      security: true,
+      securitySince: NOW - 2 * DAY * 1000,
+    });
+    await addPackage(h, {
+      available: '9',
+      installation: '/other/apt',
+      installed: '8',
+      name: 'curl',
+      security: null,
+    });
+    const id = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -HOUR,
+      subject: source,
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.packages).toEqual([
+      {
+        available: '3.0',
+        installed: null,
+        name: 'openssl',
+        security: true,
+        securitySince: NOW - 2 * DAY * 1000,
+      },
+      { available: '2.0', installed: '1.0', name: 'wget', security: false, securitySince: null },
+    ]);
+  });
+
+  test('is not listed for a cleared occurrence, nor for another kind', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addPackage(h, { available: '2.0', installed: '1.0', name: 'wget', security: false });
+    const cleared = await addCondition(h.db.sql, {
+      clearedAt: -60,
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -HOUR,
+      subject: source,
+      system: 'server-1',
+    });
+    const reboot = await addCondition(h.db.sql, {
+      kind: 'reboot_required',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+
+    expect((await read(h, { id: cleared, name: 'server-1' }))?.packages).toBeUndefined();
+    expect((await read(h, { id: reboot, name: 'server-1' }))?.packages).toBeUndefined();
   });
 });

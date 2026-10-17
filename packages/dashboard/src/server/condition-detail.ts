@@ -1,9 +1,14 @@
-import { ConditionLevelSchema, parseProcessSubject } from '@heimdall/schema';
+import {
+  ConditionLevelSchema,
+  parseProcessSubject,
+  parseUpdateSubject,
+  PendingUpdateSchema,
+} from '@heimdall/schema';
 import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { readAttention } from './attention.ts';
-import type { ConditionDetail, ConditionSeries } from './condition-detail-types.ts';
+import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import type { ConditionKind } from './fleet-overview-types.ts';
 import { bucketStart } from './fleet-overview.ts';
@@ -176,6 +181,33 @@ const readLimits = async (sql: SQL, system: string): Promise<ConditionLimitSet |
   return (rows.find((row) => row.system === system) ?? rows[0])?.limits;
 };
 
+// The packages the Hub holds as pending in the package source an open
+// pending_update Condition names, security updates first.
+const readPackages = async (
+  sql: SQL,
+  { subject, system }: { subject: string; system: string },
+): Promise<PendingPackage[]> => {
+  const source = parseUpdateSubject(subject);
+  if (source === undefined) {
+    return [];
+  }
+  const rows: { name: string; pending_update: unknown; security_since: Date | null }[] = await sql`
+    SELECT name, pending_update, security_since FROM update_subjects
+    WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+    ORDER BY security_since IS NULL, name
+  `;
+  return rows.map((row) => {
+    const { available, installed, security } = PendingUpdateSchema.parse(row.pending_update);
+    return {
+      available,
+      installed,
+      name: row.name,
+      security,
+      securitySince: row.security_since?.getTime() ?? null,
+    };
+  });
+};
+
 // The open occurrence's attention item, the way the System page builds it.
 const readOpenAttention = async (
   sql: SQL,
@@ -210,11 +242,14 @@ export const readConditionDetail = async (
   const kind = conditionKind(row.kind);
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
-  const [transitions, limits, series, attention] = await Promise.all([
+  const [transitions, limits, series, attention, packages] = await Promise.all([
     readConditionTransitions(sql, [row]),
     readLimits(sql, name),
     readSeries(sql, { kind, subject: row.subject, system: name, window }),
     clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
+    clearedAt === undefined && kind === 'pending_update'
+      ? readPackages(sql, { subject: row.subject, system: name })
+      : undefined,
   ]);
   return {
     attention,
@@ -226,6 +261,7 @@ export const readConditionDetail = async (
     latestReason: row.latest_reason,
     level: ConditionLevelSchema.parse(row.level),
     limits,
+    packages,
     raisedAt: row.raised_at.getTime(),
     series,
     subject: row.subject,

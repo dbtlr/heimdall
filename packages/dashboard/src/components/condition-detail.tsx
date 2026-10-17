@@ -75,6 +75,41 @@ function ChartSection({ chart }: { chart: NonNullable<ConditionDetailView['chart
   );
 }
 
+// The packages a source has pending: their versions, whether each is a
+// security update, and how long a security update has waited.
+function PackageTable({ packages }: { packages: NonNullable<ConditionDetailView['packages']> }) {
+  return (
+    <section className="mt-6 min-w-0">
+      <h2 className="mb-1 text-[12.5px] font-normal text-muted-foreground">Packages</h2>
+      {packages.length === 0 ? (
+        <p className="text-base">No updates pending.</p>
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b text-left text-xs text-muted-foreground">
+              {['Package', 'Version', 'Security', 'Waiting'].map((title) => (
+                <th className="pr-2 pb-1 font-normal" key={title}>
+                  {title}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {packages.map((item) => (
+              <tr className="border-b align-top" key={item.name}>
+                <td className="py-1 pr-2 wrap-anywhere">{item.name}</td>
+                <td className="py-1 pr-2 wrap-anywhere">{item.versions}</td>
+                <td className="py-1 pr-2">{item.security}</td>
+                <td className="py-1 pr-2">{item.pending ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 // One transition: the level it reached, when, and what the Hub said.
 function HistoryItem({ now, row }: { now: number; row: HistoryRow }) {
   return (
@@ -126,6 +161,7 @@ export function ConditionDetailPanel({ now, view }: { now: number; view: Conditi
       <Heading view={view} />
       <Hero view={view} />
       {view.chart !== undefined && <ChartSection chart={view.chart} />}
+      {view.packages !== undefined && <PackageTable packages={view.packages} />}
       <section className="mt-6 min-w-0">
         <h2 className="mb-1 text-[12.5px] font-normal text-muted-foreground">How it got here</h2>
         <ol className="border-l-2 pl-3">
