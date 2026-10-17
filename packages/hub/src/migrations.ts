@@ -1905,6 +1905,18 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 28,
   },
+  {
+    // The limits the Hub judges by, for readers that cannot see hub.toml. The
+    // fleet defaults are the row with an empty system; a System with an
+    // override has its own row, merged with those defaults.
+    sql: `
+      CREATE TABLE condition_limits (
+        system text PRIMARY KEY,
+        limits jsonb NOT NULL
+      );
+    `,
+    version: 29,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

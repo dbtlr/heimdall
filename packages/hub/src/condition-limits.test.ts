@@ -3,8 +3,13 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { tempHome } from '@heimdall/service/testing';
+import type { SQL } from 'bun';
 
-import { parseConditionLimits, readConditionLimits } from './condition-limits.ts';
+import {
+  parseConditionLimits,
+  readConditionLimits,
+  storeConditionLimits,
+} from './condition-limits.ts';
 import { configArgs, configFile, invoke } from './testing/cli.ts';
 import { migrate, report, storeReport, storeToken } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
@@ -242,5 +247,51 @@ test('serve judges disk using fleet defaults and partial System overrides from h
     { level: 'note', system: 'laptop-1' },
     { level: 'warning', system: 'server-1' },
   ]);
+  expect(await storedDiskLimits(db.sql)).toEqual([
+    { disk: { alert: 90, hysteresis: 5, note: 60, warning: 75 }, system: '' },
+    { disk: { alert: 95, hysteresis: 5, note: 60, warning: 85 }, system: 'laptop-1' },
+  ]);
   expect(result.stderr).toBe('');
+});
+
+const storedDiskLimits = (sql: SQL): Promise<{ disk: unknown; system: string }[]> =>
+  sql`SELECT system, limits->'disk' AS disk FROM condition_limits ORDER BY system`;
+
+test('stored limits hold the fleet defaults and each overridden System, replaced as a whole', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await storeConditionLimits(
+    db.sql,
+    parseConditionLimits({ systems: { 'laptop-1': { cpu: { percent: 80 } } } }),
+  );
+  const rows: { limits: unknown; system: string }[] =
+    await db.sql`SELECT system, limits FROM condition_limits ORDER BY system`;
+  const fleet = {
+    cpu: {
+      noteMinutes: 30,
+      noteWindowMinutes: 60,
+      percent: 90,
+      warningMinutes: 120,
+      warningWindowMinutes: 240,
+    },
+    disk: { alert: 90, hysteresis: 5, note: 70, warning: 80 },
+    memory: { percent: 90, warningMinutes: 30, warningWindowMinutes: 60 },
+    process: {
+      cores: 0.5,
+      noteMinutes: 30,
+      noteWindowMinutes: 60,
+      warningMinutes: 120,
+      warningWindowMinutes: 240,
+    },
+    updates: { rebootWarningDays: 7, securityWarningDays: 3 },
+  };
+  expect(rows).toEqual([
+    { limits: fleet, system: '' },
+    { limits: { ...fleet, cpu: { ...fleet.cpu, percent: 80 } }, system: 'laptop-1' },
+  ]);
+
+  await storeConditionLimits(db.sql, parseConditionLimits({ disk: { note: 65 } }));
+  expect(await storedDiskLimits(db.sql)).toEqual([
+    { disk: { alert: 90, hysteresis: 5, note: 65, warning: 80 }, system: '' },
+  ]);
 });

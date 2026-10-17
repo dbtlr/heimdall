@@ -1,7 +1,9 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
 import { configHome, readConfigSection } from '@heimdall/service';
+import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { MIGRATION_LOCK } from './migrations.ts';
 import { RAW_RETENTION_MS } from './retention.ts';
 
 export const DISK_LIMITS = { alert: 90, hysteresis: 5, note: 70, warning: 80 };
@@ -202,3 +204,22 @@ export const readConditionLimits = async ({
       section: 'conditions',
     }),
   );
+
+// Replaces the stored limits with these, so the dashboard draws the limits
+// the Hub judges by. Takes the migration lock, as loading prices does.
+export const storeConditionLimits = async (sql: SQL, limits: ConditionLimits): Promise<void> => {
+  const { systems, ...defaults } = limits;
+  const rows = [['', defaults] as const, ...systems].map(([system, effective]) => ({
+    limits: effective,
+    system,
+  }));
+  await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
+    await tx`DELETE FROM condition_limits`;
+    await tx`
+      INSERT INTO condition_limits (system, limits)
+      SELECT system, limits FROM jsonb_to_recordset(${JSON.stringify(rows)}::text::jsonb)
+        AS loaded (system text, limits jsonb)
+    `;
+  });
+};

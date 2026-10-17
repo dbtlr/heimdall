@@ -13,7 +13,7 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
-import { readConditionLimits } from './condition-limits.ts';
+import { readConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits } from './condition-limits.ts';
 import { openDatabase } from './database.ts';
 import { describeError } from './errors.ts';
@@ -132,6 +132,9 @@ const serveUntilStopped = async ({
     await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: configuredPrices }).catch(
       (error: unknown) =>
         log.fatal(clean(`Could not load the price table: ${describeError(error)}`)),
+    );
+    await storeConditionLimits(sql, limits).catch((error: unknown) =>
+      log.fatal(clean(`Could not store the Condition limits: ${describeError(error)}`)),
     );
     // The insight reader is granted after the migrations, so it covers every
     // view they made. Neither a reader not created yet nor a failed grant stops
