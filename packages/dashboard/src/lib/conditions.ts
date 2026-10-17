@@ -48,7 +48,7 @@ export const conditionSubject = ({ kind, subject }: { kind: ConditionKind; subje
     // An occurrence from before packages were grouped names its one package.
     return source.name === undefined
       ? `${updateManagerName(source.manager)} (${source.installation})`
-      : `${source.name} (${source.manager}, ${source.installation})`;
+      : `${source.name} (${updateManagerName(source.manager)}, ${source.installation})`;
   }
   if (kind !== 'hot_process') {
     return subject;

@@ -441,3 +441,86 @@ test('per-package update Conditions merge into one open Condition for each packa
   }
   expect(byId.get(second)?.cleared_at).toEqual(closing.find((row) => row.condition === second)?.at);
 });
+
+test('a merged occurrence closes no earlier than its last transition, however late', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 29),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const { addCondition, at } = timeline(Date.UTC(2026, 9, 6, 12, 0, 0));
+  const common = { kind: 'pending_update', level: 'note', system: 'laptop-1' } as const;
+  await addCondition(db.sql, { ...common, raisedAt: -3 * DAY, subject: apt('x') });
+  const merged = await addCondition(db.sql, {
+    ...common,
+    raisedAt: -DAY,
+    subject: apt('y'),
+    transitions: [{ at: 20 * 365 * DAY, level: 'warning', reason: 'security' }],
+  });
+
+  await migrate(db.sql);
+
+  const [closed]: { cleared_at: Date }[] = await db.sql`
+    SELECT cleared_at FROM conditions WHERE id = ${merged}
+  `;
+  expect(closed?.cleared_at.getTime()).toBeGreaterThanOrEqual(at(20 * 365 * DAY).getTime());
+});
+
+test('the earliest-raised occurrence survives a merge even with the higher id', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 29),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const { addCondition } = timeline(Date.UTC(2026, 9, 6, 12, 0, 0));
+  const common = { kind: 'pending_update', level: 'note', system: 'laptop-1' } as const;
+  await addCondition(db.sql, { ...common, raisedAt: -DAY, subject: apt('late') });
+  const early = await addCondition(db.sql, {
+    ...common,
+    raisedAt: -3 * DAY,
+    subject: apt('early'),
+  });
+
+  await migrate(db.sql);
+
+  const open: { id: string }[] = await db.sql`SELECT id FROM conditions WHERE cleared_at IS NULL`;
+  expect(open.map((row) => row.id)).toEqual([early]);
+});
+
+test('the surviving occurrence carries the reason of its level change', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 29),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const { addCondition } = timeline(Date.UTC(2026, 9, 6, 12, 0, 0));
+  const common = { kind: 'pending_update', system: 'laptop-1' } as const;
+  const raised = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -3 * DAY,
+    subject: apt('a'),
+  });
+  await addCondition(db.sql, { ...common, level: 'warning', raisedAt: -DAY, subject: apt('b') });
+  const lone = await addCondition(db.sql, {
+    ...common,
+    level: 'note',
+    raisedAt: -DAY,
+    subject: brew('c'),
+  });
+  await db.sql`INSERT INTO conditions (system, kind, subject, level, raised_at, raised_reason, latest_at, latest_reason)
+    VALUES ('laptop-1', 'service_down', 'not json {', 'alert', now(), 'down', now(), 'down')`;
+
+  await migrate(db.sql);
+
+  const reasons: { id: string; latest_reason: string }[] = await db.sql`
+    SELECT id, latest_reason FROM conditions WHERE id IN ${db.sql([raised, lone])} ORDER BY id
+  `;
+  expect(reasons).toEqual([
+    { id: raised, latest_reason: 'Merged with the other pending updates of its package source.' },
+    { id: lone, latest_reason: 'Merged into one Condition for its package source.' },
+  ]);
+});

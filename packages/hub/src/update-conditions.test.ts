@@ -466,16 +466,64 @@ test('each package source on a System has its own Condition', async () => {
   ]);
 });
 
-test('evaluation clears an open update Condition that names no current package source', async () => {
+test('a package joining an open source adds no Timeline transition', async () => {
   await using h = await startHub();
-  await send(h, [manager(NOW)]);
+  await send(h, [manager(NOW, [wget])]);
   await evaluate(h);
-  await h.db.sql`
-    UPDATE conditions SET subject = ${JSON.stringify(['apt', '/usr/bin/apt', 'openssl:amd64'])}
-    WHERE kind = 'pending_update'
-  `;
   h.clock.now += 1;
-  const items = await evaluate(h);
-  expect(items.map(({ subject }) => subject)).toEqual([sourceSubject]);
-  expect(await rows(h, 'cleared_at IS NOT NULL')).toHaveLength(1);
+  await send(h, [manager(h.clock.now, [wget, curl])]);
+  await evaluate(h);
+  const [source, ...others] = await rows(h, 'true');
+  expect(others).toEqual([]);
+  expect(source).toMatchObject({
+    actions: ['raised'],
+    cleared_at: null,
+    latest_reason: '2 APT packages are out of date.',
+  });
+});
+
+test('an aged security package keeps the source a warning when a newer one joins', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [pending])]);
+  await evaluate(h);
+  h.clock.now += 4 * DAY;
+  await send(h, [manager(h.clock.now, [pending, { ...pending, name: 'newer' }])]);
+  expect((await evaluate(h))[0]?.level).toBe('warning');
+});
+
+test('a held warning stays while any package has unknown security, whatever its order', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [{ ...curl, name: 'a-unknown' }, pending])]);
+  await evaluate(h);
+  h.clock.now += 4 * DAY;
+  expect((await evaluate(h))[0]?.level).toBe('warning');
+  h.clock.now += 1;
+  await send(h, [
+    manager(h.clock.now, [
+      { ...curl, name: 'a-unknown' },
+      { ...pending, security: false },
+    ]),
+  ]);
+  expect((await evaluate(h))[0]?.level).toBe('warning');
+});
+
+test('local proof that the last package is gone ends the Condition in its Report', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [wget])]);
+  await evaluate(h);
+  h.clock.now += 1;
+  await send(h, [
+    {
+      ...manager(h.clock.now, []),
+      installed: { names: [], observedAt: h.clock.now },
+      result: { kind: 'unavailable', reason: 'APT timed out' },
+    },
+  ]);
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [wget])]);
+  await evaluate(h);
+  expect((await rows(h, 'true')).map(({ actions }) => actions)).toEqual([
+    ['raised', 'cleared'],
+    ['raised'],
+  ]);
 });

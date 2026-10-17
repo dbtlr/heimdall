@@ -579,6 +579,7 @@ test('an open pending_update Condition lists its packages with versions, securit
           securitySince: NOW - 2 * DAY - 3 * HOUR,
         },
         { available: null, installed: null, name: 'wget', security: false, securitySince: null },
+        { available: '2', installed: '1', name: 'zlib', security: null, securitySince: NOW - HOUR },
         { available: '9', installed: '8', name: 'curl', security: null, securitySince: null },
       ],
       subject: '["apt","system"]',
@@ -589,6 +590,7 @@ test('an open pending_update Condition lists its packages with versions, securit
   expect(view.packages).toEqual([
     { name: 'openssl', pending: '2 d 3 h', security: 'yes', versions: '1.0 → 3.0' },
     { name: 'wget', pending: undefined, security: 'no', versions: 'unknown → unknown' },
+    { name: 'zlib', pending: '1 h', security: 'yes', versions: '1 → 2' },
     { name: 'curl', pending: undefined, security: 'unknown', versions: '8 → 9' },
   ]);
 });

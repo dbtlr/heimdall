@@ -27,7 +27,7 @@ test('pending updates display the package source, and older occurrences the pack
     'macOS (system)',
   );
   expect(conditionSubject({ kind: 'pending_update', subject: '["apt","system","openssl"]' })).toBe(
-    'openssl (apt, system)',
+    'openssl (APT, system)',
   );
   expect(conditionSubject({ kind: 'pending_update', subject: 'bad' })).toBe('Unknown package');
 });

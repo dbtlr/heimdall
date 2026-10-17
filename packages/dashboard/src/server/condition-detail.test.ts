@@ -432,6 +432,33 @@ describe('a package source with pending updates', () => {
     ]);
   });
 
+  test('lists only its own System and manager', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await addPackage(h, { available: '2', installed: '1', name: 'mine', security: false });
+    await h.db.sql`
+      INSERT INTO update_subjects (
+        system, subject, manager, installation, name, first_seen_at, observed_at, pending_update
+      ) VALUES
+        ('laptop-1', ${JSON.stringify(['apt', '/usr/bin/apt', 'theirs'])}, 'apt', '/usr/bin/apt', 'theirs',
+         ${new Date(NOW)}, ${new Date(NOW)}, '{"available":"2","installed":"1","name":"theirs","security":false}'::jsonb),
+        ('server-1', ${JSON.stringify(['homebrew', '/usr/bin/apt', 'brewed'])}, 'homebrew', '/usr/bin/apt', 'brewed',
+         ${new Date(NOW)}, ${new Date(NOW)}, '{"available":"2","installed":"1","name":"brewed","security":false}'::jsonb)
+    `;
+    const id = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -HOUR,
+      subject: source,
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.packages?.map((item) => item.name)).toEqual(['mine']);
+  });
+
   test('is not listed for a cleared occurrence, nor for another kind', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');

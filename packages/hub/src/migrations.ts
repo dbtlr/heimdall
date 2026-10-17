@@ -1927,15 +1927,18 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE TEMP TABLE merged_updates ON COMMIT DROP AS
       WITH open AS (
         SELECT c.id, c.system, c.level, c.raised_at,
-               '[' || to_json(c.subject::jsonb ->> 0)::text || ',' ||
-                      to_json(c.subject::jsonb ->> 1)::text || ']' AS source,
+               '[' || to_json(p.subject ->> 0)::text || ',' ||
+                      to_json(p.subject ->> 1)::text || ']' AS source,
                GREATEST(now(), c.raised_at, (
                  SELECT max(t.at) FROM condition_transitions t WHERE t.condition = c.id
                )) AS at
         FROM conditions c
+        CROSS JOIN LATERAL (
+          SELECT CASE WHEN c.kind = 'pending_update' THEN c.subject::jsonb END AS subject
+        ) p
         WHERE c.kind = 'pending_update' AND c.cleared_at IS NULL
-          AND CASE WHEN jsonb_typeof(c.subject::jsonb) = 'array'
-                   THEN jsonb_array_length(c.subject::jsonb) END = 3
+          AND CASE WHEN jsonb_typeof(p.subject) = 'array'
+                   THEN jsonb_array_length(p.subject) END = 3
       )
       SELECT id, system, level, source, at,
              id = first_value(id) OVER (
@@ -1957,7 +1960,10 @@ export const MIGRATIONS: readonly Migration[] = [
       SELECT id, 'level_changed', worst, level, at,
              'Merged with the other pending updates of its package source.'
       FROM merged_updates WHERE survivor AND worst <> level ORDER BY id;
-      UPDATE conditions c SET subject = m.source, level = m.worst
+      UPDATE conditions c SET subject = m.source, level = m.worst,
+        latest_reason = CASE WHEN m.worst <> m.level
+          THEN 'Merged with the other pending updates of its package source.'
+          ELSE 'Merged into one Condition for its package source.' END
       FROM merged_updates m WHERE c.id = m.id AND m.survivor;
     `,
     version: 30,

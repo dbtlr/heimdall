@@ -13,7 +13,7 @@ import type { SQL } from 'bun';
 import type { ConditionLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
-import { updateRecovered } from './update-observations.ts';
+import { clearEmptySource, updateRecovered } from './update-observations.ts';
 
 const KINDS = ['pending_update', 'reboot_required'] as const;
 const DAY = 86400000;
@@ -154,7 +154,7 @@ export const evaluateUpdateSystem = (
     for (const held of open) {
       if (held.kind === 'pending_update' && !sources.has(held.subject)) {
         // oxlint-disable-next-line no-await-in-loop -- clearing shares the System transaction.
-        await clear(tx, { ...held, now: at, system });
+        await clearEmptySource(tx, { now: at, subject: held.subject, system });
       }
     }
     const [reboot]: { observation: unknown; first_required_at: Date | null }[] = await tx`

@@ -443,17 +443,19 @@ const clearsBelow = (detail: ConditionDetail): string | undefined => {
   return `The ${detail.level} eases below ${String(disk[detail.level] - disk.hysteresis)}%, and the Condition clears below ${clears}%.`;
 };
 
-const securityWord = (security: boolean | null) => {
-  if (security === null) {
-    return 'unknown';
+// A package the Hub holds a security age for is a security update, whatever the
+// latest observation reports; otherwise the latest report stands.
+const securityWord = ({ security, securitySince }: PendingPackage) => {
+  if (securitySince !== null || security === true) {
+    return 'yes';
   }
-  return security ? 'yes' : 'no';
+  return security === null ? 'unknown' : 'no';
 };
 
 const packageRow = (item: PendingPackage, now: number): PackageRow => ({
   name: item.name,
   pending: item.securitySince === null ? undefined : formatSpan(now - item.securitySince),
-  security: securityWord(item.security),
+  security: securityWord(item),
   versions: `${item.installed ?? 'unknown'} → ${item.available ?? 'unknown'}`,
 });
 

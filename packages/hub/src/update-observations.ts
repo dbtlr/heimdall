@@ -1,5 +1,6 @@
 import {
   FUTURE_SAMPLE_TOLERANCE_MS,
+  parseUpdateSubject,
   updateSourceSubject,
   updateSubject,
   freshUpdateTime,
@@ -60,23 +61,23 @@ export const updateRecovered = ({
   return removed || applied || fresh;
 };
 
-// A package source's Condition ends with its last pending package, in the
-// Report that removed it, so a later observation cannot erase the recovery.
-const clearEmptySource = async (
+// A package source's Condition ends with its last pending package. Report
+// storage and the periodic judgment both end it here, so a later observation
+// cannot erase the recovery.
+export const clearEmptySource = async (
   tx: SQL,
-  { manager, receivedAt, system }: { manager: UpdateManager; receivedAt: number; system: string },
+  { now, subject, system }: { now: Date; subject: string; system: string },
 ) => {
+  const source = parseUpdateSubject(subject);
+  if (source === undefined) {
+    return;
+  }
   const [remaining]: { count: number }[] = await tx`
     SELECT count(*)::int AS count FROM update_subjects
-    WHERE system = ${system} AND manager = ${manager.manager} AND installation = ${manager.installation}
+    WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
   `;
   if (remaining?.count === 0) {
-    await clear(tx, {
-      kind: 'pending_update',
-      now: new Date(receivedAt),
-      subject: updateSourceSubject(manager),
-      system,
-    });
+    await clear(tx, { kind: 'pending_update', now, subject, system });
   }
 };
 
@@ -130,7 +131,11 @@ export const storeUpdates = async (
     }
     if (manager.result.kind !== 'available') {
       // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
-      await clearEmptySource(tx, { manager, receivedAt, system });
+      await clearEmptySource(tx, {
+        now: new Date(receivedAt),
+        subject: updateSourceSubject(manager),
+        system,
+      });
       continue;
     }
     const fresh =
@@ -157,7 +162,11 @@ export const storeUpdates = async (
       `;
     }
     // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
-    await clearEmptySource(tx, { manager, receivedAt, system });
+    await clearEmptySource(tx, {
+      now: new Date(receivedAt),
+      subject: updateSourceSubject(manager),
+      system,
+    });
   }
   const reboot = section.reboot;
   if (reboot.observedAt > receivedAt + FUTURE_SAMPLE_TOLERANCE_MS) {
