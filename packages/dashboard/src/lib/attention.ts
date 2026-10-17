@@ -588,7 +588,7 @@ const driftSteps = (item: Attention & { kind: 'drift' }) => {
 
 // How to install a package source's updates, by its package manager.
 const updateSteps = (item: { subject: string; system: string }) => {
-  const { manager } = parseUpdateSubject(item.subject) ?? {};
+  const { installation, manager } = parseUpdateSubject(item.subject) ?? {};
   const review = `On ${item.system}, review the pending packages and install them when appropriate.`;
   switch (manager) {
     case 'apt': {
@@ -601,8 +601,10 @@ const updateSteps = (item: { subject: string; system: string }) => {
       return {
         short: 'Install with brew upgrade',
         steps: [
+          // The prefix names the installation, so its own brew upgrades it,
+          // whichever brew is first on PATH.
           step('Install the updates', `${review} Run it as the installation's owner.`, [
-            'brew upgrade',
+            `${shellWord(`${installation ?? ''}/bin/brew`)} upgrade`,
           ]),
         ],
       };
