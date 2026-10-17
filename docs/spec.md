@@ -304,7 +304,7 @@ The Hub raises and grades update Conditions once a minute under each System's lo
 It commits fresh recovery and clearing with the Report, so a later observation cannot erase recovery before the next judgment.
 `pending_update` has the subject `JSON.stringify([manager, installation])`: one Condition for each package source on a System, however many packages are pending in it.
 The Hub keeps one row of evidence for each pending package, with its own security age, and the Condition's reason counts them, such as "6 APT packages are out of date, 2 of them are security updates."
-A package joining or leaving the source, or a newer candidate version, changes the reason and preserves the open occurrence and its pending age.
+A package joining or leaving the source changes the reason's counts and preserves the open occurrence and its pending age. A newer candidate version keeps the occurrence and its age and does not change the reason.
 Ordinary pending updates raise notes. A source is a warning when any of its packages is a confirmed security update that has waited more than three calendar days; otherwise it is a note.
 The security age of a package starts when the Hub first receives positive security evidence for it, rather than a package release date or a backlogged observation's time.
 Unknown security evidence preserves an established security age.
@@ -321,6 +321,7 @@ A fresh successful update list that omits a pending package removes that package
 Authoritative fresh local proof of uninstallation or exact installation of a package's previously reported candidate also removes it.
 A fresh explicit absence of the Debian reboot-required marker clears reboot-required.
 A missing executable, removed configuration entry, failed lookup, or lost installation access does not establish subject removal.
+Database migration 30 merged each System's open per-package occurrences into one for each source: the earliest-raised occurrence stayed open under the source subject at the worst level of the group, and the rest closed with a note that they were merged.
 Unpairing clears update Conditions at the next judgment. A later recurrence starts a new occurrence and age.
 The dashboard uses stored Hub levels and dates update evidence independently of Vitals and Last seen.
 
