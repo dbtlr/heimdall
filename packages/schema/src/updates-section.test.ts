@@ -4,7 +4,12 @@ import { ReportSchema } from './report.ts';
 import type { Report } from './report.ts';
 import { sample } from './testing.ts';
 import type { UpdatesSection } from './updates-section.ts';
-import { UpdatesSectionSchema } from './updates-section.ts';
+import {
+  parseUpdateSubject,
+  updateSourceSubject,
+  updateSubject,
+  UpdatesSectionSchema,
+} from './updates-section.ts';
 
 test('v1 Reports carry update coverage, unknown security and original observation times', () => {
   const updates = {
@@ -119,4 +124,22 @@ test('confirmed installed versions name distinct members of the complete local c
       ],
     }).success,
   ).toBe(false);
+});
+
+test('a package source subject names the manager and installation, and package subjects extend it', () => {
+  const source = { installation: '/opt/homebrew', manager: 'homebrew' } as const;
+  expect(updateSourceSubject(source)).toBe('["homebrew","/opt/homebrew"]');
+  expect(parseUpdateSubject(updateSourceSubject(source))).toEqual({
+    installation: '/opt/homebrew',
+    manager: 'homebrew',
+    name: undefined,
+  });
+  expect(parseUpdateSubject(updateSubject(source, 'wget'))).toEqual({
+    installation: '/opt/homebrew',
+    manager: 'homebrew',
+    name: 'wget',
+  });
+  expect(parseUpdateSubject('["homebrew"]')).toBeUndefined();
+  expect(parseUpdateSubject('["homebrew",1]')).toBeUndefined();
+  expect(parseUpdateSubject('not json')).toBeUndefined();
 });

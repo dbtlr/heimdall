@@ -68,7 +68,6 @@ test('a pending security update ages from Hub confirmation and candidate changes
   await send(h, [manager(h.clock.now, [{ ...pending, available: '1.2' }])]);
   const [warning] = await evaluate(h);
   expect(warning).toMatchObject({ firstDetected: NOW, level: 'warning', subject: note?.subject });
-  expect(warning?.kind === 'pending_update' ? warning.reason : undefined).toContain('1.2');
 });
 
 test('stale and failed checks preserve a warning, while fresh known non-security evidence can lower it', async () => {
@@ -220,8 +219,7 @@ test('schema-permitted NUL text is normalized without blocking Report delivery o
     },
   ]);
   const [condition] = await evaluate(h);
-  expect(condition?.subject).toBe(JSON.stringify(['apt', '/mock�apt', 'package�name']));
-  expect(condition?.kind === 'pending_update' ? condition.reason : undefined).toContain('2�');
+  expect(condition?.subject).toBe(JSON.stringify(['apt', '/mock�apt']));
   h.clock.now += 1;
   await send(h, [{ ...manager(h.clock.now, []), installation: '/mock\0apt' }]);
   expect(await evaluate(h)).toEqual([]);
@@ -363,4 +361,121 @@ test('an unknown candidate version cannot be established as applied by local ins
     },
   ]);
   expect(await evaluate(h)).toHaveLength(1);
+});
+
+const wget: PendingUpdate = { available: '2.0', installed: '1.0', name: 'wget', security: false };
+const curl: PendingUpdate = { available: '8.1', installed: '8.0', name: 'curl', security: null };
+const sourceSubject = JSON.stringify(['apt', '/usr/bin/apt']);
+type ConditionRow = {
+  actions: string[];
+  cleared_at: Date | null;
+  id: string;
+  latest_reason: string;
+};
+const rows = (h: Hub, where: string): Promise<ConditionRow[]> =>
+  h.db.sql.unsafe(
+    `SELECT c.id, c.level, c.subject, c.latest_reason, c.cleared_at,
+            array(SELECT action FROM condition_transitions WHERE condition = c.id ORDER BY id) AS actions
+     FROM conditions c WHERE c.kind = 'pending_update' AND ${where} ORDER BY c.id`,
+  );
+
+test('pending updates in one package source share one Condition that counts them', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [pending, wget, curl])]);
+  const items = await evaluate(h);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ level: 'note', subject: sourceSubject });
+  expect(items[0]?.kind === 'pending_update' ? items[0].reason : undefined).toBe(
+    '3 APT packages are out of date, 1 of them is a security update.',
+  );
+  expect(await rows(h, 'true')).toHaveLength(1);
+});
+
+test('one aged security package makes the whole source a warning', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [wget, curl])]);
+  await evaluate(h);
+  h.clock.now += 4 * DAY;
+  expect((await evaluate(h))[0]?.level).toBe('note');
+  await send(h, [manager(h.clock.now, [wget, curl, pending])]);
+  await evaluate(h);
+  h.clock.now += 4 * DAY;
+  await send(h, [manager(h.clock.now, [wget, curl, pending])]);
+  expect((await evaluate(h))[0]).toMatchObject({ level: 'warning', subject: sourceSubject });
+});
+
+test('a warning source stays a warning until fresh evidence covers every package', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [pending, curl])]);
+  await evaluate(h);
+  h.clock.now += 4 * DAY;
+  expect((await evaluate(h))[0]?.level).toBe('warning');
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [{ ...pending, security: false }, curl])]);
+  expect((await evaluate(h))[0]?.level).toBe('warning');
+  h.clock.now += 1;
+  await send(h, [
+    manager(h.clock.now, [
+      { ...pending, security: false },
+      { ...curl, security: false },
+    ]),
+  ]);
+  expect((await evaluate(h))[0]?.level).toBe('note');
+  const [source] = await rows(h, 'true');
+  expect(source?.actions).toEqual(['raised', 'level_changed', 'level_changed']);
+});
+
+test('a package recovering while others remain changes only the Condition reason', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [wget, curl])]);
+  await evaluate(h);
+  const [before] = await rows(h, 'true');
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [curl])]);
+  await evaluate(h);
+  const [after, ...others] = await rows(h, 'true');
+  expect(others).toEqual([]);
+  expect(after).toMatchObject({ actions: ['raised'], cleared_at: null, id: before?.id });
+  expect(after?.latest_reason).toBe('1 APT package is out of date.');
+});
+
+test('the Condition clears when the last package recovers', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [wget, curl])]);
+  await evaluate(h);
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [curl])]);
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [])]);
+  const [source] = await rows(h, 'true');
+  expect(source).toMatchObject({ actions: ['raised', 'cleared'] });
+  expect(source?.cleared_at).toEqual(new Date(h.clock.now));
+  expect(await evaluate(h)).toEqual([]);
+});
+
+test('each package source on a System has its own Condition', async () => {
+  await using h = await startHub();
+  await send(h, [
+    manager(NOW, [pending, wget]),
+    { ...manager(NOW, [curl]), installation: '/other/apt' },
+  ]);
+  const items = await evaluate(h);
+  expect(items.map(({ subject }) => subject).toSorted()).toEqual([
+    JSON.stringify(['apt', '/other/apt']),
+    sourceSubject,
+  ]);
+});
+
+test('evaluation clears an open update Condition that names no current package source', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW)]);
+  await evaluate(h);
+  await h.db.sql`
+    UPDATE conditions SET subject = ${JSON.stringify(['apt', '/usr/bin/apt', 'openssl:amd64'])}
+    WHERE kind = 'pending_update'
+  `;
+  h.clock.now += 1;
+  const items = await evaluate(h);
+  expect(items.map(({ subject }) => subject)).toEqual([sourceSubject]);
+  expect(await rows(h, 'cleared_at IS NOT NULL')).toHaveLength(1);
 });

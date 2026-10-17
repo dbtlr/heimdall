@@ -121,6 +121,9 @@ export {
   UpdateManagerSchema,
   UpdatesSectionSchema,
   RebootObservationSchema,
+  UPDATE_MANAGER_NAMES,
+  parseUpdateSubject,
+  updateSourceSubject,
   updateSubject,
 } from './updates-section.ts';
 export type {
