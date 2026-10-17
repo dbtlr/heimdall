@@ -76,25 +76,27 @@ export type AttentionKind = AttentionFacts['kind'];
 
 type EvidenceOnly = Extract<AttentionFacts, { kind: 'checks_missing' | 'file_unreadable' }>;
 
-export type Attention = (
-  | (Exclude<AttentionFacts, EvidenceOnly> & { level: ConditionLevel })
-  | (EvidenceOnly & { level?: never })
-) & {
-  // When the check, run, sample, or rejection the item rests on arrived:
-  // check_sets or run_sets received_at for Services, files, and jobs; the
-  // newest Vitals sample for disk and load; last seen for a stale System; the latest
-  // rejection for Reports rejected. Undefined when none has arrived.
-  checkedAt: number | undefined;
-  evidence: Evidence;
-  // When it was first detected: the Condition's raised_at, the unreadable
-  // file's since, or when the missing set became old.
-  firstDetected: number;
-  // The Condition's subject: a file path, Service, job, mount, or encoded
-  // process lifetime identity; '' for one about the whole System. Display
-  // process subjects through conditionSubject so their identity stays internal.
-  // A file's path for file_unreadable; '' for checks_missing.
-  subject: string;
-  system: string;
-  // Whether the System it is on is no longer paired.
-  unpaired: boolean;
-};
+export type Attention =
+  // conditionId is the open occurrence's conditions.id, which its page opens by.
+  (
+    | (Exclude<AttentionFacts, EvidenceOnly> & { conditionId: string; level: ConditionLevel })
+    | (EvidenceOnly & { conditionId?: never; level?: never })
+  ) & {
+    // When the check, run, sample, or rejection the item rests on arrived:
+    // check_sets or run_sets received_at for Services, files, and jobs; the
+    // newest Vitals sample for disk and load; last seen for a stale System; the latest
+    // rejection for Reports rejected. Undefined when none has arrived.
+    checkedAt: number | undefined;
+    evidence: Evidence;
+    // When it was first detected: the Condition's raised_at, the unreadable
+    // file's since, or when the missing set became old.
+    firstDetected: number;
+    // The Condition's subject: a file path, Service, job, mount, or encoded
+    // process lifetime identity; '' for one about the whole System. Display
+    // process subjects through conditionSubject so their identity stays internal.
+    // A file's path for file_unreadable; '' for checks_missing.
+    subject: string;
+    system: string;
+    // Whether the System it is on is no longer paired.
+    unpaired: boolean;
+  };

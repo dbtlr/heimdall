@@ -1,11 +1,10 @@
 import { expect, test } from 'bun:test';
 
-import { renderToStaticMarkup } from 'react-dom/server';
-
+import { renderRouted } from './render-routed.tsx';
 import { TimelineRail } from './timeline-rail.tsx';
 
-test('shows each transition in recording order and labels a backfilled level', () => {
-  const html = renderToStaticMarkup(
+test('shows each transition in recording order and labels a backfilled level', async () => {
+  const html = await renderRouted(
     <TimelineRail
       entries={[
         {
@@ -31,6 +30,7 @@ test('shows each transition in recording order and labels a backfilled level', (
         },
       ]}
       now={500}
+      system="gateway-1"
     />,
   );
   expect(html).toContain('Backfilled level');
@@ -39,4 +39,6 @@ test('shows each transition in recording order and labels a backfilled level', (
   expect(html).toContain('70% used');
   expect(html.indexOf('Raised at note')).toBeLessThan(html.indexOf('note → warning'));
   expect(html.indexOf('note → warning')).toBeLessThan(html.indexOf('Cleared at warning'));
+  // Each occurrence's title opens its page.
+  expect(html).toContain('href="/systems/gateway-1/conditions/1"');
 });

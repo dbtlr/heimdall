@@ -1,5 +1,3 @@
-import { Link } from '@tanstack/react-router';
-
 import {
   ATTENTION_NAMES,
   anchorOf,
@@ -11,6 +9,7 @@ import {
 import { fleetAttention } from '../lib/fleet.ts';
 import { cn } from '../lib/utils.ts';
 import type { Attention } from '../server/attention-types.ts';
+import { AttentionLink } from './attention-link.tsx';
 import { MARK_COLOR } from './attention-status.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { DateTime, PhraseText } from './date-time.tsx';
@@ -19,11 +18,9 @@ function ConditionCard({ item, now }: { item: Attention; now: number }) {
   const mark = item.level ?? 'unknown';
   const note = evidenceNote(item, now);
   return (
-    <Link
+    <AttentionLink
       className="block min-w-0 rounded-xl border bg-card p-4 hover:border-muted-foreground"
-      hash={anchorOf(item)}
-      params={{ name: item.system }}
-      to="/systems/$name"
+      item={item}
     >
       <div className="flex items-center justify-between gap-3 text-sm">
         <span className={cn('flex items-center gap-2 font-semibold capitalize', MARK_COLOR[mark])}>
@@ -58,7 +55,7 @@ function ConditionCard({ item, now }: { item: Attention; now: number }) {
         )}
       </p>
       <p className="mt-2 text-base text-primary">{nextSteps(item).short} →</p>
-    </Link>
+    </AttentionLink>
   );
 }
 

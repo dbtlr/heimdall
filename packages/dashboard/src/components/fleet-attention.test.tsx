@@ -14,6 +14,7 @@ import { FleetAttention } from './fleet-attention.tsx';
 test('Fleet shows an old alert ahead of a fresh warning and collapses notes without hiding evidence gaps', async () => {
   const disk: Attention = {
     checkedAt: 0,
+    conditionId: 'c-urgent',
     disk: undefined,
     evidence: 'old',
     firstDetected: 0,
@@ -25,8 +26,14 @@ test('Fleet shows an old alert ahead of a fresh warning and collapses notes with
     unpaired: false,
   };
   const items: Attention[] = [
-    { ...disk, evidence: 'current', level: 'warning', subject: '/warning' },
-    { ...disk, level: 'note', subject: '/note' },
+    {
+      ...disk,
+      conditionId: 'c-warning',
+      evidence: 'current',
+      level: 'warning',
+      subject: '/warning',
+    },
+    { ...disk, conditionId: 'c-note', level: 'note', subject: '/note' },
     disk,
     {
       checkedAt: 0,
@@ -54,5 +61,9 @@ test('Fleet shows an old alert ahead of a fresh warning and collapses notes with
   expect(html).toContain('1 note');
   expect(html).not.toContain('<details open');
   expect(html).toContain('Evidence old or unknown');
-  expect(html).toContain('#low-disk-urgent');
+  // A Condition's card opens its page; evidence the Hub holds no Condition for
+  // keeps the link to the System's page at that item.
+  expect(html).toContain('href="/systems/server-1/conditions/c-urgent"');
+  expect(html).not.toContain('#low-disk-urgent');
+  expect(html).toContain('#checks-missing-checks');
 });

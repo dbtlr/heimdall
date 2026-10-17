@@ -1,5 +1,3 @@
-import { Link } from '@tanstack/react-router';
-
 import {
   ATTENTION_NAMES,
   anchorOf,
@@ -9,6 +7,7 @@ import {
 } from '../lib/attention.ts';
 import { cn } from '../lib/utils.ts';
 import type { Attention } from '../server/attention-types.ts';
+import { AttentionLink } from './attention-link.tsx';
 import { AttentionSubject, MARK_COLOR } from './attention-status.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { DateTime, PhraseText } from './date-time.tsx';
@@ -24,8 +23,8 @@ function PhoneLabel({ children }: { children: string }) {
   return <span className="text-xs text-muted-foreground sm:hidden">{children} </span>;
 }
 
-// One open item as a table row: its System, its Condition linked to the
-// System's page at that item, and the evidence in short.
+// One open item as a table row: its System, its Condition linked to its page,
+// and the evidence in short.
 function OpenRow({ item, now }: { item: Attention; now: number }) {
   const unconfirmed = attentionMark(item) === 'unknown';
   return (
@@ -39,20 +38,18 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
         )}
       </td>
       <td className={cn(CELL, 'max-sm:text-right')}>
-        <Link
+        <AttentionLink
           className={cn(
             'inline-flex items-baseline gap-1 whitespace-nowrap',
             unconfirmed ? 'font-medium' : 'font-semibold',
             MARK_COLOR[attentionMark(item)],
           )}
-          hash={anchorOf(item)}
-          params={{ name: item.system }}
-          to="/systems/$name"
+          item={item}
           title={item.level === undefined ? 'Evidence old or unknown' : `Hub level: ${item.level}`}
         >
           <ConditionGlyph className="self-center" kind={attentionMark(item)} />
           {ATTENTION_NAMES[item.kind]}
-        </Link>
+        </AttentionLink>
       </td>
       <td className={cn(CELL, 'wrap-anywhere max-sm:col-span-full')}>
         <AttentionSubject item={item} />
@@ -84,7 +81,7 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
 
 // Open Conditions across the Systems shown: current evidence first, then
 // evidence old or unknown under its own
-// heading, each row linking to the System's page at that item.
+// heading, each row linking to its Condition's page.
 export function OpenNow({ items, now }: { items: readonly Attention[]; now: number }) {
   const { confirmed, unconfirmed } = rankAttention(items);
   return (

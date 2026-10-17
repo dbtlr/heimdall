@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
 import { ConditionMarks } from './condition-marks.tsx';
 import { ConditionSpans } from './condition-spans.tsx';
+import { renderRouted } from './render-routed.tsx';
 import { ConditionOccurrence } from './timeline-rail.tsx';
 
 const occurrence: ConditionMark = {
@@ -69,7 +70,7 @@ test('an open occurrence ahead of a rolled-back clock has no future bar or label
   expect(html).not.toContain('Low disk');
 });
 
-test('hot process spans and Timeline name the executable and PID without exposing its identity tuple', () => {
+test('hot process spans and Timeline name the executable and PID without exposing its identity tuple', async () => {
   const process: ConditionMark = {
     ...occurrence,
     kind: 'hot_process',
@@ -77,10 +78,9 @@ test('hot process spans and Timeline name the executable and PID without exposin
   };
   const views = [
     <ConditionSpans conditions={[process]} now={100} window={{ from: 0, to: 100 }} />,
-    <ConditionOccurrence entry={{ ...process, reason: 'CPU load' }} now={100} />,
+    <ConditionOccurrence entry={{ ...process, reason: 'CPU load' }} now={100} system="gateway-1" />,
   ];
-  for (const view of views) {
-    const html = renderToStaticMarkup(view);
+  for (const html of await Promise.all(views.map((view) => renderRouted(view)))) {
     expect(html).toContain('compiler (PID 42)');
     expect(html).toContain('Hot process');
     expect(html).not.toContain('boot-1');

@@ -20,6 +20,7 @@ export type { RequestFixture, SubagentFixture, ToolCallFixture } from './timelin
 
 // What the dashboard's dev seed uses to fill a scratch database the way a Hub
 // would: migrate it, pair Systems, store Reports, and load the price table.
+export { parseConditionLimits, storeConditionLimits } from '../condition-limits.ts';
 export { migrate } from '../migrations.ts';
 export { BUNDLED_PRICES } from '../prices.ts';
 export { syncPrices } from '../price-table.ts';

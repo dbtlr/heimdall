@@ -1,5 +1,5 @@
 export { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS } from './conditions.ts';
-export type { ConditionLevel, ConditionTransition } from './conditions.ts';
+export type { ConditionLevel, ConditionLimitSet, ConditionTransition } from './conditions.ts';
 export { storableText } from './values.ts';
 export {
   MAX_PROCESS_CENSUS,

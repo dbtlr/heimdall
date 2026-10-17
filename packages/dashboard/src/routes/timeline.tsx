@@ -37,7 +37,7 @@ function FleetTimeline() {
                   )}
                 </Link>
                 <ol>
-                  <ConditionOccurrence entry={entry} now={now} />
+                  <ConditionOccurrence entry={entry} now={now} system={entry.system} />
                 </ol>
               </li>
             ))}

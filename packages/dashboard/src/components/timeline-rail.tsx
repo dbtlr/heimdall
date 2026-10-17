@@ -1,3 +1,5 @@
+import { Link } from '@tanstack/react-router';
+
 import { conditionSubject, KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
 import { timelineWhen } from '../lib/detail.ts';
 import { cn } from '../lib/utils.ts';
@@ -7,7 +9,15 @@ import { DateTime, PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
 // An occurrence keeps the Hub's transition order, including backfilled levels.
-export function ConditionOccurrence({ entry, now }: { entry: TimelineEntry; now: number }) {
+export function ConditionOccurrence({
+  entry,
+  now,
+  system,
+}: {
+  entry: TimelineEntry;
+  now: number;
+  system: string;
+}) {
   return (
     <li
       className={cn(
@@ -18,8 +28,14 @@ export function ConditionOccurrence({ entry, now }: { entry: TimelineEntry; now:
       <ConditionGlyph className="mt-1" kind={entry.level} />
       <div className="min-w-0">
         <p className="break-words">
-          <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
-          {entry.subject !== '' && ` ${conditionSubject(entry)}`}
+          <Link
+            className="text-primary"
+            params={{ id: entry.id, name: system }}
+            to="/systems/$name/conditions/$id"
+          >
+            <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
+            {entry.subject !== '' && ` ${conditionSubject(entry)}`}
+          </Link>
         </p>
         <p className="text-muted-foreground">
           <PhraseText phrase={timelineWhen(entry, now)} />
@@ -47,7 +63,15 @@ export function ConditionOccurrence({ entry, now }: { entry: TimelineEntry; now:
 
 // The System's Timeline: each Condition of the last 7 days and each still
 // open, newest raised first, with transitions in the Hub's recording order.
-export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry[]; now: number }) {
+export function TimelineRail({
+  entries,
+  now,
+  system,
+}: {
+  entries: readonly TimelineEntry[];
+  now: number;
+  system: string;
+}) {
   return (
     <section className="mt-[18px] self-start rounded-lg bg-card p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">
@@ -58,14 +82,14 @@ export function TimelineRail({ entries, now }: { entries: readonly TimelineEntry
       ) : (
         <ol className="border-l-2 pl-1">
           {entries.slice(0, 3).map((entry) => (
-            <ConditionOccurrence entry={entry} key={entry.id} now={now} />
+            <ConditionOccurrence entry={entry} key={entry.id} now={now} system={system} />
           ))}
           {entries.length > 3 && (
             <li>
               <MoreItems label={`Show ${String(entries.length - 3)} more occurrences`}>
                 <ol>
                   {entries.slice(3).map((entry) => (
-                    <ConditionOccurrence entry={entry} key={entry.id} now={now} />
+                    <ConditionOccurrence entry={entry} key={entry.id} now={now} system={system} />
                   ))}
                 </ol>
               </MoreItems>

@@ -1,4 +1,4 @@
-import { useLocation } from '@tanstack/react-router';
+import { Link, useLocation } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
 import {
@@ -161,6 +161,15 @@ function Evidence({ item, now }: { item: Attention; now: number }) {
           <PhraseText phrase={['Latest check ', whenAt(item.checkedAt, now), '.']} />
         )}
       </p>
+      {item.conditionId !== undefined && (
+        <Link
+          className="mt-1 inline-flex min-h-11 items-center text-base text-primary"
+          params={{ id: item.conditionId, name: item.system }}
+          to="/systems/$name/conditions/$id"
+        >
+          Open
+        </Link>
+      )}
     </div>
   );
 }
