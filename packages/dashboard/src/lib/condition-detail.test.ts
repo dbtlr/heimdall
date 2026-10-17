@@ -37,16 +37,16 @@ const LIMITS: ConditionLimitSet = {
 // A readable sentence for a phrase; the tests care about words, not zones.
 const words = (phrase: Parameters<typeof phraseText>[0]) => phraseText(phrase, 'UTC');
 
-// 7 days of half-hourly readings ending at NOW: 431 GiB, growing 2.1 GiB a
-// day to 393 GiB used (91%).
+// 7 days of readings every 10 minutes ending at NOW: 431 GiB, growing 2.1 GiB
+// a day to 393 GiB used (91%).
 const diskSeries = (perDay = 2.1, days = 7): ConditionSeries => {
-  const count = days * 48;
+  const count = Math.round(days * 144);
   return {
     kind: 'disk',
     points: Array.from({ length: count + 1 }, (_, index) => ({
-      t: NOW - (count - index) * 30 * MINUTE,
+      t: NOW - (count - index) * 10 * MINUTE,
       totalBytes: 431 * GIB,
-      usedBytes: (393 - perDay * ((count - index) / 48)) * GIB,
+      usedBytes: (393 - perDay * ((count - index) / 144)) * GIB,
     })),
   };
 };
@@ -117,6 +117,18 @@ test('a low disk estimates growth and when it fills, marked as an estimate', () 
   });
 });
 
+test('the rate names the span the readings cover, not the window', () => {
+  const days = conditionDetailView(diskDetail({ series: diskSeries(2.1, 3) }), NOW).rate;
+  expect(days?.text).toStartWith('+2.1 GiB a day over the last 3 days.');
+  const hours = conditionDetailView(diskDetail({ series: diskSeries(2.1, 26 / 24) }), NOW).rate;
+  expect(hours?.text).toStartWith('+2.1 GiB a day over the last 26 h.');
+});
+
+test('a low disk growing under 1 MiB a day shows no rate', () => {
+  const crawl = 0.5 / 1024; // GiB a day
+  expect(conditionDetailView(diskDetail({ series: diskSeries(crawl) }), NOW).rate).toBeUndefined();
+});
+
 test('a low disk that is not growing, or has under a day of readings, shows no rate', () => {
   expect(conditionDetailView(diskDetail({ series: diskSeries(0) }), NOW).rate).toBeUndefined();
   expect(conditionDetailView(diskDetail({ series: diskSeries(-1) }), NOW).rate).toBeUndefined();
@@ -151,14 +163,16 @@ test('limits the System overrides move the lines, the caption, and the clearing 
   );
   expect(view.chart?.lines.map((line) => line.value)).toEqual([60, 75, 95]);
   expect(view.chart?.captions.right).toContain('lines at 60, 75, 95');
-  expect(view.nextStep?.clears).toBe('The warning clears below 70%.');
+  expect(view.nextStep?.clears).toBe(
+    'The warning eases below 70%, and the Condition clears below 55%.',
+  );
 });
 
 test("a low disk history shows each level with the Hub's words, never limits that may since have changed", () => {
   const view = conditionDetailView(diskDetail(), NOW);
   expect(view.history.map((row) => [row.label, row.backfilled])).toEqual([
     ['Raised at note', true],
-    ['Note to warning', false],
+    ['note → warning', false],
   ]);
   expect(view.history.every((row) => row.reason !== undefined)).toBe(true);
   expect(view.history.map((row) => row.at)).toEqual([NOW - 3 * DAY, NOW - 2 * DAY]);
@@ -167,7 +181,9 @@ test("a low disk history shows each level with the Hub's words, never limits tha
 test('a low disk names the next step, when it clears, and how fresh the reading is', () => {
   const view = conditionDetailView(diskDetail(), NOW);
   expect(view.nextStep?.steps[0]?.title).toBe('Free space or grow the disk');
-  expect(view.nextStep?.clears).toBe('The warning clears below 78%.');
+  expect(view.nextStep?.clears).toBe(
+    'The warning eases below 78%, and the Condition clears below 68%.',
+  );
   expect(view.provenance).toContain('Updated 2 min ago.');
   expect(view.provenance).toContain('highest reading in each 5 minutes');
 });
@@ -196,7 +212,7 @@ test('a cleared Condition keeps its last level, adds the clearing row, and has n
   expect(view.level).toBe('warning');
   expect(view.nextStep).toBeUndefined();
   expect(view.rate).toBeUndefined();
-  expect(view.history.at(-1)?.label).toBe('Cleared');
+  expect(view.history.at(-1)?.label).toBe('Cleared at warning');
   expect(view.provenance).not.toContain('Updated');
   expect(words(view.hero.text)).toContain('when it cleared');
 });
@@ -205,7 +221,7 @@ test('unknown limits draw no lines and say so', () => {
   const view = conditionDetailView(diskDetail({ limits: undefined }), NOW);
   expect(view.chart?.lines).toEqual([]);
   expect(view.chart?.captions.right).toBe('80 to 100%; limits unknown');
-  expect(view.history.map((row) => row.label)).toEqual(['Raised at note', 'Note to warning']);
+  expect(view.history.map((row) => row.label)).toEqual(['Raised at note', 'note → warning']);
   expect(view.nextStep?.clears).toBeUndefined();
 });
 
@@ -256,7 +272,9 @@ test('high CPU leads with the latest busy share, one line at its limit, and the 
   expect(view.chart?.lines).toEqual([{ label: '90%', level: 'note', value: 90 }]);
   expect(view.chart?.captions.left).toBe('CPU busy, last 24 h');
   expect(view.chart?.captions.right).toBe('85 to 100%, line at 90%');
-  expect(view.chart?.captions.rule).toBe('90% for 30 of 60 min is a note, 120 of 240 a warning');
+  expect(view.chart?.captions.rule).toBe(
+    'above 90% for 30 of 60 min is a note, 120 of 240 a warning',
+  );
   expect(view.rate).toBeUndefined();
   // Not a limit per level: the Hub's own reason says what was crossed.
   expect(view.history[0]?.label).toBe('Raised at note');
@@ -275,7 +293,7 @@ test('high memory charts used memory against its one warning limit', () => {
   );
   expect(view.title).toBe('High memory');
   expect(view.chart?.captions.left).toBe('Memory used, last 24 h');
-  expect(view.chart?.captions.rule).toBe('90% for 30 of 60 min is a warning');
+  expect(view.chart?.captions.rule).toBe('above 90% for 30 of 60 min is a warning');
   expect(view.chart?.lines).toEqual([{ label: '90%', level: 'warning', value: 90 }]);
   expect(view.hero.unit).toBe('%');
 });
@@ -400,7 +418,7 @@ test('evidence that is old is said so in the view', () => {
   expect(view.evidenceNote).toBeDefined();
 });
 
-test('a level that eased says so instead of naming a limit it did not cross', () => {
+test('a level that eased is labelled like any level change, with the Hub reason', () => {
   const view = conditionDetailView(
     diskDetail({
       transitions: [
@@ -417,6 +435,102 @@ test('a level that eased says so instead of naming a limit it did not cross', ()
     }),
     NOW,
   );
-  expect(view.history.at(-1)?.label).toBe('Eased to note');
+  expect(view.history.at(-1)?.label).toBe('warning → note');
   expect(view.history.at(-1)?.reason).toBe('77% used');
+});
+
+test('a disk at the note level clears below the note limit less the margin', () => {
+  const view = conditionDetailView(diskDetail({ level: 'note' }), NOW);
+  expect(view.nextStep?.clears).toBe('It clears below 68%.');
+});
+
+test('a Condition raised after the read time leads with under a minute open', () => {
+  const view = conditionDetailView(updateDetail({ raisedAt: NOW + HOUR + 30 * MINUTE }), NOW);
+  expect([view.hero.value, view.hero.unit]).toEqual(['<1', 'min']);
+});
+
+test('a gap of more than 15 minutes between readings breaks the line with an empty point', () => {
+  const view = conditionDetailView(
+    {
+      ...cpuDetail(),
+      series: {
+        kind: 'percent',
+        points: [
+          { percent: 91, t: NOW - 40 * MINUTE },
+          { percent: 92, t: NOW - 35 * MINUTE },
+          { percent: 93, t: NOW - 10 * MINUTE },
+          { percent: 94, t: NOW - 5 * MINUTE },
+        ],
+      },
+    },
+    NOW,
+  );
+  const points = view.chart?.points ?? [];
+  expect(points.map((point) => point.value)).toEqual([91, 92, null, 93, 94]);
+  const gap = points[2]?.t ?? 0;
+  expect(gap).toBeGreaterThan(NOW - 35 * MINUTE);
+  expect(gap).toBeLessThan(NOW - 10 * MINUTE);
+});
+
+test('readings 15 minutes apart or closer stay joined', () => {
+  const view = conditionDetailView(
+    {
+      ...cpuDetail(),
+      series: {
+        kind: 'percent',
+        points: [
+          { percent: 91, t: NOW - 30 * MINUTE },
+          { percent: 92, t: NOW - 15 * MINUTE },
+          { percent: 93, t: NOW },
+        ],
+      },
+    },
+    NOW,
+  );
+  expect(view.chart?.points.map((point) => point.value)).toEqual([91, 92, 93]);
+});
+
+test('a hot process using a core or more says cores, and under one says of a core', () => {
+  const subject = processSubject({ bootId: 'b', name: 'node', pid: 4242, start: '99' });
+  const hot = (latest: number) =>
+    conditionDetailView(
+      {
+        ...cpuDetail(),
+        kind: 'hot_process',
+        level: 'warning',
+        series: {
+          kind: 'cores',
+          points: [
+            { cores: 0.2, t: NOW - HOUR },
+            { cores: latest, t: NOW },
+          ],
+        },
+        subject,
+      },
+      NOW,
+    ).hero;
+  expect(hot(1.5)).toMatchObject({ unit: 'cores', value: '1.50' });
+  expect(hot(0.86)).toMatchObject({ unit: 'of a core', value: '0.86' });
+});
+
+test('a hot process rule says above its cores limit', () => {
+  const subject = processSubject({ bootId: 'b', name: 'node', pid: 4242, start: '99' });
+  const view = conditionDetailView(
+    {
+      ...cpuDetail(),
+      kind: 'hot_process',
+      series: {
+        kind: 'cores',
+        points: [
+          { cores: 0.2, t: NOW - HOUR },
+          { cores: 0.9, t: NOW },
+        ],
+      },
+      subject,
+    },
+    NOW,
+  );
+  expect(view.chart?.captions.rule).toBe(
+    'above 0.5 core for 30 of 60 min is a note, 120 of 240 a warning',
+  );
 });

@@ -57,10 +57,11 @@ const BOOT = 'boot-1';
 const processSample = (
   seconds: number,
   top: { cpuCores: number; name?: string; pid: number; start: string }[],
+  bootId = BOOT,
 ): Sample => ({
   ...sample(at(seconds)),
   processes: {
-    bootId: BOOT,
+    bootId,
     census: { kind: 'partial' },
     intervalMs: 15_000,
     top: top.map(({ name = 'node', ...rest }) => ({ ...rest, name, rssBytes: 1 })),
@@ -136,6 +137,38 @@ describe('an open Condition', () => {
         { t: bucketOf(-HOUR), totalBytes: 1000, usedBytes: 600 },
         { t: bucketOf(0), totalBytes: 1000, usedBytes: 700 },
       ],
+    });
+  });
+
+  test('finds its attention item when the id is written with leading zeros', async () => {
+    await using h = await startHub();
+    const id = await openDisk(h);
+
+    const detail = await read(h, { id: `00${id}`, name: 'server-1' });
+
+    expect(detail?.id).toBe(id);
+    expect(detail?.attention).toMatchObject({ conditionId: id, kind: 'low_disk' });
+  });
+
+  test('leaves out a bucket that starts before the window', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', [
+      diskSample(-7 * DAY + 10, { mount: '/data', usedBytes: 100 }),
+      diskSample(-HOUR, { mount: '/data', usedBytes: 600 }),
+    ]);
+    const id = await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      raisedAt: -3 * DAY,
+      subject: '/data',
+      system: 'server-1',
+    });
+
+    // A minute later than the fixtures' clock, so the window starts inside a bucket.
+    const detail = await read(h, { id, name: 'server-1', now: NOW + 60_000 });
+
+    expect(detail?.series).toEqual({
+      kind: 'disk',
+      points: [{ t: bucketOf(-HOUR), totalBytes: 1000, usedBytes: 600 }],
     });
   });
 
@@ -225,6 +258,10 @@ describe('a hot process', () => {
       processSample(-30 * MINUTE, [{ cpuCores: 4, pid: 100, start: '1000' }]),
       processSample(-25 * MINUTE, [{ cpuCores: 5, name: 'other', pid: 100, start: '1000' }]),
       processSample(-20 * MINUTE, []),
+    ]);
+    // After a reboot the same PID, start, and name are another process.
+    await hear(h, 'server-1', [
+      processSample(-2 * HOUR + 30, [{ cpuCores: 7, pid: 100, start: '1000' }], 'boot-2'),
     ]);
     const id = await addCondition(h.db.sql, {
       kind: 'hot_process',

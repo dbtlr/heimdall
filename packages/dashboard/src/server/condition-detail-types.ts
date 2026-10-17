@@ -29,7 +29,8 @@ export type ConditionDetail = {
   latestAt: number;
   latestReason: string;
   level: ConditionLevel;
-  // The limits the Hub stores for the System: its own row, else the fleet's.
+  // The limits the Hub stores now for the System: its own row, else the fleet's.
+  // They may differ from the ones that set a past level.
   // Undefined when the Hub has stored none, as before it first starts on a
   // version that stores them.
   limits: ConditionLimitSet | undefined;

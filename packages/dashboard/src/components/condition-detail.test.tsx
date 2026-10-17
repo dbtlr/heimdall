@@ -35,21 +35,21 @@ const diskView: ConditionDetailView = {
     {
       at: NOW - 3 * 86_400_000,
       backfilled: true,
-      label: 'Note at 70%',
+      label: 'Raised at note',
       level: 'note',
       reason: undefined,
     },
     {
       at: NOW - 86_400_000,
       backfilled: false,
-      label: 'Warning at 80%',
+      label: 'note → warning',
       level: 'warning',
       reason: undefined,
     },
   ],
   level: 'warning',
   nextStep: {
-    clears: 'The warning clears below 78%.',
+    clears: 'The warning eases below 78%, and the Condition clears below 68%.',
     steps: [
       {
         commands: ['df -h /'],
@@ -109,7 +109,7 @@ test('shows the rule beside a load chart', () => {
 test('lists how it got here in order, with backfilled levels marked', () => {
   const page = html(diskView);
   expect(page).toContain('How it got here');
-  expect(page.indexOf('Note at 70%')).toBeLessThan(page.indexOf('Warning at 80%'));
+  expect(page.indexOf('Raised at note')).toBeLessThan(page.indexOf('note → warning'));
   expect(page.match(/Backfilled level/gu)).toHaveLength(1);
 });
 
@@ -118,7 +118,7 @@ test('gives the next step with its commands, when it clears, and where the readi
   expect(page).toContain('Next step.');
   expect(page).toContain('find what fills / and remove it');
   expect(page).toContain('df -h /');
-  expect(page).toContain('The warning clears below 78%.');
+  expect(page).toContain('The warning eases below 78%, and the Condition clears below 68%.');
   expect(page).toContain('Updated 2 min ago.');
 });
 
@@ -140,4 +140,24 @@ test('a long title and sentence wrap instead of widening a 390 px screen', () =>
   expect(page).toContain('wrap-anywhere');
   expect(page).toContain('min-w-0');
   expect(page).not.toContain('whitespace-nowrap');
+});
+
+test('chart captions and the rule wrap a long unbroken process name', () => {
+  const chart = diskView.chart;
+  if (chart === undefined) {
+    throw new Error('fixture has a chart');
+  }
+  const name = `node${'a'.repeat(200)}`;
+  const page = html({
+    ...diskView,
+    chart: {
+      ...chart,
+      captions: { left: `${name} CPU, last 24 h`, right: 'x', rule: `above 0.5 core ${name}` },
+    },
+  });
+  for (const text of [`${name} CPU, last 24 h`, `above 0.5 core ${name}`]) {
+    expect(page).toMatch(
+      new RegExp(`<[a-z]+ class="[^"]*min-w-0[^"]*wrap-anywhere[^"]*">${text}<`, 'u'),
+    );
+  }
 });

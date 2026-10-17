@@ -64,11 +64,13 @@ function ChartSection({ chart }: { chart: NonNullable<ConditionDetailView['chart
   return (
     <section className="mt-5 min-w-0">
       <ConditionChart chart={chart} />
-      <p className="mt-1 flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
-        <span>{left}</span>
-        <span>{right}</span>
+      <p className="mt-1 flex min-w-0 flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
+        <span className="min-w-0 wrap-anywhere">{left}</span>
+        <span className="min-w-0 wrap-anywhere">{right}</span>
       </p>
-      {rule !== undefined && <p className="mt-1 text-xs text-muted-foreground">{rule}</p>}
+      {rule !== undefined && (
+        <p className="mt-1 min-w-0 text-xs text-muted-foreground wrap-anywhere">{rule}</p>
+      )}
     </section>
   );
 }

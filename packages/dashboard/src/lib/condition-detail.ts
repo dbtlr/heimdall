@@ -1,6 +1,6 @@
 // What one opened Condition's page says, as plain values the component only
 // renders: the title and level, the number it leads with, the chart of the
-// reading it rests on against the limits that set its level, the levels it
+// reading it rests on against the limits the Hub stores now, the levels it
 // went through, and what to do about it.
 
 import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@heimdall/schema';
@@ -8,7 +8,7 @@ import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@he
 import type { ConditionDetail, ConditionSeries } from '../server/condition-detail-types.ts';
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
-import { conditionSubject } from './conditions.ts';
+import { conditionSubject, transitionLabel } from './conditions.ts';
 import { diskGrowth } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';
@@ -24,7 +24,7 @@ const DAY_MS = 24 * HOUR_MS;
 // that finish the sentence.
 export type HeroView = { text: Phrase; unit: string; value: string };
 
-// A dashed line across the chart at a limit that sets a level.
+// A dashed line across the chart at a limit the Hub judges by now.
 export type ChartLine = { label: string; level: ConditionLevel; value: number };
 
 // A reading; null where the bucket had none, which breaks the line.
@@ -32,8 +32,8 @@ export type ChartPoint = { t: number; value: number | null };
 
 export type ChartView = {
   // What the chart says about itself: the series and window on the left, the
-  // range of the readings and the lines on the right, and for load Conditions
-  // the rule that turns the limit into a level.
+  // chart's scale and the lines on the right, and for load Conditions the rule
+  // that turns the limit into a level.
   captions: { left: string; right: string; rule: string | undefined };
   // The plotted range on the value axis.
   domain: [number, number];
@@ -49,7 +49,7 @@ export type HistoryRow = {
   label: string;
   // The level the row reached, or `cleared`.
   level: ConditionLevel | 'cleared';
-  // The Hub's own words, when the label gives no limit to show.
+  // The Hub's own words for the transition.
   reason: string | undefined;
 };
 
@@ -69,20 +69,17 @@ export type ConditionDetailView = {
   title: string;
 };
 
-const LEVEL_RANK: Record<ConditionLevel, number> = { alert: 2, note: 0, warning: 1 };
-
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-
 const plural = (count: number, one: string, many: string) =>
   `${String(count)} ${count === 1 ? one : many}`;
 
-// "7 days" or "24 h": the length of the chart's window.
-const windowWords = ({ from, to }: Window) => {
-  const span = to - from;
-  return span >= 2 * DAY_MS
+// "7 days" or "24 h": a length of time.
+const spanWords = (span: number) =>
+  span >= 2 * DAY_MS
     ? `${String(Math.round(span / DAY_MS))} days`
     : `${String(Math.round(span / HOUR_MS))} h`;
-};
+
+// The length of the chart's window.
+const windowWords = ({ from, to }: Window) => spanWords(to - from);
 
 // "38 GiB", or "3.2 GiB" below ten.
 const gib = (bytes: number) => {
@@ -123,6 +120,19 @@ const percentDomain = (values: readonly number[]): [number, number] => [
 
 const present = (points: readonly ChartPoint[]) =>
   points.flatMap((point) => (point.value === null ? [] : [point.value]));
+
+// Readings further apart than this are not one continuous line.
+const GAP_MS = 15 * MINUTE_MS;
+
+// The points with an empty one between any two more than GAP_MS apart, so the
+// line breaks there instead of crossing the time nothing was read.
+const withGaps = (points: readonly ChartPoint[]): ChartPoint[] =>
+  points.flatMap((point, index) => {
+    const before = points[index - 1];
+    return before !== undefined && point.t - before.t > GAP_MS
+      ? [{ t: (before.t + point.t) / 2, value: null }, point]
+      : [point];
+  });
 
 // What a chart of one series is made of, before it is set against limits.
 type Reading = {
@@ -167,8 +177,8 @@ const readingOf = (detail: ConditionDetail, series: ConditionSeries): Reading =>
   }
 };
 
-// The lines the System's limits draw for this kind, with the rule behind them
-// for the load kinds. Empty when the Hub has stored no limits.
+// The lines the Hub's stored limits draw for this kind, with the rule behind
+// them for the load kinds. Empty when the Hub has stored no limits.
 const limitLines = (
   detail: ConditionDetail,
   limits: ConditionLimitSet | undefined,
@@ -194,14 +204,14 @@ const limitLines = (
         limits.cpu;
       return {
         lines: [{ label: `${String(percent)}%`, level, value: percent }],
-        rule: `${String(percent)}% for ${String(noteMinutes)} of ${String(noteWindowMinutes)} min is a note, ${String(warningMinutes)} of ${String(warningWindowMinutes)} a warning`,
+        rule: `above ${String(percent)}% for ${String(noteMinutes)} of ${String(noteWindowMinutes)} min is a note, ${String(warningMinutes)} of ${String(warningWindowMinutes)} a warning`,
       };
     }
     case 'high_memory': {
       const { percent, warningMinutes, warningWindowMinutes } = limits.memory;
       return {
         lines: [{ label: `${String(percent)}%`, level, value: percent }],
-        rule: `${String(percent)}% for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
+        rule: `above ${String(percent)}% for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
       };
     }
     case 'hot_process': {
@@ -214,7 +224,7 @@ const limitLines = (
       } = limits.process;
       return {
         lines: [{ label: cores(limit), level, value: limit }],
-        rule: `${cores(limit)} for ${String(noteMinutes)} of ${String(noteWindowMinutes)} min is a note, ${String(warningMinutes)} of ${String(warningWindowMinutes)} a warning`,
+        rule: `above ${cores(limit)} for ${String(noteMinutes)} of ${String(noteWindowMinutes)} min is a note, ${String(warningMinutes)} of ${String(warningWindowMinutes)} a warning`,
       };
     }
     default: {
@@ -251,7 +261,7 @@ const chartOf = (
     domain,
     label: `${reading.left} over the last ${windowWords(window)}`,
     lines,
-    points: reading.points,
+    points: withGaps(reading.points),
     window,
   };
 };
@@ -280,7 +290,16 @@ const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
     detail.series?.kind === 'disk' && detail.clearedAt === undefined
       ? diskGrowth(detail.series.points)
       : undefined;
-  if (growth === undefined || growth.bytesPerDay <= 0 || growth.daysUntilFull === undefined) {
+  const readings = detail.series?.kind === 'disk' ? detail.series.points : [];
+  const first = readings[0];
+  const last = readings.at(-1);
+  if (
+    growth === undefined ||
+    first === undefined ||
+    last === undefined ||
+    growth.bytesPerDay < MIB ||
+    growth.daysUntilFull === undefined
+  ) {
     return undefined;
   }
   const perDay =
@@ -296,7 +315,7 @@ const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
   }
   return {
     estimate: true,
-    text: `+${perDay} a day over the last ${windowWords({ from: detail.from, to: detail.to })}. At that rate it is full ${fills}.`,
+    text: `+${perDay} a day over the last ${spanWords(last.t - first.t)}. At that rate it is full ${fills}.`,
   };
 };
 
@@ -329,7 +348,8 @@ const leadingOf = (detail: ConditionDetail): Leading => {
   }
   const reason = `${cleared ? 'when it cleared' : 'at the latest reading'}. ${detail.latestReason}`;
   if (series.kind === 'cores') {
-    return { ...lead, hero: { text: [reason], unit: 'of a core', value: latest.toFixed(2) } };
+    const unit = latest < 1 ? 'of a core' : 'cores';
+    return { ...lead, hero: { text: [reason], unit, value: latest.toFixed(2) } };
   }
   const what = detail.kind === 'high_memory' ? 'in use' : 'busy';
   return {
@@ -359,7 +379,7 @@ const diskFallback = (detail: ConditionDetail): Leading => {
 // Hub observed.
 const openHero = (detail: ConditionDetail, now: number): HeroView => {
   const cleared = detail.clearedAt !== undefined;
-  const { unit, value } = duration((detail.clearedAt ?? now) - detail.raisedAt);
+  const { unit, value } = duration(Math.max(0, (detail.clearedAt ?? now) - detail.raisedAt));
   const observed: Phrase =
     detail.attention === undefined
       ? [detail.latestReason]
@@ -371,35 +391,29 @@ const openHero = (detail: ConditionDetail, now: number): HeroView => {
   };
 };
 
-// The row for one transition, with the Hub's own words beneath. The limits
-// in force then may differ from the stored ones, so no row names a limit.
-const historyRow = (transition: ConditionTransition): HistoryRow => {
-  const { at, backfilled, reason } = transition;
-  const row = { at, backfilled };
-  if (transition.kind === 'cleared') {
-    return { ...row, label: 'Cleared', level: 'cleared', reason };
-  }
-  const { level } = transition;
-  if (
-    transition.kind === 'level_changed' &&
-    LEVEL_RANK[level] < LEVEL_RANK[transition.previousLevel]
-  ) {
-    return { ...row, label: `Eased to ${level}`, level, reason };
-  }
-  const label =
-    transition.kind === 'level_changed'
-      ? `${capitalize(transition.previousLevel)} to ${level}`
-      : `Raised at ${level}`;
-  return { ...row, label, level, reason };
-};
+// The row for one transition, with the Hub's own words beneath. No row names a
+// limit: the limits in force then may differ from the ones stored now.
+const historyRow = (transition: ConditionTransition): HistoryRow => ({
+  at: transition.at,
+  backfilled: transition.backfilled,
+  label: transitionLabel(transition),
+  level: transition.kind === 'cleared' ? 'cleared' : transition.level,
+  reason: transition.reason,
+});
 
-// "The warning clears below 78%." for a disk, whose limits have a margin the
-// reading must fall back past; undefined for kinds with no such margin.
+// What a disk's limits say about when it clears. The Hub eases a level once
+// used falls below its limit less the margin, and clears the Condition only
+// below the note limit less the margin; undefined for kinds with no such margin.
 const clearsBelow = (detail: ConditionDetail): string | undefined => {
   const disk = detail.kind === 'low_disk' ? detail.limits?.disk : undefined;
-  return disk === undefined
-    ? undefined
-    : `The ${detail.level} clears below ${String(disk[detail.level] - disk.hysteresis)}%.`;
+  if (disk === undefined) {
+    return undefined;
+  }
+  const clears = String(disk.note - disk.hysteresis);
+  if (detail.level === 'note') {
+    return `It clears below ${clears}%.`;
+  }
+  return `The ${detail.level} eases below ${String(disk[detail.level] - disk.hysteresis)}%, and the Condition clears below ${clears}%.`;
 };
 
 // The page for one Condition occurrence, at `now` (epoch milliseconds).

@@ -46,6 +46,11 @@ const windowOf = (kind: ConditionKind, to: number): Window => ({
   to,
 });
 
+// Readings whose bucket starts within the window; the first rollup bucket
+// fetched may begin before it.
+const withinWindow = <Row extends { bucket: Date }>(rows: Row[], { from }: Window) =>
+  rows.filter((row) => row.bucket.getTime() >= from);
+
 // Rollup buckets overlapping the window: the one holding `from` through the
 // one holding `to`.
 const bucketsIn = ({ from, to }: Window) => [new Date(bucketStart(from)), new Date(to)] as const;
@@ -63,7 +68,7 @@ const diskSeries = async (
   `;
   return {
     kind: 'disk',
-    points: rows.map((row) => ({
+    points: withinWindow(rows, window).map((row) => ({
       t: row.bucket.getTime(),
       totalBytes: row.total,
       usedBytes: row.used,
@@ -94,7 +99,10 @@ const percentSeries = async (
         `;
   return {
     kind: 'percent',
-    points: rows.map((row) => ({ percent: row.percent, t: row.bucket.getTime() })),
+    points: withinWindow(rows, window).map((row) => ({
+      percent: row.percent,
+      t: row.bucket.getTime(),
+    })),
   };
 };
 
@@ -117,7 +125,7 @@ const coresSeries = async (
     CROSS JOIN LATERAL jsonb_array_elements(s.processes->'top') e
     WHERE s.system = ${system} AND s.t >= ${first} AND s.t <= ${last}
       AND s.processes->>'bootId' = ${identity.bootId}
-      AND (e->>'pid')::int = ${identity.pid}
+      AND (e->>'pid')::bigint = ${identity.pid}
       AND e->>'start' = ${identity.start}
       AND e->>'name' = ${identity.name}
     GROUP BY 1
@@ -125,7 +133,10 @@ const coresSeries = async (
   `;
   return {
     kind: 'cores',
-    points: rows.map((row) => ({ cores: row.cores, t: row.bucket.getTime() })),
+    points: withinWindow(rows, window).map((row) => ({
+      cores: row.cores,
+      t: row.bucket.getTime(),
+    })),
   };
 };
 
@@ -176,7 +187,7 @@ const readOpenAttention = async (
 };
 
 // One Condition occurrence of a System, with its Timeline of transitions, the
-// evidence and next steps while it is open, the limits it was judged by, and
+// evidence and next steps while it is open, the limits the Hub judges by now, and
 // the readings around it. Undefined when the System has no such occurrence.
 // Read-only.
 export const readConditionDetail = async (
@@ -198,7 +209,7 @@ export const readConditionDetail = async (
     readConditionTransitions(sql, [row]),
     readLimits(sql, name),
     readSeries(sql, { kind, subject: row.subject, system: name, window }),
-    clearedAt === undefined ? readOpenAttention(sql, { id, name, now }) : undefined,
+    clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
   ]);
   return {
     attention,

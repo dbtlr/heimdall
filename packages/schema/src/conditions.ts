@@ -15,7 +15,7 @@ export type ConditionTransition = {
   reason: string;
 } & ({ kind: 'raised' | 'cleared' } | { kind: 'level_changed'; previousLevel: ConditionLevel });
 
-// The limits the Hub judged a System's Conditions by: the fleet's limits with
+// The limits the Hub judges a System's Conditions by now: the fleet's limits with
 // that System's overrides merged in, as the Hub stores them in
 // condition_limits. Percentages are 0 to 100; durations are minutes or days.
 export type ConditionLimitSet = {

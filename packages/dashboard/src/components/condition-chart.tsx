@@ -1,7 +1,7 @@
 import { Area, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from 'recharts';
 
 import type { ChartView } from '../lib/condition-detail.ts';
-import { LEVEL_STROKE } from './condition-colors.ts';
+import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { ChartContainer } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
 
