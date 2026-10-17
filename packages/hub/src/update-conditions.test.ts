@@ -439,6 +439,27 @@ test('a package recovering while others remain changes only the Condition reason
   expect(after?.latest_reason).toBe('1 APT package is out of date.');
 });
 
+test('stale, failed, or metadata-less checks never clear a source that still has packages', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [wget])]);
+  await evaluate(h);
+  const [before] = await rows(h, 'true');
+  h.clock.now += 9 * DAY;
+  await evaluate(h);
+  await send(h, [
+    { ...manager(h.clock.now), result: { kind: 'unavailable', reason: 'permission denied' } },
+  ]);
+  await evaluate(h);
+  h.clock.now += 1;
+  await send(h, [
+    { ...manager(h.clock.now), result: { kind: 'available', metadataAt: null, updates: [] } },
+  ]);
+  await evaluate(h);
+  const [after, ...others] = await rows(h, 'true');
+  expect(others).toEqual([]);
+  expect(after).toMatchObject({ actions: ['raised'], cleared_at: null, id: before?.id });
+});
+
 test('the Condition clears when the last package recovers', async () => {
   await using h = await startHub();
   await send(h, [manager(NOW, [wget, curl])]);
