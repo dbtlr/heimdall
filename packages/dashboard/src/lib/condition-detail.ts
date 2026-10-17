@@ -124,9 +124,16 @@ const present = (points: readonly ChartPoint[]) =>
 // Readings further apart than this are not one continuous line.
 const GAP_MS = 15 * MINUTE_MS;
 
+// Whether a reading has no reading beside it, so a line cannot show it and the
+// chart draws it as a dot instead.
+export const isLone = (points: readonly ChartPoint[], index: number): boolean =>
+  points[index]?.value !== null &&
+  points[index - 1]?.value == null &&
+  points[index + 1]?.value == null;
+
 // The points with an empty one between any two more than GAP_MS apart, so the
 // line breaks there instead of crossing the time nothing was read.
-const withGaps = (points: readonly ChartPoint[]): ChartPoint[] =>
+export const withGaps = (points: readonly ChartPoint[]): ChartPoint[] =>
   points.flatMap((point, index) => {
     const before = points[index - 1];
     return before !== undefined && point.t - before.t > GAP_MS

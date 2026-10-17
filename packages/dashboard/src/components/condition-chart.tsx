@@ -1,6 +1,7 @@
 import { Area, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from 'recharts';
 
 import type { ChartView } from '../lib/condition-detail.ts';
+import { isLone } from '../lib/condition-detail.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { ChartContainer } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
@@ -11,7 +12,8 @@ const CONFIG = { value: { color: 'var(--foreground)', label: 'Reading' } } satis
 
 // One reading over the window as a line with a faint area, and a dashed line
 // across it at each limit that sets a level, in that level's colour. The x axis
-// is the window, so a gap in the readings is a break in the line.
+// is the window, so a gap in the readings is a break in the line, and a
+// reading alone between gaps is a dot.
 export function ConditionChart({ chart }: { chart: ChartView }) {
   return (
     <ChartContainer
@@ -56,7 +58,13 @@ export function ConditionChart({ chart }: { chart: ChartView }) {
         <Line
           activeDot={false}
           dataKey="value"
-          dot={false}
+          dot={({ cx, cy, index }: { cx?: number; cy?: number; index: number }) =>
+            isLone(chart.points, index) && cx !== undefined && cy !== undefined ? (
+              <circle cx={cx} cy={cy} fill="#d5dbea" key={index} r={2} />
+            ) : (
+              <g key={index} />
+            )
+          }
           isAnimationActive={false}
           stroke="#d5dbea"
           strokeWidth={1.5}

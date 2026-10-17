@@ -5,7 +5,7 @@ import type { ConditionLimitSet } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
 import type { ConditionDetail, ConditionSeries } from '../server/condition-detail-types.ts';
-import { conditionDetailView } from './condition-detail.ts';
+import { conditionDetailView, isLone, withGaps } from './condition-detail.ts';
 import { phraseText } from './phrase.ts';
 
 const GIB = 1024 ** 3;
@@ -533,4 +533,15 @@ test('a hot process rule says above its cores limit', () => {
   expect(view.chart?.captions.rule).toBe(
     'above 0.5 core for 30 of 60 min is a note, 120 of 240 a warning',
   );
+});
+
+test('a reading with no neighbour on either side is marked lone, so the chart still draws it', () => {
+  const points = [
+    { t: NOW - 40 * MINUTE, value: 1 },
+    { t: NOW - 20 * MINUTE, value: 2 },
+    { t: NOW - 15 * MINUTE, value: 3 },
+    { t: NOW + MINUTE, value: 4 },
+  ];
+  const lone = withGaps(points).map((point, index, all) => isLone(all, index));
+  expect(lone).toEqual([true, false, false, false, false, true]);
 });
