@@ -248,6 +248,23 @@ test('a section that could not read the working directory keeps the directory an
   });
 });
 
+// A path of `bytes` bytes that does not compress, as an index would store it.
+const longPath = (bytes: number) => {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
+  const random = crypto.getRandomValues(new Uint8Array(bytes - 1));
+  return `/${Array.from(random, (byte) => chars[byte % chars.length]).join('')}`;
+};
+
+test('a working directory and repository as long as a Report allows are stored', async () => {
+  await using h = await startHub();
+  const cwd = longPath(4096);
+  const repository = longPath(4096);
+
+  await pushProcesses(h, 'laptop-1', [running({ cwd, repository })]);
+
+  expect((await rowsOf(h, 'laptop-1'))[0]).toMatchObject({ cwd, repository });
+});
+
 test('a pid reused within seconds of an ended process is stored as another process beside the one held', async () => {
   await using h = await startHub();
   await pushProcesses(h, 'laptop-1', [running()]);

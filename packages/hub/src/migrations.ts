@@ -1973,12 +1973,15 @@ export const MIGRATIONS: readonly Migration[] = [
     // Collector read it from the System's repository pointer files, and the
     // Session's own `repository`: that of the most recent process on its
     // System, in the directory the Session ended in, that reported one. The
-    // process views carry the process's own. `CREATE OR REPLACE VIEW` appends
+    // process views carry the process's own. The lookup's index keys on a hash
+    // of the working directory, as transcript paths do, so a path of any length
+    // the Report allows fits a btree entry. `CREATE OR REPLACE VIEW` appends
     // the column and keeps the views built on these; it resets a view's
     // options, so the barrier is set again.
     sql: `
       ALTER TABLE harness_processes ADD COLUMN repository text;
-      CREATE INDEX harness_processes_by_cwd ON harness_processes (system, cwd, started_at DESC)
+      CREATE INDEX harness_processes_by_cwd
+        ON harness_processes (system, md5(cwd), started_at DESC)
         WHERE repository IS NOT NULL;
 
       CREATE OR REPLACE VIEW insight.sessions WITH (security_barrier = true) AS
@@ -1987,8 +1990,8 @@ export const MIGRATIONS: readonly Migration[] = [
              s.first_harness_version, s.last_harness_version, s.parser_version,
              (
                SELECT p.repository FROM harness_processes p
-               WHERE p.system = s.system AND p.cwd = COALESCE(s.last_cwd, s.first_cwd)
-                 AND p.repository IS NOT NULL
+               WHERE p.system = s.system AND md5(p.cwd) = md5(COALESCE(s.last_cwd, s.first_cwd))
+                 AND p.cwd = COALESCE(s.last_cwd, s.first_cwd) AND p.repository IS NOT NULL
                ORDER BY p.started_at DESC, p.id DESC
                LIMIT 1
              ) AS repository

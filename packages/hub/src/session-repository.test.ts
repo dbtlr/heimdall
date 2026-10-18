@@ -113,3 +113,21 @@ test('the Harness process view carries the repository its process reported', asy
     { pid: 101, repository: null },
   ]);
 });
+
+test('of processes that started at the same time, the one the Hub stored last names the repository', async () => {
+  await using db = await database();
+  await addProcess(db.sql, { cwd: LINKED, end: 600, pid: 100, repository: '/work/old', start: 0 });
+  await addProcess(db.sql, { cwd: LINKED, end: 600, pid: 101, repository: MAIN, start: 0 });
+  await addSession(db.sql, { firstCwd: LINKED, id: 's1', requests: [3, 200] });
+
+  expect(await repositories(db.sql)).toEqual({ s1: MAIN });
+});
+
+test('a Session in a working directory as long as a Report allows takes its repository', async () => {
+  await using db = await database();
+  const cwd = `/${'d'.repeat(4095)}`;
+  await addProcess(db.sql, { cwd, end: 600, pid: 100, repository: MAIN, start: 0 });
+  await addSession(db.sql, { firstCwd: cwd, id: 's1', requests: [3, 200] });
+
+  expect(await repositories(db.sql)).toEqual({ s1: MAIN });
+});
