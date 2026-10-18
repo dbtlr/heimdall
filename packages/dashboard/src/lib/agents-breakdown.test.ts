@@ -74,10 +74,34 @@ test('rows group Sessions by project, System, or Harness, highest priced cost fi
   expect(tied.map((row) => row.name)).toEqual(['a', 'b']);
 });
 
-test('a Session with no project groups under No working directory', () => {
-  const rows = breakdownRows(overviewOf([session({ project: undefined })]), 'project');
-  expect(rows.map(({ key, name }) => [key, name])).toEqual([
-    ['No working directory', 'No working directory'],
+test('a Session with no project groups under an empty key labelled No working directory, apart from a project of that name', () => {
+  const rows = breakdownRows(
+    overviewOf([
+      session({ pricedCostUsd: 5, project: undefined, sessionId: 'none' }),
+      session({ pricedCostUsd: 3, project: 'No working directory', sessionId: 'named' }),
+    ]),
+    'project',
+  );
+  expect(rows.map(({ key, name, pricedCostUsd }) => [key, name, pricedCostUsd])).toEqual([
+    ['', 'No working directory', 5],
+    ['No working directory', 'No working directory', 3],
+  ]);
+});
+
+test('an empty model groups under an empty key labelled Unknown model, apart from a model of that name', () => {
+  const rows = breakdownRows(
+    overviewOf(
+      [],
+      [
+        { model: '', pricedCostUsd: 5, requests: 1, unpricedRequests: 0 },
+        { model: 'Unknown model', pricedCostUsd: 3, requests: 1, unpricedRequests: 0 },
+      ],
+    ),
+    'model',
+  );
+  expect(rows.map(({ key, name, pricedCostUsd }) => [key, name, pricedCostUsd])).toEqual([
+    ['', 'Unknown model', 5],
+    ['Unknown model', 'Unknown model', 3],
   ]);
 });
 
@@ -113,12 +137,12 @@ test('only the top five rows of a dimension take series colors and the rest shar
     'var(--chart-3)',
     'var(--chart-4)',
     'var(--chart-5)',
-    'var(--muted-foreground)',
-    'var(--muted-foreground)',
+    'var(--chart-other)',
+    'var(--chart-other)',
   ]);
   const segments = barSegments(rows);
   expect(segments).toHaveLength(6);
-  expect(segments.at(-1)?.color).toBe('var(--muted-foreground)');
+  expect(segments.at(-1)?.color).toBe('var(--chart-other)');
   expect(segments.at(-1)?.percent).toBeCloseTo(((5 + 4) / 49) * 100);
   expect(segments.reduce((sum, segment) => sum + segment.percent, 0)).toBeCloseTo(100);
 });
@@ -173,14 +197,17 @@ test('a pick keeps the Sessions in that project, on that System, of that Harness
   const sessions = [
     session({ harness: 'codex', models: ['m-a', 'm-b'], project: undefined, sessionId: 'a' }),
     session({ models: ['m-b'], project: 'heimdall', sessionId: 'b', system: 'laptop' }),
+    session({ models: [''], project: 'other', sessionId: 'c', system: 'desk' }),
   ];
   const ids = (by: Parameters<typeof sessionsIn>[1], key: string) =>
     sessionsIn(sessions, by, key).map((one) => one.sessionId);
   expect(ids('project', 'heimdall')).toEqual(['b']);
-  expect(ids('project', 'No working directory')).toEqual(['a']);
+  expect(ids('project', '')).toEqual(['a']);
+  expect(ids('project', 'No working directory')).toEqual([]);
   expect(ids('system', 'laptop')).toEqual(['b']);
   expect(ids('model', 'm-b')).toEqual(['a', 'b']);
   expect(ids('model', 'm-a')).toEqual(['a']);
+  expect(ids('model', '')).toEqual(['c']);
   expect(ids('harness', 'codex')).toEqual(['a']);
   expect(ids('harness', 'nothing')).toEqual([]);
 });

@@ -1,4 +1,4 @@
-import { NO_PROJECT } from '../server/agents-overview-types.ts';
+import { NO_KEY, NO_PROJECT, UNKNOWN_MODEL } from '../server/agents-overview-types.ts';
 import type {
   AgentsBreakdown,
   AgentsOverview,
@@ -11,7 +11,9 @@ import { harnessColor, harnessName } from './lane.ts';
 export const VISIBLE_ROWS = 8;
 
 const SERIES_COLORS = [1, 2, 3, 4, 5].map((index) => `var(--chart-${String(index)})`);
-const NEUTRAL_COLOR = 'var(--muted-foreground)';
+// Rows past the fifth share one neutral, which is no series color so the
+// merged rest never reads as a row of its own.
+const NEUTRAL_COLOR = 'var(--chart-other)';
 
 // `exact` has a list price for every request, `at-least` is a lower bound,
 // and `none` has no priced request at all.
@@ -30,8 +32,21 @@ type Group = PeriodTotals & { key: string; name: string };
 
 const keyOf = (by: Exclude<AgentsBreakdown, 'model'>, session: AgentsSession): string =>
   by === 'project'
-    ? (session.project ?? NO_PROJECT)
+    ? (session.project ?? NO_KEY)
     : session[by === 'system' ? 'system' : 'harness'];
+
+const NONE_LABELS: Partial<Record<AgentsBreakdown, string>> = {
+  model: UNKNOWN_MODEL,
+  project: NO_PROJECT,
+};
+
+// What a row shows for its key: the empty key gets a label, and a Harness its name.
+const nameOf = (by: AgentsBreakdown, key: string): string => {
+  if (by === 'harness') {
+    return harnessName(key);
+  }
+  return key === NO_KEY ? (NONE_LABELS[by] ?? key) : key;
+};
 
 const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSession[]) => {
   const groups = new Map<string, Group>();
@@ -39,7 +54,7 @@ const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSe
     const key = keyOf(by, session);
     const group = groups.get(key) ?? {
       key,
-      name: by === 'harness' ? harnessName(key) : key,
+      name: nameOf(by, key),
       pricedCostUsd: 0,
       requests: 0,
       unpricedRequests: 0,
@@ -55,7 +70,7 @@ const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSe
 // Model totals come from the overview: a Session can use several models.
 const groupsOf = (overview: AgentsOverview, by: AgentsBreakdown): Group[] =>
   by === 'model'
-    ? overview.models.map(({ model, ...totals }) => ({ ...totals, key: model, name: model }))
+    ? overview.models.map(({ model, ...totals }) => ({ ...totals, key: model, name: nameOf('model', model) }))
     : groupSessions(by, overview.sessions);
 
 const pricingOf = (group: PeriodTotals): RowPricing => {

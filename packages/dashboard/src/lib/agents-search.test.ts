@@ -30,9 +30,10 @@ test('the cost breakdown dimension falls back to project, and a pick must be a s
   expect(agentsSearch({ by: 'branch' }).by).toBe('project');
   expect(agentsSearch({ by: ['model'] }).by).toBe('project');
   expect(agentsSearch({ pick: 'heimdall' }).pick).toBe('heimdall');
-  expect(agentsSearch({ pick: 'x'.repeat(512) }).pick).toBe('x'.repeat(512));
-  expect(agentsSearch({ pick: 'x'.repeat(513) }).pick).toBeUndefined();
-  expect(agentsSearch({ pick: '' }).pick).toBeUndefined();
+  expect(agentsSearch({ pick: 'x'.repeat(4096) }).pick).toBe('x'.repeat(4096));
+  expect(agentsSearch({ pick: 'x'.repeat(4097) }).pick).toBeUndefined();
+  // The empty key is the row for Sessions with no working directory or requests with no model.
+  expect(agentsSearch({ pick: '' }).pick).toBe('');
   expect(agentsSearch({ pick: 7 }).pick).toBeUndefined();
 });
 

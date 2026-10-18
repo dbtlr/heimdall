@@ -15,9 +15,10 @@ const validZone = (zone: unknown): string | undefined => {
   }
 };
 
-// A breakdown row's key: a project, System, model, or Harness name.
+// A breakdown row's key: a project, System, model, or Harness name, or the
+// empty key of Sessions with no working directory and requests with no model.
 const validPick = (pick: unknown): string | undefined =>
-  typeof pick === 'string' && pick.length > 0 && pick.length <= 512 ? pick : undefined;
+  typeof pick === 'string' && pick.length <= 4096 ? pick : undefined;
 
 export const agentsSearch = (search: Record<string, unknown>) => ({
   by: AGENTS_BREAKDOWNS.find((by) => by === search.by) ?? 'project',

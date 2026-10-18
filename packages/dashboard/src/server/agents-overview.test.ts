@@ -297,3 +297,57 @@ test('model totals of a whole Session are the stored ones, and a Session crossin
   ]);
   expect(result.totals.pricedCostUsd).toBe(12);
 });
+
+test('a request with an empty model totals under the empty model, not under a name', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, { id: 'blank', model: '', requests: [-50, -40], system: 'server-1' });
+
+  const result = await view(h);
+
+  expect(result.models).toEqual([
+    { model: '', pricedCostUsd: 0, requests: 2, unpricedRequests: 2 },
+  ]);
+  expect(result.sessions[0]?.models).toEqual(['']);
+});
+
+test('stored model totals of a Session the period lists no longer are not counted', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    harness: 'codex',
+    id: 'kept',
+    model: 'test-model',
+    requests: [-50],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'switched',
+    model: 'old-model',
+    requests: [-60, -40],
+    system: 'server-1',
+  });
+  // A newer parser leaves the Session unlisted until its requests are parsed
+  // again, while its stored model totals stay until the refresh.
+  await h.db.sql`UPDATE current_parsers SET version = version + 1 WHERE harness = 'claude-code'`;
+
+  const result = await view(h);
+
+  expect(result.sessions.map((one) => one.sessionId)).toEqual(['kept']);
+  expect(result.models.map((one) => one.model)).toEqual(['test-model']);
+  expect(result.models.reduce((sum, one) => sum + one.requests, 0)).toBe(result.totals.requests);
+});
+
+// The database orders model ids by its locale (a-model before B-model); the
+// list is sorted by code unit, as it is wherever it is read.
+test("a Session's models are listed in code unit order, not in the order the database returns them", async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'mixed',
+    model: 'a-model',
+    requests: [-300, { at: -200, model: 'B-model' }, { at: -100, model: 'c-model' }],
+    system: 'server-1',
+  });
+
+  const result = await view(h);
+
+  expect(result.sessions[0]?.models).toEqual(['B-model', 'a-model', 'c-model']);
+});

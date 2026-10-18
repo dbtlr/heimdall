@@ -1,6 +1,5 @@
 import type { SQL } from 'bun';
 
-import { UNKNOWN_MODEL } from './agents-overview-types.ts';
 import type {
   AgentsOverview,
   AgentsRange,
@@ -56,7 +55,7 @@ const readModelRows = (
     HAVING max(ended_at) >= ${from} AND min(started_at) <= ${to}
   )
   SELECT k.harness, k.system, k.source, k.session_id,
-         coalesce(nullif(t.model, ''), ${UNKNOWN_MODEL}) AS model,
+         t.model,
          t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
          t.unpriced_requests::float8 AS unpriced_requests
   FROM spans k
