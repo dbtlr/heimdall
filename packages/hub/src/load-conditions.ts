@@ -41,6 +41,7 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
     // Judgment changes must invalidate stored fingerprints on upgrade.
     const fingerprint = JSON.stringify({
       cpu: selected.cpu,
+      macMemory: 'pressure',
       memory: selected.memory,
       old: now - newest.t.getTime() > OLD_EVIDENCE_MS,
     });

@@ -145,20 +145,22 @@ test('CPU boundaries escalate the same occurrence and short spikes or equality d
 });
 
 test.each([
-  ['linux', undefined, true],
-  ['darwin', 'normal', false],
-  ['darwin', 'warning', true],
-  ['darwin', 'critical', true],
-  ['darwin', undefined, false],
-] satisfies ['linux' | 'darwin', VitalsSample['memory']['pressure'], boolean][])(
-  '%s memory with pressure %s only warns on supported high-memory evidence',
-  async (platform, pressure, expected) => {
+  ['linux', 950, undefined, true],
+  ['linux', 750, undefined, false],
+  ['darwin', 950, 'normal', false],
+  ['darwin', 500, 'normal', false],
+  ['darwin', 750, 'warning', true],
+  ['darwin', 950, 'critical', true],
+  ['darwin', 950, undefined, false],
+] satisfies ['linux' | 'darwin', number, VitalsSample['memory']['pressure'], boolean][])(
+  '%s memory %d of 1000 used with pressure %s only warns on supported high-memory evidence',
+  async (platform, usedBytes, pressure, expected) => {
     await using h = await startHub();
     const samples = readings(NOW, 30, () => 10).map((row) =>
       Object.assign(row, {
         memory: {
           totalBytes: 1000,
-          usedBytes: 950,
+          usedBytes,
           ...(pressure === undefined ? {} : { pressure }),
         },
       }),
@@ -461,7 +463,21 @@ test('an entirely old backlog records separate completed episodes without creati
   expect(rows).toEqual([{ n: 2, open: 0 }]);
 });
 
-test('macOS usage below a configured limit is known recovery evidence without pressure', async () => {
+test('macOS memory pressure warns at any usage and names pressure in its reason', async () => {
+  await using h = await startHub();
+  const samples = readings(NOW, 30, () => 10);
+  for (const row of samples) {
+    row.memory = { pressure: 'warning', totalBytes: 1000, usedBytes: 500 };
+  }
+  await send(h, samples, 'darwin');
+  const [warning] = await evaluate(h);
+  expect(warning?.level).toBe('warning');
+  expect(warning?.kind === 'high_memory' ? warning.reason : undefined).toMatch(
+    /^Memory pressure for 30 minutes in the 60 minutes ending /u,
+  );
+});
+
+test('macOS memory without pressure is unknown evidence at any usage', async () => {
   await using h = await startHub();
   const high = readings(NOW, 30, () => 10);
   for (const row of high) {
@@ -474,7 +490,7 @@ test('macOS usage below a configured limit is known recovery evidence without pr
     row.memory = { totalBytes: 1000, usedBytes: 100 };
   }
   await send(h, low, 'darwin');
-  expect((await evaluate(h))[0]?.evidence).toBe('current');
+  expect((await evaluate(h))[0]?.evidence).toBe('unknown');
 });
 
 test('a fresh sample after sleep holds CPU level while its latest interval is unknown', async () => {

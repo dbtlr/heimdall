@@ -181,6 +181,14 @@ const readLimits = async (sql: SQL, system: string): Promise<ConditionLimitSet |
   return (rows.find((row) => row.system === system) ?? rows[0])?.limits;
 };
 
+// The platform the System's Collector last reported, if any.
+const readPlatform = async (sql: SQL, system: string): Promise<string | undefined> => {
+  const [row]: { collector_platform: string | null }[] = await sql`
+    SELECT collector_platform FROM systems WHERE name = ${system}
+  `;
+  return row?.collector_platform ?? undefined;
+};
+
 // The packages the Hub holds as pending in the package source an open
 // pending_update Condition names, security updates first.
 const readPackages = async (
@@ -242,7 +250,7 @@ export const readConditionDetail = async (
   const kind = conditionKind(row.kind);
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
-  const [transitions, limits, series, attention, packages] = await Promise.all([
+  const [transitions, limits, series, attention, packages, platform] = await Promise.all([
     readConditionTransitions(sql, [row]),
     readLimits(sql, name),
     readSeries(sql, { kind, subject: row.subject, system: name, window }),
@@ -250,6 +258,7 @@ export const readConditionDetail = async (
     clearedAt === undefined && kind === 'pending_update'
       ? readPackages(sql, { subject: row.subject, system: name })
       : undefined,
+    readPlatform(sql, name),
   ]);
   return {
     attention,
@@ -262,6 +271,7 @@ export const readConditionDetail = async (
     level: ConditionLevelSchema.parse(row.level),
     limits,
     packages,
+    platform,
     raisedAt: row.raised_at.getTime(),
     series,
     subject: row.subject,

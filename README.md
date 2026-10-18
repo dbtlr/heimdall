@@ -136,7 +136,7 @@ note = 60
 
 Unspecified System limits inherit the fleet's limits. Restart the Hub after changing them. On start, the Hub stores the limits it judges by in its database, so the dashboard can draw them. Invalid limits stop startup before database access. [Condition levels and history](docs/spec.md#condition-levels-and-history) describes levels, migration, and recovery rules.
 
-CPU and memory Conditions count busy time across sustained work or recurring bursts. CPU above 90% for 30 minutes within an hour raises a note, and 120 minutes within four hours raises a warning. Memory above 90% for 30 minutes within an hour raises a warning. macOS also requires warning or critical memory pressure. These defaults are configurable:
+CPU and memory Conditions count busy time across sustained work or recurring bursts. CPU above 90% for 30 minutes within an hour raises a note, and 120 minutes within four hours raises a warning. Memory above 90% for 30 minutes within an hour raises a warning. On macOS, memory counts as high whenever the kernel reports warning or critical memory pressure, at any use, so the memory percentage applies to Linux only. These defaults are configurable:
 
 ```toml
 [conditions.cpu]

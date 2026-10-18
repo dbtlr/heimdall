@@ -60,16 +60,15 @@ export class Window {
   }
 }
 
+// Linux judges use against the limit. macOS judges the kernel's pressure
+// alone, which live readings showed rising well below any usage limit.
 const memoryBusy = (row: Reading, percent: number): boolean | undefined => {
   const total = Number(row.memory_total_bytes);
   if (total === 0) {
     return undefined;
   }
-  if ((100 * Number(row.memory_used_bytes)) / total <= percent) {
-    return false;
-  }
   if (row.collector_platform === 'linux') {
-    return true;
+    return (100 * Number(row.memory_used_bytes)) / total > percent;
   }
   if (row.collector_platform !== 'darwin' || row.memory_pressure == null) {
     return undefined;
@@ -168,13 +167,13 @@ export const chooseWindowRule = <Rule extends { level: Level; duration: number; 
 
 export const reasonFor = (rule: ReturnType<typeof rulesFor>[number], row: Reading) => {
   const name = rule.kind === 'high_cpu' ? 'CPU' : 'Memory';
-  const pressure =
+  const busy =
     rule.kind === 'high_memory' && row.collector_platform === 'darwin'
-      ? ' with memory pressure'
-      : '';
+      ? 'Memory pressure'
+      : `${name} above ${String(rule.percent)}%`;
   if (rule.window.busy < rule.duration) {
     const unknownMinutes = Math.max(0, rule.window.minutes - rule.window.known / 60_000);
     return `${name} load remains uncertain: ${String(Math.round(unknownMinutes * 10) / 10)} minutes are unknown in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}; the ${rule.level} limit could still be met.`;
   }
-  return `${name} above ${String(rule.percent)}%${pressure} for ${String(Math.round((rule.window.busy / 60_000) * 10) / 10)} minutes in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}.`;
+  return `${busy} for ${String(Math.round((rule.window.busy / 60_000) * 10) / 10)} minutes in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}.`;
 };

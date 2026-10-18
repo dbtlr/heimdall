@@ -232,6 +232,13 @@ const limitLines = (
     }
     case 'high_memory': {
       const { percent, warningMinutes, warningWindowMinutes } = limits.memory;
+      // macOS judges kernel memory pressure, so no usage limit applies.
+      if (detail.platform === 'darwin') {
+        return {
+          lines: [],
+          rule: `memory pressure for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
+        };
+      }
       return {
         lines: [{ label: `${String(percent)}%`, level, value: percent }],
         rule: `above ${String(percent)}% for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
@@ -272,7 +279,7 @@ const chartOf = (
   const range = isCores
     ? `0 to ${String(domain[1])} cores`
     : `${String(domain[0])} to ${String(domain[1])}%`;
-  let right = `${range}; limits unknown`;
+  let right = detail.limits === undefined ? `${range}; limits unknown` : range;
   if (lines.length > 0) {
     right =
       detail.kind === 'low_disk'

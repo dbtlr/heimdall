@@ -82,6 +82,7 @@ const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail =
   level: 'warning',
   limits: LIMITS,
   packages: undefined,
+  platform: 'linux',
   raisedAt: NOW - 3 * DAY,
   series: diskSeries(),
   subject: '/',
@@ -269,6 +270,7 @@ const cpuDetail = (): ConditionDetail => ({
   level: 'note',
   limits: LIMITS,
   packages: undefined,
+  platform: 'linux',
   raisedAt: NOW - 2 * HOUR,
   series: percentSeries(93),
   subject: '',
@@ -317,6 +319,23 @@ test('high memory charts used memory against its one warning limit', () => {
   expect(view.chart?.captions.rule).toBe('above 90% for 30 of 60 min is a warning');
   expect(view.chart?.lines).toEqual([{ label: '90%', level: 'warning', value: 90 }]);
   expect(view.hero.unit).toBe('%');
+});
+
+test('macOS high memory states the pressure rule and draws no usage line', () => {
+  const view = conditionDetailView(
+    {
+      ...cpuDetail(),
+      attention: { ...cpuDetail().attention, kind: 'high_memory' } as Attention,
+      kind: 'high_memory',
+      level: 'warning',
+      platform: 'darwin',
+    },
+    NOW,
+  );
+  expect(view.chart?.captions.left).toBe('Memory used, last 24 h');
+  expect(view.chart?.captions.right).toBe('85 to 100%');
+  expect(view.chart?.captions.rule).toBe('memory pressure for 30 of 60 min is a warning');
+  expect(view.chart?.lines).toEqual([]);
 });
 
 test('a hot process leads with the cores it used and charts them against the cores limit', () => {
@@ -382,6 +401,7 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
   level: 'note',
   limits: LIMITS,
   packages: undefined,
+  platform: 'linux',
   raisedAt: NOW - 3 * DAY,
   series: undefined,
   subject: '["apt","system"]',

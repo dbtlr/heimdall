@@ -145,7 +145,7 @@ The Hub counts measured busy time within rolling windows, so sustained work and 
 | --- | --- | --- | --- | --- |
 | High CPU (`high_cpu`) | Above 90% | 30 minutes | 60 minutes | note |
 | High CPU (`high_cpu`) | Above 90% | 120 minutes | 240 minutes | warning |
-| High memory (`high_memory`) | Above 90% | 30 minutes | 60 minutes | warning |
+| High memory (`high_memory`) | Above 90% on Linux; pressure on macOS | 30 minutes | 60 minutes | warning |
 
 Both Conditions have an empty subject and name their resource in their reason.
 The CPU percentage covers all cores. Equality with the percentage limit does not count as busy.
@@ -160,12 +160,13 @@ Missing intervals remain unknown. Sleep, a reboot, and Collector silence never c
 Windows end at sample time, not the Hub's wall clock. Samples more than five minutes ahead of the Hub are left for a later pass.
 
 Linux memory use subtracts the kernel's `MemAvailable`, so reclaimable cache is already excluded.
-On macOS, high use also requires `memory.pressure` of `warning` or `critical` on the same sample.
+On macOS, a sample is busy when its `memory.pressure` is `warning` or `critical`, whatever its use; the memory percentage applies to Linux only.
+Live macOS readings showed pressure rising at 70 to 80% used, so a usage limit would hide it.
 The Collector reads `kern.memorystatus_vm_pressure_level` with a read-only `sysctl` query, mapping 1 to `normal`, 2 to `warning`, and 4 to `critical`.
 These values follow [XNU's pressure notification mapping](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c).
 The optional field keeps Report schema version 1.
 An unavailable probe or an unknown pressure value omits pressure and preserves the other Vitals.
-A macOS sample above the usage limit without pressure is unknown for this judgment. A normal pressure reading is known non-busy evidence.
+A macOS sample without pressure is unknown for this judgment. A normal pressure reading is known non-busy evidence.
 A zero memory total is unknown. Older samples without a recorded platform cannot establish high memory use.
 
 Raising and escalation require enough measured busy time.
@@ -192,6 +193,7 @@ Only raw samples carry pressure. Existing Vitals rollups and insight views keep 
 Load limits live in `[conditions.cpu]` and `[conditions.memory]` in `hub.toml`, or the equivalent JSON objects.
 CPU fields default to `percent = 90`, `noteMinutes = 30`, `noteWindowMinutes = 60`, `warningMinutes = 120`, and `warningWindowMinutes = 240`.
 Memory fields default to `percent = 90`, `warningMinutes = 30`, and `warningWindowMinutes = 60`.
+These defaults were checked against 12 days of live readings from four Systems: they raised one CPU note, during several hours of sustained build work, and no warnings.
 `[conditions.systems.<System>.cpu]` and `[conditions.systems.<System>.memory]` override individual fields, inheriting the rest.
 Percentages must be greater than zero and at most 100. Durations and windows range from 0.25 to 18,720 minutes, within raw retention.
 Each duration must fit its window. CPU's note duration must be less than its warning duration, and its note window cannot exceed its warning window.
