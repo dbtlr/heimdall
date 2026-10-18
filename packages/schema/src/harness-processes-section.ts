@@ -26,9 +26,9 @@ export const MAX_CWD_BYTES = 4096;
 //
 // `startedAt` and `pid` identify the process, since a pid is reused. `cwd` is
 // null when the Collector could not read it. `repository` is the absolute path
-// of the main worktree of the repository that working directory belongs to, and
-// null when it belongs to none; an older Collector omits it (ADR-0004). `cpuMicros` is the CPU time the
-// process and its descendants have used, and `rssBytes` their resident memory
+// of the repository that working directory belongs to (ADR-0019), and null
+// when it belongs to none; an older Collector omits it (ADR-0004). `cpuMicros`
+// is the CPU time the process and its descendants have used, and `rssBytes` their resident memory
 // at `lastSeenAt`; `peakRssBytes` is the highest `rssBytes` the Collector saw.
 // A process still running has no `endedAt`. One that ended has the time of the
 // tick that found it gone.

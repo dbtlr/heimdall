@@ -145,8 +145,8 @@ export type StoredHarnessProcess = {
   lastSeenAt: number;
   peakRssBytes: number;
   pid: number;
-  // The main worktree of the repository the working directory belongs to, when
-  // the Collector resolved one.
+  // The repository the working directory belongs to, when the Collector
+  // resolved one (ADR-0019).
   repository: string | null;
   startedAt: number;
 };

@@ -31,7 +31,7 @@ const repositories = async (sql: SQL) => {
   return Object.fromEntries(rows.map((row) => [row.session_id, row.repository]));
 };
 
-test('a Session in a linked worktree takes the main worktree of the repository its process reported', async () => {
+test('a Session in a linked worktree takes the repository its process reported', async () => {
   await using db = await database();
   await addProcess(db.sql, { cwd: LINKED, end: 600, pid: 100, repository: MAIN, start: 0 });
   await addSession(db.sql, { firstCwd: LINKED, id: 's1', requests: [3, 200] });

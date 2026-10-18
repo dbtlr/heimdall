@@ -70,7 +70,7 @@ One main conversation in a Harness, started by a person or a program, together w
 _Avoid_: conversation (as a synonym), thread, run (a job's run)
 
 **project**:
-The repository a Session's working directory belongs to, named by the folder of the repository's main worktree, so Sessions in every linked worktree of one repository share a project. A working directory outside any repository names itself, by its last folder. The Collector resolves the repository for the Harness processes it observes, and the Hub gives a Session the repository of the process that ran in its working directory ([ADR-0019](decisions/0019-a-sessions-project-is-the-git-repository-of-its-working-directory.md)).
+The git repository a Session's working directory belongs to, named by the repository's folder, so Sessions in every linked worktree of one repository share a project. A working directory outside any repository names itself, by its last folder. The Collector resolves the repository for the Harness processes it observes, and the Hub gives a Session the repository of the most recently started Harness process on its System that was seen in the same working directory and reported one, whether or not that process ran the Session ([ADR-0019](decisions/0019-a-sessions-project-is-the-git-repository-of-its-working-directory.md)).
 _Avoid_: repo, workspace
 
 **subagent**:

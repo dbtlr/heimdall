@@ -15,7 +15,7 @@ modified: 2026-10-11
 
 The Harnesses Heimdall supports first write their transcripts as JSONL files that only grow:
 
-- Claude Code writes `<config dir>/projects/<project>/<session>.jsonl`, with subagent and workflow transcripts, small `.meta.json` files, and large tool outputs in `tool-results/` beside it. Subagent transcripts are about three quarters of its volume. It deletes old files after 30 days by default.
+- Claude Code writes `<config dir>/projects/<encoded cwd>/<session>.jsonl`, with subagent and workflow transcripts, small `.meta.json` files, and large tool outputs in `tool-results/` beside it. Subagent transcripts are about three quarters of its volume. It deletes old files after 30 days by default.
 - Codex writes `<home>/sessions/<year>/<month>/<day>/rollout-<time>-<id>.jsonl`. A forked Session's file repeats its parent's history.
 - Either Harness can be pointed at another directory, so one System can hold several profiles of the same Harness.
 
