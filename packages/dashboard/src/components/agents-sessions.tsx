@@ -5,12 +5,38 @@ import { formatCost } from '../lib/time.ts';
 import type { AgentsSession } from '../server/agents-overview-types.ts';
 import { DateTime } from './date-time.tsx';
 
-export function AgentsSessions({ now, sessions }: { now: number; sessions: AgentsSession[] }) {
+// `picked` names the breakdown row the list is filtered to, if any.
+export function AgentsSessions({
+  now,
+  picked,
+  sessions,
+}: {
+  now: number;
+  picked?: string | undefined;
+  sessions: AgentsSession[];
+}) {
   return (
     <section aria-labelledby="agents-sessions-heading">
       <h2 className="mb-3 text-base font-semibold" id="agents-sessions-heading">
         Most expensive first
       </h2>
+      {picked !== undefined && (
+        <p className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Sessions in</span>
+          <Link
+            aria-label={`Show all Sessions, not only those in ${picked}`}
+            className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full border border-chart-1 bg-accent px-3 break-all"
+            resetScroll={false}
+            search={(previous) => ({ ...previous, pick: undefined })}
+            to="."
+          >
+            {picked}
+            <svg aria-hidden="true" height="9" viewBox="0 0 10 10" width="9">
+              <path d="M1 1l8 8M9 1l-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </Link>
+        </p>
+      )}
       {sessions.some((session) => session.unpricedRequests > 0) && (
         <p className="mb-3 text-sm text-muted-foreground">
           Unpriced requests may change this order.

@@ -7,6 +7,7 @@ import { AgentsSessions } from '../components/agents-sessions.tsx';
 import { AgentsSummary } from '../components/agents-summary.tsx';
 import { AppHeader } from '../components/app-header.tsx';
 import { DateTime } from '../components/date-time.tsx';
+import { breakdownRows, sessionsIn } from '../lib/agents-breakdown.ts';
 import { agentsSearch } from '../lib/agents-search.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { getAgentsOverview } from '../server/agents-overview-fn.ts';
@@ -19,8 +20,9 @@ export const Route = createFileRoute('/agents')({
       ? undefined
       : getAgentsOverview({ data: { range: deps.range, timeZone: deps.zone } }),
   loaderDeps: ({ search }) => ({ range: search.range, zone: search.zone }),
-  validateSearch: (search: { range?: unknown; zone?: unknown } & SearchSchemaInput) =>
-    agentsSearch(search),
+  validateSearch: (
+    search: { by?: unknown; pick?: unknown; range?: unknown; zone?: unknown } & SearchSchemaInput,
+  ) => agentsSearch(search),
 });
 
 function Agents() {
@@ -40,6 +42,10 @@ function Agents() {
   const ready = timeZone !== undefined && overview?.timeZone === timeZone;
   const recent = ready
     ? overview.sessions.filter((session) => session.activeRecently).length
+    : undefined;
+  // A pick that matches no row is ignored.
+  const picked = ready
+    ? breakdownRows(overview, search.by).find((row) => row.key === search.pick)
     : undefined;
   return (
     <>
@@ -71,7 +77,7 @@ function Agents() {
                   : `Requests in the last ${overview.range === '7d' ? '7' : '30'} days`}
                 , to <DateTime at={overview.now} format="clock" />.
               </p>
-              <AgentsSummary overview={overview} />
+              <AgentsSummary by={search.by} overview={overview} pick={picked?.key} />
               <p className="mt-3 text-sm text-muted-foreground">
                 Token usage at API list prices, including subagents. Subscription charges may
                 differ.
@@ -80,7 +86,15 @@ function Agents() {
                 Session amounts include only requests in this period.
               </p>
             </div>
-            <AgentsSessions now={overview.now} sessions={overview.sessions} />
+            <AgentsSessions
+              now={overview.now}
+              picked={picked?.name}
+              sessions={
+                picked === undefined
+                  ? overview.sessions
+                  : sessionsIn(overview.sessions, search.by, picked.key)
+              }
+            />
           </div>
         )}
       </main>

@@ -1,25 +1,17 @@
-import { harnessColor, harnessName } from '../lib/lane.ts';
+import { breakdownRows } from '../lib/agents-breakdown.ts';
 import { formatCost } from '../lib/time.ts';
-import type { AgentsOverview, PeriodTotals } from '../server/agents-overview-types.ts';
+import type { AgentsBreakdown, AgentsOverview } from '../server/agents-overview-types.ts';
+import { AgentsBreakdownList, AgentsBreakdownSwitch } from './agents-breakdown.tsx';
 
-const byHarness = (sessions: AgentsOverview['sessions']) => {
-  const totals = new Map<string, PeriodTotals>();
-  for (const session of sessions) {
-    const total = totals.get(session.harness) ?? {
-      pricedCostUsd: 0,
-      requests: 0,
-      unpricedRequests: 0,
-    };
-    total.pricedCostUsd += session.pricedCostUsd;
-    total.requests += session.requests;
-    total.unpricedRequests += session.unpricedRequests;
-    totals.set(session.harness, total);
-  }
-  return [...totals].toSorted(([, left], [, right]) => right.pricedCostUsd - left.pricedCostUsd);
-};
-
-export function AgentsSummary({ overview }: { overview: AgentsOverview }) {
-  const harnesses = byHarness(overview.sessions);
+export function AgentsSummary({
+  by,
+  overview,
+  pick,
+}: {
+  by: AgentsBreakdown;
+  overview: AgentsOverview;
+  pick: string | undefined;
+}) {
   const systems = new Set(overview.sessions.map((session) => session.system)).size;
   const { totals } = overview;
   return (
@@ -46,36 +38,8 @@ export function AgentsSummary({ overview }: { overview: AgentsOverview }) {
           </>
         )}
       </p>
-      <div
-        aria-label="Priced request cost by Harness"
-        className="mt-4 flex h-2.5 overflow-hidden rounded-full bg-accent"
-        role="img"
-      >
-        {harnesses.map(([harness, total]) => (
-          <span
-            key={harness}
-            style={{
-              background: harnessColor(harness),
-              width: `${String(totals.pricedCostUsd === 0 ? 0 : (total.pricedCostUsd / totals.pricedCostUsd) * 100)}%`,
-            }}
-          />
-        ))}
-      </div>
-      <ul className="mt-2.5 flex flex-wrap justify-between gap-x-6 gap-y-2 text-sm">
-        {harnesses.map(([harness, total]) => (
-          <li className="flex items-baseline gap-2" key={harness}>
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: harnessColor(harness) }}
-            />
-            <span className="text-muted-foreground">{harnessName(harness)}</span>
-            <b className="font-semibold">
-              {total.unpricedRequests > 0 ? 'At least ' : ''}
-              {formatCost(total.pricedCostUsd)}
-            </b>
-          </li>
-        ))}
-      </ul>
+      <AgentsBreakdownSwitch current={by} />
+      <AgentsBreakdownList by={by} pick={pick} rows={breakdownRows(overview, by)} />
     </section>
   );
 }
