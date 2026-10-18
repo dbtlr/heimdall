@@ -1,4 +1,3 @@
-import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -10,27 +9,8 @@ const GITDIR_PREFIX = 'gitdir:';
 // is one line naming a path, and a path is at most MAX_CWD_BYTES.
 const MAX_POINTER_BYTES = 4096;
 
-// The first MAX_POINTER_BYTES of a regular file, or null when the path is not
-// one or cannot be read. It opens without blocking and checks what it opened,
-// so a FIFO or a device in a pointer's place is never read.
-const readPointer = async (path: string) => {
-  try {
-    const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    try {
-      if (!(await handle.stat()).isFile()) {
-        return null;
-      }
-      const buffer = Buffer.alloc(MAX_POINTER_BYTES);
-      const { bytesRead } = await handle.read(buffer, 0, MAX_POINTER_BYTES, 0);
-      return buffer.toString('utf8', 0, bytesRead);
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return null;
-  }
-};
-
+// What a path is: a directory, a regular file, something else such as a FIFO
+// or a device, or null when it is missing or cannot be read.
 const kindOf = async (path: string) => {
   try {
     const info = await stat(path);
@@ -38,6 +18,27 @@ const kindOf = async (path: string) => {
       return 'directory';
     }
     return info.isFile() ? 'file' : 'other';
+  } catch {
+    return null;
+  }
+};
+
+// The first MAX_POINTER_BYTES of a pointer file, or null when it is not a
+// regular file or cannot be read. Only a regular file is opened, so a FIFO in a
+// pointer's place cannot block the tick, and a large file is never read whole.
+const readPointer = async (path: string) => {
+  if ((await kindOf(path)) !== 'file') {
+    return null;
+  }
+  try {
+    const handle = await open(path, 'r');
+    try {
+      const buffer = Buffer.alloc(MAX_POINTER_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, MAX_POINTER_BYTES, 0);
+      return buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      await handle.close();
+    }
   } catch {
     return null;
   }
@@ -89,8 +90,7 @@ const repositoryHere = async (dir: string) => {
   if (kind === null) {
     return undefined;
   }
-  const pointer = await readPointer(entry);
-  return pointer === null ? null : repositoryOfPointer(dir, pointer);
+  return repositoryOfPointer(dir, (await readPointer(entry)) ?? '');
 };
 
 const repositoryAbove = async (dir: string): Promise<string | null> => {
