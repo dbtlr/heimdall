@@ -1,4 +1,4 @@
-import { parseUpdateSubject } from '@heimdall/schema';
+import { CLOCK_SKEW_SUBJECTS, parseUpdateSubject } from '@heimdall/schema';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type {
@@ -102,10 +102,10 @@ export const subjectText = (item: Attention): string => {
     }
     case 'reports_rejected':
     case 'system_stale':
-    case 'clock_skew':
     case 'reboot_required': {
       return '';
     }
+    case 'clock_skew':
     case 'hot_process':
     case 'pending_update': {
       return conditionSubject(item);
@@ -393,10 +393,17 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
       );
     }
     case 'clock_skew': {
-      return evidence(same('Clock agrees with the Hub'), {
-        long: [item.reason],
-        short: [truncate(item.reason, SHORT_LIMIT)],
-      });
+      return evidence(
+        same(
+          item.subject === CLOCK_SKEW_SUBJECTS.hub
+            ? "The Hub's clock agrees with the other Systems"
+            : 'Clock agrees with the Hub',
+        ),
+        {
+          long: [item.reason],
+          short: [truncate(item.reason, SHORT_LIMIT)],
+        },
+      );
     }
     case 'reports_rejected': {
       return evidence(same('Reports the Hub accepts'), {
@@ -463,7 +470,7 @@ export const evidenceNote = (item: Attention, now: number): Phrase | undefined =
       : [
           `No ${thing} has arrived since `,
           whenAt(item.checkedAt, now),
-          ', over 2 hours ago, so this may be out of date.',
+          `, over ${item.kind === 'clock_skew' ? '10 minutes' : '2 hours'} ago, so this may be out of date.`,
         ];
   }
   if (item.kind === 'drift' && item.state === undefined) {
@@ -634,16 +641,13 @@ const updateSteps = (item: { subject: string; system: string }) => {
   }
 };
 
-// Whether the skew's reason blames the Hub's clock rather than the System's.
-const blamesHub = (reason: string) => reason.startsWith("The Hub's clock");
-
 const clockSteps = (item: Attention & { kind: 'clock_skew' }) => {
   const system = step(
     'Check its time sync',
     `On ${item.system}, check that time synchronization (NTP) is running and that the clock reads the correct time.`,
     ['date -u'],
   );
-  if (!blamesHub(item.reason)) {
+  if (item.subject !== CLOCK_SKEW_SUBJECTS.hub) {
     return { short: 'Check its time sync', steps: [system] };
   }
   return {

@@ -111,10 +111,14 @@ const evaluate = (
   return evaluateClockConditions(h.db.sql, () => h.clock.now, thresholds);
 };
 
-const open = (h: Hub): Promise<{ level: string; reason: string; system: string }[]> =>
+// Subject '' says the System's own clock disagrees with the Hub's; 'hub' says
+// the Hub's clock is wrong.
+const open = (
+  h: Hub,
+): Promise<{ level: string; reason: string; subject: string; system: string }[]> =>
   h.db.sql`
-    SELECT system, level, latest_reason AS reason FROM conditions
-    WHERE kind = 'clock_skew' AND subject = '' AND cleared_at IS NULL ORDER BY system
+    SELECT system, level, latest_reason AS reason, subject FROM conditions
+    WHERE kind = 'clock_skew' AND cleared_at IS NULL ORDER BY system, subject
   `;
 
 // The level of each transition of a System's clock skew Condition, in order.
@@ -143,7 +147,7 @@ describe('clock skew', () => {
 
     await evaluate(h, T);
 
-    expect(await open(h)).toEqual([{ level, reason, system: 'laptop-1' }]);
+    expect(await open(h)).toEqual([{ level, reason, subject: '', system: 'laptop-1' }]);
   });
 
   test('an offset under the note limit raises nothing', async () => {
@@ -250,6 +254,7 @@ describe('clock skew', () => {
         {
           level: 'warning',
           reason: "The Hub's clock is 3 min 2 s ahead of 3 other Systems.",
+          subject: 'hub',
           system: 'laptop-1',
         },
       ]);
@@ -292,6 +297,31 @@ describe('clock skew', () => {
       expect(await settle(T + 2 * MINUTE, 200 * SECOND)).toEqual(['laptop-1:warning']);
     });
 
+    test('moves a System between its own clock and the Hub clock as the blame comes and goes', async () => {
+      await using h = await startHub();
+      await pair(h, 'a-box', 'b-box');
+      const settle = async (time: number, laptop: number, others: number) => {
+        await send(h, time, laptop, 'laptop-1');
+        for (const system of ['server-1', 'a-box', 'b-box']) {
+          // oxlint-disable-next-line no-await-in-loop -- one Report at a time.
+          await send(h, time, others, system);
+        }
+        await evaluate(h, time);
+        return (await open(h)).map((row) => `${row.system}:${row.subject}:${row.level}`);
+      };
+
+      // laptop-1 is a note on its own clock, and stays one inside the hysteresis band.
+      expect(await settle(T, 40 * SECOND, 0)).toEqual(['laptop-1::note']);
+      expect(await settle(T + MINUTE, 28 * SECOND, 0)).toEqual(['laptop-1::note']);
+      // The others agree on a skew: the Hub's clock is blamed on laptop-1, which
+      // therefore no longer holds its own.
+      expect(await settle(T + 2 * MINUTE, 28 * SECOND, -182 * SECOND)).toEqual([
+        'laptop-1:hub:warning',
+      ]);
+      // The blame ends: the Hub identity clears, and a System under its note limit holds none.
+      expect(await settle(T + 3 * MINUTE, 28 * SECOND, 0)).toEqual([]);
+    });
+
     test('judges each System alone when only one other System is skewed', async () => {
       await using h = await startHub();
       await send(h, T, SECOND, 'laptop-1');
@@ -303,6 +333,7 @@ describe('clock skew', () => {
         {
           level: 'warning',
           reason: "Its clock is 3 min 2 s behind the Hub's.",
+          subject: '',
           system: 'server-1',
         },
       ]);

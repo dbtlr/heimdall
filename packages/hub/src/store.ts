@@ -402,9 +402,10 @@ const storeChecks = async (
 };
 
 // The kinds of Condition the Hub derives. A job Condition's subject is the
-// job's name, a low disk Condition's the mount, a stale System Condition's is
-// empty, as are clock skew, high CPU and memory, a Drift Condition's the file's
-// path, and a Service down Condition's the Service's name.
+// job's name, a low disk Condition's the mount, a Drift Condition's the file's
+// path, and a Service down Condition's the Service's name. A clock skew
+// Condition's is empty for the System's own clock and `hub` for the Hub's. The
+// rest are empty: stale System, high CPU and memory.
 export type ConditionKind =
   | 'clock_skew'
   | 'pending_update'

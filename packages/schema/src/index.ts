@@ -1,4 +1,10 @@
-export { ConditionLevelSchema, FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS } from './conditions.ts';
+export {
+  CLOCK_OFFSET_FRESH_MS,
+  CLOCK_SKEW_SUBJECTS,
+  ConditionLevelSchema,
+  FUTURE_SAMPLE_TOLERANCE_MS,
+  OLD_EVIDENCE_MS,
+} from './conditions.ts';
 export type { ConditionLevel, ConditionLimitSet, ConditionTransition } from './conditions.ts';
 export { storableText } from './values.ts';
 export {

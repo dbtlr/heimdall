@@ -1,4 +1,5 @@
 import {
+  CLOCK_OFFSET_FRESH_MS,
   ConditionLevelSchema,
   FUTURE_SAMPLE_TOLERANCE_MS,
   UpdateManagerSchema,
@@ -324,10 +325,13 @@ const conditionFound = (
     };
   }
   if (kind === 'clock_skew') {
-    // The Hub judges the offset of the latest Report, so that is the evidence.
+    // The Hub judges only an offset it recorded within CLOCK_OFFSET_FRESH_MS.
     return {
       checkedAt: held.clockOffsetAt,
-      evidence: evidenceAt(held.clockOffsetAt, now, 'current'),
+      evidence:
+        held.clockOffsetAt !== undefined && now - held.clockOffsetAt <= CLOCK_OFFSET_FRESH_MS
+          ? 'current'
+          : 'old',
       facts: { kind, reason: row.latest_reason },
     };
   }

@@ -818,7 +818,8 @@ test('update attention reads actual observations independently of fresh Vitals a
 
 test.each([
   { evidence: 'current', label: 'a recent Report', receivedAt: NOW - MINUTE },
-  { evidence: 'old', label: 'no Report for over 2 hours', receivedAt: NOW - 3 * HOUR },
+  { evidence: 'current', label: 'a Report at the 10-minute edge', receivedAt: NOW - 10 * MINUTE },
+  { evidence: 'old', label: 'no Report for over 10 minutes', receivedAt: NOW - 10 * MINUTE - 1000 },
 ] as const)(
   'clock skew attention rests on when the Hub last judged the clock offset: $label',
   async ({ evidence, receivedAt }) => {

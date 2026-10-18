@@ -162,6 +162,10 @@ export const flushQueue = async ({
     ): Report => ({
       ...base,
       ...carried,
+      // Stamped when the Report is built to be sent, since the Hub reads it
+      // against its clock on arrival to judge the System's clock: a resend
+      // must not carry the first request's time.
+      sentAt: Math.trunc(now()),
     });
     const { checks, harnesses, harnessProcesses, records, runs, updates } = waiting;
     const withSections = reportWith({

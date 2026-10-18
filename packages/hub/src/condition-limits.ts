@@ -1,5 +1,5 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
-import type { ConditionLimitSet } from '@heimdall/schema';
+import type { ConditionLevel, ConditionLimitSet } from '@heimdall/schema';
 import { configHome, readConfigSection } from '@heimdall/service';
 import type { SQL } from 'bun';
 import { z } from 'zod';
@@ -86,43 +86,46 @@ const section = z.strictObject({
   updates: partialUpdates.optional(),
 });
 
+// The limits of a measurement graded into levels: each level starts at its
+// limit, and a lower level recovers a hysteresis below it.
+export type Bands = { alert: number; hysteresis: number; note: number; warning: number };
+
+const LEVELS = ['note', 'warning', 'alert'] as const;
+
+// The level `value` falls in, or undefined when it falls in none. Escalation is
+// immediate and includes equality. A level at or below the `current` one holds
+// until `value` is a hysteresis below its limit, so a drop can skip levels or
+// clear outright.
+export const gradedLevel = (
+  value: number,
+  bands: Bands,
+  current: ConditionLevel | undefined,
+): ConditionLevel | undefined => {
+  const currentRank = current === undefined ? -1 : LEVELS.indexOf(current);
+  return LEVELS.toReversed().find(
+    (level) =>
+      value >= bands[level] ||
+      (LEVELS.indexOf(level) <= currentRank && value >= bands[level] - bands.hysteresis),
+  );
+};
+
 // Non-overlapping recovery bands make a lower level's meaning independent
 // of which higher level preceded it. A note must always be able to clear.
-const validateDisk = (limits: DiskLimits, name: string): DiskLimits => {
+// `top` ends the message's ordering, such as `alert <= 100`.
+const validateBands = <T extends Bands>(limits: T, name: string, top: string): T => {
   const { note, warning, alert, hysteresis } = limits;
   if (note <= hysteresis || warning - note <= hysteresis || alert - warning <= hysteresis) {
     throw new Error(
-      `${name}: require 0 < hysteresis < note < warning < alert <= 100, with each level gap greater than hysteresis.`,
+      `${name}: require 0 < hysteresis < note < warning < ${top}, with each level gap greater than hysteresis.`,
     );
   }
   return limits;
 };
 
-// The same bands as disk: a note must always be able to clear.
-const validateClock = (limits: ClockLimits, name: string): ClockLimits => {
-  const { note, warning, alert, hysteresis } = limits;
-  if (note <= hysteresis || warning - note <= hysteresis || alert - warning <= hysteresis) {
-    throw new Error(
-      `${name}: require 0 < hysteresis < note < warning < alert, with each level gap greater than hysteresis.`,
-    );
-  }
-  return limits;
-};
+type PartialBands = { [K in keyof Bands]?: Bands[K] | undefined };
 
-const mergeClock = (
-  defaults: ClockLimits,
-  override: z.infer<typeof partialClock> | undefined,
-): ClockLimits => ({
-  alert: override?.alert ?? defaults.alert,
-  hysteresis: override?.hysteresis ?? defaults.hysteresis,
-  note: override?.note ?? defaults.note,
-  warning: override?.warning ?? defaults.warning,
-});
-
-const mergeDisk = (
-  defaults: DiskLimits,
-  override: z.infer<typeof partialDisk> | undefined,
-): DiskLimits => ({
+const mergeBands = <T extends Bands>(defaults: T, override: PartialBands | undefined): T => ({
+  ...defaults,
   alert: override?.alert ?? defaults.alert,
   hysteresis: override?.hysteresis ?? defaults.hysteresis,
   note: override?.note ?? defaults.note,
@@ -188,9 +191,9 @@ export const parseConditionLimits = (value: unknown) => {
       );
     }
     return {
-      clock: validateClock(mergeClock(defaults.clock, override.clock), `${name}.clock`),
+      clock: validateBands(mergeBands(defaults.clock, override.clock), `${name}.clock`, 'alert'),
       cpu,
-      disk: validateDisk(mergeDisk(defaults.disk, override.disk), `${name}.disk`),
+      disk: validateBands(mergeBands(defaults.disk, override.disk), `${name}.disk`, 'alert <= 100'),
       memory,
       process,
       updates: {
