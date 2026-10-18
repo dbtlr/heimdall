@@ -199,6 +199,7 @@ test('a host probe that has not settled does not hold back a successful Harness 
         throw new Error('must reuse snapshot');
       },
     },
+    repositoryOf: async () => null,
     sampler: { sample: () => host.promise },
     uptimeSeconds: () => 100,
   });

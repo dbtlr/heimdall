@@ -54,6 +54,7 @@ export const createProcessSampling = ({
   names = memoryProcessNames(),
   now,
   reader,
+  repositoryOf,
   sampler,
   uptimeSeconds,
 }: {
@@ -63,10 +64,11 @@ export const createProcessSampling = ({
   names?: ProcessNameStore;
   now: () => number;
   reader: ProcessSamplingReader;
+  repositoryOf?: (cwd: string) => Promise<string | null>;
   sampler: Sampler;
   uptimeSeconds: () => number;
 }) => {
-  const tracker = createProcessTracker({ now, reader });
+  const tracker = createProcessTracker({ now, reader, ...(repositoryOf && { repositoryOf }) });
   const observer = createProcessObserver({ names });
   const readHost = boundedHostRead(sampler, hostTimeoutMs);
   let failing = false;

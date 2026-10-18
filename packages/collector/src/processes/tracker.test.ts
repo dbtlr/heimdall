@@ -21,8 +21,14 @@ const entry = (pid: number, over: Partial<ProcessEntry> = {}): ProcessEntry => (
 
 // A process table a test changes between ticks, with working directories.
 const host = () => {
-  const state: { cwds: Record<number, string | null>; table: ProcessEntry[]; failing?: boolean } = {
+  const state: {
+    cwds: Record<number, string | null>;
+    failing?: boolean;
+    repositories: Record<string, string>;
+    table: ProcessEntry[];
+  } = {
     cwds: {},
+    repositories: {},
     table: [],
   };
   const reader: ProcessReader = {
@@ -30,12 +36,18 @@ const host = () => {
     table: () =>
       state.failing ? Promise.reject(new Error('ps failed')) : Promise.resolve(state.table),
   };
+  const lookups: (string | null)[] = [];
+  const repositoryOf = (cwd: string | null) => {
+    lookups.push(cwd);
+    return Promise.resolve(cwd === null ? null : (state.repositories[cwd] ?? null));
+  };
   let now = BASE + 100_000;
-  const tracker = createProcessTracker({ now: () => now, reader });
+  const tracker = createProcessTracker({ now: () => now, reader, repositoryOf });
   return {
     advance: (ms: number) => {
       now += ms;
     },
+    lookups,
     now: () => now,
     state,
     tracker,
@@ -74,11 +86,63 @@ test('a running Harness root is reported with its start, working directory, tota
         lastSeenAt: h.now(),
         peakRssBytes: 150,
         pid: 10,
+        repository: null,
         rssBytes: 150,
         startedAt: BASE + 10_000,
       },
     ],
   });
+});
+
+test('a Harness root reports the repository its working directory belongs to', async () => {
+  const h = host();
+  h.state.table = [entry(10)];
+  h.state.cwds[10] = '/trees/feature';
+  h.state.repositories['/trees/feature'] = '/work/project';
+
+  await h.tracker.tick();
+
+  expect(h.tracker.latest()?.processes[0]?.repository).toBe('/work/project');
+});
+
+test('the repository is looked up once for a working directory, however many ticks see it', async () => {
+  const h = host();
+  h.state.table = [entry(10)];
+  h.state.cwds[10] = '/trees/feature';
+  await h.tracker.tick();
+  await h.tracker.tick();
+  await h.tracker.tick();
+
+  expect(h.lookups).toEqual(['/trees/feature']);
+});
+
+test('a process that changes directory is looked up again, and one whose directory is unreadable keeps its repository', async () => {
+  const h = host();
+  h.state.table = [entry(10)];
+  h.state.cwds[10] = '/trees/a';
+  h.state.repositories['/trees/a'] = '/work/a';
+  h.state.repositories['/trees/b'] = '/work/b';
+  await h.tracker.tick();
+  h.state.cwds[10] = '/trees/b';
+  await h.tracker.tick();
+  const moved = h.tracker.latest()?.processes[0]?.repository;
+  h.state.cwds[10] = null;
+  await h.tracker.tick();
+
+  expect(moved).toBe('/work/b');
+  expect(h.tracker.latest()?.processes[0]?.repository).toBe('/work/b');
+});
+
+test('a process that ended keeps the repository it was last seen in', async () => {
+  const h = host();
+  h.state.table = [entry(10)];
+  h.state.cwds[10] = '/trees/a';
+  h.state.repositories['/trees/a'] = '/work/a';
+  await h.tracker.tick();
+  h.state.table = [];
+  await h.tracker.tick();
+
+  expect(h.tracker.latest()?.processes[0]?.repository).toBe('/work/a');
 });
 
 test('later ticks update the totals and keep the highest memory seen', async () => {
