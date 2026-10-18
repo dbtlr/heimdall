@@ -123,16 +123,17 @@ export const linkOf = (link: string): Link => {
   return link;
 };
 
-// A Session's project and branch: its last working directory's name and its
-// last branch, else its first.
+// A Session's project and branch: its repository's name, else its last working
+// directory's, and its last branch, else its first.
 const sessionPlace = (row: {
   first_cwd: string | null;
   first_git_branch: string | null;
   last_cwd: string | null;
   last_git_branch: string | null;
+  repository: string | null;
 }) => ({
   branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
-  project: projectOf(row.last_cwd ?? row.first_cwd),
+  project: projectOf(row.repository ?? row.last_cwd ?? row.first_cwd),
 });
 
 // Groups each Harness process's buckets into its series, in order of first bucket.
@@ -351,6 +352,7 @@ type SampleSessionRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   process_id: number;
+  repository: string | null;
 };
 
 type UnlinkedRow = {
@@ -361,6 +363,7 @@ type UnlinkedRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   link: string;
+  repository: string | null;
   session_id: string;
   source: string;
 };
@@ -433,7 +436,7 @@ export const readSample = async (
     // stretch's last request.
     sql`
       SELECT x.process_id::float8 AS process_id, x.session_id, s.first_cwd, s.last_cwd,
-             s.first_git_branch, s.last_git_branch
+             s.first_git_branch, s.last_git_branch, s.repository
       FROM (
         SELECT process_id, harness, system, source, session_id
         FROM insight.vitals_sessions WHERE system = ${name} AND t = ${t}
@@ -449,7 +452,7 @@ export const readSample = async (
     `,
     sql`
       SELECT st.harness, st.source, st.session_id, st.link, st.candidates::int AS candidates,
-             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository
       FROM insight.session_stretches st
       JOIN insight.sessions s
         ON (s.harness, s.system, s.source, s.session_id)

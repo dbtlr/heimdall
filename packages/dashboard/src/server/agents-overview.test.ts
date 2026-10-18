@@ -9,7 +9,7 @@ beforeAll(async () => {
   await using _h = await startHub();
 }, 60_000);
 
-const { addSession } = timeline(NOW);
+const { addProcess, addSession } = timeline(NOW);
 
 const start = async () => {
   const h = await startHub();
@@ -198,3 +198,35 @@ test.each(['7d', '30d'] as const)(
     expect(now - result.from).toBe(range === '7d' ? 604_800_000 : 2_592_000_000);
   },
 );
+
+test("a Session's project is the repository of its working directory, else the directory's name", async () => {
+  await using h = await start();
+  await addProcess(h.db.sql, {
+    cwd: '/srv/trees/feature',
+    end: -30,
+    pid: 10,
+    repository: '/srv/work/api',
+    start: -400,
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'in-worktree',
+    lastCwd: '/srv/trees/feature',
+    model: 'test-model',
+    requests: [-300, -60],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'unmatched',
+    lastCwd: '/srv/trees/other',
+    model: 'test-model',
+    requests: [-300, -60],
+    system: 'server-1',
+  });
+
+  const projects = Object.fromEntries(
+    (await view(h)).sessions.map((session) => [session.sessionId, session.project]),
+  );
+
+  expect(projects).toEqual({ 'in-worktree': 'api', unmatched: 'other' });
+});

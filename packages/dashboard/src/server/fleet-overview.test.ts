@@ -310,6 +310,27 @@ describe('stretches', () => {
     ]);
   });
 
+  test("names a stretch's project for the repository its working directory belongs to", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addProcess(h.db.sql, {
+      cwd: '/srv/trees/feature',
+      end: -1000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -4000,
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/trees/feature',
+      requests: [-3500, -2000],
+      system: 'server-1',
+    });
+
+    expect((await lane(h, 'server-1')).stretches[0]?.project).toBe('api');
+  });
+
   test("gives each of a Session's stretches the Session's whole cost, keeping sources apart", async () => {
     await using h = await startHub();
     await hear(h, 'server-1');

@@ -634,6 +634,29 @@ describe('readSample', () => {
     });
   });
 
+  test("names a process's Session by the repository its working directory belongs to", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, {
+      cwd: '/srv/trees/feature',
+      end: -1000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -4000,
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/trees/feature',
+      requests: [-3500, -2500, -2490, -2000],
+      system: 'server-1',
+    });
+
+    const { processes } = await inspect(h, NOW - 2490_000);
+
+    expect(processes[0]?.sessions).toEqual([{ branch: undefined, project: 'api' }]);
+  });
+
   test('lists a Session working then that no single process is linked to', async () => {
     await using h = await startHub();
     await scene(h);

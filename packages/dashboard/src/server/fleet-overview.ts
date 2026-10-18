@@ -132,6 +132,7 @@ export type StretchRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   link: string;
+  repository: string | null;
   session_id: string;
   source: string;
   started_at: Date;
@@ -168,7 +169,7 @@ const toStretch = (row: StretchRow): Stretch => {
     endedAt: row.ended_at.getTime(),
     harness: row.harness,
     link: row.link,
-    project: projectOf(row.last_cwd ?? row.first_cwd),
+    project: projectOf(row.repository ?? row.last_cwd ?? row.first_cwd),
     sessionId: row.session_id,
     startedAt: row.started_at.getTime(),
   };
@@ -203,7 +204,8 @@ export const readStretches = (
       AND ended_at >= ${new Date(from)}
   ), sessions AS MATERIALIZED (
     SELECT k.harness, k.system, k.source, k.session_id,
-           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
+           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
+           t.cost_usd
     FROM (SELECT DISTINCT harness, system, source, session_id FROM st) k
     JOIN insight.sessions s
       ON (s.harness, s.system, s.source, s.session_id)
@@ -217,7 +219,7 @@ export const readStretches = (
     ) t
   )
   SELECT st.system, st.harness, st.source, st.session_id, st.started_at, st.ended_at, st.link,
-         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.cost_usd
+         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository, s.cost_usd
   FROM st
   JOIN sessions s USING (harness, system, source, session_id)
   ORDER BY st.system, st.started_at
