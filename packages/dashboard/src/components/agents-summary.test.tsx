@@ -145,7 +145,8 @@ test('switching clears a pick and tapping a row sets or clears it', async () => 
   expect(html).toMatch(/<a(?=[^>]*href="[^"]*by=model)(?![^>]*pick=)[^>]*>Model<\/a>/u);
   // The picked row is outlined and links to the list without its pick.
   expect(html).toMatch(/<a(?=[^>]*outline-chart-1)(?![^>]*pick=)[^>]*title="heimdall"/u);
-  expect(html).toMatch(/<a(?![^>]*outline-chart-1)[^>]*pick=No\+working\+directory[^>]*>/u);
+  // The row of Sessions with no working directory picks the empty key.
+  expect(html).toMatch(/<a(?![^>]*outline-chart-1)[^>]*pick=(?:&amp;|")[^>]*>/u);
 });
 
 test('project rows name Sessions with no working directory and rank by cost', async () => {
@@ -164,22 +165,43 @@ test('model rows use per-request totals, and a model with no list price shows no
   expect(html).not.toContain('0%');
 });
 
-test('more than eight rows fold the rest into a count', async () => {
-  const sessions = Array.from({ length: 10 }, (_, index) => ({
+const nineProjects = (): AgentsOverview => ({
+  ...overview,
+  sessions: Array.from({ length: 9 }, (_, index) => ({
     ...overview.sessions[1]!,
     pricedCostUsd: 20 - index,
     project: `project-${String(index)}`,
     sessionId: `s${String(index)}`,
-  }));
-  const html = await renderSummary({ by: 'project', value: { ...overview, sessions } });
+  })),
+});
+
+test('more than eight rows fold the rest into a count', async () => {
+  const html = await renderSummary({ by: 'project', value: nineProjects() });
   expect(html).toContain('project-7');
   expect(html).not.toContain('project-8');
-  expect(html).toContain('2 more');
-  const picked = await renderSummary({
-    by: 'project',
-    pick: 'project-9',
-    value: { ...overview, sessions },
+  expect(html).toContain('1 more');
+});
+
+test('a picked row past the fold opens the list, and one at the fold boundary does not', async () => {
+  // Row index 8 is the first folded row, and 7 the last shown one.
+  const first = await renderSummary({ by: 'project', pick: 'project-8', value: nineProjects() });
+  expect(first).toContain('project-8');
+  expect(first).not.toContain('1 more');
+  const last = await renderSummary({ by: 'project', pick: 'project-7', value: nineProjects() });
+  expect(last).not.toContain('project-8');
+  expect(last).toContain('1 more');
+});
+
+test('a note under the list says unpriced requests may change the shares and the order', async () => {
+  const note = 'Unpriced requests may change these shares and this order.';
+  expect(await renderSummary({ by: 'harness' })).toContain(note);
+  expect(await renderSummary({ by: 'model' })).toContain(note);
+  const priced = await renderSummary({
+    value: {
+      ...overview,
+      models: overview.models.filter((one) => one.unpricedRequests === 0),
+      sessions: overview.sessions.map((one) => ({ ...one, unpricedRequests: 0 })),
+    },
   });
-  expect(picked).toContain('project-9');
-  expect(picked).toContain('Show fewer');
+  expect(priced).not.toContain('Unpriced requests may change');
 });

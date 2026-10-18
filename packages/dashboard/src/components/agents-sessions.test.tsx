@@ -11,13 +11,17 @@ import {
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { agentsSearch } from '../lib/agents-search.ts';
-import type { AgentsSession } from '../server/agents-overview-types.ts';
+import type { AgentsBreakdown, AgentsSession } from '../server/agents-overview-types.ts';
 import { AgentsSessions } from './agents-sessions.tsx';
 
-const renderSessions = async (sessions: AgentsSession[], picked?: string) => {
+const renderSessions = async (
+  sessions: AgentsSession[],
+  picked?: string,
+  by: AgentsBreakdown = 'project',
+) => {
   const root = createRootRoute({ component: Outlet });
   const route = createRoute({
-    component: () => <AgentsSessions now={200} picked={picked} sessions={sessions} />,
+    component: () => <AgentsSessions by={by} now={200} picked={picked} sessions={sessions} />,
     getParentRoute: () => root,
     path: '/agents',
     validateSearch: agentsSearch,
@@ -81,4 +85,20 @@ test('a picked row shows a chip that clears the pick, and a pick with no Session
   expect(html).toContain('No requests in this period.');
   const plain = await renderSessions([]);
   expect(plain).not.toContain('Sessions in');
+  // The chip is as tall as the other controls.
+  expect(html).toContain('min-h-11');
+  expect(html).not.toContain('min-h-9');
+});
+
+test('the chip of a picked model reads Sessions using, and the other dimensions Sessions in', async () => {
+  const model = await renderSessions([], 'big-model', 'model');
+  expect(model).toContain('Sessions using');
+  expect(model).not.toContain('Sessions in');
+  expect(model).toContain('aria-label="Show all Sessions, not only those using big-model"');
+  for (const by of ['project', 'system', 'harness'] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- one render per dimension.
+    const html = await renderSessions([], 'x', by);
+    expect(html).toContain('Sessions in');
+    expect(html).not.toContain('Sessions using');
+  }
 });

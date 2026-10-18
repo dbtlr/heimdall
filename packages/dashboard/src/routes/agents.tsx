@@ -87,6 +87,7 @@ function Agents() {
               </p>
             </div>
             <AgentsSessions
+              by={search.by}
               now={overview.now}
               picked={picked?.name}
               sessions={

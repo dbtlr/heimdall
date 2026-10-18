@@ -39,7 +39,7 @@ export function AgentsSummary({
         )}
       </p>
       <AgentsBreakdownSwitch current={by} />
-      <AgentsBreakdownList by={by} pick={pick} rows={breakdownRows(overview, by)} />
+      <AgentsBreakdownList by={by} key={by} pick={pick} rows={breakdownRows(overview, by)} />
     </section>
   );
 }

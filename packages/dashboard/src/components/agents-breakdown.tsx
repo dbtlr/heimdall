@@ -95,7 +95,8 @@ function BreakdownItem({ picked, row }: { picked: boolean; row: BreakdownRow }) 
 }
 
 // The stacked bar and the ranked list of one dimension. Rows past the eighth
-// fold into a "N more" control; a picked row among them opens the list.
+// fold into a "N more" control; a picked row among them keeps the list open.
+// The state belongs to one dimension, so the caller keys the list by it.
 export function AgentsBreakdownList({
   by,
   pick,
@@ -105,9 +106,9 @@ export function AgentsBreakdownList({
   pick: string | undefined;
   rows: BreakdownRow[];
 }) {
-  const [expanded, setExpanded] = useState(
-    rows.findIndex((row) => row.key === pick) >= VISIBLE_ROWS,
-  );
+  const [expanded, setExpanded] = useState(false);
+  const pickedPastFold = rows.findIndex((row) => row.key === pick) >= VISIBLE_ROWS;
+  const showAll = expanded || pickedPastFold;
   const hidden = rows.length - VISIBLE_ROWS;
   return (
     <>
@@ -124,11 +125,16 @@ export function AgentsBreakdownList({
         ))}
       </div>
       <ul className="mt-2">
-        {(expanded ? rows : rows.slice(0, VISIBLE_ROWS)).map((row) => (
+        {(showAll ? rows : rows.slice(0, VISIBLE_ROWS)).map((row) => (
           <BreakdownItem key={row.key} picked={row.key === pick} row={row} />
         ))}
       </ul>
-      {hidden > 0 && (
+      {rows.some((row) => row.pricing !== 'exact') && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Unpriced requests may change these shares and this order.
+        </p>
+      )}
+      {hidden > 0 && !pickedPastFold && (
         <button
           aria-expanded={expanded}
           className="min-h-11 text-sm text-muted-foreground"
