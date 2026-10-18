@@ -1,6 +1,12 @@
 import type { SQL } from 'bun';
 
-import type { AgentsOverview, AgentsRange, AgentsSession } from './agents-overview-types.ts';
+import { UNKNOWN_MODEL } from './agents-overview-types.ts';
+import type {
+  AgentsOverview,
+  AgentsRange,
+  AgentsSession,
+  ModelTotals,
+} from './agents-overview-types.ts';
 import { projectOf } from './fleet-overview.ts';
 
 type SessionRow = {
@@ -17,6 +23,57 @@ type SessionRow = {
   source: string;
   system: string;
   unpriced_requests: number;
+};
+
+type ModelRow = {
+  harness: string;
+  model: string;
+  priced_cost_usd: number;
+  requests: number;
+  session_id: string;
+  source: string;
+  system: string;
+  unpriced_requests: number;
+};
+
+const sessionIdentity = (row: Pick<SessionRow, 'harness' | 'session_id' | 'source' | 'system'>) =>
+  JSON.stringify([row.system, row.harness, row.source, row.session_id]);
+
+// Model totals sum request pricing, so they can differ slightly from the
+// stored Session totals the rest of the overview shows (ADR-0016).
+const readModelRows = (
+  sql: SQL,
+  { from, to }: { from: Date; to: Date },
+): Promise<ModelRow[]> => sql`
+  SELECT r.harness, r.system, r.source, r.session_id,
+         coalesce(nullif(r.model, ''), ${UNKNOWN_MODEL}) AS model,
+         count(*)::float8 AS requests,
+         coalesce(sum(r.cost_usd), 0)::float8 AS priced_cost_usd,
+         count(*) FILTER (WHERE r.cost_usd IS NULL)::float8 AS unpriced_requests
+  FROM insight.requests r
+  WHERE r.at >= ${from} AND r.at <= ${to}
+  GROUP BY r.harness, r.system, r.source, r.session_id, 5
+`;
+
+// The fleet's model totals over the Sessions listed, and each Session's models.
+const modelBreakdown = (rows: ModelRow[], sessions: SessionRow[]) => {
+  const listed = new Set(sessions.map(sessionIdentity));
+  const totals = new Map<string, ModelTotals>();
+  const used = new Map<string, string[]>();
+  for (const row of rows.filter((candidate) => listed.has(sessionIdentity(candidate)))) {
+    const total = totals.get(row.model) ?? {
+      model: row.model,
+      pricedCostUsd: 0,
+      requests: 0,
+      unpricedRequests: 0,
+    };
+    total.pricedCostUsd += row.priced_cost_usd;
+    total.requests += row.requests;
+    total.unpricedRequests += row.unpriced_requests;
+    totals.set(row.model, total);
+    used.set(sessionIdentity(row), [...(used.get(sessionIdentity(row)) ?? []), row.model]);
+  }
+  return { models: [...totals.values()], used };
 };
 
 const readSnapshot = async (
@@ -72,11 +129,13 @@ const readSnapshot = async (
     WHERE t.requests > 0
     ORDER BY coalesce(t.priced_cost_usd, 0) DESC, k.system, k.harness, k.source, k.session_id
   `;
+  const { models, used } = modelBreakdown(await readModelRows(sql, { from, to }), rows);
   const sessions: AgentsSession[] = rows.map((row) => ({
     activeRecently: now - row.last_request_at.getTime() <= 60_000,
     branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
     harness: row.harness,
     lastRequestAt: row.last_request_at.getTime(),
+    models: (used.get(sessionIdentity(row)) ?? []).toSorted(),
     pricedCostUsd: row.priced_cost_usd,
     project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     requests: row.requests,
@@ -87,6 +146,7 @@ const readSnapshot = async (
   }));
   return {
     from: from.getTime(),
+    models,
     now,
     range,
     sessions,
