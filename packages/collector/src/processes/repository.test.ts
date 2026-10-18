@@ -156,6 +156,22 @@ test('a commondir that is not a regular file is never read', async () => {
   expect(await repositoryOf(linked)).toBeNull();
 }, 2000);
 
+test('a .git entry that cannot be read belongs to none, not to the repository above', async () => {
+  const folder = await inOuterRepository('looped');
+  await symlink(join(folder, '.git'), join(folder, '.git'));
+
+  expect(await repositoryOf(folder)).toBeNull();
+});
+
+test('a commondir that cannot be read belongs to none, not to the worktree itself', async () => {
+  const gitdir = await dir('project', '.git', 'worktrees', 'feature');
+  await symlink(join(gitdir, 'commondir'), join(gitdir, 'commondir'));
+  const linked = await inOuterRepository('feature');
+  await writeFile(join(linked, '.git'), `gitdir: ${gitdir}`);
+
+  expect(await repositoryOf(linked)).toBeNull();
+});
+
 // A linked worktree whose `.git` file pads its pointer with spaces after
 // `gitdir:` so that the pointer's path ends `end` bytes into the file.
 const paddedPointer = async (end: number) => {

@@ -33,7 +33,8 @@ It walks up from the process's working directory to the first `.git` entry and r
 - A git directory without a `commondir` file, such as a submodule's or the `.bare` a project folder's own `.git` file points to, makes the working directory its own repository. So a project folder that holds a `.bare` repository and the worktrees added inside it all name the project folder.
 - With no `.git` entry the repository is null. A `.git` entry that is there but unusable, such as one that is not a regular file or directory, a file with no `gitdir:` pointer, a pointer to a missing directory, or a `commondir` file that is empty or cannot be read, also makes it null, and the walk stops there instead of going further up.
 
-It never runs git, opens only regular files, reads at most the first 4 KiB of each, and reads nothing else in a repository.
+It never runs git, reads only regular files, opening each without blocking and checking it once open, reads at most the first 4 KiB of each, and reads nothing else in a repository.
+An entry that is there but cannot be examined, such as one it lacks permission to read, counts as unusable; only a missing entry lets the walk go further up.
 It looks a directory up when a process is first seen in it, and again only when the process's working directory changes.
 The field is optional in the Report, so an older Collector omits it ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
 

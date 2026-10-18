@@ -520,7 +520,7 @@ It reads `exe` links for Harness candidates and the hottest processes, and `cwd`
 On macOS it runs `ps -axww -o pid=,ppid=,rss=,etime=,time=,ucomm=` once.
 Through libproc in libSystem and `bun:ffi`, `proc_pidpath` resolves executable paths for Harness candidates and the hottest processes.
 `proc_pidinfo` reads each root's working directory and exact BSD start where permitted.
-When it first sees a root, and again when the root's working directory changes, on either platform, the Collector checks for a `.git` entry in it and each folder above it until it finds one, and reads the first 4 KiB of that entry when it is a regular file, and of the `commondir` file in the git directory it points to; it opens nothing that is not a regular file.
+When it first sees a root, and again when the root's working directory changes, on either platform, the Collector checks for a `.git` entry in it and each folder above it until it finds one, and reads the first 4 KiB of that entry when it is a regular file, and of the `commondir` file in the git directory it points to; it opens each without blocking and reads it only when the open file is regular, and an entry it cannot examine stops the walk as an unusable one.
 It also reads every process's cross-user lifetime identifier for hot-process observations, which `ps` does not supply.
 No column or call reads a process's arguments or environment.
 

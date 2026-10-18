@@ -1,7 +1,10 @@
+import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { MAX_CWD_BYTES } from '@heimdall/schema';
+
+import { isAbsent } from '../harness-installs.ts';
 
 const GITDIR_PREFIX = 'gitdir:';
 
@@ -9,8 +12,9 @@ const GITDIR_PREFIX = 'gitdir:';
 // is one line naming a path, and a path is at most MAX_CWD_BYTES.
 const MAX_POINTER_BYTES = 4096;
 
-// What a path is: a directory, a regular file, something else such as a FIFO
-// or a device, or null when it is missing or cannot be read.
+// What a path is: a directory, a regular file, null when it is missing, or
+// `other` for anything else, such as a FIFO, a device, or a path that is there
+// but cannot be read. Only a missing path lets the walk go further up.
 const kindOf = async (path: string) => {
   try {
     const info = await stat(path);
@@ -18,21 +22,22 @@ const kindOf = async (path: string) => {
       return 'directory';
     }
     return info.isFile() ? 'file' : 'other';
-  } catch {
-    return null;
+  } catch (error) {
+    return isAbsent(error) ? null : 'other';
   }
 };
 
 // The first MAX_POINTER_BYTES of a pointer file, or null when it is not a
-// regular file or cannot be read. Only a regular file is opened, so a FIFO in a
-// pointer's place cannot block the tick, and a large file is never read whole.
+// regular file or cannot be read. Opening without blocking and checking the
+// open handle means a FIFO in a pointer's place, even one swapped in after an
+// earlier check, cannot block the tick; a large file is never read whole.
 const readPointer = async (path: string) => {
-  if ((await kindOf(path)) !== 'file') {
-    return null;
-  }
   try {
-    const handle = await open(path, 'r');
+    const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
+      if (!(await handle.stat()).isFile()) {
+        return null;
+      }
       const buffer = Buffer.alloc(MAX_POINTER_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, MAX_POINTER_BYTES, 0);
       return buffer.toString('utf8', 0, bytesRead);
@@ -72,8 +77,12 @@ const repositoryOfPointer = async (workingDir: string, pointer: string) => {
     return null;
   }
   const commonDirFile = join(gitDir, 'commondir');
-  if ((await kindOf(commonDirFile)) === null) {
+  const commonDirKind = await kindOf(commonDirFile);
+  if (commonDirKind === null) {
     return workingDir;
+  }
+  if (commonDirKind !== 'file') {
+    return null;
   }
   const commonDir = (await readPointer(commonDirFile))?.trim() ?? '';
   return commonDir === '' ? null : repositoryOfCommonDir(resolve(gitDir, commonDir));
