@@ -11,11 +11,7 @@ import type { Hub } from './testing/hub.ts';
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 
-const entry = (system: string, offsetMs: number, noteMs = 30 * SECOND) => ({
-  noteMs,
-  offsetMs,
-  system,
-});
+const entry = (system: string, offsetMs: number) => ({ offsetMs, system });
 
 const agreeingBy = (spread: number) =>
   blameHubClock([entry('a', 100 * SECOND), entry('b', 100 * SECOND + spread), entry('c', 0)]);
@@ -42,12 +38,44 @@ describe('blameHubClock', () => {
     expect(blame?.hubOffsetMs).toBe(-183 * SECOND);
   });
 
-  test('fires when the agreeing offsets are exactly 5 seconds apart, and not when further', () => {
+  test('fires while the Hub is only 10 seconds off', () => {
+    const blame = blameHubClock([
+      entry('a', -10 * SECOND),
+      entry('b', -10 * SECOND),
+      entry('c', 200),
+    ]);
+
+    expect(blame).toEqual({ agreeing: ['a', 'b'], blamed: 'c', hubOffsetMs: 10 * SECOND });
+  });
+
+  // Classifying by a note limit flapped while the Hub's clock drifted through
+  // it: Systems sat either side of the limit with millisecond jitter.
+  test('keeps blaming the Hub while the others jitter around a note limit', () => {
+    for (const jitter of [29_990, 30_010]) {
+      const blame = blameHubClock([
+        entry('a', -jitter),
+        entry('b', -(60_000 - jitter)),
+        entry('c', 200),
+      ]);
+
+      expect(blame?.blamed).toBe('c');
+    }
+  });
+
+  test('reads a System as true up to exactly 5 seconds from the Hub, and off beyond', () => {
+    const others = [entry('a', -40 * SECOND), entry('b', -40 * SECOND)];
+
+    expect(blameHubClock([...others, entry('c', 5000)])?.blamed).toBe('c');
+    expect(blameHubClock([...others, entry('c', -5000)])?.blamed).toBe('c');
+    expect(blameHubClock([...others, entry('c', 5001)])).toBeUndefined();
+  });
+
+  test('fires when the off Systems are exactly 5 seconds apart, and not when further', () => {
     expect(agreeingBy(5000)).toBeDefined();
     expect(agreeingBy(5001)).toBeUndefined();
   });
 
-  test('does not fire with only one other System past its note limit', () => {
+  test('does not fire with only one other System off', () => {
     expect(blameHubClock([entry('a', -182 * SECOND), entry('b', SECOND)])).toBeUndefined();
   });
 
@@ -68,18 +96,16 @@ describe('blameHubClock', () => {
     ).toBeUndefined();
   });
 
-  test('does not fire when the skewed Systems disagree', () => {
+  test('does not fire when the off Systems disagree', () => {
     expect(
       blameHubClock([entry('a', 60 * SECOND), entry('b', 182 * SECOND), entry('c', SECOND)]),
     ).toBeUndefined();
   });
 
-  test('judges each System against its own note limit', () => {
-    const offsets = [entry('a', 40 * SECOND), entry('b', 41 * SECOND)];
-
-    // c is 20 s off: past a 10 s limit, so not the one System reading true.
-    expect(blameHubClock([...offsets, entry('c', 20 * SECOND, 10 * SECOND)])).toBeUndefined();
-    expect(blameHubClock([...offsets, entry('c', 20 * SECOND, 60 * SECOND)])?.blamed).toBe('c');
+  test('does not count a System 27 seconds off as true', () => {
+    expect(
+      blameHubClock([entry('a', -40 * SECOND), entry('b', -40 * SECOND), entry('c', 27 * SECOND)]),
+    ).toBeUndefined();
   });
 });
 
@@ -310,16 +336,58 @@ describe('clock skew', () => {
         return (await open(h)).map((row) => `${row.system}:${row.subject}:${row.level}`);
       };
 
-      // laptop-1 is a note on its own clock, and stays one inside the hysteresis band.
       expect(await settle(T, 40 * SECOND, 0)).toEqual(['laptop-1::note']);
-      expect(await settle(T + MINUTE, 28 * SECOND, 0)).toEqual(['laptop-1::note']);
-      // The others agree on a skew: the Hub's clock is blamed on laptop-1, which
-      // therefore no longer holds its own.
-      expect(await settle(T + 2 * MINUTE, 28 * SECOND, -182 * SECOND)).toEqual([
-        'laptop-1:hub:warning',
-      ]);
-      // The blame ends: the Hub identity clears, and a System under its note limit holds none.
-      expect(await settle(T + 3 * MINUTE, 28 * SECOND, 0)).toEqual([]);
+      // The others agree on a skew while laptop-1 reads true: the Hub's clock is
+      // blamed on laptop-1, which holds the Hub's clock and not its own.
+      expect(await settle(T + MINUTE, 2 * SECOND, -182 * SECOND)).toEqual(['laptop-1:hub:warning']);
+      // The blame ends: the Hub identity clears.
+      expect(await settle(T + 2 * MINUTE, 2 * SECOND, 0)).toEqual([]);
+    });
+
+    test('fires while the Hub is under every note limit, raising nothing and clearing the others', async () => {
+      await using h = await startHub();
+      await pair(h, 'a-box', 'b-box');
+      const others = ['server-1', 'a-box', 'b-box'];
+      // Each is a note on its own clock while their offsets differ.
+      for (const [i, system] of others.entries()) {
+        // oxlint-disable-next-line no-await-in-loop -- one Report at a time.
+        await send(h, T, -(40 + 10 * i) * SECOND, system);
+      }
+      await send(h, T, 0, 'laptop-1');
+      await evaluate(h, T);
+      expect(await open(h)).toHaveLength(3);
+
+      for (const system of others) {
+        // oxlint-disable-next-line no-await-in-loop -- one Report at a time.
+        await send(h, T + MINUTE, -20 * SECOND, system);
+      }
+      await send(h, T + MINUTE, 0, 'laptop-1');
+      await evaluate(h, T + MINUTE);
+
+      expect(await open(h)).toEqual([]);
+    });
+
+    test('raises a note on the blamed System as the Hub drifts through 30 seconds, and keeps it through the hysteresis band', async () => {
+      await using h = await startHub();
+      await pair(h, 'a-box', 'b-box');
+      let time = T;
+      const drift = async (hubAhead: number) => {
+        // A little spread between the others, as real clocks have.
+        for (const [i, system] of ['server-1', 'a-box', 'b-box'].entries()) {
+          // oxlint-disable-next-line no-await-in-loop -- one Report at a time.
+          await send(h, time, -(hubAhead * SECOND + (i - 1) * 500), system);
+        }
+        await send(h, time, 0, 'laptop-1');
+        await evaluate(h, time);
+        time += MINUTE;
+        return (await open(h)).map((row) => `${row.system}:${row.subject}:${row.level}`);
+      };
+
+      expect(await drift(29)).toEqual([]);
+      expect(await drift(31)).toEqual(['laptop-1:hub:note']);
+      expect(await drift(33)).toEqual(['laptop-1:hub:note']);
+      expect(await drift(27)).toEqual(['laptop-1:hub:note']);
+      expect(await drift(24)).toEqual([]);
     });
 
     test('judges each System alone when only one other System is skewed', async () => {

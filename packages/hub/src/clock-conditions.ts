@@ -8,13 +8,12 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 import type { SystemConditionThresholds } from './system-conditions.ts';
 import { whenPaired } from './tokens.ts';
 
-// Systems whose clock offsets lie this close together share one error, the
-// Hub's own.
+// A System within this of the Hub's clock reads true; off Systems whose
+// offsets lie this close together share one error, the Hub's own.
 const AGREEMENT_MS = 5000;
 
-// One System's latest clock offset (its clock less the Hub's, in milliseconds)
-// and the offset at which its own limits make it a note.
-type Offset = { noteMs: number; offsetMs: number; system: string };
+// One System's latest clock offset: its clock less the Hub's, in milliseconds.
+type Offset = { offsetMs: number; system: string };
 
 // Who is wrong when the Hub's own clock is.
 export type HubBlame = {
@@ -32,23 +31,28 @@ const median = (sorted: readonly number[]) => {
   return sorted.length % 2 === 1 ? above : Math.round((below + above) / 2);
 };
 
-// The Hub's clock is wrong, not the Systems', when at least two Systems are
-// past their note limits, all within 5 seconds of one another, and exactly one
-// System is under its own: a Hub whose clock is off puts every other System
-// off alike, while its own Collector reads true. Otherwise nobody is blamed.
+// The Hub's clock is wrong, not the Systems', when exactly one System reads
+// true (within 5 seconds of the Hub) and at least two are off, all within 5
+// seconds of one another: a Hub whose clock is off puts every other System off
+// alike, while its own Collector reads true. Otherwise nobody is blamed. The
+// distance from the Hub, not a note limit, classifies the Systems, so the rule
+// does not flap while the Hub drifts through a limit, when every other System
+// sits at the limit with millisecond jitter, and a System recovering inside
+// its hysteresis band does not count as true. Note limits grade the Hub's
+// offset afterward, so a small one raises nothing.
 export const blameHubClock = (offsets: readonly Offset[]): HubBlame | undefined => {
-  const skewed = offsets.filter(({ noteMs, offsetMs }) => Math.abs(offsetMs) >= noteMs);
-  const reading = offsets.filter(({ noteMs, offsetMs }) => Math.abs(offsetMs) < noteMs);
+  const off = offsets.filter(({ offsetMs }) => Math.abs(offsetMs) > AGREEMENT_MS);
+  const reading = offsets.filter(({ offsetMs }) => Math.abs(offsetMs) <= AGREEMENT_MS);
   const [blamed] = reading;
-  if (skewed.length < 2 || reading.length !== 1 || blamed === undefined) {
+  if (off.length < 2 || reading.length !== 1 || blamed === undefined) {
     return undefined;
   }
-  const sorted = skewed.map(({ offsetMs }) => offsetMs).toSorted((a, b) => a - b);
+  const sorted = off.map(({ offsetMs }) => offsetMs).toSorted((a, b) => a - b);
   if ((sorted.at(-1) ?? 0) - (sorted[0] ?? 0) > AGREEMENT_MS) {
     return undefined;
   }
   return {
-    agreeing: skewed.map(({ system }) => system).toSorted(),
+    agreeing: off.map(({ system }) => system).toSorted(),
     blamed: blamed.system,
     hubOffsetMs: -median(sorted),
   };
@@ -202,13 +206,7 @@ export const evaluateClockConditions = async (
     WHERE s.clock_offset_at >= ${new Date(clock() - CLOCK_OFFSET_FRESH_MS)}
   `;
   const offsets = new Map(fresh.map(({ offset_ms, system }) => [system, Number(offset_ms)]));
-  const blame = blameHubClock(
-    [...offsets].map(([system, offsetMs]) => ({
-      noteMs: 1000 * (thresholds.systems.get(system)?.clock ?? thresholds.clock).note,
-      offsetMs,
-      system,
-    })),
-  );
+  const blame = blameHubClock([...offsets].map(([system, offsetMs]) => ({ offsetMs, system })));
   const withConditions: { system: string }[] = await sql`
     SELECT system FROM conditions WHERE kind = 'clock_skew' AND cleared_at IS NULL
   `;
