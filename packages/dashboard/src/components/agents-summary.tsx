@@ -1,4 +1,4 @@
-import { breakdownRows } from '../lib/agents-breakdown.ts';
+import { breakdownRows, sessionsIn } from '../lib/agents-breakdown.ts';
 import { formatCost } from '../lib/time.ts';
 import type { AgentsBreakdown, AgentsOverview } from '../server/agents-overview-types.ts';
 import { AgentsBreakdownList, AgentsBreakdownSwitch } from './agents-breakdown.tsx';
@@ -39,7 +39,13 @@ export function AgentsSummary({
         )}
       </p>
       <AgentsBreakdownSwitch current={by} />
-      <AgentsBreakdownList by={by} key={by} pick={pick} rows={breakdownRows(overview, by)} />
+      <AgentsBreakdownList
+        by={by}
+        key={by}
+        matched={pick === undefined ? 0 : sessionsIn(overview.sessions, by, pick).length}
+        pick={pick}
+        rows={breakdownRows(overview, by)}
+      />
     </section>
   );
 }

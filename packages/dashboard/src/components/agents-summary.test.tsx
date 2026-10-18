@@ -149,6 +149,28 @@ test('switching clears a pick and tapping a row sets or clears it', async () => 
   expect(html).toMatch(/<a(?![^>]*outline-chart-1)[^>]*pick=(?:&amp;|")[^>]*>/u);
 });
 
+// The line under the picked row, from its count to its link to the Sessions list.
+const jumpLine = /<div[^>]*lg:hidden[^>]*>.*?<\/div>/u;
+
+test('below the wide layout, the picked row counts its Sessions and links down to them', async () => {
+  const system = await renderSummary({
+    by: 'system',
+    entry: '/agents?range=7d&by=system&pick=asgard',
+    pick: 'asgard',
+  });
+  const line = jumpLine.exec(system)?.[0];
+  expect(line).toContain('2 Sessions');
+  // The link keeps the pick and lands on the list's heading.
+  expect(line).toMatch(/href="[^"]*pick=asgard[^"]*#agents-sessions-heading"/u);
+  const model = await renderSummary({
+    by: 'model',
+    entry: '/agents?range=7d&by=model&pick=small-model',
+    pick: 'small-model',
+  });
+  expect(jumpLine.exec(model)?.[0]).toContain('1 Session<');
+  expect(await renderSummary({ by: 'system' })).not.toMatch(jumpLine);
+});
+
 test('project rows name Sessions with no working directory and rank by cost', async () => {
   const html = await renderSummary({ by: 'project' });
   expect(html.indexOf('No working directory')).toBeLessThan(html.indexOf('>heimdall<'));
