@@ -760,3 +760,26 @@ test('a database migrated to version 31 has model totals beside its Session tota
   expect(models).toBe(sessions);
   expect(await differences(db.sql)).toEqual([]);
 });
+
+test('a stored Session that insight.sessions no longer lists is marked for refresh when migrated to the latest', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 31),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await price(db.sql);
+  await addSession(db.sql, { id: 's1', model: 'priced-model', requests: [10, 20] });
+  expect(await refreshSessionInsight(db.sql)).toBe(0);
+  await db.sql`
+    INSERT INTO stored_session_totals (harness, system, source, session_id, requests,
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, unpriced_requests)
+    VALUES ('claude-code', 'laptop-1', 'personal', 'unlisted', 1, 0, 0, 0, 0, 0)
+  `;
+
+  await migrate(db.sql);
+
+  expect(await stale(db.sql)).toEqual(['unlisted totals']);
+  await refreshSessionInsight(db.sql);
+  expect(await differences(db.sql)).toEqual([]);
+});

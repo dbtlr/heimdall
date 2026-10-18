@@ -2161,6 +2161,18 @@ export const MIGRATIONS: readonly Migration[] = [
       JOIN stored_session_totals t
         ON (t.harness, t.system, t.source, t.session_id)
          = (c.harness, c.system, c.source, c.session_id);
+
+      -- A stored Session insight.sessions does not list now, such as one whose
+      -- Harness's parser just switched, has no model totals to fill; the next
+      -- refresh settles both.
+      SELECT mark_sessions_stale(array_agg(t.harness), array_agg(t.system),
+                                 array_agg(t.source), array_agg(t.session_id), false, true)
+      FROM stored_session_totals t
+      WHERE NOT EXISTS (
+        SELECT 1 FROM stored_session_model_totals m
+        WHERE (m.harness, m.system, m.source, m.session_id)
+            = (t.harness, t.system, t.source, t.session_id)
+      );
     `,
     version: 32,
   },
