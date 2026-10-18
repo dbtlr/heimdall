@@ -78,7 +78,7 @@ const repositoryAbove = async (dir: string): Promise<string | null> => {
 // The absolute path of the main worktree of the repository a working directory
 // belongs to, or null when it belongs to none or the pointer files cannot be
 // read. This walks up to the first `.git` entry and follows its pointers; it
-// never runs git and reads nothing of a repository's content (ADR-0002).
+// never runs git and reads nothing of a repository's content (ADR-0019).
 export const repositoryOf = async (cwd: string | null): Promise<string | null> => {
   if (cwd === null || !isAbsolute(cwd)) {
     return null;

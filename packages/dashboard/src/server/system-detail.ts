@@ -112,6 +112,7 @@ export type CoresRow = {
   harness: string;
   pid: number;
   process_id: number;
+  repository: string | null;
 };
 
 export const linkOf = (link: string): Link => {
@@ -147,7 +148,7 @@ export const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
         pid: row.pid,
         points: [],
         processId: row.process_id,
-        project: projectOf(row.cwd),
+        project: projectOf(row.repository ?? row.cwd),
       };
       series.set(row.process_id, found);
     }
@@ -238,7 +239,7 @@ const readSystemDetailSnapshot = async (
     // cumulative, so its rise over the time between is the cores kept busy.
     // Rollups keep no reading times, and raw readings outlast the longest range.
     sql`
-      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, r.bucket,
+      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository, r.bucket,
              CASE WHEN r.last_t > r.first_t
                   THEN ((r.cpu_max - r.cpu_min) / 1e6 / extract(epoch FROM r.last_t - r.first_t))::float8
              END AS cores
@@ -342,6 +343,7 @@ type SampleProcessRow = {
   harness: string;
   pid: number;
   process_id: number;
+  repository: string | null;
   rss_bytes: number | null;
 };
 
@@ -425,7 +427,7 @@ export const readSample = async (
         AND bucket = date_bin('5 minutes', ${t}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
     `,
     sql`
-      SELECT process_id::float8 AS process_id, harness, pid, cwd, cpu_cores AS cores,
+      SELECT process_id::float8 AS process_id, harness, pid, cwd, repository, cpu_cores AS cores,
              rss_bytes::float8 AS rss_bytes
       FROM insight.vitals_processes
       WHERE system = ${name} AND t = ${t}
@@ -490,7 +492,7 @@ export const readSample = async (
       harness: row.harness,
       pid: row.pid,
       processId: row.process_id,
-      project: projectOf(row.cwd),
+      project: projectOf(row.repository ?? row.cwd),
       requests: answeredBy((request) => request.process_id === row.process_id),
       rssBytes: row.rss_bytes ?? undefined,
       sessions: sessionsOf(row.process_id),

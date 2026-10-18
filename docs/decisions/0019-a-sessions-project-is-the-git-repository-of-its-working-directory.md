@@ -17,7 +17,7 @@ That fails for a linked worktree: a Session in `.../worktrees/heimdall/t3-d175d0
 The repository is a fact about the System's filesystem.
 The Hub cannot see that filesystem, and the transcript records only a path.
 [ADR-0012](0012-hub-archives-agent-session-transcripts.md) has the Collector upload transcripts as written, and [ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md) has the Hub derive every fact from them with a parser per Harness.
-The Collector reads each Harness root process's working directory already, and links it to Sessions by that path ([ADR-0002](0002-collector-observes-processes-never-content.md) and ADR-0012 set what it may read).
+The Collector already reports each Harness root process's working directory, and the Hub links processes to Sessions by matching paths (ADR-0012 sets what it may read).
 
 ## Decision
 
@@ -36,7 +36,7 @@ It looks once for each directory a process is seen in.
 The field is optional in the Report, so an older Collector omits it ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
 
 **The Hub matches a Session to those processes.**
-It stores each process's `repository`, and `insight.sessions` gains a `repository` column: the repository of the most recent Harness process on the Session's System whose working directory equals the Session's last (else first) working directory and that reported a repository.
+It stores each process's `repository`, the Harness process views carry it, and `insight.sessions` gains a `repository` column: the repository of the most recent Harness process on the Session's System whose working directory equals the Session's last (else first) working directory and that reported a repository.
 The column is a locator, which ADR-0014 allows the views to carry.
 The dashboard names a Session's project by its `repository`, else its working directory, taking the last folder of either.
 

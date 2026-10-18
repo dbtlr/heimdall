@@ -304,6 +304,26 @@ describe('readSystemDetail', () => {
     expect(found.gaps).toContainEqual({ from: NOW - 30 * MINUTE, to: NOW - 20 * MINUTE });
   });
 
+  test('labels a process in a linked worktree with its repository, in the history and at a sample', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, {
+      cpuCores: 1,
+      cwd: '/srv/trees/feature',
+      end: -1000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -4000,
+      system: 'server-1',
+    });
+
+    const { processes } = await detail(h);
+    const sampled = (await inspect(h, NOW - 2490_000)).processes;
+
+    expect(processes[0]?.project).toBe('api');
+    expect(sampled[0]?.project).toBe('api');
+  });
+
   test('gives each Harness process the CPU cores it used per bucket', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');

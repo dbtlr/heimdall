@@ -98,3 +98,18 @@ test('a process on another System does not name a Session repository', async () 
 
   expect(await repositories(db.sql)).toEqual({ s1: null });
 });
+
+test('the Harness process view carries the repository its process reported', async () => {
+  await using db = await database();
+  await addProcess(db.sql, { cwd: LINKED, end: 600, pid: 100, repository: MAIN, start: 0 });
+  await addProcess(db.sql, { cwd: LINKED, end: 600, pid: 101, start: 0 });
+
+  const rows: { pid: number; repository: string | null }[] = await db.sql`
+    SELECT pid, repository FROM insight.harness_processes ORDER BY pid
+  `;
+
+  expect(rows).toEqual([
+    { pid: 100, repository: MAIN },
+    { pid: 101, repository: null },
+  ]);
+});
