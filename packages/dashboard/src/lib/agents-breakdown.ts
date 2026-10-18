@@ -31,9 +31,7 @@ export type BreakdownRow = PeriodTotals & {
 type Group = PeriodTotals & { key: string; name: string };
 
 const keyOf = (by: Exclude<AgentsBreakdown, 'model'>, session: AgentsSession): string =>
-  by === 'project'
-    ? (session.project ?? NO_KEY)
-    : session[by === 'system' ? 'system' : 'harness'];
+  by === 'project' ? (session.project ?? NO_KEY) : session[by === 'system' ? 'system' : 'harness'];
 
 const NONE_LABELS: Partial<Record<AgentsBreakdown, string>> = {
   model: UNKNOWN_MODEL,
@@ -70,7 +68,11 @@ const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSe
 // Model totals come from the overview: a Session can use several models.
 const groupsOf = (overview: AgentsOverview, by: AgentsBreakdown): Group[] =>
   by === 'model'
-    ? overview.models.map(({ model, ...totals }) => ({ ...totals, key: model, name: nameOf('model', model) }))
+    ? overview.models.map(({ model, ...totals }) => ({
+        ...totals,
+        key: model,
+        name: nameOf('model', model),
+      }))
     : groupSessions(by, overview.sessions);
 
 const pricingOf = (group: PeriodTotals): RowPricing => {

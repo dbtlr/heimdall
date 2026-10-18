@@ -200,7 +200,7 @@ test('a note under the list says unpriced requests may change the shares and the
     value: {
       ...overview,
       models: overview.models.filter((one) => one.unpricedRequests === 0),
-      sessions: overview.sessions.map((one) => ({ ...one, unpricedRequests: 0 })),
+      sessions: [{ ...overview.sessions[0]!, unpricedRequests: 0 }, overview.sessions[1]!],
     },
   });
   expect(priced).not.toContain('Unpriced requests may change');
