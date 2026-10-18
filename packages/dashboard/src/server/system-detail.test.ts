@@ -696,6 +696,32 @@ describe('readSample', () => {
     ]);
   });
 
+  test('names a Session no single process is linked to by its repository', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    for (const pid of [20, 21]) {
+      // oxlint-disable-next-line no-await-in-loop -- two fixture rows.
+      await addProcess(h.db.sql, {
+        cwd: '/srv/trees/feature',
+        end: -1000,
+        pid,
+        repository: '/srv/work/web',
+        start: -4000,
+        system: 'server-1',
+      });
+    }
+    await addSession(h.db.sql, {
+      firstCwd: '/srv/trees/feature',
+      id: 's2',
+      requests: [-3000, -2490, -1500],
+      system: 'server-1',
+    });
+
+    const { unlinked } = await inspect(h, NOW - 2490_000);
+
+    expect(unlinked.map(({ project }) => project)).toEqual(['web']);
+  });
+
   test('names the Session a process answered requests for in the sample after its last one', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { times: every15s(-3600, 0) });
