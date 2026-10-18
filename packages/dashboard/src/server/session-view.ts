@@ -1,7 +1,7 @@
 import type { SQL } from 'bun';
 
 import type { CpuBucket } from './fleet-overview-types.ts';
-import { BUCKET_MS, toBucket } from './fleet-overview.ts';
+import { BUCKET_MS, projectOf, toBucket } from './fleet-overview.ts';
 import type { BucketRow } from './fleet-overview.ts';
 import type {
   SessionAgent,
@@ -65,6 +65,7 @@ type SessionRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   last_harness_version: string | null;
+  repository: string | null;
   started_at: Date | null;
 };
 
@@ -284,7 +285,7 @@ const readCores = async (
   const toAt = new Date(to);
   if (raw) {
     const rows: CoresRow[] = await sql`
-      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, r.bucket,
+      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository, r.bucket,
              CASE WHEN r.last_t > r.first_t
                   THEN ((r.cpu_max - r.cpu_min) / 1e6 / extract(epoch FROM r.last_t - r.first_t))::float8
              END AS cores
@@ -307,7 +308,7 @@ const readCores = async (
   }
   const binMs = Math.max(BUCKET_MS, widthMs);
   return sql`
-    SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd,
+    SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
            date_bin(make_interval(secs => ${binMs / 1000}), r.bucket,
                     timestamptz '1970-01-01 00:00:00+00') AS bucket,
            ((max(r.cpu_micros_max) - min(r.cpu_micros_min)) / 1e6 / ${binMs / 1000})::float8 AS cores
@@ -315,8 +316,8 @@ const readCores = async (
     JOIN harness_process_rollups r ON r.process = p.id
     WHERE p.id = ${processId} AND r.bucket >= ${new Date(bucketAt(from, binMs))}
       AND r.bucket <= ${toAt}
-    GROUP BY p.id, p.harness, p.pid, p.cwd, 5
-    ORDER BY 5
+    GROUP BY p.id, p.harness, p.pid, p.cwd, p.repository, 6
+    ORDER BY 6
   `;
 };
 
@@ -352,7 +353,7 @@ export const readSessionView = async (
   ] = await Promise.all([
     sql`
       SELECT started_at, ended_at, first_cwd, last_cwd, first_git_branch, last_git_branch,
-             first_harness_version, last_harness_version
+             first_harness_version, last_harness_version, repository
       FROM insight.sessions
       WHERE harness = ${harness} AND system = ${system} AND source = ${source}
         AND session_id = ${sessionId}
@@ -444,6 +445,7 @@ export const readSessionView = async (
       to: span.endedAt,
       widthMs: bucketMs,
     }),
+    project: projectOf(session.repository, session.last_cwd ?? session.first_cwd),
     requests: requests.map(toRequest),
     sessionId,
     source,

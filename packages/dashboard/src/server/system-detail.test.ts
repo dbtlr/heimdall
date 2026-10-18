@@ -304,6 +304,26 @@ describe('readSystemDetail', () => {
     expect(found.gaps).toContainEqual({ from: NOW - 30 * MINUTE, to: NOW - 20 * MINUTE });
   });
 
+  test('labels a process in a linked worktree with its repository, in the history and at a sample', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, {
+      cpuCores: 1,
+      cwd: '/srv/trees/feature',
+      end: -1000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -4000,
+      system: 'server-1',
+    });
+
+    const { processes } = await detail(h);
+    const sampled = (await inspect(h, NOW - 2490_000)).processes;
+
+    expect(processes[0]?.project).toBe('api');
+    expect(sampled[0]?.project).toBe('api');
+  });
+
   test('gives each Harness process the CPU cores it used per bucket', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
@@ -634,6 +654,29 @@ describe('readSample', () => {
     });
   });
 
+  test("names a process's Session by the repository its working directory belongs to", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    await addProcess(h.db.sql, {
+      cwd: '/srv/trees/feature',
+      end: -1000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -4000,
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/trees/feature',
+      requests: [-3500, -2500, -2490, -2000],
+      system: 'server-1',
+    });
+
+    const { processes } = await inspect(h, NOW - 2490_000);
+
+    expect(processes[0]?.sessions).toEqual([{ branch: undefined, project: 'api' }]);
+  });
+
   test('lists a Session working then that no single process is linked to', async () => {
     await using h = await startHub();
     await scene(h);
@@ -651,6 +694,32 @@ describe('readSample', () => {
         sessionId: 's2',
       },
     ]);
+  });
+
+  test('names a Session no single process is linked to by its repository', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+    for (const pid of [20, 21]) {
+      // oxlint-disable-next-line no-await-in-loop -- two fixture rows.
+      await addProcess(h.db.sql, {
+        cwd: '/srv/trees/feature',
+        end: -1000,
+        pid,
+        repository: '/srv/work/web',
+        start: -4000,
+        system: 'server-1',
+      });
+    }
+    await addSession(h.db.sql, {
+      firstCwd: '/srv/trees/feature',
+      id: 's2',
+      requests: [-3000, -2490, -1500],
+      system: 'server-1',
+    });
+
+    const { unlinked } = await inspect(h, NOW - 2490_000);
+
+    expect(unlinked.map(({ project }) => project)).toEqual(['web']);
   });
 
   test('names the Session a process answered requests for in the sample after its last one', async () => {

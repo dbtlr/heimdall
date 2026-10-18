@@ -14,7 +14,9 @@ import { storableJson } from './storable.ts';
 //   its pid never merge. A process with no row gets one.
 // - A matched row is updated: peak memory only grows, a known working directory
 //   is not forgotten, and a process listed without an end is running, with no
-//   missed end.
+//   missed end. The repository goes with the working directory: a section that
+//   reads the directory sets the repository it sends, null included, unless it
+//   comes from a Collector too old to send one.
 // - Each process's reading, CPU time and memory at `lastSeenAt`, is stored as a
 //   sample and rolls up into its 5-minute bucket, once however often it is
 //   resent (ADR-0008).
@@ -49,7 +51,8 @@ export const storeHarnessProcesses = async (
       SELECT e.idx, p->>'harness' AS harness, (p->>'pid')::integer AS pid,
              to_timestamp((p->>'startedAt')::bigint / 1000.0) AS started_at,
              to_timestamp((p->>'endedAt')::bigint / 1000.0) AS ended_at,
-             p->>'cwd' AS cwd, (p->>'cpuMicros')::bigint AS cpu_micros,
+             p->>'cwd' AS cwd, p->>'repository' AS repository,
+             p->'repository' IS NOT NULL AS sends_repository, (p->>'cpuMicros')::bigint AS cpu_micros,
              (p->>'rssBytes')::bigint AS rss_bytes, (p->>'peakRssBytes')::bigint AS peak_rss_bytes,
              to_timestamp((p->>'lastSeenAt')::bigint / 1000.0) AS last_seen_at
       FROM jsonb_array_elements(${storableJson(section.processes)}::text::jsonb)
@@ -78,6 +81,8 @@ export const storeHarnessProcesses = async (
         ended_at = i.ended_at,
         end_missed = false,
         cwd = COALESCE(i.cwd, h.cwd),
+        repository = CASE WHEN i.cwd IS NOT NULL AND i.sends_repository
+                          THEN i.repository ELSE h.repository END,
         peak_rss_bytes = GREATEST(h.peak_rss_bytes, i.peak_rss_bytes),
         last_seen_at = i.last_seen_at,
         sent_at = ${sent}
@@ -86,10 +91,11 @@ export const storeHarnessProcesses = async (
     ),
     added AS (
       INSERT INTO harness_processes (
-        id, system, harness, pid, started_at, ended_at, cwd, peak_rss_bytes, last_seen_at, sent_at
+        id, system, harness, pid, started_at, ended_at, cwd, repository, peak_rss_bytes,
+        last_seen_at, sent_at
       )
       OVERRIDING SYSTEM VALUE
-      SELECT f.id, ${system}, i.harness, i.pid, i.started_at, i.ended_at, i.cwd,
+      SELECT f.id, ${system}, i.harness, i.pid, i.started_at, i.ended_at, i.cwd, i.repository,
              i.peak_rss_bytes, i.last_seen_at, ${sent}
       FROM fresh f JOIN incoming i USING (idx)
     ),
@@ -139,6 +145,9 @@ export type StoredHarnessProcess = {
   lastSeenAt: number;
   peakRssBytes: number;
   pid: number;
+  // The repository the working directory belongs to, when the Collector
+  // resolved one (ADR-0019).
+  repository: string | null;
   startedAt: number;
 };
 
@@ -150,6 +159,7 @@ type Row = {
   last_seen_at: Date;
   peak_rss_bytes: string;
   pid: number;
+  repository: string | null;
   started_at: Date;
 };
 
@@ -159,7 +169,8 @@ export const listHarnessProcesses = async (
   system: string,
 ): Promise<StoredHarnessProcess[]> => {
   const rows: Row[] = await sql`
-    SELECT harness, pid, started_at, ended_at, end_missed, cwd, peak_rss_bytes, last_seen_at
+    SELECT harness, pid, started_at, ended_at, end_missed, cwd, repository, peak_rss_bytes,
+           last_seen_at
     FROM harness_processes WHERE system = ${system}
     ORDER BY started_at, harness, pid
   `;
@@ -171,6 +182,7 @@ export const listHarnessProcesses = async (
     lastSeenAt: row.last_seen_at.getTime(),
     peakRssBytes: Number(row.peak_rss_bytes),
     pid: row.pid,
+    repository: row.repository,
     startedAt: row.started_at.getTime(),
   }));
 };

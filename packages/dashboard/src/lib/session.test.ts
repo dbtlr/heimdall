@@ -109,6 +109,7 @@ const view = (overrides: Partial<SessionView> = {}): SessionView => ({
   harness: 'claude-code',
   harnessVersion: undefined,
   processes: [],
+  project: undefined,
   requests: [],
   sessionId: 's1',
   source: 'local',

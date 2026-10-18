@@ -22,7 +22,8 @@ export type InstallReader = {
   readText: (path: string) => Promise<string | undefined>;
 };
 
-const isAbsent = (error: unknown) =>
+// Whether a filesystem error means the path is missing, not merely unreadable.
+export const isAbsent = (error: unknown) =>
   error instanceof Error &&
   'code' in error &&
   (error.code === 'ENOENT' || error.code === 'ENOTDIR');

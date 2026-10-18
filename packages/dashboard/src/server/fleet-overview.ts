@@ -70,8 +70,13 @@ export const findGaps = (
 export const isLink = (link: string): link is Link =>
   link === 'linked' || link === 'ambiguous' || link === 'unmatched';
 
-// The last directory name of a working directory.
-export const projectOf = (cwd: string | null) => cwd?.split('/').findLast((part) => part !== '');
+const lastFolderOf = (path: string | null) => path?.split('/').findLast((part) => part !== '');
+
+// A project's name (ADR-0019): the last folder of the repository a working
+// directory belongs to, else of the working directory itself, as when there is
+// no repository or it is `/`, which has no folder name.
+export const projectOf = (repository: string | null, cwd: string | null) =>
+  lastFolderOf(repository) ?? lastFolderOf(cwd);
 
 // A lane's status word, first match wins (see LaneStatus).
 export const laneStatus = ({
@@ -132,6 +137,7 @@ export type StretchRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   link: string;
+  repository: string | null;
   session_id: string;
   source: string;
   started_at: Date;
@@ -168,7 +174,7 @@ const toStretch = (row: StretchRow): Stretch => {
     endedAt: row.ended_at.getTime(),
     harness: row.harness,
     link: row.link,
-    project: projectOf(row.last_cwd ?? row.first_cwd),
+    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     sessionId: row.session_id,
     startedAt: row.started_at.getTime(),
   };
@@ -188,9 +194,10 @@ export const toMark = (row: ConditionRow, transitions: ConditionTransition[]): C
 // Session's place and cost, by System and start. Stretches name their System
 // and a range of `started_at`, which keeps the view cheap (docs/spec.md, the
 // insight views); a stretch that started over a day before `from` is left out.
-// A Session's totals price every request it made, so each Session is looked up
-// once, however many stretches it has; OFFSET 0 keeps that a lookup per
-// Session, since PostgreSQL would otherwise total every Session kept.
+// A Session's totals price every request it made, and its repository is a
+// lookup of its process, so each Session is looked up once, however many
+// stretches it has; OFFSET 0 keeps that a lookup per Session, since PostgreSQL
+// would otherwise build every Session kept.
 export const readStretches = (
   sql: SQL,
   { from, systems, to }: { from: number; systems: readonly string[]; to: number },
@@ -203,11 +210,16 @@ export const readStretches = (
       AND ended_at >= ${new Date(from)}
   ), sessions AS MATERIALIZED (
     SELECT k.harness, k.system, k.source, k.session_id,
-           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, t.cost_usd
+           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
+           t.cost_usd
     FROM (SELECT DISTINCT harness, system, source, session_id FROM st) k
-    JOIN insight.sessions s
-      ON (s.harness, s.system, s.source, s.session_id)
-       = (k.harness, k.system, k.source, k.session_id)
+    CROSS JOIN LATERAL (
+      SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+      FROM insight.sessions x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) s
     CROSS JOIN LATERAL (
       SELECT x.cost_usd
       FROM insight.session_totals x
@@ -217,7 +229,7 @@ export const readStretches = (
     ) t
   )
   SELECT st.system, st.harness, st.source, st.session_id, st.started_at, st.ended_at, st.link,
-         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.cost_usd
+         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository, s.cost_usd
   FROM st
   JOIN sessions s USING (harness, system, source, session_id)
   ORDER BY st.system, st.started_at

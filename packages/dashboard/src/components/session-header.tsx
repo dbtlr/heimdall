@@ -108,8 +108,6 @@ export function SessionHeader({
   now: number;
   view: SessionView;
 }) {
-  // As elsewhere, a Session's project is its working directory's last name.
-  const project = view.cwd?.split('/').findLast((part) => part !== '');
   return (
     <>
       <div className="pt-3.5 pb-2.5 sm:pt-[18px]">
@@ -125,7 +123,7 @@ export function SessionHeader({
           >
             {view.system}
           </Link>{' '}
-          / {project ?? `${harnessName(view.harness)} Session`}
+          / {view.project ?? `${harnessName(view.harness)} Session`}
           {view.branch !== undefined && (
             <span className="font-medium text-muted-foreground"> on {view.branch}</span>
           )}

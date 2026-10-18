@@ -1968,6 +1968,72 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 30,
   },
+  {
+    // The repository a Harness process's working directory belongs to, as the
+    // Collector read it from the System's repository pointer files, and the
+    // Session's own `repository`: that of the most recent process on its
+    // System, in the directory the Session ended in, that reported one. The
+    // process views carry the process's own. The lookup's index keys on a hash
+    // of the working directory, as transcript paths do, so a path of any length
+    // the Report allows fits a btree entry. `CREATE OR REPLACE VIEW` appends
+    // the column and keeps the views built on these; it resets a view's
+    // options, so the barrier is set again.
+    sql: `
+      ALTER TABLE harness_processes ADD COLUMN repository text;
+      CREATE INDEX harness_processes_by_cwd
+        ON harness_processes (system, md5(cwd), started_at DESC)
+        WHERE repository IS NOT NULL;
+
+      CREATE OR REPLACE VIEW insight.sessions WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.path, s.started_at, s.ended_at,
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+             s.first_harness_version, s.last_harness_version, s.parser_version,
+             (
+               -- md5(cwd) is what lets harness_processes_by_cwd serve the lookup.
+               SELECT p.repository FROM harness_processes p
+               WHERE p.system = s.system AND md5(p.cwd) = md5(COALESCE(s.last_cwd, s.first_cwd))
+                 AND p.cwd = COALESCE(s.last_cwd, s.first_cwd) AND p.repository IS NOT NULL
+               ORDER BY p.started_at DESC, p.id DESC
+               LIMIT 1
+             ) AS repository
+      FROM projected_sessions s
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.session_id = s.session_id
+      );
+
+      CREATE OR REPLACE VIEW insight.harness_processes WITH (security_barrier = true) AS
+      SELECT w.system, w.harness, w.id AS process_id, w.pid, w.started_at, w.ended_at,
+             w.end_missed, w.cwd, p.peak_rss_bytes, w.last_seen_at,
+             NULLIF(w.may_until, 'infinity') AS may_have_run_until, p.repository
+      FROM harness_process_windows w JOIN harness_processes p ON p.id = w.id;
+
+      CREATE OR REPLACE VIEW insight.vitals_processes WITH (security_barrier = true) AS
+      SELECT i.system, i.t, p.harness, p.id AS process_id, p.pid, p.cwd,
+             p.started_at AS process_started_at,
+             r.t AS read_at, r.cpu_micros, r.rss_bytes,
+             ((r.cpu_micros - prev.cpu_micros) / extract(epoch FROM r.t - prev.t) / 1e6)
+               ::double precision AS cpu_cores, p.repository
+      FROM vitals_intervals i
+      JOIN harness_processes p
+        ON p.system = i.system
+       AND tstzrange(p.started_at, CASE WHEN p.ended_at IS NULL THEN 'infinity'::timestamptz
+                                        ELSE GREATEST(p.started_at, p.ended_at) END, '[]') @> i.t
+      LEFT JOIN LATERAL (
+        SELECT x.t, x.cpu_micros, x.rss_bytes FROM harness_process_samples x
+        WHERE x.process = p.id AND x.t <= i.t AND x.t > i.since
+        ORDER BY x.t DESC LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT x.t, x.cpu_micros FROM harness_process_samples x
+        WHERE x.process = p.id AND x.t < r.t
+        ORDER BY x.t DESC LIMIT 1
+      ) prev ON true;
+    `,
+    version: 31,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

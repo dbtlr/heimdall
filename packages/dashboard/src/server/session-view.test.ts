@@ -392,6 +392,68 @@ describe('readSessionView', () => {
     expect(points[1]?.cores).toBeCloseTo(2, 5);
   });
 
+  test('names the Session and its process by the repository their working directory belongs to, and keeps the directory', async () => {
+    await using h = await start();
+    await hear(h, -10_800, 0);
+    await addProcess(h.db.sql, {
+      cpuCores: 2,
+      cwd: '/srv/trees/feature',
+      end: -5000,
+      pid: 10,
+      repository: '/srv/work/api',
+      start: -9000,
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/trees/feature',
+      requests: [-8500, -8000],
+      system: 'server-1',
+    });
+
+    const found = await view(h);
+
+    expect(found).toMatchObject({ cwd: '/srv/trees/feature', project: 'api' });
+    expect(found.processes.map(({ project }) => project)).toEqual(['api']);
+  });
+
+  test('names a process by its repository from the rollups too', async () => {
+    await using h = await start();
+    await addVitals(h.db.sql, 'server-1', -2 * 86_400, 10);
+    await addProcess(h.db.sql, {
+      cpuCores: 2,
+      cwd: '/srv/trees/feature',
+      end: -86_400 + 7200,
+      pid: 10,
+      readings: 'rollups',
+      repository: '/srv/work/api',
+      seenFrom: -86_400,
+      seenTo: -86_400 + 7200,
+      start: -86_400 - 3600,
+      system: 'server-1',
+    });
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/trees/feature',
+      requests: [-2 * 86_400, -86_400 + 600, -86_400 + 1200, 0],
+      system: 'server-1',
+    });
+
+    expect((await view(h)).processes.map(({ project }) => project)).toEqual(['api']);
+  });
+
+  test('names a Session outside any matched repository by its working directory', async () => {
+    await using h = await start();
+    await addSession(h.db.sql, {
+      id: 's1',
+      lastCwd: '/srv/work/notes',
+      requests: [-600, -300],
+      system: 'server-1',
+    });
+
+    expect((await view(h)).project).toBe('notes');
+  });
+
   test('draws no cores for a process with only rollups when the raw Vitals need buckets narrower than 5 minutes', async () => {
     await using h = await start();
     await hear(h, -10_800, 0);

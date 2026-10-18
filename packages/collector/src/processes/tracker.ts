@@ -1,6 +1,7 @@
 import { MAX_HARNESS_PROCESSES, SAME_HARNESS_PROCESS_MS } from '@heimdall/schema';
 import type { HarnessProcess, HarnessProcessesSection } from '@heimdall/schema';
 
+import { repositoryOf as readRepositoryOf } from './repository.ts';
 import { findHarnessRoots } from './roots.ts';
 import type { ProcessEntry, ProcessReader } from './table.ts';
 
@@ -62,10 +63,12 @@ const sameProcess = (held: Tracked, entry: ProcessEntry) =>
 // acknowledges them.
 //
 // A tick reads the process table once (`reader.table`) and the working
-// directory of each root. A process in the previous tick's table and not in
-// this one ended at this tick's time, which is when the Collector noticed, not
-// when the process exited. A process the Collector was not running to see end is
-// the Hub's to close (see the spec).
+// directory of each root. The repository a working directory belongs to is
+// looked up when a root is first seen in it and again only when the root's
+// directory changes, not on every tick. A process in the previous tick's table
+// and not in this one ended at this tick's time, which is when the Collector
+// noticed, not when the process exited. A process the Collector was not running
+// to see end is the Hub's to close (see the spec).
 //
 // A pid read again is the same process when the kernel's start is the same
 // (`kernelStart`), which no wall-clock step moves; a pid whose kernel start
@@ -95,9 +98,11 @@ const sameProcess = (held: Tracked, entry: ProcessEntry) =>
 export const createProcessTracker = ({
   now,
   reader,
+  repositoryOf = readRepositoryOf,
 }: {
   now: () => number;
   reader: ProcessReader;
+  repositoryOf?: (cwd: string) => Promise<string | null>;
 }) => {
   const running = new Map<string, Tracked>();
   let ended: Ended[] = [];
@@ -123,10 +128,24 @@ export const createProcessTracker = ({
     enclosing?.pending.push({ cpuMicros: tracked.readCpuMicros, ticksLeft: ABSORB_TICKS });
   };
 
+  // The roots of a tick, each with its working directory and the repository
+  // that belongs to. A directory the Collector cannot read this tick is the one
+  // it last read for that process, and a directory already looked up is not
+  // looked up again. A new process that reused a pid starts with neither.
   const rootsAt = async (at: number, entries?: readonly ProcessEntry[]) => {
     const roots = findHarnessRoots(entries ?? (await reader.table()));
     return Promise.all(
-      roots.map(async (root) => ({ at, cwd: await reader.cwdOf(root.entry.pid), root })),
+      roots.map(async (root) => {
+        const held = running.get(keyOf({ harness: root.harness, pid: root.entry.pid }));
+        const before =
+          held !== undefined && sameProcess(held, root.entry) ? held.process : undefined;
+        const cwd = (await reader.cwdOf(root.entry.pid)) ?? before?.cwd ?? null;
+        const repository =
+          cwd === null || cwd === before?.cwd
+            ? (before?.repository ?? null)
+            : await repositoryOf(cwd);
+        return { at, cwd, repository, root };
+      }),
     );
   };
 
@@ -145,7 +164,7 @@ export const createProcessTracker = ({
       const next = new Map<string, Tracked>();
       const replaced: Tracked[] = [];
       const reapedNow = new Map<string, number>();
-      for (const { cwd, root } of seen) {
+      for (const { cwd, repository, root } of seen) {
         const { entry, harness } = root;
         const key = keyOf({ harness, pid: entry.pid });
         const held = running.get(key);
@@ -162,11 +181,12 @@ export const createProcessTracker = ({
           pending: kept?.pending ?? [],
           process: {
             cpuMicros: before?.cpuMicros ?? 0,
-            cwd: cwd ?? before?.cwd ?? null,
+            cwd,
             harness,
             lastSeenAt: at,
             peakRssBytes: Math.max(before?.peakRssBytes ?? 0, root.rssBytes),
             pid: entry.pid,
+            repository,
             rssBytes: root.rssBytes,
             startedAt: before?.startedAt ?? entry.startedAt,
           },

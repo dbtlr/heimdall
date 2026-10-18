@@ -31,3 +31,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0016 — Session stretches and totals are stored, and the Hub refreshes them](0016-session-stretches-and-totals-are-stored-and-refreshed.md)
 - [ADR-0017 — The Hub sets each Condition's level](0017-the-hub-sets-condition-levels.md)
 - [ADR-0018 — The Collector checks package managers on a schedule](0018-collector-checks-package-managers-on-a-schedule.md)
+- [ADR-0019 — A Session's project is the git repository of its working directory](0019-a-sessions-project-is-the-git-repository-of-its-working-directory.md)

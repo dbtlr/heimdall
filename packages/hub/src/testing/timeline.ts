@@ -81,6 +81,8 @@ export type ProcessFixture = {
   endMissed?: boolean;
   harness?: string;
   pid: number;
+  // The repository the Collector reported for the process's directory.
+  repository?: string | null;
   // Readings are every 15 seconds from `seenFrom` and at `seenTo`, the last
   // sighting; they default to the process's life, or 100,000 s while running.
   // The Hub keeps them as samples, as 5-minute rollups, or both; rollups alone
@@ -248,6 +250,7 @@ export const timeline = (origin: number) => {
       harness = 'claude-code',
       pid,
       readings = 'samples',
+      repository = null,
       rssBytes = 0,
       seenFrom,
       seenTo,
@@ -267,6 +270,11 @@ export const timeline = (origin: number) => {
       RETURNING id
     `;
     const id = Number(row?.id);
+    // Set apart so fixtures still load into a database migrated to a version
+    // before the column.
+    if (repository !== null) {
+      await sql`UPDATE harness_processes SET repository = ${repository} WHERE id = ${id}`;
+    }
     await sql`
       INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
       SELECT ${id}, ${at(0)}::timestamptz + s * interval '1 second',

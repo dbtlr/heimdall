@@ -11,6 +11,7 @@ type SessionRow = {
   last_git_branch: string | null;
   last_request_at: Date;
   priced_cost_usd: number;
+  repository: string | null;
   requests: number;
   session_id: string;
   source: string;
@@ -42,11 +43,17 @@ const readSnapshot = async (
       HAVING max(ended_at) >= ${from} AND min(started_at) <= ${to}
     )
     SELECT k.harness, k.system, k.source, k.session_id,
-           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+           s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
            t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
            t.unpriced_requests::float8 AS unpriced_requests, t.last_request_at
     FROM spans k
-    JOIN insight.sessions s USING (harness, system, source, session_id)
+    CROSS JOIN LATERAL (
+      SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+      FROM insight.sessions x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) s
     CROSS JOIN LATERAL (
       SELECT x.requests, x.priced_cost_usd, x.unpriced_requests, k.last_request_at
       FROM insight.session_totals x
@@ -71,7 +78,7 @@ const readSnapshot = async (
     harness: row.harness,
     lastRequestAt: row.last_request_at.getTime(),
     pricedCostUsd: row.priced_cost_usd,
-    project: projectOf(row.last_cwd ?? row.first_cwd),
+    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     requests: row.requests,
     sessionId: row.session_id,
     source: row.source,

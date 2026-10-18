@@ -112,6 +112,7 @@ export type CoresRow = {
   harness: string;
   pid: number;
   process_id: number;
+  repository: string | null;
 };
 
 export const linkOf = (link: string): Link => {
@@ -123,16 +124,17 @@ export const linkOf = (link: string): Link => {
   return link;
 };
 
-// A Session's project and branch: its last working directory's name and its
-// last branch, else its first.
+// A Session's project and branch: its repository's name, else its last working
+// directory's, and its last branch, else its first.
 const sessionPlace = (row: {
   first_cwd: string | null;
   first_git_branch: string | null;
   last_cwd: string | null;
   last_git_branch: string | null;
+  repository: string | null;
 }) => ({
   branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
-  project: projectOf(row.last_cwd ?? row.first_cwd),
+  project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
 });
 
 // Groups each Harness process's buckets into its series, in order of first bucket.
@@ -146,7 +148,7 @@ export const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
         pid: row.pid,
         points: [],
         processId: row.process_id,
-        project: projectOf(row.cwd),
+        project: projectOf(row.repository, row.cwd),
       };
       series.set(row.process_id, found);
     }
@@ -237,7 +239,7 @@ const readSystemDetailSnapshot = async (
     // cumulative, so its rise over the time between is the cores kept busy.
     // Rollups keep no reading times, and raw readings outlast the longest range.
     sql`
-      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, r.bucket,
+      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository, r.bucket,
              CASE WHEN r.last_t > r.first_t
                   THEN ((r.cpu_max - r.cpu_min) / 1e6 / extract(epoch FROM r.last_t - r.first_t))::float8
              END AS cores
@@ -341,6 +343,7 @@ type SampleProcessRow = {
   harness: string;
   pid: number;
   process_id: number;
+  repository: string | null;
   rss_bytes: number | null;
 };
 
@@ -351,6 +354,7 @@ type SampleSessionRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   process_id: number;
+  repository: string | null;
 };
 
 type UnlinkedRow = {
@@ -361,6 +365,7 @@ type UnlinkedRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   link: string;
+  repository: string | null;
   session_id: string;
   source: string;
 };
@@ -422,7 +427,7 @@ export const readSample = async (
         AND bucket = date_bin('5 minutes', ${t}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
     `,
     sql`
-      SELECT process_id::float8 AS process_id, harness, pid, cwd, cpu_cores AS cores,
+      SELECT process_id::float8 AS process_id, harness, pid, cwd, repository, cpu_cores AS cores,
              rss_bytes::float8 AS rss_bytes
       FROM insight.vitals_processes
       WHERE system = ${name} AND t = ${t}
@@ -430,10 +435,12 @@ export const readSample = async (
     `,
     // A process's Sessions: those whose stretch holds the sample, and those it
     // answered requests for in the sample, which takes in the sample after a
-    // stretch's last request.
+    // stretch's last request. Each Session is looked up on its own, and OFFSET 0
+    // keeps it so, since PostgreSQL would otherwise build every Session kept to
+    // join them. The unlinked stretches below look theirs up the same way.
     sql`
       SELECT x.process_id::float8 AS process_id, x.session_id, s.first_cwd, s.last_cwd,
-             s.first_git_branch, s.last_git_branch
+             s.first_git_branch, s.last_git_branch, s.repository
       FROM (
         SELECT process_id, harness, system, source, session_id
         FROM insight.vitals_sessions WHERE system = ${name} AND t = ${t}
@@ -442,18 +449,27 @@ export const readSample = async (
         FROM insight.vitals_requests
         WHERE system = ${name} AND t = ${t} AND process_id IS NOT NULL
       ) x
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (x.harness, x.system, x.source, x.session_id)
+      CROSS JOIN LATERAL (
+        SELECT y.started_at, y.first_cwd, y.last_cwd, y.first_git_branch, y.last_git_branch,
+               y.repository
+        FROM insight.sessions y
+        WHERE (y.harness, y.system, y.source, y.session_id)
+            = (x.harness, x.system, x.source, x.session_id)
+        OFFSET 0
+      ) s
       ORDER BY x.process_id, s.started_at, x.session_id
     `,
     sql`
       SELECT st.harness, st.source, st.session_id, st.link, st.candidates::int AS candidates,
-             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository
       FROM insight.session_stretches st
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (st.harness, st.system, st.source, st.session_id)
+      CROSS JOIN LATERAL (
+        SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+        FROM insight.sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (st.harness, st.system, st.source, st.session_id)
+        OFFSET 0
+      ) s
       WHERE st.system = ${name}
         AND st.started_at BETWEEN ${new Date(t.getTime() - DAY_MS)} AND ${t}
         AND st.ended_at > ${sample.since}
@@ -487,7 +503,7 @@ export const readSample = async (
       harness: row.harness,
       pid: row.pid,
       processId: row.process_id,
-      project: projectOf(row.cwd),
+      project: projectOf(row.repository, row.cwd),
       requests: answeredBy((request) => request.process_id === row.process_id),
       rssBytes: row.rss_bytes ?? undefined,
       sessions: sessionsOf(row.process_id),
