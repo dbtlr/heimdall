@@ -817,6 +817,33 @@ test('update attention reads actual observations independently of fresh Vitals a
 });
 
 test.each([
+  { evidence: 'current', label: 'a recent Report', receivedAt: NOW - MINUTE },
+  { evidence: 'current', label: 'a Report at the 10-minute edge', receivedAt: NOW - 10 * MINUTE },
+  { evidence: 'old', label: 'no Report for over 10 minutes', receivedAt: NOW - 10 * MINUTE - 1000 },
+] as const)(
+  'clock skew attention rests on when the Hub last judged the clock offset: $label',
+  async ({ evidence, receivedAt }) => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { receivedAt });
+    await addCondition(h.db.sql, {
+      kind: 'clock_skew',
+      level: 'warning',
+      raisedAt: -3600,
+      reason: "Its clock is 2 min 10 s ahead of the Hub's.",
+      subject: '',
+      system: 'server-1',
+    });
+
+    expect(await only(h, 'clock_skew')).toMatchObject({
+      checkedAt: receivedAt,
+      evidence,
+      level: 'warning',
+      reason: "Its clock is 2 min 10 s ahead of the Hub's.",
+    });
+  },
+);
+
+test.each([
   { evidence: 'current', label: 'fresh query and metadata', metadataAt: NOW, observedAt: NOW },
   {
     evidence: 'current',

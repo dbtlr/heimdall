@@ -12,8 +12,14 @@ test.each([
   ['drift', 'Drift'],
   ['pending_update', 'Pending update'],
   ['reboot_required', 'Reboot required'],
+  ['clock_skew', 'Clock skew'],
 ] as const)('%s reads %s', (kind, name) => {
   expect(KIND_NAMES[kind]).toBe(name);
+});
+
+test('a clock skew subject names whose clock is wrong, and an own clock has none', () => {
+  expect(conditionSubject({ kind: 'clock_skew', subject: '' })).toBe('');
+  expect(conditionSubject({ kind: 'clock_skew', subject: 'hub' })).toBe("Hub's clock");
 });
 
 test('pending updates display the package source, and older occurrences the package too', () => {

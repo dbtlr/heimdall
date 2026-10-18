@@ -1,4 +1,9 @@
-import { parseProcessSubject, parseUpdateSubject, UPDATE_MANAGER_NAMES } from '@heimdall/schema';
+import {
+  CLOCK_SKEW_SUBJECTS,
+  parseProcessSubject,
+  parseUpdateSubject,
+  UPDATE_MANAGER_NAMES,
+} from '@heimdall/schema';
 import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
 import type { ConditionKind } from '../server/fleet-overview-types.ts';
@@ -17,6 +22,7 @@ export const LEVEL_STROKE: Record<ConditionLevel, string> = {
 };
 
 export const KIND_NAMES: Record<ConditionKind, string> = {
+  clock_skew: 'Clock skew',
   drift: 'Drift',
   high_cpu: 'High CPU',
   high_memory: 'High memory',
@@ -49,6 +55,9 @@ export const conditionSubject = ({ kind, subject }: { kind: ConditionKind; subje
     return source.name === undefined
       ? `${updateManagerName(source.manager)} (${source.installation})`
       : `${source.name} (${updateManagerName(source.manager)}, ${source.installation})`;
+  }
+  if (kind === 'clock_skew') {
+    return subject === CLOCK_SKEW_SUBJECTS.hub ? "Hub's clock" : '';
   }
   if (kind !== 'hot_process') {
     return subject;

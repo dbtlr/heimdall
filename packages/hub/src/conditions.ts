@@ -14,7 +14,13 @@ export const FIXED_LEVELS = {
 } as const satisfies Record<
   Exclude<
     ConditionKind,
-    'low_disk' | 'high_cpu' | 'high_memory' | 'hot_process' | 'pending_update' | 'reboot_required'
+    | 'clock_skew'
+    | 'low_disk'
+    | 'high_cpu'
+    | 'high_memory'
+    | 'hot_process'
+    | 'pending_update'
+    | 'reboot_required'
   >,
   ConditionLevel
 >;
@@ -27,6 +33,7 @@ type Judgment = {
 } & (
   | {
       kind:
+        | 'clock_skew'
         | 'low_disk'
         | 'high_cpu'
         | 'high_memory'

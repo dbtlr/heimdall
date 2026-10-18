@@ -1,11 +1,15 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
-import type { ConditionLimitSet } from '@heimdall/schema';
+import type { ConditionLevel, ConditionLimitSet } from '@heimdall/schema';
 import { configHome, readConfigSection } from '@heimdall/service';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
 import { MIGRATION_LOCK } from './migrations.ts';
 import { RAW_RETENTION_MS } from './retention.ts';
+
+// Clock skew limits in seconds, either direction.
+export const CLOCK_LIMITS = { alert: 300, hysteresis: 5, note: 30, warning: 120 };
+export type ClockLimits = typeof CLOCK_LIMITS;
 
 export const DISK_LIMITS = { alert: 90, hysteresis: 5, note: 70, warning: 80 };
 export type DiskLimits = typeof DISK_LIMITS;
@@ -28,6 +32,13 @@ export const PROCESS_LIMITS = {
 export const UPDATE_LIMITS = { rebootWarningDays: 7, securityWarningDays: 3 };
 
 const percentage = z.number().finite().min(0).max(100);
+const seconds = z.number().finite().positive();
+const partialClock = z.strictObject({
+  alert: seconds.optional(),
+  hysteresis: seconds.optional(),
+  note: seconds.optional(),
+  warning: seconds.optional(),
+});
 const partialDisk = z.strictObject({
   alert: percentage.optional(),
   hysteresis: percentage.positive().optional(),
@@ -58,6 +69,7 @@ const partialUpdates = z.strictObject({
   securityWarningDays: z.number().finite().positive().max(3650).optional(),
 });
 const systemOverrides = z.strictObject({
+  clock: partialClock.optional(),
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
@@ -65,6 +77,7 @@ const systemOverrides = z.strictObject({
   updates: partialUpdates.optional(),
 });
 const section = z.strictObject({
+  clock: partialClock.optional(),
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
@@ -73,22 +86,46 @@ const section = z.strictObject({
   updates: partialUpdates.optional(),
 });
 
+// The limits of a measurement graded into levels: each level starts at its
+// limit, and a lower level recovers a hysteresis below it.
+export type Bands = { alert: number; hysteresis: number; note: number; warning: number };
+
+const LEVELS = ['note', 'warning', 'alert'] as const;
+
+// The level `value` falls in, or undefined when it falls in none. Escalation is
+// immediate and includes equality. A level at or below the `current` one holds
+// until `value` is a hysteresis below its limit, so a drop can skip levels or
+// clear outright.
+export const gradedLevel = (
+  value: number,
+  bands: Bands,
+  current: ConditionLevel | undefined,
+): ConditionLevel | undefined => {
+  const currentRank = current === undefined ? -1 : LEVELS.indexOf(current);
+  return LEVELS.toReversed().find(
+    (level) =>
+      value >= bands[level] ||
+      (LEVELS.indexOf(level) <= currentRank && value >= bands[level] - bands.hysteresis),
+  );
+};
+
 // Non-overlapping recovery bands make a lower level's meaning independent
 // of which higher level preceded it. A note must always be able to clear.
-const validateDisk = (limits: DiskLimits, name: string): DiskLimits => {
+// `top` ends the message's ordering, such as `alert <= 100`.
+const validateBands = <T extends Bands>(limits: T, name: string, top: string): T => {
   const { note, warning, alert, hysteresis } = limits;
   if (note <= hysteresis || warning - note <= hysteresis || alert - warning <= hysteresis) {
     throw new Error(
-      `${name}: require 0 < hysteresis < note < warning < alert <= 100, with each level gap greater than hysteresis.`,
+      `${name}: require 0 < hysteresis < note < warning < ${top}, with each level gap greater than hysteresis.`,
     );
   }
   return limits;
 };
 
-const mergeDisk = (
-  defaults: DiskLimits,
-  override: z.infer<typeof partialDisk> | undefined,
-): DiskLimits => ({
+type PartialBands = { [K in keyof Bands]?: Bands[K] | undefined };
+
+const mergeBands = <T extends Bands>(defaults: T, override: PartialBands | undefined): T => ({
+  ...defaults,
   alert: override?.alert ?? defaults.alert,
   hysteresis: override?.hysteresis ?? defaults.hysteresis,
   note: override?.note ?? defaults.note,
@@ -99,6 +136,7 @@ export const parseConditionLimits = (value: unknown) => {
   const parsed = section.parse(value === undefined ? {} : value);
   const resolve = (
     defaults: {
+      clock: ClockLimits;
       cpu: typeof CPU_LIMITS;
       disk: DiskLimits;
       memory: typeof MEMORY_LIMITS;
@@ -153,8 +191,9 @@ export const parseConditionLimits = (value: unknown) => {
       );
     }
     return {
+      clock: validateBands(mergeBands(defaults.clock, override.clock), `${name}.clock`, 'alert'),
       cpu,
-      disk: validateDisk(mergeDisk(defaults.disk, override.disk), `${name}.disk`),
+      disk: validateBands(mergeBands(defaults.disk, override.disk), `${name}.disk`, 'alert <= 100'),
       memory,
       process,
       updates: {
@@ -167,6 +206,7 @@ export const parseConditionLimits = (value: unknown) => {
   };
   const defaults = resolve(
     {
+      clock: CLOCK_LIMITS,
       cpu: CPU_LIMITS,
       disk: DISK_LIMITS,
       memory: MEMORY_LIMITS,

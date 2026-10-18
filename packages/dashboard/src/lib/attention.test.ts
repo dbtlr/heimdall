@@ -932,6 +932,42 @@ test.each([
   },
 );
 
+test('a clock skew card shows the Hub reason and points to the System time sync', () => {
+  const skew = attention(
+    { kind: 'clock_skew', reason: "Its clock is 42 s ahead of the Hub's." },
+    { level: 'note' },
+  );
+  expect(subjectText(skew)).toBe('');
+  expect(evidenceWords(skew, NOW)).toMatchObject({
+    expected: ['Clock agrees with the Hub'],
+    observed: ["Its clock is 42 s ahead of the Hub's."],
+  });
+  const steps = nextSteps(skew);
+  expect(steps.short).toBe('Check its time sync');
+  expect(steps.steps).toHaveLength(1);
+  expect(steps.steps[0]?.text).toContain('NTP');
+});
+
+test('a clock skew card about the Hub clock names it and points to the Hub time sync first', () => {
+  const skew = attention(
+    { kind: 'clock_skew', reason: "The Hub's clock is 3 min 2 s ahead of 3 other Systems." },
+    { evidence: 'old', level: 'warning', subject: 'hub' },
+  );
+  expect(subjectText(skew)).toBe("Hub's clock");
+  expect(evidenceWords(skew, NOW).expected).toEqual([
+    "The Hub's clock agrees with the other Systems",
+  ]);
+  const steps = nextSteps(skew);
+  expect(steps.short).toBe("Check the Hub's time sync");
+  expect(steps.steps.map(({ title }) => title)).toEqual([
+    "Check the Hub's time sync",
+    'Check its time sync',
+  ]);
+  const note = utc(evidenceNote(skew, NOW) ?? []);
+  expect(note).toContain('No Report has');
+  expect(note).toContain('over 10 minutes ago');
+});
+
 test('update and reboot cards retain the Hub reason and offer manual next steps', () => {
   const pending = attention(
     { kind: 'pending_update', reason: '2 APT packages are out of date.' },

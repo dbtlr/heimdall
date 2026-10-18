@@ -46,6 +46,7 @@ export type Stretch = {
 };
 
 export type ConditionKind =
+  | 'clock_skew'
   | 'high_cpu'
   | 'high_memory'
   | 'hot_process'

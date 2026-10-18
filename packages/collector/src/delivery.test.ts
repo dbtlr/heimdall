@@ -241,6 +241,40 @@ describe('flushing the queue', () => {
     queue.close();
   });
 
+  // The Hub reads sentAt against its own clock on arrival, so a stamp that
+  // predates a slow first request would read as the System running behind.
+  test('stamps the resend of a refused Report with the time it is sent, not the first send', async () => {
+    await using dir = await tempStateDir();
+    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
+    queue.append(sample(1000));
+    let clock = 9000;
+    const hub = scriptedHub([{ detail: 'bad sections', kind: 'rejected' }]);
+    const send = (sent: Report) => {
+      clock += 4000;
+      return hub.send(sent);
+    };
+    const sections = {
+      pending: () =>
+        Promise.resolve({ runs: { section: { jobs: [], unreadable: [] }, settle: () => {} } }),
+    };
+
+    await flushQueue({
+      identity,
+      now: () => clock,
+      queue,
+      sections,
+      send,
+      timeZone: NO_TIME_ZONE,
+      transcripts: () => NO_TRANSCRIPTS,
+    });
+
+    expect(hub.reports.map((r) => [r.runs !== undefined, r.sentAt])).toEqual([
+      [true, 9000],
+      [false, 13_000],
+    ]);
+    queue.close();
+  });
+
   test('resends the samples of a Report refused with records and runs sections, without either, and settles both', async () => {
     await using dir = await tempStateDir();
     const queue = await openQueue({ capacity: 10, stateDir: dir.path });

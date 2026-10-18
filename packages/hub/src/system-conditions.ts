@@ -2,7 +2,7 @@ import { FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS, VitalsSampleSchema } from 
 import type { ConditionLevel, VitalsSample } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { parseConditionLimits } from './condition-limits.ts';
+import { gradedLevel, parseConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits, DiskLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import type { ConditionKind } from './store.ts';
@@ -99,8 +99,7 @@ const tighter = (a: Disk, b: Disk) => {
     : a;
 };
 
-// Escalation is immediate. On recovery, only levels at or below the current
-// one retain their hysteresis band; a drop can skip levels or clear outright.
+// Disk use as a graded level, with the mount's free space as the reason.
 const diskVerdict = (
   disk: Disk,
   limits: DiskLimits,
@@ -110,19 +109,13 @@ const diskVerdict = (
   if (free === undefined) {
     return 'hold';
   }
-  const used = (100 * disk.usedBytes) / disk.totalBytes;
-  const levels = ['note', 'warning', 'alert'] as const;
-  const currentRank = current === undefined ? -1 : levels.indexOf(current);
-  for (const level of levels.toReversed()) {
-    const recovering = levels.indexOf(level) <= currentRank;
-    if (used >= limits[level] || (recovering && used >= limits[level] - limits.hysteresis)) {
-      return {
+  const level = gradedLevel((100 * disk.usedBytes) / disk.totalBytes, limits, current);
+  return level === undefined
+    ? 'clear'
+    : {
         level,
         raise: `${bytesText(free.bytes)} free of ${bytesText(disk.totalBytes)} (${(free.fraction * 100).toFixed(1)}%).`,
       };
-    }
-  }
-  return 'clear';
 };
 
 const DISKS_SCHEMA = VitalsSampleSchema.shape.disks;

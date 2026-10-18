@@ -15,6 +15,7 @@ const DAY = 24 * HOUR;
 const NOW = 1_800_000_000_000;
 
 const LIMITS: ConditionLimitSet = {
+  clock: { alert: 300, hysteresis: 5, note: 30, warning: 120 },
   cpu: {
     noteMinutes: 30,
     noteWindowMinutes: 60,
@@ -396,6 +397,7 @@ test.each([
   ['pending_update', 'Pending update APT (system)'],
   ['reboot_required', 'Reboot required'],
   ['reports_rejected', 'Reports rejected'],
+  ['clock_skew', 'Clock skew'],
 ] as const)('%s has no chart and leads with how long it has been open', (kind, title) => {
   const view = conditionDetailView(
     updateDetail({

@@ -1,4 +1,5 @@
 import {
+  CLOCK_OFFSET_FRESH_MS,
   ConditionLevelSchema,
   FUTURE_SAMPLE_TOLERANCE_MS,
   UpdateManagerSchema,
@@ -57,7 +58,12 @@ type MirroredRunRow = RunRow & {
 
 type MirroredRecordRow = RecordRow & { system: string };
 
-type SystemRow = { last_seen_at: Date | null; sleeps: boolean | null; system: string };
+type SystemRow = {
+  clock_offset_at: Date | null;
+  last_seen_at: Date | null;
+  sleeps: boolean | null;
+  system: string;
+};
 
 type SampleRow = {
   disks: Disk[];
@@ -71,6 +77,7 @@ type SampleRow = {
 // Everything the Hub holds about one System that bears on what needs the operator.
 type Held = {
   checks: ChecksSetRow | undefined;
+  clockOffsetAt: number | undefined;
   conditions: ConditionRow[];
   jobRuns: Map<string, MirroredRunRow>;
   lastSeenAt: number | undefined;
@@ -317,6 +324,17 @@ const conditionFound = (
       facts: { kind, reason: row.latest_reason },
     };
   }
+  if (kind === 'clock_skew') {
+    // The Hub judges only an offset it recorded within CLOCK_OFFSET_FRESH_MS.
+    return {
+      checkedAt: held.clockOffsetAt,
+      evidence:
+        held.clockOffsetAt !== undefined && now - held.clockOffsetAt <= CLOCK_OFFSET_FRESH_MS
+          ? 'current'
+          : 'old',
+      facts: { kind, reason: row.latest_reason },
+    };
+  }
   if (kind === 'system_stale') {
     return {
       checkedAt: held.lastSeenAt,
@@ -438,6 +456,7 @@ const heldOf = (
   },
 ): Held => ({
   checks: rows.checks.get(name)?.[0],
+  clockOffsetAt: rows.systems.get(name)?.[0]?.clock_offset_at?.getTime(),
   conditions: rows.conditions.get(name) ?? [],
   jobRuns: new Map((rows.runs.get(name) ?? []).map((row) => [row.job, row])),
   lastSeenAt: rows.systems.get(name)?.[0]?.last_seen_at?.getTime(),
@@ -496,7 +515,10 @@ export const readAttention = async (
       FROM mirrored_records WHERE system IN ${sql(names)}
       ORDER BY kind, name
     `,
-    sql`SELECT name AS system, last_seen_at, sleeps FROM systems WHERE name IN ${sql(names)}`,
+    sql`
+      SELECT name AS system, last_seen_at, sleeps, clock_offset_at
+      FROM systems WHERE name IN ${sql(names)}
+    `,
     // One newest sample per System, read through the (system, t) key.
     sql`
       SELECT s.name AS system, v.t, v.disks, e.cpu_known, e.memory_known,

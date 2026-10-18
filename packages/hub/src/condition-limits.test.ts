@@ -32,6 +32,41 @@ test('update warning ages inherit fields per System and reject invalid limits', 
   }
 });
 
+test('clock limits default to 30, 120, and 300 seconds, inherit per field per System, and reject bad orderings', () => {
+  expect(parseConditionLimits(undefined).clock).toEqual({
+    alert: 300,
+    hysteresis: 5,
+    note: 30,
+    warning: 120,
+  });
+  const limits = parseConditionLimits({
+    clock: { note: 20 },
+    systems: { 'laptop-1': { clock: { alert: 600 } } },
+  });
+  expect(limits.clock).toEqual({ alert: 300, hysteresis: 5, note: 20, warning: 120 });
+  expect(limits.systems.get('laptop-1')?.clock).toEqual({
+    alert: 600,
+    hysteresis: 5,
+    note: 20,
+    warning: 120,
+  });
+  const invalid = [
+    { hysteresis: 0 },
+    { note: 5 },
+    { note: 120 },
+    { warning: 34 },
+    { alert: 124 },
+    { warning: 400 },
+    { note: -1 },
+    { note: '30' },
+    { unknown: 1 },
+  ];
+  for (const clock of invalid) {
+    expect(() => parseConditionLimits({ clock })).toThrow();
+    expect(() => parseConditionLimits({ systems: { 'laptop-1': { clock } } })).toThrow();
+  }
+});
+
 test('hot-process limits inherit individual core and rolling duration settings per System', () => {
   const limits = parseConditionLimits({
     process: { cores: 0.75 },
@@ -205,7 +240,8 @@ test('serve judges disk using fleet defaults and partial System overrides from h
   for (const system of ['laptop-1', 'server-1']) {
     // oxlint-disable-next-line no-await-in-loop -- seed each System before serving.
     await storeToken(db.sql, { pairedAt: now, system, token: system });
-    const body = report(system, [now]);
+    // Sent at the time it is received, so that no clock skew is judged.
+    const body = { ...report(system, [now]), sentAt: now };
     body.samples[0]?.disks.splice(0, body.samples[0].disks.length, {
       mount: '/',
       totalBytes: 1000,
@@ -267,6 +303,7 @@ test('stored limits hold the fleet defaults and each overridden System, replaced
   const rows: { limits: unknown; system: string }[] =
     await db.sql`SELECT system, limits FROM condition_limits ORDER BY system`;
   const fleet = {
+    clock: { alert: 300, hysteresis: 5, note: 30, warning: 120 },
     cpu: {
       noteMinutes: 30,
       noteWindowMinutes: 60,
