@@ -8,6 +8,17 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.7.1 - 2026-10-17
+
+### Added
+
+- **Hub stores the Condition limits it judges by** (HMD-127). On start, the Hub writes the fleet's limits and each System's overridden limits to its database, so the dashboard can draw them without reading `hub.toml`.
+- **Each Condition opens its own page** (HMD-114). The page leads with the culprit's number, charts disk, CPU, memory, and hot-process readings against the System's limits, estimates when a filling disk would be full, and lists the level history and the next step. Fleet cards, the Now tab, Open now, and the Timeline link to it. Upgrade the Hub first so it stores the limits the page draws.
+
+### Changed
+
+- **Pending updates raise one Condition for each package source** (HMD-128). A System with several pending Homebrew or APT packages now shows one Pending update Condition per package source, instead of one per package. The Condition is a warning once a security update in the source has waited longer than the limit, and a note otherwise. Its page lists the packages with their versions and security status, and says how to install them. On upgrade the Hub merges open per-package Conditions into one for each source, keeping the earliest raise time. Upgrade the Hub first.
+
 ## v0.7.0 - 2026-10-16
 
 ### Added
