@@ -72,7 +72,7 @@ function JumpToSessions({ matched }: { matched: number }) {
         search={(previous) => previous}
         to="."
       >
-        {matched === 1 ? 'Show it' : 'Show them'} ↓
+        {matched === 1 ? 'Show it' : 'Show them'} <span aria-hidden="true">↓</span>
       </Link>
     </div>
   );
