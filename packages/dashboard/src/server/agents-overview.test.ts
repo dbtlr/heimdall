@@ -268,3 +268,32 @@ test('models are totaled per request in the period, and each Session lists the m
     mixed: ['pricey-model', 'test-model', 'unknown'],
   });
 });
+
+test('model totals of a whole Session are the stored ones, and a Session crossing the start is priced by request', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'whole',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-50, -40],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'crossing',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-691_200, -30],
+    system: 'laptop-1',
+  });
+  await h.db.sql`UPDATE model_prices SET input_per_mtok = 10 WHERE model = 'test-model'`;
+
+  const result = await view(h);
+  // The whole Session still has the price stored at the last refresh, as its
+  // Session total does; the crossing one is priced now.
+  expect(result.models).toEqual([
+    { model: 'test-model', pricedCostUsd: 12, requests: 3, unpricedRequests: 0 },
+  ]);
+  expect(result.totals.pricedCostUsd).toBe(12);
+});

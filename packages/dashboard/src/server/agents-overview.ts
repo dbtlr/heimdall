@@ -39,27 +39,50 @@ type ModelRow = {
 const sessionIdentity = (row: Pick<SessionRow, 'harness' | 'session_id' | 'source' | 'system'>) =>
   JSON.stringify([row.system, row.harness, row.source, row.session_id]);
 
-// Model totals sum request pricing, so they can differ slightly from the
-// stored Session totals the rest of the overview shows (ADR-0016).
+// A model's totals per Session in the period: the Hub's stored model totals
+// for a Session wholly inside it, and request pricing for one crossing a
+// boundary, as for the Session totals. Like them, stored model totals lag a
+// change until the Hub's refresh (ADR-0016). The spans repeat the Session
+// query's, which the planner reads in about a millisecond.
 const readModelRows = (
   sql: SQL,
   { from, to }: { from: Date; to: Date },
 ): Promise<ModelRow[]> => sql`
-  SELECT r.harness, r.system, r.source, r.session_id,
-         coalesce(nullif(r.model, ''), ${UNKNOWN_MODEL}) AS model,
-         count(*)::float8 AS requests,
-         coalesce(sum(r.cost_usd), 0)::float8 AS priced_cost_usd,
-         count(*) FILTER (WHERE r.cost_usd IS NULL)::float8 AS unpriced_requests
-  FROM insight.requests r
-  WHERE r.at >= ${from} AND r.at <= ${to}
-  GROUP BY r.harness, r.system, r.source, r.session_id, 5
+  WITH spans AS MATERIALIZED (
+    SELECT harness, system, source, session_id,
+           min(started_at) AS first_request_at, max(ended_at) AS last_request_at
+    FROM insight.session_stretches
+    GROUP BY harness, system, source, session_id
+    HAVING max(ended_at) >= ${from} AND min(started_at) <= ${to}
+  )
+  SELECT k.harness, k.system, k.source, k.session_id,
+         coalesce(nullif(t.model, ''), ${UNKNOWN_MODEL}) AS model,
+         t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
+         t.unpriced_requests::float8 AS unpriced_requests
+  FROM spans k
+  CROSS JOIN LATERAL (
+    SELECT x.model, x.requests, x.priced_cost_usd, x.unpriced_requests
+    FROM insight.session_model_totals x
+    WHERE (x.harness, x.system, x.source, x.session_id)
+        = (k.harness, k.system, k.source, k.session_id)
+      AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
+    UNION ALL
+    SELECT r.model, count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL)
+    FROM insight.requests r
+    WHERE (r.harness, r.system, r.source, r.session_id)
+        = (k.harness, k.system, k.source, k.session_id)
+      AND NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
+      AND r.at >= ${from} AND r.at <= ${to}
+    GROUP BY r.model
+  ) t
+  WHERE t.requests > 0
 `;
 
 // The fleet's model totals over the Sessions listed, and each Session's models.
 const modelBreakdown = (rows: ModelRow[], sessions: SessionRow[]) => {
   const listed = new Set(sessions.map(sessionIdentity));
   const totals = new Map<string, ModelTotals>();
-  const used = new Map<string, string[]>();
+  const used = new Map<string, Set<string>>();
   for (const row of rows.filter((candidate) => listed.has(sessionIdentity(candidate)))) {
     const total = totals.get(row.model) ?? {
       model: row.model,
@@ -71,7 +94,7 @@ const modelBreakdown = (rows: ModelRow[], sessions: SessionRow[]) => {
     total.requests += row.requests;
     total.unpricedRequests += row.unpriced_requests;
     totals.set(row.model, total);
-    used.set(sessionIdentity(row), [...(used.get(sessionIdentity(row)) ?? []), row.model]);
+    used.set(sessionIdentity(row), new Set([...(used.get(sessionIdentity(row)) ?? []), row.model]));
   }
   return { models: [...totals.values()], used };
 };
@@ -135,7 +158,7 @@ const readSnapshot = async (
     branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
     harness: row.harness,
     lastRequestAt: row.last_request_at.getTime(),
-    models: (used.get(sessionIdentity(row)) ?? []).toSorted(),
+    models: [...(used.get(sessionIdentity(row)) ?? [])].toSorted(),
     pricedCostUsd: row.priced_cost_usd,
     project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     requests: row.requests,
