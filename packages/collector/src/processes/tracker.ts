@@ -64,10 +64,11 @@ const sameProcess = (held: Tracked, entry: ProcessEntry) =>
 //
 // A tick reads the process table once (`reader.table`) and the working
 // directory of each root. The repository a working directory belongs to is
-// looked up once for each directory a root is seen in, not on every tick. A process in the previous tick's table and not in
-// this one ended at this tick's time, which is when the Collector noticed, not
-// when the process exited. A process the Collector was not running to see end is
-// the Hub's to close (see the spec).
+// looked up when a root is first seen in it and again only when the root's
+// directory changes, not on every tick. A process in the previous tick's table
+// and not in this one ended at this tick's time, which is when the Collector
+// noticed, not when the process exited. A process the Collector was not running
+// to see end is the Hub's to close (see the spec).
 //
 // A pid read again is the same process when the kernel's start is the same
 // (`kernelStart`), which no wall-clock step moves; a pid whose kernel start
@@ -136,7 +137,8 @@ export const createProcessTracker = ({
     return Promise.all(
       roots.map(async (root) => {
         const held = running.get(keyOf({ harness: root.harness, pid: root.entry.pid }));
-        const before = held !== undefined && sameProcess(held, root.entry) ? held.process : undefined;
+        const before =
+          held !== undefined && sameProcess(held, root.entry) ? held.process : undefined;
         const cwd = (await reader.cwdOf(root.entry.pid)) ?? before?.cwd ?? null;
         const repository =
           cwd === null || cwd === before?.cwd

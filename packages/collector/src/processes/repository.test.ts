@@ -124,7 +124,7 @@ test('a .git file with an empty gitdir belongs to none', async () => {
 
 test('a FIFO named .git belongs to none and is never read', async () => {
   const folder = await inOuterRepository('fifo');
-  expect(Bun.spawnSync(['mkfifo', join(folder, '.git')]).exitCode).toBe(0);
+  expect(await Bun.spawn(['mkfifo', join(folder, '.git')]).exited).toBe(0);
 
   expect(await repositoryOf(folder)).toBeNull();
 }, 2000);
