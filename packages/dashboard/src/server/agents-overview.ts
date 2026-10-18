@@ -72,7 +72,7 @@ const readSnapshot = async (
     harness: row.harness,
     lastRequestAt: row.last_request_at.getTime(),
     pricedCostUsd: row.priced_cost_usd,
-    project: projectOf(row.repository ?? row.last_cwd ?? row.first_cwd),
+    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     requests: row.requests,
     sessionId: row.session_id,
     source: row.source,

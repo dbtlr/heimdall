@@ -102,6 +102,8 @@ export type SessionView = SessionKey & {
   harnessVersion: string | undefined;
   // The cores of each process a stretch is linked to, in the same buckets.
   processes: ProcessSeries[];
+  // The repository's name, else the working directory's (ADR-0019).
+  project: string | undefined;
   // Oldest first.
   requests: SessionRequest[];
   startedAt: number;

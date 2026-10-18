@@ -14,7 +14,7 @@ import {
 import type { Hub } from '@heimdall/hub/testing';
 
 import type { Range } from './fleet-overview-types.ts';
-import { findGaps, parseOverviewInput, readFleetOverview } from './fleet-overview.ts';
+import { findGaps, parseOverviewInput, projectOf, readFleetOverview } from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -86,6 +86,18 @@ describe('parseOverviewInput', () => {
     expect(parseOverviewInput({ unpaired: true }).unpaired).toBe(true);
     expect(parseOverviewInput({ unpaired: false }).unpaired).toBe(false);
     expect(parseOverviewInput({}).unpaired).toBe(false);
+  });
+});
+
+describe('projectOf', () => {
+  test("names a project by its repository's last folder, else its working directory's", () => {
+    expect(projectOf('/srv/work/api/', '/srv/trees/feature')).toBe('api');
+    expect(projectOf(null, '/srv/trees/feature')).toBe('feature');
+    expect(projectOf(null, null)).toBeUndefined();
+  });
+
+  test('falls back to the working directory when the repository has no folder name', () => {
+    expect(projectOf('/', '/notes')).toBe('notes');
   });
 });
 

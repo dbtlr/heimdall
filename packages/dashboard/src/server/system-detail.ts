@@ -134,7 +134,7 @@ const sessionPlace = (row: {
   repository: string | null;
 }) => ({
   branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
-  project: projectOf(row.repository ?? row.last_cwd ?? row.first_cwd),
+  project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
 });
 
 // Groups each Harness process's buckets into its series, in order of first bucket.
@@ -148,7 +148,7 @@ export const toProcesses = (rows: readonly CoresRow[]): ProcessSeries[] => {
         pid: row.pid,
         points: [],
         processId: row.process_id,
-        project: projectOf(row.repository ?? row.cwd),
+        project: projectOf(row.repository, row.cwd),
       };
       series.set(row.process_id, found);
     }
@@ -492,7 +492,7 @@ export const readSample = async (
       harness: row.harness,
       pid: row.pid,
       processId: row.process_id,
-      project: projectOf(row.repository ?? row.cwd),
+      project: projectOf(row.repository, row.cwd),
       requests: answeredBy((request) => request.process_id === row.process_id),
       rssBytes: row.rss_bytes ?? undefined,
       sessions: sessionsOf(row.process_id),

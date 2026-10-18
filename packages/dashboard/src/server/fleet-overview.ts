@@ -70,8 +70,13 @@ export const findGaps = (
 export const isLink = (link: string): link is Link =>
   link === 'linked' || link === 'ambiguous' || link === 'unmatched';
 
-// The last directory name of a working directory.
-export const projectOf = (cwd: string | null) => cwd?.split('/').findLast((part) => part !== '');
+const lastFolderOf = (path: string | null) => path?.split('/').findLast((part) => part !== '');
+
+// A project's name (ADR-0019): the last folder of the repository a working
+// directory belongs to, else of the working directory itself, as when there is
+// no repository or it is `/`, which has no folder name.
+export const projectOf = (repository: string | null, cwd: string | null) =>
+  lastFolderOf(repository) ?? lastFolderOf(cwd);
 
 // A lane's status word, first match wins (see LaneStatus).
 export const laneStatus = ({
@@ -169,7 +174,7 @@ const toStretch = (row: StretchRow): Stretch => {
     endedAt: row.ended_at.getTime(),
     harness: row.harness,
     link: row.link,
-    project: projectOf(row.repository ?? row.last_cwd ?? row.first_cwd),
+    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
     sessionId: row.session_id,
     startedAt: row.started_at.getTime(),
   };
