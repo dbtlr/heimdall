@@ -13,8 +13,10 @@ import { storableJson } from './storable.ts';
 //   row is taken by one process, so an ended process and the one that reused
 //   its pid never merge. A process with no row gets one.
 // - A matched row is updated: peak memory only grows, a known working directory
-//   or repository is not forgotten, and a process listed without an end is
-//   running, with no missed end.
+//   is not forgotten, and a process listed without an end is running, with no
+//   missed end. The repository goes with the working directory: a section that
+//   reads the directory sets the repository it sends, null included, unless it
+//   comes from a Collector too old to send one.
 // - Each process's reading, CPU time and memory at `lastSeenAt`, is stored as a
 //   sample and rolls up into its 5-minute bucket, once however often it is
 //   resent (ADR-0008).
@@ -49,7 +51,8 @@ export const storeHarnessProcesses = async (
       SELECT e.idx, p->>'harness' AS harness, (p->>'pid')::integer AS pid,
              to_timestamp((p->>'startedAt')::bigint / 1000.0) AS started_at,
              to_timestamp((p->>'endedAt')::bigint / 1000.0) AS ended_at,
-             p->>'cwd' AS cwd, p->>'repository' AS repository, (p->>'cpuMicros')::bigint AS cpu_micros,
+             p->>'cwd' AS cwd, p->>'repository' AS repository,
+             p->'repository' IS NOT NULL AS sends_repository, (p->>'cpuMicros')::bigint AS cpu_micros,
              (p->>'rssBytes')::bigint AS rss_bytes, (p->>'peakRssBytes')::bigint AS peak_rss_bytes,
              to_timestamp((p->>'lastSeenAt')::bigint / 1000.0) AS last_seen_at
       FROM jsonb_array_elements(${storableJson(section.processes)}::text::jsonb)
@@ -78,7 +81,8 @@ export const storeHarnessProcesses = async (
         ended_at = i.ended_at,
         end_missed = false,
         cwd = COALESCE(i.cwd, h.cwd),
-        repository = COALESCE(i.repository, h.repository),
+        repository = CASE WHEN i.cwd IS NOT NULL AND i.sends_repository
+                          THEN i.repository ELSE h.repository END,
         peak_rss_bytes = GREATEST(h.peak_rss_bytes, i.peak_rss_bytes),
         last_seen_at = i.last_seen_at,
         sent_at = ${sent}

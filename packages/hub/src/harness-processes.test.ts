@@ -219,6 +219,35 @@ test('a process whose repository the Collector could not resolve is stored with 
   expect((await rowsOf(h, 'laptop-1'))[0]?.repository).toBe('/work/project');
 });
 
+test('a process that moves to a directory outside any repository loses the repository it had', async () => {
+  await using h = await startHub();
+  await pushProcesses(h, 'laptop-1', [running()]);
+  await pushProcesses(
+    h,
+    'laptop-1',
+    [running({ cwd: '/tmp/scratch', lastSeenAt: NOW + 15_000, repository: null })],
+    { sentAt: NOW + 15_000, t: NOW + 15_000 },
+  );
+
+  expect((await rowsOf(h, 'laptop-1'))[0]).toMatchObject({ cwd: '/tmp/scratch', repository: null });
+});
+
+test('a section that could not read the working directory keeps the directory and its repository', async () => {
+  await using h = await startHub();
+  await pushProcesses(h, 'laptop-1', [running()]);
+  await pushProcesses(
+    h,
+    'laptop-1',
+    [running({ cwd: null, lastSeenAt: NOW + 15_000, repository: null })],
+    { sentAt: NOW + 15_000, t: NOW + 15_000 },
+  );
+
+  expect((await rowsOf(h, 'laptop-1'))[0]).toMatchObject({
+    cwd: '/work/project',
+    repository: '/work/project',
+  });
+});
+
 test('a pid reused within seconds of an ended process is stored as another process beside the one held', async () => {
   await using h = await startHub();
   await pushProcesses(h, 'laptop-1', [running()]);
