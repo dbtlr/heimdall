@@ -230,3 +230,124 @@ test("a Session's project is the repository of its working directory, else the d
 
   expect(projects).toEqual({ 'in-worktree': 'api', unmatched: 'other' });
 });
+
+test('models are totaled per request in the period, and each Session lists the models it used', async () => {
+  await using h = await start();
+  await h.db.sql`
+    INSERT INTO model_prices (model, valid_from, source, input_per_mtok, output_per_mtok, context_window)
+    VALUES ('pricey-model', '2020-01-01', 'bundled', 4, 8, 2000000)
+  `;
+  await addSession(h.db.sql, {
+    id: 'mixed',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-300, { at: -200, model: 'pricey-model' }, { at: -100, model: 'unknown' }],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'crossing',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [{ at: -700_000, model: 'old-model' }, -50],
+    system: 'laptop-1',
+  });
+  const result = await view(h);
+  const byModel = Object.fromEntries(result.models.map(({ model, ...totals }) => [model, totals]));
+  expect(byModel).toEqual({
+    'pricey-model': { pricedCostUsd: 4, requests: 1, unpricedRequests: 0 },
+    'test-model': { pricedCostUsd: 2, requests: 2, unpricedRequests: 0 },
+    unknown: { pricedCostUsd: 0, requests: 1, unpricedRequests: 1 },
+  });
+  const modelsOf = Object.fromEntries(
+    result.sessions.map(({ models, sessionId }) => [sessionId, models]),
+  );
+  expect(modelsOf).toEqual({
+    crossing: ['test-model'],
+    mixed: ['pricey-model', 'test-model', 'unknown'],
+  });
+});
+
+test('model totals of a whole Session are the stored ones, and a Session crossing the start is priced by request', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'whole',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-50, -40],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'crossing',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-691_200, -30],
+    system: 'laptop-1',
+  });
+  await h.db.sql`UPDATE model_prices SET input_per_mtok = 10 WHERE model = 'test-model'`;
+
+  const result = await view(h);
+  // The whole Session still has the price stored at the last refresh, as its
+  // Session total does; the crossing one is priced now.
+  expect(result.models).toEqual([
+    { model: 'test-model', pricedCostUsd: 12, requests: 3, unpricedRequests: 0 },
+  ]);
+  expect(result.totals.pricedCostUsd).toBe(12);
+});
+
+test('a request with an empty model totals under the empty model, not under a name', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, { id: 'blank', model: '', requests: [-50, -40], system: 'server-1' });
+
+  const result = await view(h);
+
+  expect(result.models).toEqual([
+    { model: '', pricedCostUsd: 0, requests: 2, unpricedRequests: 2 },
+  ]);
+  expect(result.sessions[0]?.models).toEqual(['']);
+});
+
+test('stored model totals of a Session the period lists no longer are not counted', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    harness: 'codex',
+    id: 'kept',
+    model: 'test-model',
+    requests: [-50],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'switched',
+    model: 'old-model',
+    requests: [-60, -40],
+    system: 'server-1',
+  });
+  // A newer parser leaves the Session unlisted until its requests are parsed
+  // again, while its stored model totals stay until the refresh.
+  await h.db.sql`UPDATE current_parsers SET version = version + 1 WHERE harness = 'claude-code'`;
+
+  const result = await view(h);
+
+  expect(result.sessions.map((one) => one.sessionId)).toEqual(['kept']);
+  expect(result.models.map((one) => one.model)).toEqual(['test-model']);
+  expect(result.models.reduce((sum, one) => sum + one.requests, 0)).toBe(result.totals.requests);
+});
+
+// The database orders model ids by its locale (a-model before B-model); the
+// list is sorted by code unit, as it is wherever it is read.
+test("a Session's models are listed in code unit order, not in the order the database returns them", async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'mixed',
+    model: 'a-model',
+    requests: [-300, { at: -200, model: 'B-model' }, { at: -100, model: 'c-model' }],
+    system: 'server-1',
+  });
+
+  const result = await view(h);
+
+  expect(result.sessions[0]?.models).toEqual(['B-model', 'a-model', 'c-model']);
+});

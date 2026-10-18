@@ -27,7 +27,9 @@ test('Agents period links preserve the viewer zone and Fleet navigation remains 
     validateSearch: agentsSearch,
   });
   const router = createRouter({
-    history: createMemoryHistory({ initialEntries: ['/agents?range=7d&zone=Europe%2FBerlin'] }),
+    history: createMemoryHistory({
+      initialEntries: ['/agents?range=7d&by=model&zone=Europe%2FBerlin&pick=heimdall'],
+    }),
     routeTree: root.addChildren([route]),
   });
   await router.load();
@@ -35,8 +37,9 @@ test('Agents period links preserve the viewer zone and Fleet navigation remains 
   expect(html).toContain('href="/"');
   expect(html).toContain('>Agents</a>');
   expect(html).toMatch(/<a(?=[^>]*href="\/agents")(?=[^>]*aria-current="page")[^>]*>/u);
-  expect(html).toContain('href="/agents?range=today&amp;zone=Europe%2FBerlin"');
-  expect(html).toContain('href="/agents?range=30d&amp;zone=Europe%2FBerlin"');
+  expect(html).toContain('href="/agents?range=today&amp;by=model&amp;zone=Europe%2FBerlin"');
+  expect(html).toContain('href="/agents?range=30d&amp;by=model&amp;zone=Europe%2FBerlin"');
+  expect(html).not.toContain('pick=');
   expect(html).toContain('Today');
   expect(html).toContain('7 days');
   expect(html).toContain('30 days');

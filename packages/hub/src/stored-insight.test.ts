@@ -53,6 +53,13 @@ const differences = async (sql: SQL) => [
     (SELECT 'totals', * FROM computed_session_totals
      EXCEPT ALL SELECT 'totals', * FROM insight.session_totals)
   `),
+  ...(await sql`
+    (SELECT 'model totals' AS kind, * FROM insight.session_model_totals
+     EXCEPT ALL SELECT 'model totals', * FROM computed_session_model_totals)
+    UNION ALL
+    (SELECT 'model totals', * FROM computed_session_model_totals
+     EXCEPT ALL SELECT 'model totals', * FROM insight.session_model_totals)
+  `),
 ];
 
 // The Sessions marked stale, once the ranges marked are read as the next
@@ -175,6 +182,96 @@ describe('refreshing', () => {
 
 // Each change alters what the rules give for s1, marks s1 stale for what it
 // altered, and is in the views once refreshed.
+// A Session's stored model totals as "model: requests, priced cost, unpriced".
+const modelTotals = async (sql: SQL, session: string): Promise<string[]> =>
+  (
+    await sql`
+      SELECT model, requests, priced_cost_usd, unpriced_requests
+      FROM insight.session_model_totals WHERE session_id = ${session} ORDER BY model
+    `
+  ).map(
+    (row: {
+      model: string;
+      priced_cost_usd: string | null;
+      requests: string;
+      unpriced_requests: string;
+    }) =>
+      `${row.model}: ${row.requests}, ${row.priced_cost_usd === null ? 'null' : Number(row.priced_cost_usd)}, ${row.unpriced_requests}`,
+  );
+
+describe('model totals', () => {
+  test('the refresh fills them per model, and replaces them when requests change', async () => {
+    await using db = await database();
+    await price(db.sql);
+    await addSession(db.sql, {
+      id: 's1',
+      inputTokens: 1_000_000,
+      model: 'priced-model',
+      outputTokens: 0,
+      requests: [10, { at: 20, model: 'unpriced-model' }, 30],
+    });
+    expect(await modelTotals(db.sql, 's1')).toEqual([
+      'priced-model: 2, 2000000, 0',
+      'unpriced-model: 1, null, 1',
+    ]);
+
+    await addRequest(db.sql, 's1', 's1-late', 40);
+    expect(await modelTotals(db.sql, 's1')).toEqual([
+      'priced-model: 2, 2000000, 0',
+      'unpriced-model: 1, null, 1',
+    ]);
+    await refreshSessionInsight(db.sql);
+
+    expect(await modelTotals(db.sql, 's1')).toEqual([
+      'priced-model: 3, 2000003, 0',
+      'unpriced-model: 1, null, 1',
+    ]);
+    expect(await differences(db.sql)).toEqual([]);
+  });
+
+  test('a price change reprices them with the Session totals', async () => {
+    await using db = await database();
+    await price(db.sql);
+    await addSession(db.sql, {
+      id: 's1',
+      inputTokens: 1_000_000,
+      model: 'priced-model',
+      outputTokens: 0,
+      requests: [10, 20],
+    });
+    await price(db.sql, 3_000_000);
+
+    expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 2000000, 0']);
+    expect(await stale(db.sql)).toEqual(['s1 totals']);
+    await refreshSessionInsight(db.sql);
+
+    expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 6000000, 0']);
+    expect(await differences(db.sql)).toEqual([]);
+  });
+
+  test('a Session a delete is deriving again loses them, and a Session that is gone keeps none', async () => {
+    await using db = await database();
+    await linkedSession(db.sql);
+    await db.sql`
+      INSERT INTO rederiving_sessions (harness, system, source, session_id)
+      VALUES ('claude-code', 'laptop-1', 'claude-code', 's1')
+    `;
+    const [{ stored }] = await db.sql`
+      SELECT count(*)::int AS stored FROM stored_session_model_totals WHERE session_id = 's1'
+    `;
+    expect(stored).toBe(0);
+
+    await db.sql`DELETE FROM rederiving_sessions`;
+    await db.sql`DELETE FROM projected_requests WHERE session_id = 's2'`;
+    await db.sql`DELETE FROM projected_sessions WHERE session_id = 's2'`;
+    await refreshSessionInsight(db.sql);
+
+    expect(await modelTotals(db.sql, 's2')).toEqual([]);
+    expect(await modelTotals(db.sql, 's1')).toHaveLength(1);
+    expect(await differences(db.sql)).toEqual([]);
+  });
+});
+
 describe('a change that alters a stored Session marks it stale', () => {
   const changes: [string, string, (sql: SQL, process: number) => Promise<unknown>][] = [
     ['a new request', 's1 stretches totals', (sql) => addRequest(sql, 's1', 's1-late', 700)],
@@ -638,5 +735,51 @@ test('a database migrated to version 21 refreshes once migrated to the latest', 
   await price(db.sql);
 
   expect(await refreshSessionInsight(db.sql)).toBe(1);
+  expect(await differences(db.sql)).toEqual([]);
+});
+
+test('a database migrated to version 31 has model totals beside its Session totals once migrated to the latest', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 31),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await price(db.sql);
+  await addSession(db.sql, { id: 's1', model: 'priced-model', requests: [10, 20] });
+  expect(await refreshSessionInsight(db.sql)).toBe(0);
+
+  await migrate(db.sql);
+
+  expect(await stale(db.sql)).toEqual([]);
+  expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 10, 0']);
+  const [{ sessions, models }] = await db.sql`
+    SELECT (SELECT sum(requests) FROM insight.session_totals)::int AS sessions,
+           (SELECT sum(requests) FROM insight.session_model_totals)::int AS models
+  `;
+  expect(models).toBe(sessions);
+  expect(await differences(db.sql)).toEqual([]);
+});
+
+test('a stored Session that insight.sessions no longer lists is marked for refresh when migrated to the latest', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 31),
+  );
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now())`;
+  await price(db.sql);
+  await addSession(db.sql, { id: 's1', model: 'priced-model', requests: [10, 20] });
+  expect(await refreshSessionInsight(db.sql)).toBe(0);
+  await db.sql`
+    INSERT INTO stored_session_totals (harness, system, source, session_id, requests,
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, unpriced_requests)
+    VALUES ('claude-code', 'laptop-1', 'personal', 'unlisted', 1, 0, 0, 0, 0, 0)
+  `;
+
+  await migrate(db.sql);
+
+  expect(await stale(db.sql)).toEqual(['unlisted totals']);
+  await refreshSessionInsight(db.sql);
   expect(await differences(db.sql)).toEqual([]);
 });

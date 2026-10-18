@@ -1,4 +1,4 @@
-import { AGENTS_RANGES } from '../server/agents-overview-types.ts';
+import { AGENTS_BREAKDOWNS, AGENTS_RANGES } from '../server/agents-overview-types.ts';
 
 const validZone = (zone: unknown): string | undefined => {
   if (
@@ -15,7 +15,14 @@ const validZone = (zone: unknown): string | undefined => {
   }
 };
 
+// A breakdown row's key: a project, System, model, or Harness name, or the
+// empty key of Sessions with no working directory and requests with no model.
+const validPick = (pick: unknown): string | undefined =>
+  typeof pick === 'string' && pick.length <= 4096 ? pick : undefined;
+
 export const agentsSearch = (search: Record<string, unknown>) => ({
+  by: AGENTS_BREAKDOWNS.find((by) => by === search.by) ?? 'project',
+  pick: validPick(search.pick),
   range: AGENTS_RANGES.find((range) => range === search.range) ?? 'today',
   zone: validZone(search.zone),
 });

@@ -36,6 +36,8 @@
   --chart-3: #9ba4b9;
   --chart-4: #fab219;
   --chart-5: #0ca30c;
+  /* The rest of a breakdown, past the five series: unlike chart-3, a neutral that is no series. */
+  --chart-other: #6c789a;
 
   /* Status, from good to critical. */
   --status-good: #0ca30c;

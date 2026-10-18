@@ -2034,6 +2034,148 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 31,
   },
+  {
+    // Each Session's totals split by model are stored too, so the Agents view
+    // reads a model's cost for a whole period by index instead of pricing every
+    // request again (ADR-0016). computed_session_model_totals holds the rules:
+    // the same per-request sums as computed_session_totals, grouped by Session
+    // and model, for the Sessions insight.sessions lists. They depend on exactly
+    // what the totals do, so the triggers that mark a Session's totals stale
+    // cover them, and the refresh replaces both in one transaction. Every
+    // Session that has stored totals gets its model totals here, from the same
+    // rules, so the two are present together. A Session already waiting on a
+    // refresh keeps its mark; until it refreshes, its model totals are current
+    // while its stored totals are not, as for any stale Session. The fill
+    // reads the whole archive, so it may outlast the connection's timeout.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE VIEW computed_session_model_totals WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, r.model,
+             count(r.request_id)::bigint AS requests,
+             sum(r.cost_usd) AS priced_cost_usd,
+             (count(r.request_id) FILTER (WHERE r.cost_usd IS NULL))::bigint AS unpriced_requests
+      FROM insight.sessions s
+      JOIN insight.requests r
+        ON r.harness = s.harness AND r.system = s.system AND r.source = s.source
+       AND r.session_id = s.session_id
+      GROUP BY s.harness, s.system, s.source, s.session_id, r.model;
+
+      CREATE TABLE stored_session_model_totals (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        model text NOT NULL,
+        requests bigint NOT NULL,
+        priced_cost_usd numeric,
+        unpriced_requests bigint NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id, model)
+      );
+
+      CREATE VIEW insight.session_model_totals WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.model, s.requests,
+             s.priced_cost_usd, s.unpriced_requests
+      FROM stored_session_model_totals s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+
+      CREATE OR REPLACE FUNCTION forget_rederiving_sessions() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        DELETE FROM stored_session_stretches s USING after_change k
+        WHERE (s.harness, s.system, s.source, s.session_id)
+            = (k.harness, k.system, k.source, k.session_id);
+        DELETE FROM stored_session_totals s USING after_change k
+        WHERE (s.harness, s.system, s.source, s.session_id)
+            = (k.harness, k.system, k.source, k.session_id);
+        DELETE FROM stored_session_model_totals s USING after_change k
+        WHERE (s.harness, s.system, s.source, s.session_id)
+            = (k.harness, k.system, k.source, k.session_id);
+        RETURN NULL;
+      END
+      $$;
+
+      CREATE OR REPLACE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          DELETE FROM stored_session_model_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_model_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+                 c.priced_cost_usd, c.unpriced_requests
+          FROM computed_session_model_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
+      END
+      $$;
+
+      INSERT INTO stored_session_model_totals
+      SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+             c.priced_cost_usd, c.unpriced_requests
+      FROM computed_session_model_totals c
+      JOIN stored_session_totals t
+        ON (t.harness, t.system, t.source, t.session_id)
+         = (c.harness, c.system, c.source, c.session_id);
+
+      -- A stored Session insight.sessions does not list now, such as one whose
+      -- Harness's parser just switched, has no model totals to fill; the next
+      -- refresh settles both.
+      SELECT mark_sessions_stale(array_agg(t.harness), array_agg(t.system),
+                                 array_agg(t.source), array_agg(t.session_id), false, true)
+      FROM stored_session_totals t
+      WHERE NOT EXISTS (
+        SELECT 1 FROM stored_session_model_totals m
+        WHERE (m.harness, m.system, m.source, m.session_id)
+            = (t.harness, t.system, t.source, t.session_id)
+      );
+    `,
+    version: 32,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
