@@ -2043,9 +2043,9 @@ export const MIGRATIONS: readonly Migration[] = [
     // what the totals do, so the triggers that mark a Session's totals stale
     // cover them, and the refresh replaces both in one transaction. Every
     // Session that has stored totals gets its model totals here, from the same
-    // rules, so the two are present together and no Session needs a refresh
-    // for the Agents view to add up. A Session still waiting on a refresh
-    // keeps its mark.
+    // rules, so the two are present together. A Session already waiting on a
+    // refresh keeps its mark; until it refreshes, its model totals are current
+    // while its stored totals are not, as for any stale Session.
     sql: `
       CREATE VIEW computed_session_model_totals WITH (security_barrier = true) AS
       SELECT s.harness, s.system, s.source, s.session_id, r.model,
