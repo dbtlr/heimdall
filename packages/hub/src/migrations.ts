@@ -2176,6 +2176,19 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 32,
   },
+  {
+    // How far a System's clock was from the Hub's when its latest Report
+    // arrived: the Report's sent time minus the Hub's clock at arrival, in
+    // milliseconds, and that arrival time. Only the latest is kept; the clock
+    // skew Condition judges it. A System that has sent no Report since has
+    // neither.
+    sql: `
+      ALTER TABLE systems
+        ADD COLUMN clock_offset_ms bigint,
+        ADD COLUMN clock_offset_at timestamptz;
+    `,
+    version: 33,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

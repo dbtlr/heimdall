@@ -173,6 +173,69 @@ test('a Report of samples the Hub already holds still counts as seeing the Syste
   expect((await listSystems(h.db.sql))[0]?.lastSeenAt).toBe(NOW + 60 * 60_000);
 });
 
+const clockOffset = async (h: Awaited<ReturnType<typeof startHub>>) => {
+  const [row]: { at: Date | null; ms: string | number | null }[] = await h.db.sql`
+    SELECT clock_offset_ms AS ms, clock_offset_at AS at FROM systems WHERE name = 'laptop-1'
+  `;
+  return { at: row?.at?.getTime() ?? null, ms: row?.ms === null ? null : Number(row?.ms) };
+};
+
+test('a Report stores how far its sent time is ahead of the Hub clock, and when the Hub judged it', async () => {
+  await using h = await startHub();
+
+  await push(
+    h.hub,
+    { ...report('laptop-1', [NOW]), sentAt: NOW + 42_000 },
+    { token: 'laptop-token' },
+  );
+  expect(await clockOffset(h)).toEqual({ at: NOW, ms: 42_000 });
+
+  h.clock.now = NOW + 60_000;
+  await push(
+    h.hub,
+    { ...report('laptop-1', [NOW + 15_000]), sentAt: NOW },
+    { token: 'laptop-token' },
+  );
+  expect(await clockOffset(h)).toEqual({ at: NOW + 60_000, ms: -60_000 });
+});
+
+// A backlog Report takes long to upload; its upload time is not skew.
+test('the offset counts from when the Report arrives, not from when its body has been read', async () => {
+  await using h = await startHub();
+  const body = new TextEncoder().encode(JSON.stringify(report('laptop-1', [NOW])));
+  const slow = new ReadableStream({
+    pull(controller) {
+      h.clock.now = NOW + 90_000;
+      controller.enqueue(body);
+      controller.close();
+    },
+  });
+
+  const response = await h.hub.fetch(
+    new Request('http://hub.test/api/v1/reports', {
+      body: slow,
+      duplex: 'half',
+      headers: { authorization: 'Bearer laptop-token' },
+      method: 'POST',
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(await clockOffset(h)).toEqual({ at: NOW, ms: 0 });
+});
+
+test('a rejected Report records no offset', async () => {
+  await using h = await startHub();
+
+  await push(
+    h.hub,
+    { ...report('laptop-1', [NOW]), samples: [], sentAt: NOW + 42_000 },
+    { token: 'laptop-token' },
+  );
+
+  expect(await clockOffset(h)).toEqual({ at: null, ms: null });
+});
+
 // PostgreSQL cannot store NUL or a lone surrogate. Refusing the Report would
 // stall the Collector's queue behind it, so the Hub stores a replacement character.
 test('text PostgreSQL cannot store is kept as a replacement character', async () => {

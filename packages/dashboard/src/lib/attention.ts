@@ -102,6 +102,7 @@ export const subjectText = (item: Attention): string => {
     }
     case 'reports_rejected':
     case 'system_stale':
+    case 'clock_skew':
     case 'reboot_required': {
       return '';
     }
@@ -391,6 +392,12 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
         },
       );
     }
+    case 'clock_skew': {
+      return evidence(same('Clock agrees with the Hub'), {
+        long: [item.reason],
+        short: [truncate(item.reason, SHORT_LIMIT)],
+      });
+    }
     case 'reports_rejected': {
       return evidence(same('Reports the Hub accepts'), {
         long: [item.reason],
@@ -414,6 +421,9 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
 const arrivedThing = (item: Attention) => {
   if (item.kind === 'job_failing' || item.kind === 'job_overdue') {
     return 'run';
+  }
+  if (item.kind === 'clock_skew') {
+    return 'Report';
   }
   return item.kind === 'low_disk' ||
     item.kind === 'high_cpu' ||
@@ -624,6 +634,31 @@ const updateSteps = (item: { subject: string; system: string }) => {
   }
 };
 
+// Whether the skew's reason blames the Hub's clock rather than the System's.
+const blamesHub = (reason: string) => reason.startsWith("The Hub's clock");
+
+const clockSteps = (item: Attention & { kind: 'clock_skew' }) => {
+  const system = step(
+    'Check its time sync',
+    `On ${item.system}, check that time synchronization (NTP) is running and that the clock reads the correct time.`,
+    ['date -u'],
+  );
+  if (!blamesHub(item.reason)) {
+    return { short: 'Check its time sync', steps: [system] };
+  }
+  return {
+    short: "Check the Hub's time sync",
+    steps: [
+      step(
+        "Check the Hub's time sync",
+        `The Systems that disagree with the Hub agree with one another, so the Hub's clock is likely wrong. ${item.system} shares it. Check that time synchronization (NTP) is running and that the clock reads the correct time on the System that runs the Hub.`,
+        ['date -u'],
+      ),
+      system,
+    ],
+  };
+};
+
 const serviceSteps = (item: Attention & { kind: 'service_down' }) => {
   const { log, start } = serviceCommands(item.service);
   const supervisorCheck = item.checks.find(({ check }) => check !== 'health');
@@ -759,6 +794,9 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
           ),
         ],
       };
+    }
+    case 'clock_skew': {
+      return clockSteps(item);
     }
     case 'reports_rejected': {
       return {

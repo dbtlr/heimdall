@@ -27,9 +27,10 @@ export const seeSystem = async (sql: SQL, { at, system }: { at: number; system: 
   `;
 };
 
-// Records a Report received at `receivedAt` (epoch milliseconds): the System is
-// seen at that time, and each sample is stored unless the Hub already holds one
-// for the same System and time (ADR-0004).
+// Records a Report received at `receivedAt` (epoch milliseconds), the Hub's
+// clock when the request arrived: the System is seen at that time, its clock
+// offset is the Report's sent time less that time, and each sample is stored
+// unless the Hub already holds one for the same System and time (ADR-0004).
 export const storeReport = (
   sql: SQL,
   { receivedAt, report }: { receivedAt: number; report: Report },
@@ -38,11 +39,13 @@ export const storeReport = (
     const seenAt = new Date(receivedAt);
     await tx`
       INSERT INTO systems (
-        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps
+        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps,
+        clock_offset_ms, clock_offset_at
       )
       VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
               ${report.collector.platform}, ${storable(report.collector.arch)},
-              ${report.timeZone ?? null}, ${report.sleeps ?? null})
+              ${report.timeZone ?? null}, ${report.sleeps ?? null},
+              ${report.sentAt - receivedAt}, ${seenAt})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
         collector_version = excluded.collector_version,
@@ -52,7 +55,10 @@ export const storeReport = (
         -- arrive wins, which is fine with one Collector per System.
         time_zone = COALESCE(excluded.time_zone, systems.time_zone),
         -- Likewise a Report without sleeps, from a Collector that predates it.
-        sleeps = COALESCE(excluded.sleeps, systems.sleeps)
+        sleeps = COALESCE(excluded.sleeps, systems.sleeps),
+        -- Only the latest offset is kept, whichever way the Hub's clock moved.
+        clock_offset_ms = excluded.clock_offset_ms,
+        clock_offset_at = excluded.clock_offset_at
     `;
     // The samples travel as one JSON parameter, so a Report of any size is one
     // statement. The samples the insert stored, and only those, roll up into
@@ -397,9 +403,10 @@ const storeChecks = async (
 
 // The kinds of Condition the Hub derives. A job Condition's subject is the
 // job's name, a low disk Condition's the mount, a stale System Condition's is
-// empty, as are high CPU and memory, a Drift Condition's the file's path, and a Service down Condition's
-// the Service's name.
+// empty, as are clock skew, high CPU and memory, a Drift Condition's the file's
+// path, and a Service down Condition's the Service's name.
 export type ConditionKind =
+  | 'clock_skew'
   | 'pending_update'
   | 'reboot_required'
   | 'hot_process'

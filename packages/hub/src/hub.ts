@@ -112,8 +112,10 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
 // know or a Report from another System than the token's, 422 for an invalid
 // Report (ADR-0004). A Report the token attributes to a System counts as seeing
 // that System even when rejected, and raises its Reports-rejected Condition
-// (ADR-0005).
+// (ADR-0005). The Hub's clock is read once on arrival, before the body, so a
+// large Report's upload time never reads as the System's clock skew.
 const ingest = async (request: Request, { now, onError, sql }: HubDependencies) => {
+  const arrival = now();
   const auth = await authenticate(request, sql);
   if (auth.kind === 'missing') {
     return answer(401, "Supply the System's ingest token as a bearer token.");
@@ -126,7 +128,7 @@ const ingest = async (request: Request, { now, onError, sql }: HubDependencies) 
     const shown = reason.slice(0, MAX_REASON_LENGTH);
     // The answer tells the Collector whether to drop the Report, so it stands
     // even when the database cannot record the rejection (ADR-0004).
-    await recordRejection(sql, { reason: shown, receivedAt: now(), system }).catch(onError);
+    await recordRejection(sql, { reason: shown, receivedAt: arrival, system }).catch(onError);
     return answer(status, shown);
   };
   const invalid = (reason: string) => reject(422, reason);
@@ -145,7 +147,7 @@ const ingest = async (request: Request, { now, onError, sql }: HubDependencies) 
   if (parsed.data.system !== system) {
     return reject(403, `This token belongs to ${system}, not ${parsed.data.system}.`);
   }
-  return Response.json(await storeReport(sql, { receivedAt: now(), report: parsed.data }));
+  return Response.json(await storeReport(sql, { receivedAt: arrival, report: parsed.data }));
 };
 
 // The System a transcript upload's token names, or the answer to a request

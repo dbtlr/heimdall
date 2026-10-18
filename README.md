@@ -121,6 +121,19 @@ warning = 85
 alert = 95
 ```
 
+Clock skew compares each System's clock with the Hub's, in seconds and in either direction: a note at 30, a warning at 120, and an alert at 300, with a five-second recovery margin. It takes the same kind of limits and overrides:
+
+```toml
+[conditions.clock]
+note = 30
+warning = 120
+alert = 300
+hysteresis = 5
+
+[conditions.systems.laptop-1.clock]
+note = 60
+```
+
 Unspecified System limits inherit the fleet's limits. Restart the Hub after changing them. On start, the Hub stores the limits it judges by in its database, so the dashboard can draw them. Invalid limits stop startup before database access. [Condition levels and history](docs/spec.md#condition-levels-and-history) describes levels, migration, and recovery rules.
 
 CPU and memory Conditions count busy time across sustained work or recurring bursts. CPU above 90% for 30 minutes within an hour raises a note, and 120 minutes within four hours raises a warning. Memory above 90% for 30 minutes within an hour raises a warning. macOS also requires warning or critical memory pressure. These defaults are configurable:

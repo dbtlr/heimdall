@@ -17,8 +17,10 @@ export type ConditionTransition = {
 
 // The limits the Hub judges a System's Conditions by now: the fleet's limits with
 // that System's overrides merged in, as the Hub stores them in
-// condition_limits. Percentages are 0 to 100; durations are minutes or days.
+// condition_limits. Percentages are 0 to 100; durations are minutes or days,
+// and clock skew limits are seconds.
 export type ConditionLimitSet = {
+  clock: { alert: number; hysteresis: number; note: number; warning: number };
   cpu: {
     noteMinutes: number;
     noteWindowMinutes: number;

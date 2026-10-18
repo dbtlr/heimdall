@@ -12,6 +12,7 @@ test.each([
   ['drift', 'Drift'],
   ['pending_update', 'Pending update'],
   ['reboot_required', 'Reboot required'],
+  ['clock_skew', 'Clock skew'],
 ] as const)('%s reads %s', (kind, name) => {
   expect(KIND_NAMES[kind]).toBe(name);
 });

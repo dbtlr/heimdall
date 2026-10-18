@@ -7,6 +7,10 @@ import { z } from 'zod';
 import { MIGRATION_LOCK } from './migrations.ts';
 import { RAW_RETENTION_MS } from './retention.ts';
 
+// Clock skew limits in seconds, either direction.
+export const CLOCK_LIMITS = { alert: 300, hysteresis: 5, note: 30, warning: 120 };
+export type ClockLimits = typeof CLOCK_LIMITS;
+
 export const DISK_LIMITS = { alert: 90, hysteresis: 5, note: 70, warning: 80 };
 export type DiskLimits = typeof DISK_LIMITS;
 
@@ -28,6 +32,13 @@ export const PROCESS_LIMITS = {
 export const UPDATE_LIMITS = { rebootWarningDays: 7, securityWarningDays: 3 };
 
 const percentage = z.number().finite().min(0).max(100);
+const seconds = z.number().finite().positive();
+const partialClock = z.strictObject({
+  alert: seconds.optional(),
+  hysteresis: seconds.optional(),
+  note: seconds.optional(),
+  warning: seconds.optional(),
+});
 const partialDisk = z.strictObject({
   alert: percentage.optional(),
   hysteresis: percentage.positive().optional(),
@@ -58,6 +69,7 @@ const partialUpdates = z.strictObject({
   securityWarningDays: z.number().finite().positive().max(3650).optional(),
 });
 const systemOverrides = z.strictObject({
+  clock: partialClock.optional(),
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
@@ -65,6 +77,7 @@ const systemOverrides = z.strictObject({
   updates: partialUpdates.optional(),
 });
 const section = z.strictObject({
+  clock: partialClock.optional(),
   cpu: partialCpu.optional(),
   disk: partialDisk.optional(),
   memory: partialMemory.optional(),
@@ -85,6 +98,27 @@ const validateDisk = (limits: DiskLimits, name: string): DiskLimits => {
   return limits;
 };
 
+// The same bands as disk: a note must always be able to clear.
+const validateClock = (limits: ClockLimits, name: string): ClockLimits => {
+  const { note, warning, alert, hysteresis } = limits;
+  if (note <= hysteresis || warning - note <= hysteresis || alert - warning <= hysteresis) {
+    throw new Error(
+      `${name}: require 0 < hysteresis < note < warning < alert, with each level gap greater than hysteresis.`,
+    );
+  }
+  return limits;
+};
+
+const mergeClock = (
+  defaults: ClockLimits,
+  override: z.infer<typeof partialClock> | undefined,
+): ClockLimits => ({
+  alert: override?.alert ?? defaults.alert,
+  hysteresis: override?.hysteresis ?? defaults.hysteresis,
+  note: override?.note ?? defaults.note,
+  warning: override?.warning ?? defaults.warning,
+});
+
 const mergeDisk = (
   defaults: DiskLimits,
   override: z.infer<typeof partialDisk> | undefined,
@@ -99,6 +133,7 @@ export const parseConditionLimits = (value: unknown) => {
   const parsed = section.parse(value === undefined ? {} : value);
   const resolve = (
     defaults: {
+      clock: ClockLimits;
       cpu: typeof CPU_LIMITS;
       disk: DiskLimits;
       memory: typeof MEMORY_LIMITS;
@@ -153,6 +188,7 @@ export const parseConditionLimits = (value: unknown) => {
       );
     }
     return {
+      clock: validateClock(mergeClock(defaults.clock, override.clock), `${name}.clock`),
       cpu,
       disk: validateDisk(mergeDisk(defaults.disk, override.disk), `${name}.disk`),
       memory,
@@ -167,6 +203,7 @@ export const parseConditionLimits = (value: unknown) => {
   };
   const defaults = resolve(
     {
+      clock: CLOCK_LIMITS,
       cpu: CPU_LIMITS,
       disk: DISK_LIMITS,
       memory: MEMORY_LIMITS,

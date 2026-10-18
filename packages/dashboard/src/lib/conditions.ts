@@ -17,6 +17,7 @@ export const LEVEL_STROKE: Record<ConditionLevel, string> = {
 };
 
 export const KIND_NAMES: Record<ConditionKind, string> = {
+  clock_skew: 'Clock skew',
   drift: 'Drift',
   high_cpu: 'High CPU',
   high_memory: 'High memory',
