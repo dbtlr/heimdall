@@ -94,7 +94,8 @@ const modelBreakdown = (rows: ModelRow[], sessions: SessionRow[]) => {
     total.requests += row.requests;
     total.unpricedRequests += row.unpriced_requests;
     totals.set(row.model, total);
-    used.set(sessionIdentity(row), new Set([...(used.get(sessionIdentity(row)) ?? []), row.model]));
+    const identity = sessionIdentity(row);
+    used.set(identity, (used.get(identity) ?? new Set<string>()).add(row.model));
   }
   return { models: [...totals.values()], used };
 };
