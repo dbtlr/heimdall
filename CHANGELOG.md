@@ -8,6 +8,19 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.7.2 - 2026-10-18
+
+### Added
+
+- **Sessions in every worktree of a git repository share one project** (HMD-142). A Session that ran in a linked worktree, such as `.../worktrees/heimdall/fix-login`, is now filed under its repository, `heimdall`, instead of the worktree's folder name. The Collector reads which repository each Harness process's working directory belongs to, from git's pointer files only, and reports it; the Hub gives a Session the repository of the most recently started Harness process on its System, seen in the same working directory, that reported one, and `insight.sessions` gains a `repository` column. Upgrade the Hub first, then every Collector: a Hub older than this drops the `repository` a newer Collector sends, and a process that ends before the Hub is upgraded never gets it. Sessions with no matching Harness process, including all Sessions from before the upgrade, keep their folder-name project.
+- **Agents breaks the period's list-price cost down by project, System, model, or Harness** (HMD-143). A switch on the cost card chooses the split and keeps it in the address, and a stacked bar and a ranked list show each row's share and cost. A row with unpriced requests reads "At least"; a row with none priced reads "No list price". Tapping a row filters the Sessions list to that project, System, model, or Harness, and tapping it again clears the filter. The Hub now stores each Session's totals by model, so upgrade the Hub before the dashboard.
+- **The Hub raises a Clock skew Condition when a System's clock disagrees with the Hub's** (HMD-139). It compares each Report's sent time with the moment the Hub received the request, and grades the gap in either direction: a note at 30 seconds, a warning at 120, and an alert at 300, well before a skew hides a System's newest samples from the disk, load, and hot-process judgments. When several Systems are off by the same amount and one reads true, the Hub blames its own clock and raises the Condition on that one System. Limits are configurable under `[conditions.clock]`, with per-System overrides. Upgrade the Hub before the dashboard.
+- **On a phone, a picked Agents breakdown row says how many Sessions it matched and links down to them** (HMD-144). Below the wide layout the Sessions list sits under the cost card, out of sight, so the picked row now shows its Session count and a "Show them" link to the filtered list. The wide layout, with the list beside the card, is unchanged.
+
+### Changed
+
+- **macOS high memory is judged by the kernel's memory pressure alone** (HMD-122). A macOS sample counts as busy when pressure is `warning` or `critical`, at any use. Live readings showed pressure rising at 70 to 80% used, below the 90% limit the old rule also required, so the Condition could never be raised on macOS. `[conditions.memory].percent` now applies to Linux only. A macOS sample without pressure, as from a Collector older than 0.7.0, is unknown evidence. The Condition page states the pressure rule for a macOS System and draws no usage line. CPU and Linux memory defaults are unchanged; 12 days of live readings supported them.
+
 ## v0.7.1 - 2026-10-17
 
 ### Added
