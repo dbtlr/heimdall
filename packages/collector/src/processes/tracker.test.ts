@@ -235,6 +235,22 @@ test('a pid reused by a new process ends the old one and starts another', async 
   ]);
 });
 
+test("a new process that reused a pid inherits neither the old one's directory nor its repository", async () => {
+  const h = host();
+  h.state.table = [entry(10, { startedAt: BASE })];
+  h.state.cwds[10] = '/trees/old';
+  h.state.repositories['/trees/old'] = '/work/old';
+  await h.tracker.tick();
+  h.advance(15_000);
+  h.state.table = [entry(10, { startedAt: BASE + 50_000 })];
+  h.state.cwds[10] = null;
+
+  await h.tracker.tick();
+
+  const running = h.tracker.latest()?.processes.find((p) => p.endedAt === undefined);
+  expect(running).toMatchObject({ cwd: null, repository: null, startedAt: BASE + 50_000 });
+});
+
 test('a start time that moves by a second is the same process', async () => {
   const h = host();
   h.state.table = [entry(10, { startedAt: BASE })];

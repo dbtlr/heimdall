@@ -130,12 +130,13 @@ export const createProcessTracker = ({
   // The roots of a tick, each with its working directory and the repository
   // that belongs to. A directory the Collector cannot read this tick is the one
   // it last read for that process, and a directory already looked up is not
-  // looked up again.
+  // looked up again. A new process that reused a pid starts with neither.
   const rootsAt = async (at: number, entries?: readonly ProcessEntry[]) => {
     const roots = findHarnessRoots(entries ?? (await reader.table()));
     return Promise.all(
       roots.map(async (root) => {
-        const before = running.get(keyOf({ harness: root.harness, pid: root.entry.pid }))?.process;
+        const held = running.get(keyOf({ harness: root.harness, pid: root.entry.pid }));
+        const before = held !== undefined && sameProcess(held, root.entry) ? held.process : undefined;
         const cwd = (await reader.cwdOf(root.entry.pid)) ?? before?.cwd ?? null;
         const repository =
           cwd === null || cwd === before?.cwd
