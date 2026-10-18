@@ -32,7 +32,7 @@ On the live archive in October 2026, about 200,000 requests in 800 Sessions, tha
 
   A change to a request or a Session row marks its Session by key. Any other change marks a range: the Sessions of a System and Harness with a request near or after it, every Session's totals for a price change, or every Session of a Harness for a parser switch. The refresh's pick reads which Sessions a range covers in its own snapshot, not the writer's, so a Session a parse commits while the change is still open is covered too. Loading the price table at start writes it only when a price changed.
 - **The refresh stores what the rules give for the stale Sessions**, those that failed fewest times and then those with the latest requests first. Each Session is its own transaction, so one that cannot be refreshed, such as one too large for the statement timeout, holds up no other: it is tried again behind the rest, left after 3 tries until it is marked again, and named in a warning. `serve` runs the refresh on its own 15-second timer, for at most 10 seconds a run, so a backlog such as every Session after a parser switch drains over several runs.
-- **The `insight.session_stretches`, `insight.session_totals`, and `insight.session_model_totals` views read the stored rows.** They keep their columns, and they hide a Session a delete is deriving again at once, as every view does.
+- **The `insight.session_stretches`, `insight.session_totals`, and `insight.session_model_totals` views read the stored rows.** The first two keep the columns they had; `insight.session_model_totals` is new, with one row per Session and model. All three hide a Session a delete is deriving again at once, as every view does.
 - **Cost is still computed by the views' rules, at the prices in force.** A price change marks every Session's totals stale, so a price fix reprices every stored total within a few refreshes, with no rebuild.
 
 ## Considered options
@@ -43,10 +43,10 @@ On the live archive in October 2026, about 200,000 requests in 800 Sessions, tha
 
 ## Consequences
 
-The two views can lag a change by one refresh, about 15 seconds. That includes a new Session, which appears once refreshed. The dashboard refreshes its pages on the same period. A backlog lags longer:
+The three views can lag a change by one refresh, about 15 seconds. That includes a new Session, which appears once refreshed. The dashboard refreshes its pages on the same period. A backlog lags longer:
 
-- The migration that adds the stored rows marks every Session stale, so for the first minute or two after an upgrade the views miss the Sessions not yet stored.
-- A parser switch marks every Session of its Harness. Until the refresh reaches a Session, these two views show what the earlier version derived, while `insight.sessions` and `insight.requests` already show the new one. A rebuild also marks each Session as its rows are written.
+- The migration that first added the stored rows marks every Session stale, so for the first minute or two after that upgrade the views missed the Sessions not yet stored. The migration that added the model totals fills them from the rules at once for every Session that has stored totals, so the two are present together.
+- A parser switch marks every Session of its Harness. Until the refresh reaches a Session, these three views show what the earlier version derived, while `insight.sessions` and `insight.requests` already show the new one. A rebuild also marks each Session as its rows are written.
 
 The views that still compute on read, `insight.requests` and `insight.main_conversation_totals`, can briefly disagree with `insight.session_totals` until the refresh: a Session's requests can sum to more than its stored total. Each number still has one definition.
 
@@ -57,3 +57,4 @@ A missing trigger would leave a stored row behind the rules with nothing to show
 ## Changelog
 
 - 2026-10-14: Accepted with the change that builds it (HMD-97). On a copy of the live archive, after HMD-96, the 24-hour overview went from 6 seconds to about 0.1 and the 7-day overview from 13 seconds to about 0.4.
+- 2026-10-18: Addendum. Per-Session model totals are stored and refreshed with Session totals (HMD-143). The decision is unchanged.
