@@ -194,9 +194,10 @@ export const toMark = (row: ConditionRow, transitions: ConditionTransition[]): C
 // Session's place and cost, by System and start. Stretches name their System
 // and a range of `started_at`, which keeps the view cheap (docs/spec.md, the
 // insight views); a stretch that started over a day before `from` is left out.
-// A Session's totals price every request it made, so each Session is looked up
-// once, however many stretches it has; OFFSET 0 keeps that a lookup per
-// Session, since PostgreSQL would otherwise total every Session kept.
+// A Session's totals price every request it made, and its repository is a
+// lookup of its process, so each Session is looked up once, however many
+// stretches it has; OFFSET 0 keeps that a lookup per Session, since PostgreSQL
+// would otherwise build every Session kept.
 export const readStretches = (
   sql: SQL,
   { from, systems, to }: { from: number; systems: readonly string[]; to: number },
@@ -212,9 +213,13 @@ export const readStretches = (
            s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
            t.cost_usd
     FROM (SELECT DISTINCT harness, system, source, session_id FROM st) k
-    JOIN insight.sessions s
-      ON (s.harness, s.system, s.source, s.session_id)
-       = (k.harness, k.system, k.source, k.session_id)
+    CROSS JOIN LATERAL (
+      SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+      FROM insight.sessions x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) s
     CROSS JOIN LATERAL (
       SELECT x.cost_usd
       FROM insight.session_totals x

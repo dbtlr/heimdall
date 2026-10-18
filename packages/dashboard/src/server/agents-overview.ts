@@ -47,7 +47,13 @@ const readSnapshot = async (
            t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
            t.unpriced_requests::float8 AS unpriced_requests, t.last_request_at
     FROM spans k
-    JOIN insight.sessions s USING (harness, system, source, session_id)
+    CROSS JOIN LATERAL (
+      SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+      FROM insight.sessions x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) s
     CROSS JOIN LATERAL (
       SELECT x.requests, x.priced_cost_usd, x.unpriced_requests, k.last_request_at
       FROM insight.session_totals x

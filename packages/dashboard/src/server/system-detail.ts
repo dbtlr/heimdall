@@ -435,7 +435,9 @@ export const readSample = async (
     `,
     // A process's Sessions: those whose stretch holds the sample, and those it
     // answered requests for in the sample, which takes in the sample after a
-    // stretch's last request.
+    // stretch's last request. Each Session is looked up on its own, and OFFSET 0
+    // keeps it so, since PostgreSQL would otherwise build every Session kept to
+    // join them. The unlinked stretches below look theirs up the same way.
     sql`
       SELECT x.process_id::float8 AS process_id, x.session_id, s.first_cwd, s.last_cwd,
              s.first_git_branch, s.last_git_branch, s.repository
@@ -447,18 +449,27 @@ export const readSample = async (
         FROM insight.vitals_requests
         WHERE system = ${name} AND t = ${t} AND process_id IS NOT NULL
       ) x
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (x.harness, x.system, x.source, x.session_id)
+      CROSS JOIN LATERAL (
+        SELECT y.started_at, y.first_cwd, y.last_cwd, y.first_git_branch, y.last_git_branch,
+               y.repository
+        FROM insight.sessions y
+        WHERE (y.harness, y.system, y.source, y.session_id)
+            = (x.harness, x.system, x.source, x.session_id)
+        OFFSET 0
+      ) s
       ORDER BY x.process_id, s.started_at, x.session_id
     `,
     sql`
       SELECT st.harness, st.source, st.session_id, st.link, st.candidates::int AS candidates,
              s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository
       FROM insight.session_stretches st
-      JOIN insight.sessions s
-        ON (s.harness, s.system, s.source, s.session_id)
-         = (st.harness, st.system, st.source, st.session_id)
+      CROSS JOIN LATERAL (
+        SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+        FROM insight.sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (st.harness, st.system, st.source, st.session_id)
+        OFFSET 0
+      ) s
       WHERE st.system = ${name}
         AND st.started_at BETWEEN ${new Date(t.getTime() - DAY_MS)} AND ${t}
         AND st.ended_at > ${sample.since}
