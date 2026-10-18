@@ -16,6 +16,7 @@ const running = (over: Partial<HarnessProcess> = {}): HarnessProcess => ({
   lastSeenAt: NOW,
   peakRssBytes: 600,
   pid: 4242,
+  repository: '/work/project',
   rssBytes: 500,
   startedAt: START,
   ...over,
@@ -60,6 +61,7 @@ test('stores a running Harness process with what the Collector read', async () =
       lastSeenAt: NOW,
       peakRssBytes: 600,
       pid: 4242,
+      repository: '/work/project',
       startedAt: START,
     },
   ]);
@@ -198,6 +200,23 @@ test('a process whose working directory the Collector could not read is stored w
 
   expect(unknown).toBeNull();
   expect((await rowsOf(h, 'laptop-1'))[0]?.cwd).toBe('/work/project');
+});
+
+test('a process whose repository the Collector could not resolve is stored with none, and a later one fills it in', async () => {
+  await using h = await startHub();
+  await pushProcesses(h, 'laptop-1', [running({ repository: null })]);
+  const unknown = (await rowsOf(h, 'laptop-1'))[0]?.repository;
+  await pushProcesses(h, 'laptop-1', [running({ lastSeenAt: NOW + 15_000 })], {
+    sentAt: NOW + 15_000,
+    t: NOW + 15_000,
+  });
+  const filled = (await rowsOf(h, 'laptop-1'))[0]?.repository;
+  const { repository: _, ...older } = running({ lastSeenAt: NOW + 30_000 });
+  await pushProcesses(h, 'laptop-1', [older], { sentAt: NOW + 30_000, t: NOW + 30_000 });
+
+  expect(unknown).toBeNull();
+  expect(filled).toBe('/work/project');
+  expect((await rowsOf(h, 'laptop-1'))[0]?.repository).toBe('/work/project');
 });
 
 test('a pid reused within seconds of an ended process is stored as another process beside the one held', async () => {

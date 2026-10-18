@@ -1968,6 +1968,40 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 30,
   },
+  {
+    // The repository a Harness process's working directory belongs to, as the
+    // Collector read it from the System's repository pointer files, and the
+    // Session's own `repository`: that of the most recent process on its
+    // System, in the directory the Session ended in, that reported one.
+    // `CREATE OR REPLACE VIEW` appends the column and keeps the views built on
+    // `insight.sessions`; it resets the view's options, so the barrier is set
+    // again.
+    sql: `
+      ALTER TABLE harness_processes ADD COLUMN repository text;
+      CREATE INDEX harness_processes_by_cwd ON harness_processes (system, cwd, started_at DESC)
+        WHERE repository IS NOT NULL;
+
+      CREATE OR REPLACE VIEW insight.sessions WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.path, s.started_at, s.ended_at,
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+             s.first_harness_version, s.last_harness_version, s.parser_version,
+             (
+               SELECT p.repository FROM harness_processes p
+               WHERE p.system = s.system AND p.cwd = COALESCE(s.last_cwd, s.first_cwd)
+                 AND p.repository IS NOT NULL
+               ORDER BY p.started_at DESC, p.id DESC
+               LIMIT 1
+             ) AS repository
+      FROM projected_sessions s
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.session_id = s.session_id
+      );
+    `,
+    version: 31,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
