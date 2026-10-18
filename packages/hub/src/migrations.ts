@@ -2045,8 +2045,11 @@ export const MIGRATIONS: readonly Migration[] = [
     // Session that has stored totals gets its model totals here, from the same
     // rules, so the two are present together. A Session already waiting on a
     // refresh keeps its mark; until it refreshes, its model totals are current
-    // while its stored totals are not, as for any stale Session.
+    // while its stored totals are not, as for any stale Session. The fill
+    // reads the whole archive, so it may outlast the connection's timeout.
     sql: `
+      SET LOCAL statement_timeout = '10min';
+
       CREATE VIEW computed_session_model_totals WITH (security_barrier = true) AS
       SELECT s.harness, s.system, s.source, s.session_id, r.model,
              count(r.request_id)::bigint AS requests,
