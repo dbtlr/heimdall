@@ -48,6 +48,9 @@ export type ConditionDetail = {
   // The packages an open pending_update Condition's source has pending, security
   // updates first; undefined for any other Condition and once cleared.
   packages: PendingPackage[] | undefined;
+  // The System Collector's platform, such as linux or darwin; undefined
+  // before a Collector reports one. It says how the Hub judges memory.
+  platform: string | undefined;
   raisedAt: number;
   series: ConditionSeries | undefined;
   subject: string;

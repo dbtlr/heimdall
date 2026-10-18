@@ -124,6 +124,7 @@ describe('an open Condition', () => {
       id,
       kind: 'low_disk',
       level: 'warning',
+      platform: 'darwin',
       raisedAt: at(-3 * DAY),
       subject: '/data',
       system: 'server-1',

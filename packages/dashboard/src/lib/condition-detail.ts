@@ -232,6 +232,13 @@ const limitLines = (
     }
     case 'high_memory': {
       const { percent, warningMinutes, warningWindowMinutes } = limits.memory;
+      // macOS judges kernel memory pressure, so no usage limit applies.
+      if (detail.platform === 'darwin') {
+        return {
+          lines: [],
+          rule: `memory pressure for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
+        };
+      }
       return {
         lines: [{ label: `${String(percent)}%`, level, value: percent }],
         rule: `above ${String(percent)}% for ${String(warningMinutes)} of ${String(warningWindowMinutes)} min is a warning`,
