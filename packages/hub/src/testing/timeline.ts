@@ -262,14 +262,19 @@ export const timeline = (origin: number) => {
     const to = seenTo ?? end ?? 100_000;
     const [row]: { id: string }[] = await sql`
       INSERT INTO harness_processes (
-        system, harness, pid, started_at, ended_at, end_missed, cwd, repository,
-        peak_rss_bytes, last_seen_at, sent_at
+        system, harness, pid, started_at, ended_at, end_missed, cwd, peak_rss_bytes,
+        last_seen_at, sent_at
       )
       VALUES (${system}, ${harness}, ${pid}, ${at(start)}, ${end === undefined ? null : at(end)},
-              ${endMissed}, ${cwd}, ${repository}, ${rssBytes}, ${at(to)}, ${at(to)})
+              ${endMissed}, ${cwd}, ${rssBytes}, ${at(to)}, ${at(to)})
       RETURNING id
     `;
     const id = Number(row?.id);
+    // Set apart so fixtures still load into a database migrated to a version
+    // before the column.
+    if (repository !== null) {
+      await sql`UPDATE harness_processes SET repository = ${repository} WHERE id = ${id}`;
+    }
     await sql`
       INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
       SELECT ${id}, ${at(0)}::timestamptz + s * interval '1 second',
