@@ -279,7 +279,7 @@ const chartOf = (
   const range = isCores
     ? `0 to ${String(domain[1])} cores`
     : `${String(domain[0])} to ${String(domain[1])}%`;
-  let right = `${range}; limits unknown`;
+  let right = detail.limits === undefined ? `${range}; limits unknown` : range;
   if (lines.length > 0) {
     right =
       detail.kind === 'low_disk'

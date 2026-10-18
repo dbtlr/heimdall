@@ -333,6 +333,7 @@ test('macOS high memory states the pressure rule and draws no usage line', () =>
     NOW,
   );
   expect(view.chart?.captions.left).toBe('Memory used, last 24 h');
+  expect(view.chart?.captions.right).toBe('85 to 100%');
   expect(view.chart?.captions.rule).toBe('memory pressure for 30 of 60 min is a warning');
   expect(view.chart?.lines).toEqual([]);
 });

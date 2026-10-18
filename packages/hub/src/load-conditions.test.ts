@@ -148,6 +148,7 @@ test.each([
   ['linux', 950, undefined, true],
   ['linux', 750, undefined, false],
   ['darwin', 950, 'normal', false],
+  ['darwin', 500, 'normal', false],
   ['darwin', 750, 'warning', true],
   ['darwin', 950, 'critical', true],
   ['darwin', 950, undefined, false],
