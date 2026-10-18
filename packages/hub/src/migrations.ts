@@ -1989,6 +1989,7 @@ export const MIGRATIONS: readonly Migration[] = [
              s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
              s.first_harness_version, s.last_harness_version, s.parser_version,
              (
+               -- md5(cwd) is what lets harness_processes_by_cwd serve the lookup.
                SELECT p.repository FROM harness_processes p
                WHERE p.system = s.system AND md5(p.cwd) = md5(COALESCE(s.last_cwd, s.first_cwd))
                  AND p.cwd = COALESCE(s.last_cwd, s.first_cwd) AND p.repository IS NOT NULL

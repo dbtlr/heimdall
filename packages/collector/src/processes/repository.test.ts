@@ -122,6 +122,15 @@ test('a .git file with an empty gitdir belongs to none', async () => {
   expect(await repositoryOf(folder)).toBeNull();
 });
 
+test('a linked worktree whose commondir is empty belongs to none, not to itself', async () => {
+  const gitdir = await dir('project', '.git', 'worktrees', 'feature');
+  await writeFile(join(gitdir, 'commondir'), '');
+  const folder = await inOuterRepository('feature');
+  await writeFile(join(folder, '.git'), `gitdir: ${gitdir}\n`);
+
+  expect(await repositoryOf(folder)).toBeNull();
+});
+
 test('a FIFO named .git belongs to none and is never read', async () => {
   const folder = await inOuterRepository('fifo');
   expect(await Bun.spawn(['mkfifo', join(folder, '.git')]).exited).toBe(0);
