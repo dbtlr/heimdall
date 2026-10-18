@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -69,6 +69,10 @@ _Avoid_: client, IDE, model
 One main conversation in a Harness, started by a person or a program, together with its subagents; a Harness run that another Session's agent starts as a separate program, such as `codex exec`, is a Session of its own. What it did, used, and cost is derived from its transcripts.
 _Avoid_: conversation (as a synonym), thread, run (a job's run)
 
+**project**:
+The repository a Session's working directory belongs to, named by the folder of the repository's main worktree, so Sessions in every linked worktree of one repository share a project. A working directory outside any repository names itself, by its last folder. The Collector resolves the repository for the Harness processes it observes, and the Hub gives a Session the repository of the process that ran in its working directory ([ADR-0019](decisions/0019-a-sessions-project-is-the-git-repository-of-its-working-directory.md)).
+_Avoid_: repo, workspace
+
 **subagent**:
 A child conversation that a Session's agent starts inside the same Harness, with its own transcript, model, and agent type. It can start subagents of its own, and its usage counts toward its Session.
 _Avoid_: sidechain, child Session, worker
@@ -102,7 +106,7 @@ One copy of a Harness on a System, found by the Collector in a place such as a t
 _Avoid_: Harness version (a System can hold several), installation
 
 **Harness process**:
-A running Harness root process as the Collector observes it from the process table: a process of a Harness whose parent is not a process of the same Harness. The Collector records its Harness, working directory, start and end, and readings of the CPU time and memory of it and its descendants, and never command-line arguments or environment variables. The Hub keeps the process and stores its readings as samples on the Vitals time axis. A Codex subagent is a thread, not a process. One Harness process can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous. An end the Collector did not see is marked as missed.
+A running Harness root process as the Collector observes it from the process table: a process of a Harness whose parent is not a process of the same Harness. The Collector records its Harness, working directory, the repository that directory belongs to, start and end, and readings of the CPU time and memory of it and its descendants, and never command-line arguments or environment variables. The Hub keeps the process and stores its readings as samples on the Vitals time axis. A Codex subagent is a thread, not a process. One Harness process can run several Sessions in turn, and the Hub links it to a Session only when the match is unambiguous. An end the Collector did not see is marked as missed.
 _Avoid_: Session (the conversation, not the process), agent process
 
 **Condition**:

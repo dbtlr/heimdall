@@ -75,7 +75,7 @@ The reader can query every view in the `insight` schema:
 
 The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. A few columns are text as the Harness or the Collector wrote it:
 
-- `first_cwd` and `last_cwd`, the working directories, and `first_git_branch` and `last_git_branch`, in `insight.sessions`.
+- `first_cwd` and `last_cwd`, the working directories, `repository`, the main worktree of the repository they belong to, and `first_git_branch` and `last_git_branch`, in `insight.sessions`.
 - `cwd`, a Harness process's working directory, in `insight.harness_processes` and `insight.vitals_processes`.
 - `path`, the path of a transcript file within its source, in the Session, subagent, request, and tool call views.
 
