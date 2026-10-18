@@ -738,7 +738,7 @@ test('a database migrated to version 21 refreshes once migrated to the latest', 
   expect(await differences(db.sql)).toEqual([]);
 });
 
-test('a database migrated to version 31 fills model totals once migrated to the latest', async () => {
+test('a database migrated to version 31 has model totals beside its Session totals once migrated to the latest', async () => {
   await using db = await testDatabase();
   await migrate(
     db.sql,
@@ -751,8 +751,12 @@ test('a database migrated to version 31 fills model totals once migrated to the 
 
   await migrate(db.sql);
 
-  expect(await stale(db.sql)).toEqual(['s1 totals']);
-  expect(await refreshSessionInsight(db.sql)).toBe(1);
+  expect(await stale(db.sql)).toEqual([]);
   expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 10, 0']);
+  const [{ sessions, models }] = await db.sql`
+    SELECT (SELECT sum(requests) FROM insight.session_totals)::int AS sessions,
+           (SELECT sum(requests) FROM insight.session_model_totals)::int AS models
+  `;
+  expect(models).toBe(sessions);
   expect(await differences(db.sql)).toEqual([]);
 });

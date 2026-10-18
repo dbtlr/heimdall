@@ -2042,8 +2042,10 @@ export const MIGRATIONS: readonly Migration[] = [
     // and model, for the Sessions insight.sessions lists. They depend on exactly
     // what the totals do, so the triggers that mark a Session's totals stale
     // cover them, and the refresh replaces both in one transaction. Every
-    // Session's totals start stale, so the next refresh fills them, as
-    // migration 20 did for the totals.
+    // Session that has stored totals gets its model totals here, from the same
+    // rules, so the two are present together and no Session needs a refresh
+    // for the Agents view to add up. A Session still waiting on a refresh
+    // keeps its mark.
     sql: `
       CREATE VIEW computed_session_model_totals WITH (security_barrier = true) AS
       SELECT s.harness, s.system, s.source, s.session_id, r.model,
@@ -2149,10 +2151,13 @@ export const MIGRATIONS: readonly Migration[] = [
       END
       $$;
 
-      INSERT INTO stale_sessions (harness, system, source, session_id, stretches, totals)
-      SELECT DISTINCT harness, system, source, session_id, false, true FROM projected_sessions
-      ON CONFLICT (harness, system, source, session_id) DO UPDATE
-      SET totals = true, attempts = 0;
+      INSERT INTO stored_session_model_totals
+      SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+             c.priced_cost_usd, c.unpriced_requests
+      FROM computed_session_model_totals c
+      JOIN stored_session_totals t
+        ON (t.harness, t.system, t.source, t.session_id)
+         = (c.harness, c.system, c.source, c.session_id);
     `,
     version: 32,
   },
