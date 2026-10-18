@@ -58,7 +58,29 @@ const costText = (row: BreakdownRow) => {
   return `${row.pricing === 'at-least' ? 'At least ' : ''}${formatCost(row.pricedCostUsd)}`;
 };
 
-function BreakdownItem({ picked, row }: { picked: boolean; row: BreakdownRow }) {
+// Below the wide layout the Sessions list sits under this card, off screen, so
+// the picked row says how many Sessions it matched and links down to them.
+function JumpToSessions({ matched }: { matched: number }) {
+  return (
+    <div className="-mx-2 flex min-h-11 items-center justify-between gap-2 py-1 pr-2 pl-6 text-sm text-muted-foreground lg:hidden">
+      <span>
+        {matched} {matched === 1 ? 'Session' : 'Sessions'}
+      </span>
+      <Link
+        className="inline-flex min-h-11 items-center font-semibold text-chart-1"
+        hash="agents-sessions-heading"
+        search={(previous) => previous}
+        to="."
+      >
+        {matched === 1 ? 'Show it' : 'Show them'} <span aria-hidden="true">↓</span>
+      </Link>
+    </div>
+  );
+}
+
+// `matched` counts the picked row's Sessions; it is undefined for every other row.
+function BreakdownItem({ matched, row }: { matched: number | undefined; row: BreakdownRow }) {
+  const picked = matched !== undefined;
   return (
     <li>
       <Link
@@ -90,6 +112,7 @@ function BreakdownItem({ picked, row }: { picked: boolean; row: BreakdownRow }) 
           {costText(row)}
         </b>
       </Link>
+      {picked && <JumpToSessions matched={matched} />}
     </li>
   );
 }
@@ -97,12 +120,15 @@ function BreakdownItem({ picked, row }: { picked: boolean; row: BreakdownRow }) 
 // The stacked bar and the ranked list of one dimension. Rows past the eighth
 // fold into a "N more" control; a picked row among them keeps the list open.
 // The state belongs to one dimension, so the caller keys the list by it.
+// `matched` counts the Sessions in the picked row, if any.
 export function AgentsBreakdownList({
   by,
+  matched,
   pick,
   rows,
 }: {
   by: AgentsBreakdown;
+  matched: number;
   pick: string | undefined;
   rows: BreakdownRow[];
 }) {
@@ -126,7 +152,7 @@ export function AgentsBreakdownList({
       </div>
       <ul className="mt-2">
         {(showAll ? rows : rows.slice(0, VISIBLE_ROWS)).map((row) => (
-          <BreakdownItem key={row.key} picked={row.key === pick} row={row} />
+          <BreakdownItem key={row.key} matched={row.key === pick ? matched : undefined} row={row} />
         ))}
       </ul>
       {rows.some((row) => row.pricing !== 'exact') && (
