@@ -4,13 +4,12 @@ import {
   parseUpdateSubject,
   PendingUpdateSchema,
 } from '@heimdall/schema';
-import type { ConditionLimitSet } from '@heimdall/schema';
+import type { ConditionLimitSet, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { readAttention } from './attention.ts';
 import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
-import type { ConditionKind } from './fleet-overview-types.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
 

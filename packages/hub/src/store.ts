@@ -1,6 +1,7 @@
 import { mirrorChecks, mirrorRecords, mirrorRuns } from '@heimdall/schema';
 import type {
   ChecksSection,
+  ConditionKind,
   HarnessesSection,
   RecordRef,
   RecordsSection,
@@ -400,26 +401,6 @@ const storeChecks = async (
        OR check_sets.sent_at > ${receivedAt}
   `;
 };
-
-// The kinds of Condition the Hub derives. A job Condition's subject is the
-// job's name, a low disk Condition's the mount, a Drift Condition's the file's
-// path, and a Service down Condition's the Service's name. A clock skew
-// Condition's is empty for the System's own clock and `hub` for the Hub's. The
-// rest are empty: stale System, high CPU and memory.
-export type ConditionKind =
-  | 'clock_skew'
-  | 'pending_update'
-  | 'reboot_required'
-  | 'hot_process'
-  | 'high_cpu'
-  | 'high_memory'
-  | 'drift'
-  | 'job_failing'
-  | 'job_overdue'
-  | 'low_disk'
-  | 'reports_rejected'
-  | 'service_down'
-  | 'system_stale';
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';
 

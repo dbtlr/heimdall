@@ -6,6 +6,8 @@ export {
   OLD_EVIDENCE_MS,
 } from './conditions.ts';
 export type { ConditionLevel, ConditionLimitSet, ConditionTransition } from './conditions.ts';
+export { CONDITION_KIND_NAMES, conditionSubject, updateManagerName } from './condition-names.ts';
+export type { ConditionKind } from './condition-names.ts';
 export { storableText } from './values.ts';
 export {
   MAX_PROCESS_CENSUS,

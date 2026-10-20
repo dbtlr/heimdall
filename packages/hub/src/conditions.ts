@@ -1,8 +1,7 @@
-import type { ConditionLevel } from '@heimdall/schema';
+import type { ConditionLevel, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { describeError } from './errors.ts';
-import type { ConditionKind } from './store.ts';
 
 export const FIXED_LEVELS = {
   drift: 'warning',

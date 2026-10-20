@@ -1,11 +1,10 @@
 import { SERVICE_CHECK_KINDS, SERVICE_CHECK_STATES } from '@heimdall/schema';
-import type { ServiceCheck } from '@heimdall/schema';
+import type { ServiceCheck, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
 import { sampleCutoffOf } from './awake-time.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
-import type { ConditionKind } from './store.ts';
 
 const SERVICE_DOWN: ConditionKind = 'service_down';
 

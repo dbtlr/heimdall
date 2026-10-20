@@ -1,6 +1,7 @@
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 import { Link } from '@tanstack/react-router';
 
-import { conditionSubject, KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
+import { transitionLabel } from '../lib/conditions.ts';
 import { timelineWhen } from '../lib/detail.ts';
 import { cn } from '../lib/utils.ts';
 import type { TimelineEntry } from '../server/system-detail-types.ts';
@@ -33,7 +34,7 @@ export function ConditionOccurrence({
             params={{ id: entry.id, name: system }}
             to="/systems/$name/conditions/$id"
           >
-            <b className="font-semibold">{KIND_NAMES[entry.kind]}</b>
+            <b className="font-semibold">{CONDITION_KIND_NAMES[entry.kind]}</b>
             {entry.subject !== '' && ` ${conditionSubject(entry)}`}
           </Link>
         </p>

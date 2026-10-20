@@ -3,8 +3,9 @@
 // inspector shows; and what its provisioner recorded with its Timeline. Times
 // are epoch milliseconds.
 
+import type { ConditionKind } from '@heimdall/schema';
+
 import type {
-  ConditionKind,
   ConditionMark,
   CpuBucket,
   Gap,

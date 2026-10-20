@@ -1,5 +1,5 @@
 import { REPORTED_RECORD_SCHEMAS, REPORTED_RUN_SCHEMA } from '@heimdall/schema';
-import type { JobRecord, RunRecord } from '@heimdall/schema';
+import type { JobRecord, RunRecord, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
@@ -7,7 +7,6 @@ import { awakeCutoffOf } from './awake-time.ts';
 import type { AwakeCutoff } from './awake-time.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
 import { latestScheduledTime } from './schedule.ts';
-import type { ConditionKind } from './store.ts';
 
 // How long the Hub waits after a scheduled time, in its System's awake time,
 // for a successful run before it raises job overdue, unless the job's record

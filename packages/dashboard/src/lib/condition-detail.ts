@@ -1,8 +1,8 @@
+import { conditionSubject } from '@heimdall/schema';
 // What one opened Condition's page says, as plain values the component only
 // renders: the title and level, the number it leads with, the chart of the
 // reading it rests on against the limits the Hub stores now, the levels it
 // went through, and what to do about it.
-
 import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@heimdall/schema';
 
 import type {
@@ -12,7 +12,7 @@ import type {
 } from '../server/condition-detail-types.ts';
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
-import { conditionSubject, transitionLabel } from './conditions.ts';
+import { transitionLabel } from './conditions.ts';
 import { diskGrowth } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';

@@ -1,8 +1,8 @@
+import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { recordClosedOccurrence } from './conditions.ts';
 import type { Level } from './load-windows.ts';
-import type { ConditionKind } from './store.ts';
 
 export type SampledEpisode = {
   kind: ConditionKind;

@@ -1,7 +1,6 @@
-import type { HarnessInstall } from '@heimdall/schema';
+import type { HarnessInstall, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import type { ConditionKind } from '../store.ts';
 import { pairedSystems } from '../tokens.ts';
 
 // A Condition that is raised now, with what it is about, when it was raised,

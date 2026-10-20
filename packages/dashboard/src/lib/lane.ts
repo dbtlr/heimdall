@@ -1,3 +1,5 @@
+import { CONDITION_KIND_NAMES } from '@heimdall/schema';
+
 import type {
   ConditionMark,
   CpuBucket,
@@ -7,7 +9,6 @@ import type {
   Stretch,
 } from '../server/fleet-overview-types.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
-import { KIND_NAMES } from './conditions.ts';
 import { clockSpan, whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { formatCost, spanBox } from './time.ts';
@@ -133,7 +134,7 @@ export const stretchTitle = (stretch: Stretch): Phrase => {
 
 // A Condition's raised mark: "Job failing, photos-sync, since 03:04".
 export const raisedTitle = (mark: ConditionMark, now: number): Phrase => [
-  `${KIND_NAMES[mark.kind]}, ${mark.subject}, since `,
+  `${CONDITION_KIND_NAMES[mark.kind]}, ${mark.subject}, since `,
   whenAt(mark.raisedAt, now),
 ];
 
@@ -147,4 +148,4 @@ export const markSpan = (mark: ConditionMark, now: number): Phrase => [
 
 // A Condition's cleared mark: "Service down cleared for ollama."
 export const clearedTitle = (mark: ConditionMark): string =>
-  `${KIND_NAMES[mark.kind]} cleared for ${mark.subject}.`;
+  `${CONDITION_KIND_NAMES[mark.kind]} cleared for ${mark.subject}.`;

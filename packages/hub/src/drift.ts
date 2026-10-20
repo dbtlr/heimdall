@@ -1,10 +1,10 @@
 import { FILE_CHECK_STATES, filesRecordDigest, REPORTED_RECORD_SCHEMAS } from '@heimdall/schema';
+import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
 import { compareCodeUnits } from './compare.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
-import type { ConditionKind } from './store.ts';
 
 const DRIFT: ConditionKind = 'drift';
 

@@ -16,11 +16,15 @@ import type { serve } from './application.ts';
 import { readConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits } from './condition-limits.ts';
 import { openDatabase } from './database.ts';
+import { readDeliveryChannel } from './delivery-config.ts';
+import type { DeliveryChannel } from './delivery-config.ts';
+import { deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { keepInsightReaderGranted } from './insight-reader.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+import { ntfySender } from './ntfy.ts';
 import { loadPriceOverrides, syncPrices } from './price-table.ts';
 import { BUNDLED_PRICES } from './prices.ts';
 import type { PriceEntry } from './prices.ts';
@@ -32,6 +36,9 @@ import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
+// How often serve compares stored Conditions with its deliveries. A failed send
+// is tried again this much later.
+const DELIVERY_INTERVAL_MS = 30_000;
 // How often serve parses transcripts. When it keeps up, Session insight trails
 // an upload by about this; a backlog or a rebuild parses at most a budget each
 // time, so it trails further until it catches up.
@@ -65,7 +72,11 @@ export const serveAction: ActionHandler<typeof serve> = async ({
     const limits = await readConditionLimits({ cwd: host.cwd, env: host.env, named }).catch(
       (error: unknown) => log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
     );
-    await serveUntilStopped({ clean, limits, log, options, signal });
+    const delivery = await readDeliveryChannel({ cwd: host.cwd, env: host.env, named }).catch(
+      (error: unknown) =>
+        log.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
+    );
+    await serveUntilStopped({ clean, delivery, limits, log, options, signal });
   } finally {
     await stopRotating();
   }
@@ -90,12 +101,14 @@ const loadConfiguredPrices = async (
 
 const serveUntilStopped = async ({
   clean,
+  delivery,
   limits,
   log,
   options,
   signal,
 }: {
   clean: (message: string) => string;
+  delivery: DeliveryChannel | undefined;
   limits: ConditionLimits;
   log: RuntimeLog;
   options: Parameters<ActionHandler<typeof serve>>[0]['options'];
@@ -156,11 +169,12 @@ const serveUntilStopped = async ({
       hostname: options.host,
       port: options.port,
     });
-    // Pruning, judging Conditions, and parsing transcripts are routine, so only
-    // a failure, a parser switch, or a parser left behind is logged, and the
-    // next round tries again.
+    // Pruning, judging Conditions, delivering alerts, and parsing transcripts
+    // are routine, so only a failure, a parser switch, or a parser left behind
+    // is logged, and the next round tries again.
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
+    let stopDelivering: (() => Promise<void>) | undefined;
     let stopProjecting: (() => Promise<void>) | undefined;
     let stopRefreshing: (() => Promise<void>) | undefined;
     const outdatedLogged = new Set<string>();
@@ -182,6 +196,18 @@ const serveUntilStopped = async ({
         task: () =>
           evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits }),
       });
+      if (delivery !== undefined) {
+        // The server's host is no secret; the topic and token never reach the log.
+        await log.info(clean(`Delivering alerts through ${delivery.url.host}.`));
+        const send = ntfySender(delivery);
+        stopDelivering = every({
+          intervalMs: DELIVERY_INTERVAL_MS,
+          onError: (error) => {
+            void log.warn(clean(`Could not deliver alerts: ${describeError(error)}`));
+          },
+          task: () => deliverAlerts(sql, { dashboard: delivery.dashboard, now: Date.now(), send }),
+        });
+      }
       stopProjecting = every({
         intervalMs: PROJECT_INTERVAL_MS,
         onError: (error) => {
@@ -206,9 +232,10 @@ const serveUntilStopped = async ({
         await once(signal, 'abort');
       }
     } finally {
-      // A prune, judgment, parse, or refresh still running must finish before the database closes.
+      // A prune, judgment, delivery, parse, or refresh still running must finish before the database closes.
       await stopPruning?.();
       await stopJudging?.();
+      await stopDelivering?.();
       await stopProjecting?.();
       await stopRefreshing?.();
       await server.stop();

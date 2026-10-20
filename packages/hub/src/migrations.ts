@@ -2189,6 +2189,27 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 33,
   },
+  {
+    // The Hub's deliveries (ADR-0020): one row per Condition identity's time at
+    // alert, from the push until it closes with its recovered message, or
+    // without one when its System is unpaired. `alert_since` is when the
+    // identity reached alert, and `pushed_at` when the push went out. An open
+    // delivery has no `closed_at`, and an identity has at most one.
+    sql: `
+      CREATE TABLE deliveries (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        system text NOT NULL REFERENCES systems (name),
+        kind text NOT NULL,
+        subject text NOT NULL,
+        alert_since timestamptz NOT NULL,
+        pushed_at timestamptz NOT NULL,
+        closed_at timestamptz
+      );
+      CREATE UNIQUE INDEX deliveries_open ON deliveries (system, kind, subject)
+        WHERE closed_at IS NULL;
+    `,
+    version: 34,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

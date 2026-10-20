@@ -85,6 +85,7 @@ url = {{ secret "database_url" }}
 - `host` stays on loopback. Tailscale ingress reaches the Hub through Fleet's Service Unit, not through the listener's address.
 - `port` must equal `port` in the Hub's per-System Service file, which the health check and the ingress use. Both files hold the literal number, on the one System that hosts the Hub.
 - The file holds no token. The Hub keeps only hashes of the tokens it issues, in its database.
+- Alert delivery is off until the file has a `[delivery]` section naming the ntfy server, topic, optional access token, and the dashboard's address ([Alert delivery](spec.md#alert-delivery)). When the topic or token is a secret, render it with `secret`, as for the database URL.
 
 ### Dashboard
 

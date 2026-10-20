@@ -390,6 +390,30 @@ The Hub judges Service down once a minute for every System, in the same pass as 
 
 Service down stays as it is while what decides it is unknown: while any of the Service's checks is unknown and no other check has failed for 2 minutes (a health URL that has failed for 2 minutes raises Service down even while the supervisor check is unknown, since the failure is direct evidence), while a check that fails has not yet failed for 2 minutes of the System's awake time, while a Service has only unchecked checks, while the System has never sent checks or its checks carry no `services` part (a Collector older than Service checks), while the `services` part is over budget, and while the System's record set is over budget. A `files` part over budget does not stop Services from being judged. A check for a Service the Hub mirrors no record for is not judged.
 
+## Alert delivery
+
+The Hub pushes Conditions at the alert level to one [ntfy](https://ntfy.sh) topic, as [ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md) decides. Notes and warnings are never pushed.
+
+Delivery is configured in `[delivery]` in `hub.toml`, or the equivalent JSON `delivery` object. Without the section, delivery is off.
+
+| Setting | Meaning |
+| --- | --- |
+| `url` | The ntfy server's address, `http` or `https`, such as `https://ntfy.sh`. |
+| `topic` | The topic to publish to: 1 to 64 letters, digits, hyphens, or underscores. On a public server without a token, the topic name is the secret. |
+| `token` | Optional. An ntfy access token, sent as a bearer token, for a reserved topic or a server that requires one. |
+| `dashboard` | The dashboard's address, which each message links to. |
+
+An unknown setting, a missing required setting, or an invalid value stops `serve` before it opens the database. The error names the setting and never its value. The Hub logs the server's host when it starts and never logs the topic or the token.
+
+Every 30 seconds, the Hub compares the Conditions it stores with its record of deliveries. A delivery covers one identity (System, kind, and subject) for as long as it keeps reaching alert.
+
+- **Push.** An identity at alert with no open delivery sends one high-priority message with the Hub's reason and how long the identity has been at alert. The delivery stays open across level changes and new occurrences, and sends nothing more while it is open.
+- **Recovered.** Once the identity has stayed below alert for 10 minutes, cleared or open at a lower level, the delivery closes with one low-priority message. The message states the identity's current level, or that it cleared, and how many times the identity reached alert during the delivery. When the identity is back at alert by the time the message goes out, the message says so, and a new push follows it. Reaching alert again later opens a new delivery. The Hub reads when a delivery closed from the stored transitions, so a delivery that closed while sends were failing still closes, even when its identity has since returned to alert.
+- **What is true now.** The Hub records a delivery only after ntfy accepts the message. A failed send records nothing, and the next pass tries again with what is stored then. An identity that reached alert and left it while ntfy was unreachable or the Hub was stopped sends nothing. One still at alert sends a single push. A delivery that was pushed earlier and closed meanwhile sends its recovered message, and an identity back at alert since then sends a new push after it. When delivery is first configured, the Conditions already open at alert send one push. Closed occurrences, such as backfilled history, never send.
+- **Batching.** Recovered messages that come due in one pass go out as one message, then pushes as another. A message about one Condition opens that Condition's page on the dashboard. A message about several lists a line for each of the first 10, counts the rest, and opens the Fleet page. Long titles and lines are cut short, so a message stays within the 4,096 bytes ntfy publishes.
+
+When two Hubs share a database, as during an upgrade, one delivery pass runs at a time across them, so a message is never sent twice. Delivery covers paired Systems only. An unpaired System's open Conditions send nothing, and unpairing a System closes its open deliveries without a recovered message. The Hub publishes with one JSON request to the server's address and treats a redirect as a failed send.
+
 ## Reading the records back
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.
