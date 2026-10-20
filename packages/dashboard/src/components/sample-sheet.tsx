@@ -40,7 +40,7 @@ export function SampleSheet({
   return (
     <dialog
       aria-labelledby="sample-sheet-title"
-      className="fixed inset-x-0 top-auto bottom-0 m-0 max-h-[80dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border bg-background p-0 text-foreground backdrop:bg-black/60 lg:inset-0 lg:m-auto lg:max-w-lg lg:rounded-2xl"
+      className="fixed inset-x-0 top-auto bottom-0 m-0 max-h-[80dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border bg-background p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-foreground backdrop:bg-black/60 lg:inset-0 lg:m-auto lg:max-w-lg lg:rounded-2xl lg:p-0"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           const box = event.currentTarget.getBoundingClientRect();
