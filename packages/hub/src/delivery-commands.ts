@@ -34,7 +34,9 @@ export const deliveryTestAction: ActionHandler<typeof deliveryTest> = async ({
   }).catch((error: unknown) =>
     out.fatal(clean(`Could not send the test message: ${describeError(error)}`)),
   );
+  // Said before the database is touched, so a database failure after the send
+  // cannot read as a broken channel.
+  await out.print(`Sent a test message through ${channel.url.host}.`);
   // A channel that works again is no longer failing, even before an alert sends.
   await withDatabase(options.database, { out, signal, style }, clearFailingRun);
-  await out.print(`Sent a test message through ${channel.url.host}.`);
 };

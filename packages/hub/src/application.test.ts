@@ -849,6 +849,18 @@ test('a delivery test that gets through ends a stored run of failed sends', asyn
   expect(code).toBe(0);
 });
 
+test('a delivery test that gets through says so even when the database cannot be reached', async () => {
+  using ntfy = stubNtfy();
+  await using config = await deliveryConfig(ntfy.server.url);
+
+  const { code, stderr, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);
+
+  expect(ntfy.received).toHaveLength(1);
+  expect(stdout).toContain(`Sent a test message through ${ntfy.server.url.host}.\n`);
+  expect(stderr).toContain('Could not reach the database:');
+  expect(code).toBe(1);
+});
+
 test('delivery test fails with the status when ntfy refuses the message, and leaves a stored run alone', async () => {
   using ntfy = stubNtfy(403);
   await using db = await testDatabase();
