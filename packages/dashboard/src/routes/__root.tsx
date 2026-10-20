@@ -37,7 +37,7 @@ export const Route = createRootRoute({
       <head>
         <HeadContent />
       </head>
-      <body className="pb-[calc(4rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] sm:pb-0">
+      <body className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] sm:pb-0">
         {/* Safari samples a real fixed element's opaque background for its status bar.
             Touch and narrow layouts need 6px even when the top safe area is zero. */}
         <div
