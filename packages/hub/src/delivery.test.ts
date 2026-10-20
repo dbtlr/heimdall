@@ -460,3 +460,26 @@ test('clipping cuts at whole characters and marks the cut', () => {
   expect(clipBytes('short', 10)).toBe('short');
   expect(clipBytes('ééééé', 7)).toBe('éé…');
 });
+
+test('two Hubs sharing a database send a push once', async () => {
+  await using d = await setup();
+  await d.down(0);
+  const sent: Message[] = [];
+  const { promise: held, resolve: release } = Promise.withResolvers<void>();
+  const slow = deliverAlerts(d.db.sql, {
+    dashboard: DASHBOARD,
+    now: at(0.5),
+    send: async (message) => {
+      await held;
+      sent.push(message);
+    },
+  });
+  // The second Hub's pass finds the first one's running and sends nothing.
+  await Bun.sleep(100);
+  await d.pass(0.5);
+  release();
+  await slow;
+  await d.pass(1);
+
+  expect([...sent, ...d.sent].map((m) => m.title)).toEqual(['Service down on server-1: nginx']);
+});

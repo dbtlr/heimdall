@@ -244,7 +244,7 @@ const sendAndRecord = async (
 // identity's next one opens. Only paired Systems are delivered; unpairing a
 // System closes its open deliveries without a message. Throws when a send
 // fails, after trying both priorities.
-export const deliverAlerts = async (
+const deliverPass = async (
   sql: SQL,
   { dashboard, now, send }: { dashboard: URL; now: number; send: Send },
 ): Promise<void> => {
@@ -288,5 +288,33 @@ export const deliverAlerts = async (
   }
   if (only !== undefined) {
     throw only;
+  }
+};
+
+// Two Hubs share a database during an upgrade. One delivery pass runs at a
+// time across them: a Hub that finds another's pass running skips its own, so
+// a push is never sent twice. The lock is held by a session, not a
+// transaction, so sends stay outside any transaction.
+const DELIVERY_LOCK = 'heimdall-alert-delivery';
+
+export const deliverAlerts = async (
+  sql: SQL,
+  options: { dashboard: URL; now: number; send: Send },
+): Promise<void> => {
+  const session = await sql.reserve();
+  try {
+    const [held]: { locked: boolean }[] = await session`
+      SELECT pg_try_advisory_lock(hashtext(${DELIVERY_LOCK})) AS locked
+    `;
+    if (held?.locked !== true) {
+      return;
+    }
+    try {
+      await deliverPass(session, options);
+    } finally {
+      await session`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
+    }
+  } finally {
+    session.release();
   }
 };
