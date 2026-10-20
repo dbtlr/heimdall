@@ -58,7 +58,7 @@ export function SystemNavigationHeader({
     activePill.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [current]);
   return (
-    <header className="sticky top-0 z-20 border-b bg-background">
+    <header className="sticky top-0 z-20 border-b bg-card pt-[env(safe-area-inset-top)] sm:bg-background">
       <div className="mx-auto max-w-[1200px] px-3.5 sm:px-[22px]">
         <div className="flex min-h-14 items-center gap-3">
           <Link

@@ -83,6 +83,18 @@ bun packages/dashboard/scripts/benchmark-agents.ts
 
 It checks request counts against the fixture facts and reports the first read, warm median, and worst duration for each period. It uses the test PostgreSQL harness and never reads `HEIMDALL_DATABASE_URL`.
 
+## Mobile status area
+
+Mobile headers use an opaque raised surface and leave the top safe area clear.
+The viewport uses `viewport-fit=cover`; page content also respects the left and right safe areas.
+A real fixed element paints the top edge, including at least 6 pixels on narrow screens and devices with a coarse pointer.
+Wide screens with a fine pointer paint only the reported top inset, leaving desktop scrolling content clear.
+This gives Safari a persistent background to sample for its status area while the page scrolls.
+Keep that element opaque and free of filters; a pseudo-element or a `theme-color` tag alone does not provide the same sampling target.
+
+Check native status-area behavior in an installed iOS web app after layout changes.
+Desktop browser emulation can verify spacing and scrolling, but cannot reproduce iOS's status-bar gradient.
+
 ## Seed a scratch database
 
 `scripts/seed.ts` fills a scratch Hub database through the Hub's migration and ingest code. It creates four paired Systems, one unpaired System, a week of Vitals, Sessions, processes, records, runs, checks, and Harness installs. `workstation-1` has disk Conditions at all three levels, one occurrence that escalates from note through warning to alert, and a backfilled historical level. `gateway-1` has only a disk note and remains healthy. Other examples include a stopped Service, failing and overdue jobs, Drift, an unreadable file, and a Condition resting on old evidence. Reseeding resets these Systems and their transition history. The script refuses a database holding any other System. Point it at a scratch database, never a real Hub's:

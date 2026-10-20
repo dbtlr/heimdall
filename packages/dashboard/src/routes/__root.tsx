@@ -28,7 +28,7 @@ export const Route = createRootRoute({
     meta: [
       // oxlint-disable-next-line unicorn/text-encoding-identifier-case -- HTML wants the name "utf-8".
       { charSet: 'utf-8' },
-      { content: 'width=device-width, initial-scale=1', name: 'viewport' },
+      { content: 'width=device-width, initial-scale=1, viewport-fit=cover', name: 'viewport' },
       { title: 'Heimdall' },
     ],
   }),
@@ -37,7 +37,13 @@ export const Route = createRootRoute({
       <head>
         <HeadContent />
       </head>
-      <body className="pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">
+      <body className="pb-[calc(4rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] sm:pb-0">
+        {/* Safari samples a real fixed element's opaque background for its status bar.
+            Touch and narrow layouts need 6px even when the top safe area is zero. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-card sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
+        />
         {children}
         <Scripts />
       </body>
