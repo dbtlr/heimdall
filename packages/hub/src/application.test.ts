@@ -7,6 +7,7 @@ import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { raise } from './conditions.ts';
 import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
 import { configArgs, configFile, hubConfig, invoke } from './testing/cli.ts';
@@ -687,5 +688,78 @@ test('serve names the database as the problem when it cannot reach it', async ()
 
   expect(stderr).toMatch(timestampedFatal('Could not prepare the database'));
   expect(stderr).not.toContain('db-s3cret');
+  expect(code).toBe(1);
+});
+
+test('serve with a [delivery] section pushes an open alert to ntfy, and logs neither topic nor token', async () => {
+  const received: unknown[] = [];
+  const ntfy = Bun.serve({
+    fetch: async (request) => {
+      received.push(await request.json());
+      return Response.json({ id: 'x' });
+    },
+    hostname: '127.0.0.1',
+    port: 0,
+  });
+  try {
+    await using db = await testDatabase();
+    await migrate(db.sql);
+    await storeToken(db.sql, { pairedAt: Date.now(), system: 'server-1', token: 'server-token' });
+    await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('server-1', now())`;
+    await db.sql.begin((tx) =>
+      raise(tx, {
+        kind: 'service_down',
+        now: new Date(),
+        reason: 'nginx: inactive (dead).',
+        subject: 'nginx',
+        system: 'server-1',
+      }),
+    );
+    await using config = await hubConfig(db, [
+      '[delivery]',
+      `url = "${ntfy.url.href}"`,
+      'topic = "heimdall-x7Qp"',
+      'token = "tk_s3cret"',
+      'dashboard = "https://dashboard.example/"',
+    ]);
+
+    const { code, stderr, stdout } = await invoke(['serve', ...configArgs(config)], {
+      whileServing: async () => {
+        for (let tries = 0; received.length === 0 && tries < 100; tries += 1) {
+          // oxlint-disable-next-line no-await-in-loop -- polls until the push arrives.
+          await Bun.sleep(20);
+        }
+      },
+    });
+
+    expect(received).toEqual([
+      expect.objectContaining({ title: 'Service down on server-1: nginx', topic: 'heimdall-x7Qp' }),
+    ]);
+    expect(stdout).toContain(`Delivering alerts through ${ntfy.url.host}.`);
+    expect(`${stdout}${stderr}`).not.toContain('heimdall-x7Qp');
+    expect(`${stdout}${stderr}`).not.toContain('tk_s3cret');
+    expect(code).toBe(130);
+  } finally {
+    await ntfy.stop(true);
+  }
+});
+
+test('serve refuses an invalid [delivery] section before it opens the database, naming the setting', async () => {
+  await using config = await configFile([
+    'host = "127.0.0.1"',
+    'port = 0',
+    '[database]',
+    'url = "postgres://heimdall@127.0.0.1:1/heimdall"',
+    '[delivery]',
+    'url = "https://ntfy.example"',
+    'topic = "not a topic"',
+    'dashboard = "https://dashboard.example/"',
+  ]);
+
+  const { code, stderr } = await invoke(['serve', ...configArgs(config)]);
+
+  expect(stderr).toContain('Invalid Hub delivery settings: delivery.topic');
+  expect(stderr).not.toContain('not a topic');
+  expect(stderr).not.toContain('database');
   expect(code).toBe(1);
 });

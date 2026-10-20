@@ -148,3 +148,13 @@ export const silentServer = () => {
   const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {}, open() {} } });
   return { port: server.port, [Symbol.asyncDispose]: async () => server.stop(true) };
 };
+
+// What `promise` rejects with, or undefined when it resolves.
+export const failure = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+};
