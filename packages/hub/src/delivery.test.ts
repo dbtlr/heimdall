@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import { clear, raise, recordClosedOccurrence } from './conditions.ts';
-import { deliverAlerts } from './delivery.ts';
+import { clipBytes, deliverAlerts } from './delivery.ts';
 import type { Message } from './delivery.ts';
 import { failure, migrate, NOW, storeToken, unpair } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
@@ -433,4 +433,30 @@ test('a return to alert stamped earlier by a clock stepped back still keeps the 
   await d.pass(20);
 
   expect(d.sent.map((m) => m.priority)).toEqual(['high']);
+});
+
+test('a batch of long reasons stays within the 4,096 bytes ntfy publishes', async () => {
+  await using d = await setup();
+  for (let i = 0; i < 12; i += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- raised in order.
+    await d.db.sql.begin((tx) =>
+      raise(tx, {
+        kind: 'service_down',
+        now: new Date(at(0)),
+        reason: `Unhealthy: ${'é'.repeat(2000)}.`,
+        subject: `svc-${String(i).padStart(2, '0')}`,
+        system: 'server-1',
+      }),
+    );
+  }
+
+  await d.pass(0.5);
+
+  expect(new TextEncoder().encode(d.sent[0]?.message).length).toBeLessThanOrEqual(4096);
+  expect(d.sent[0]?.message.split('\n').at(-1)).toBe('And 2 more.');
+});
+
+test('clipping cuts at whole characters and marks the cut', () => {
+  expect(clipBytes('short', 10)).toBe('short');
+  expect(clipBytes('ééééé', 7)).toBe('éé…');
 });

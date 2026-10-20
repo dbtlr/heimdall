@@ -134,6 +134,30 @@ const conditionPage = (dashboard: URL, system: string, id: string) =>
 // The most lines a batched message lists; the rest are counted. ntfy turns a
 // long message into an attachment, or refuses it.
 const MAX_LINES = 10;
+// ntfy publishes up to 4,096 bytes of message. Ten lines and the count stay
+// under it, so a long reason cannot get a batch refused on every pass.
+const MAX_LINE_BYTES = 380;
+const MAX_TITLE_BYTES = 200;
+
+const encoder = new TextEncoder();
+
+// `text`, cut at whole characters to at most `maxBytes` of UTF-8, with an
+// ellipsis when cut.
+export const clipBytes = (text: string, maxBytes: number): string => {
+  if (encoder.encode(text).length <= maxBytes) {
+    return text;
+  }
+  let clipped = '';
+  let bytes = encoder.encode('…').length;
+  for (const character of text) {
+    bytes += encoder.encode(character).length;
+    if (bytes > maxBytes) {
+      break;
+    }
+    clipped += character;
+  }
+  return `${clipped}…`;
+};
 
 // One message for everything due at one priority. A single Condition's opens
 // its page; several open the Fleet page and list one line each.
@@ -143,12 +167,19 @@ const batch = (
 ): Message => {
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
-    return { click: only.click, message: only.body, priority, title: only.title };
+    return {
+      click: only.click,
+      message: clipBytes(only.body, MAX_LINES * MAX_LINE_BYTES),
+      priority,
+      title: clipBytes(only.title, MAX_TITLE_BYTES),
+    };
   }
   return {
     click: dashboard.href,
     message: [
-      ...items.slice(0, MAX_LINES).map((item) => `${item.title}. ${item.body}`),
+      ...items
+        .slice(0, MAX_LINES)
+        .map((item) => clipBytes(`${item.title}. ${item.body}`, MAX_LINE_BYTES)),
       ...(items.length > MAX_LINES ? [`And ${String(items.length - MAX_LINES)} more.`] : []),
     ].join('\n'),
     priority,
