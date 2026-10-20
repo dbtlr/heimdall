@@ -13,7 +13,7 @@
     "@heimdall/service": "workspace:*",
     "@loomcli/core": "0.10.0",
     "@loomcli/plugins": "0.10.0",
-    "@loomcli/validators": "0.10.0",
+    "@loomcli/validators": "0.13.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
