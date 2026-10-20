@@ -16,7 +16,7 @@
     "@fontsource/barlow-semi-condensed": "^5.3.0",
     "@heimdall/schema": "workspace:*",
     "@heimdall/service": "workspace:*",
-    "@loomcli/core": "0.10.0",
+    "@loomcli/core": "0.13.0",
     "@loomcli/plugins": "0.10.0",
     "@loomcli/validators": "0.10.0",
     "@tailwindcss/vite": "^4.3.3",
