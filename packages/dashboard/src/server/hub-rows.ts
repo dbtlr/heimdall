@@ -2,8 +2,8 @@
 // Conditions.
 
 import { filesRecordDigest } from '@heimdall/schema';
+import type { ConditionKind } from '@heimdall/schema';
 
-import type { ConditionKind } from './fleet-overview-types.ts';
 import type { JobRun, ScheduleEntry, ServiceCheck } from './system-detail-types.ts';
 
 export const field = (input: unknown, key: string): unknown =>

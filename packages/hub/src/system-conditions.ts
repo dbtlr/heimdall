@@ -1,11 +1,10 @@
 import { FUTURE_SAMPLE_TOLERANCE_MS, OLD_EVIDENCE_MS, VitalsSampleSchema } from '@heimdall/schema';
-import type { ConditionLevel, VitalsSample } from '@heimdall/schema';
+import type { ConditionLevel, VitalsSample, ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { gradedLevel, parseConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits, DiskLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
-import type { ConditionKind } from './store.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
 // Stale time limits and measurement limits used by each evaluation pass.

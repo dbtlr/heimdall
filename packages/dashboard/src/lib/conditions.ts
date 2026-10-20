@@ -1,12 +1,4 @@
-import {
-  CLOCK_SKEW_SUBJECTS,
-  parseProcessSubject,
-  parseUpdateSubject,
-  UPDATE_MANAGER_NAMES,
-} from '@heimdall/schema';
 import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
-
-import type { ConditionKind } from '../server/fleet-overview-types.ts';
 
 export const LEVEL_FILL: Record<ConditionLevel, string> = {
   alert: 'bg-status-critical',
@@ -19,51 +11,6 @@ export const LEVEL_STROKE: Record<ConditionLevel, string> = {
   alert: 'var(--status-critical)',
   note: 'var(--status-warning)',
   warning: 'var(--status-serious)',
-};
-
-export const KIND_NAMES: Record<ConditionKind, string> = {
-  clock_skew: 'Clock skew',
-  drift: 'Drift',
-  high_cpu: 'High CPU',
-  high_memory: 'High memory',
-  hot_process: 'Hot process',
-  job_failing: 'Job failing',
-  job_overdue: 'Job overdue',
-  low_disk: 'Low disk',
-  pending_update: 'Pending update',
-  reboot_required: 'Reboot required',
-  reports_rejected: 'Reports rejected',
-  service_down: 'Service down',
-  system_stale: 'Stale System',
-};
-
-// A package manager's display name; an unrecognized one reads as stored.
-export const updateManagerName = (manager: string): string => {
-  const names: Record<string, string> = UPDATE_MANAGER_NAMES;
-  return names[manager] ?? manager;
-};
-
-// A process's stored subject carries its lifetime identity; only its name and
-// PID belong in the labels shown to the operator.
-export const conditionSubject = ({ kind, subject }: { kind: ConditionKind; subject: string }) => {
-  if (kind === 'pending_update') {
-    const source = parseUpdateSubject(subject);
-    if (source === undefined) {
-      return 'Unknown package';
-    }
-    // An occurrence from before packages were grouped names its one package.
-    return source.name === undefined
-      ? `${updateManagerName(source.manager)} (${source.installation})`
-      : `${source.name} (${updateManagerName(source.manager)}, ${source.installation})`;
-  }
-  if (kind === 'clock_skew') {
-    return subject === CLOCK_SKEW_SUBJECTS.hub ? "Hub's clock" : '';
-  }
-  if (kind !== 'hot_process') {
-    return subject;
-  }
-  const process = parseProcessSubject(subject);
-  return process === undefined ? 'Unknown process' : `${process.name} (PID ${String(process.pid)})`;
 };
 
 export const transitionLabel = (transition: ConditionTransition): string => {

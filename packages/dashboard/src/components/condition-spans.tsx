@@ -1,4 +1,6 @@
-import { conditionSubject, KIND_NAMES, LEVEL_FILL } from '../lib/conditions.ts';
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
+
+import { LEVEL_FILL } from '../lib/conditions.ts';
 import { markSpan } from '../lib/lane.ts';
 import { phraseTitle } from '../lib/phrase.ts';
 import { spanBox } from '../lib/time.ts';
@@ -47,7 +49,7 @@ export function ConditionSpans({
       {visible.map((mark, row) => {
         const end = mark.clearedAt ?? window.to;
         const { left, width } = spanBox({ end, start: mark.raisedAt }, window);
-        const what = `${KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : ` ${conditionSubject(mark)}`}`;
+        const what = `${CONDITION_KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : ` ${conditionSubject(mark)}`}`;
         const labelStyle = conditionLabelPlace({ left, width });
         return (
           <div key={mark.id} style={{ height: ROW_PX }}>

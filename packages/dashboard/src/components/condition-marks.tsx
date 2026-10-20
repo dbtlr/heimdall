@@ -1,4 +1,6 @@
-import { conditionSubject, KIND_NAMES, transitionLabel } from '../lib/conditions.ts';
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
+
+import { transitionLabel } from '../lib/conditions.ts';
 import { phraseTitle, whenAt } from '../lib/phrase.ts';
 import { inWindow, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
@@ -50,7 +52,7 @@ export function ConditionMarks({
             key={index}
             title={phraseTitle(
               [
-                `${KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : `, ${conditionSubject(mark)}`}: ${transitionLabel(transition)}${transition.backfilled ? ' (Backfilled level)' : ''}, `,
+                `${CONDITION_KIND_NAMES[mark.kind]}${mark.subject === '' ? '' : `, ${conditionSubject(mark)}`}: ${transitionLabel(transition)}${transition.backfilled ? ' (Backfilled level)' : ''}, `,
                 whenAt(transition.at, now),
                 `. ${transition.reason}`,
               ],

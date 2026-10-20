@@ -1,10 +1,14 @@
 // One Condition occurrence, opened: the facts its page shows. Times are epoch
 // milliseconds.
 
-import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@heimdall/schema';
+import type {
+  ConditionLevel,
+  ConditionLimitSet,
+  ConditionTransition,
+  ConditionKind,
+} from '@heimdall/schema';
 
 import type { Attention } from './attention-types.ts';
-import type { ConditionKind } from './fleet-overview-types.ts';
 
 // The culprit's readings over the chart's window, oldest first, by what the
 // kind measures: a mount's used and total bytes (5-minute maxima from

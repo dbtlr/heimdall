@@ -2,7 +2,7 @@
 // time axis, the unpaired Systems when asked for, and what needs the operator now.
 // Times are epoch milliseconds.
 
-import type { ConditionLevel, ConditionTransition } from '@heimdall/schema';
+import type { ConditionKind, ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
 import type { Attention } from './attention-types.ts';
 import type { Disk } from './system-detail-types.ts';
@@ -44,21 +44,6 @@ export type Stretch = {
   sessionId: string;
   startedAt: number;
 };
-
-export type ConditionKind =
-  | 'clock_skew'
-  | 'high_cpu'
-  | 'high_memory'
-  | 'hot_process'
-  | 'drift'
-  | 'job_failing'
-  | 'job_overdue'
-  | 'low_disk'
-  | 'pending_update'
-  | 'reboot_required'
-  | 'reports_rejected'
-  | 'service_down'
-  | 'system_stale';
 
 // A Condition raised or cleared within the range; either time may fall
 // outside it.

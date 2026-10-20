@@ -1,4 +1,9 @@
-import { CLOCK_SKEW_SUBJECTS, parseUpdateSubject } from '@heimdall/schema';
+import {
+  CONDITION_KIND_NAMES,
+  conditionSubject,
+  CLOCK_SKEW_SUBJECTS,
+  parseUpdateSubject,
+} from '@heimdall/schema';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type {
@@ -8,7 +13,6 @@ import type {
   ServiceTarget,
 } from '../server/attention-types.ts';
 import type { Disk, JobRun, ServiceCheck } from '../server/system-detail-types.ts';
-import { conditionSubject, KIND_NAMES } from './conditions.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { scheduleWords } from './recorded.ts';
@@ -16,7 +20,7 @@ import { scheduleWords } from './recorded.ts';
 // What each kind of attention is called: the Hub's Conditions, plus the two
 // the dashboard raises itself.
 export const ATTENTION_NAMES: Record<AttentionKind, string> = {
-  ...KIND_NAMES,
+  ...CONDITION_KIND_NAMES,
   checks_missing: 'Checks missing',
   file_unreadable: 'File unreadable',
 };
