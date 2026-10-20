@@ -1,8 +1,8 @@
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
-import type { Lane } from '../server/fleet-overview-types.ts';
-import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
+import type { FleetOverview, Lane } from '../server/fleet-overview-types.ts';
+import { DELIVERY_FAILING_SHOWN_AFTER_MS, QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 
 const LEVEL_RANK: Record<ConditionLevel, number> = { alert: 0, note: 2, warning: 1 };
 
@@ -52,6 +52,16 @@ export const levelCountsText = (counts: ReturnType<typeof fleetAttention>['count
 
 export const isAsleep = (lane: Pick<Lane, 'sleeps' | 'lastSeenAt'>, now: number) =>
   lane.sleeps && lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS;
+
+// When delivery began failing, once that run is old enough to show; otherwise undefined.
+export const deliveryFailingShown = ({
+  deliveryFailingSince,
+  now,
+}: Pick<FleetOverview, 'deliveryFailingSince' | 'now'>) =>
+  deliveryFailingSince !== undefined &&
+  now - deliveryFailingSince >= DELIVERY_FAILING_SHOWN_AFTER_MS
+    ? deliveryFailingSince
+    : undefined;
 
 export const fleetVerdict = (items: readonly Attention[]) => {
   const { needsYou, counts } = fleetAttention(items);

@@ -16,6 +16,10 @@ export const isRange = (value: unknown): value is Range => RANGES.some((range) =
 // and its newest Vitals are no longer shown as current.
 export const QUIET_AFTER_MS = 2 * 60_000;
 
+// How old a run of failed alert deliveries must be before the Fleet page says
+// delivery is failing, so one refused send that the next pass fixes shows nothing.
+export const DELIVERY_FAILING_SHOWN_AFTER_MS = 10 * 60_000;
+
 // How a lane's status word is decided, first match wins: no longer paired;
 // never heard from; any open Condition; a System that sleeps and is quiet;
 // otherwise up.
@@ -76,6 +80,10 @@ export type FleetOverview = {
   // Everything that needs the operator on the Systems shown, with the evidence
   // behind it: newest first detected first, those on paired Systems first.
   attention: Attention[];
+  // When the Hub's current run of failed alert deliveries began, undefined
+  // while delivery works or is off. A status of the Hub, not a Condition: it
+  // joins no count or list (ADR-0020).
+  deliveryFailingSince: number | undefined;
   from: number;
   lanes: Lane[];
   now: number;

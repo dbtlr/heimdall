@@ -3,11 +3,18 @@ import type { SearchSchemaInput } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { MARK_COLOR } from '../components/attention-status.tsx';
+import { DeliveryFailing } from '../components/delivery-failing.tsx';
 import { FleetAttention } from '../components/fleet-attention.tsx';
 import { FleetSystems } from '../components/fleet-systems.tsx';
 import { OpenNow } from '../components/open-now.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
-import { fleetAttention, fleetVerdict, isAsleep, levelCountsText } from '../lib/fleet.ts';
+import {
+  deliveryFailingShown,
+  fleetAttention,
+  fleetVerdict,
+  isAsleep,
+  levelCountsText,
+} from '../lib/fleet.ts';
 import { rangeFromSearch } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
 import { cn } from '../lib/utils.ts';
@@ -33,6 +40,7 @@ function Fleet() {
   const { now, range } = overview;
   const empty = emptyFleetText(overview.lanes);
   const { counts } = fleetAttention(overview.attention);
+  const deliveryFailingSince = deliveryFailingShown(overview);
   const asleep = overview.lanes.filter((lane) => isAsleep(lane, now));
   const window = { from: overview.from, to: overview.to };
   return (
@@ -67,6 +75,9 @@ function Fleet() {
               {asleep.length > 0 &&
                 `${asleep.map((lane) => lane.name).join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep.`}
             </p>
+          )}
+          {deliveryFailingSince !== undefined && (
+            <DeliveryFailing now={now} since={deliveryFailingSince} />
           )}
         </section>
         <FleetAttention items={overview.attention} now={now} />

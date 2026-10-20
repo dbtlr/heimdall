@@ -218,16 +218,36 @@ const recoveredMessage = (recoveries: readonly DueRecovery[], dashboard: URL): M
   );
 };
 
+// Ends any run of failed sends. `serve` does this when delivery is off, so a
+// status from before it was turned off is not shown.
+export const clearFailingRun = async (sql: SQL): Promise<void> => {
+  await sql`UPDATE delivery_status SET failing_since = NULL`;
+};
+
+// Sends `message`, keeping the delivery status: a failed send starts a run of
+// failures unless one is under way, and a successful one ends it. A failed send
+// throws.
+const sendNoted = async (sql: SQL, send: Send, message: Message, at: Date): Promise<void> => {
+  try {
+    await send(message);
+  } catch (error) {
+    await sql`UPDATE delivery_status SET failing_since = ${at} WHERE failing_since IS NULL`;
+    throw error;
+  }
+  await clearFailingRun(sql);
+};
+
 // Sends `message`, then records what it covered in one transaction. A failed
 // send records nothing and answers the error, so the pass can go on.
 const sendAndRecord = async (
   sql: SQL,
   send: Send,
   message: Message,
+  at: Date,
   record: (tx: SQL) => Promise<void>,
 ): Promise<unknown> => {
   try {
-    await send(message);
+    await sendNoted(sql, send, message, at);
     await sql.begin(record);
     return undefined;
   } catch (error) {
@@ -242,8 +262,9 @@ const sendAndRecord = async (
 // alert is pushed with how long it has been there. Recovered messages go first,
 // so a delivery that closed while delivery was held closes before its
 // identity's next one opens. Only paired Systems are delivered; unpairing a
-// System closes its open deliveries without a message. Throws when a send
-// fails, after trying both priorities.
+// System closes its open deliveries without a message. Each send keeps the
+// delivery status, when the current run of failed sends began. Throws when a
+// send fails, after trying both priorities.
 const deliverPass = async (
   sql: SQL,
   { dashboard, now, send }: { dashboard: URL; now: number; send: Send },
@@ -258,7 +279,7 @@ const deliverPass = async (
   const recoveries = await dueRecoveries(sql, now);
   if (recoveries.length > 0) {
     failures.push(
-      await sendAndRecord(sql, send, recoveredMessage(recoveries, dashboard), async (tx) => {
+      await sendAndRecord(sql, send, recoveredMessage(recoveries, dashboard), at, async (tx) => {
         for (const recovery of recoveries) {
           // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
           await tx`UPDATE deliveries SET closed_at = ${at} WHERE id = ${recovery.delivery}`;
@@ -269,7 +290,7 @@ const deliverPass = async (
   const pushes = await duePushes(sql);
   if (pushes.length > 0) {
     failures.push(
-      await sendAndRecord(sql, send, pushMessage(pushes, now, dashboard), async (tx) => {
+      await sendAndRecord(sql, send, pushMessage(pushes, now, dashboard), at, async (tx) => {
         for (const push of pushes) {
           // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
           await tx`
