@@ -15,7 +15,7 @@
       "dependencies": {
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
+        "@loomcli/core": "0.13.0",
         "@loomcli/plugins": "0.10.0",
         "@loomcli/validators": "0.10.0",
       },
@@ -31,7 +31,7 @@
         "@fontsource/barlow-semi-condensed": "^5.3.0",
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
+        "@loomcli/core": "0.13.0",
         "@loomcli/plugins": "0.10.0",
         "@loomcli/validators": "0.10.0",
         "@tailwindcss/vite": "^4.3.3",
@@ -63,7 +63,7 @@
       "dependencies": {
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
+        "@loomcli/core": "0.13.0",
         "@loomcli/plugins": "0.10.0",
         "@loomcli/validators": "0.10.0",
         "zod": "^4.6.5",
@@ -76,7 +76,7 @@
       "name": "@heimdall/release",
       "version": "0.0.0",
       "dependencies": {
-        "@loomcli/core": "0.10.0",
+        "@loomcli/core": "0.13.0",
         "@loomcli/plugins": "0.10.0",
         "@loomcli/validators": "0.10.0",
       },
@@ -92,7 +92,7 @@
       "name": "@heimdall/service",
       "version": "0.0.0",
       "dependencies": {
-        "@loomcli/core": "0.10.0",
+        "@loomcli/core": "0.13.0",
         "@loomcli/plugins": "0.10.0",
         "@loomcli/validators": "0.10.0",
         "smol-toml": "^1.9.0",
@@ -160,7 +160,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@loomcli/core": ["@loomcli/core@0.10.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-fCa7ZQlqaQ2fZRKJERJ9u2fvNszQA9a/nry6eMReu9tnyLjxELaFG0ymw40MuLiEpCXyr8LS4MOiyl6DOqv8fg=="],
+    "@loomcli/core": ["@loomcli/core@0.13.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-sIiO5VKa2Zv8fCdE6Ub2cYdU4q5Ij5Shaz4qJhpDUYtk/JXlvuH+RGFA8Ft7YX21BzNIIVQQSMVfhbxpzqLUjg=="],
 
     "@loomcli/loom": ["@loomcli/loom@0.10.0", "", { "dependencies": { "@loomcli/core": "0.10.0", "@loomcli/plugins": "0.10.0", "mdast-util-from-markdown": "^2.0.3", "yaml": "^2.9.1", "zod": "^4.6.5" }, "peerDependencies": { "pnpm": "12.8.1", "typescript": "^7.0.2" }, "optionalPeers": ["pnpm", "typescript"], "bin": { "loom": "dist/main.js" } }, "sha512-y6fhq6rjDxBONRyl1KkCWzH0qknOUbMUxEqjkUJ20H3W+IS0EYcWwh4sgs+DHNXsq4GoMGG3d+S5y/exnY4miw=="],
 
@@ -875,6 +875,12 @@
     "yuku-parser": ["yuku-parser@0.9.5", "", { "dependencies": { "@yuku-toolchain/types": "^0.9.5", "yuku-ast": "^0.9.5" }, "optionalDependencies": { "@yuku-parser/binding-android-arm64": "0.9.5", "@yuku-parser/binding-darwin-arm64": "0.9.5", "@yuku-parser/binding-darwin-x64": "0.9.5", "@yuku-parser/binding-freebsd-x64": "0.9.5", "@yuku-parser/binding-linux-arm-gnu": "0.9.5", "@yuku-parser/binding-linux-arm-musl": "0.9.5", "@yuku-parser/binding-linux-arm64-gnu": "0.9.5", "@yuku-parser/binding-linux-arm64-musl": "0.9.5", "@yuku-parser/binding-linux-x64-gnu": "0.9.5", "@yuku-parser/binding-linux-x64-musl": "0.9.5", "@yuku-parser/binding-win32-arm64": "0.9.5", "@yuku-parser/binding-win32-x64": "0.9.5" } }, "sha512-IBnAdNVMswWbJcM7woPluOudectJzFjJ1N8jVRxP9Uq4CIv5hZdBIcdmtRbFDYF/Ph2j2gVup4YJ4N9mh0jYFA=="],
 
     "zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
+
+    "@loomcli/loom/@loomcli/core": ["@loomcli/core@0.10.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-fCa7ZQlqaQ2fZRKJERJ9u2fvNszQA9a/nry6eMReu9tnyLjxELaFG0ymw40MuLiEpCXyr8LS4MOiyl6DOqv8fg=="],
+
+    "@loomcli/plugins/@loomcli/core": ["@loomcli/core@0.10.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-fCa7ZQlqaQ2fZRKJERJ9u2fvNszQA9a/nry6eMReu9tnyLjxELaFG0ymw40MuLiEpCXyr8LS4MOiyl6DOqv8fg=="],
+
+    "@loomcli/validators/@loomcli/core": ["@loomcli/core@0.10.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-fCa7ZQlqaQ2fZRKJERJ9u2fvNszQA9a/nry6eMReu9tnyLjxELaFG0ymw40MuLiEpCXyr8LS4MOiyl6DOqv8fg=="],
 
     "@reduxjs/toolkit/immer": ["immer@11.1.21", "", {}, "sha512-bZSadeCPGdaY5/qRLgr6mDSH1ra21rD3rqpiWk7+QTr4ayYPTE9qZYdLh/NdPhMe0wSrTvHD/Lk8q5EwhUs0aw=="],
 
