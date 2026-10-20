@@ -17,7 +17,7 @@
         "@heimdall/service": "workspace:*",
         "@loomcli/core": "0.10.0",
         "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/validators": "0.13.0",
       },
       "devDependencies": {
         "@heimdall/hub": "workspace:*",
@@ -33,7 +33,7 @@
         "@heimdall/service": "workspace:*",
         "@loomcli/core": "0.10.0",
         "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/validators": "0.13.0",
         "@tailwindcss/vite": "^4.3.3",
         "@tanstack/react-router": "^1.170.44",
         "@tanstack/react-start": "^1.169.1",
@@ -65,7 +65,7 @@
         "@heimdall/service": "workspace:*",
         "@loomcli/core": "0.10.0",
         "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/validators": "0.13.0",
         "zod": "^4.6.5",
       },
       "devDependencies": {
@@ -78,7 +78,7 @@
       "dependencies": {
         "@loomcli/core": "0.10.0",
         "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/validators": "0.13.0",
       },
     },
     "packages/schema": {
@@ -94,7 +94,7 @@
       "dependencies": {
         "@loomcli/core": "0.10.0",
         "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/validators": "0.13.0",
         "smol-toml": "^1.9.0",
       },
     },
@@ -166,7 +166,7 @@
 
     "@loomcli/plugins": ["@loomcli/plugins@0.10.0", "", { "dependencies": { "smol-toml": "^1.9.0", "yaml": "^2.9.1", "zod": "^4.6.5" }, "peerDependencies": { "@loomcli/core": "0.10.0" } }, "sha512-1QyqdSNUXAgiSqdS/qJABxEugKXTgb5lJ6crU71ZOdYRGjAoMCS+eMJSrDVPlJphlQqohd2nadMIjcjKXhArxQ=="],
 
-    "@loomcli/validators": ["@loomcli/validators@0.10.0", "", { "peerDependencies": { "@loomcli/core": "0.10.0" } }, "sha512-elRX5Mr8SbAbF+Qf0RHSq2jcxW6poFD+NCLGXXzIjZa1It1icS58hL01kGeRGW4/g2QWvjNm1cE6eP5Me8h2aA=="],
+    "@loomcli/validators": ["@loomcli/validators@0.13.0", "", { "peerDependencies": { "@loomcli/core": "0.13.0" } }, "sha512-i0WkEGhUtPXzxJgg7nU8Zhe0i69lKuxPB3e2G8WOsmEeBpnk03793eHAWxIMax6wlzqQrCTY3c1s+qL7xFuiwg=="],
 
     "@oozcitak/dom": ["@oozcitak/dom@2.0.2", "", { "dependencies": { "@oozcitak/infra": "^2.0.2", "@oozcitak/url": "^3.0.0", "@oozcitak/util": "^10.0.0" } }, "sha512-GjpKhkSYC3Mj4+lfwEyI1dqnsKTgwGy48ytZEhm4A/xnH/8z9M3ZVXKr/YGQi3uCLs1AEBS+x5T2JPiueEDW8w=="],
 

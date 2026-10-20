@@ -6,6 +6,6 @@
   "dependencies": {
     "@loomcli/core": "0.10.0",
     "@loomcli/plugins": "0.10.0",
-    "@loomcli/validators": "0.10.0"
+    "@loomcli/validators": "0.13.0"
   }
 }
