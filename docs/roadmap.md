@@ -1,5 +1,5 @@
 ---
-description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, graded System health, and alerting, with the settled scope of v1."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1, and alerting (M8), which follows v1."
 ---
 
 # Roadmap
@@ -17,7 +17,7 @@ Heimdall gives one view of a personal fleet and the agent work done on it: wheth
 
 ## Out of v1
 
-- Alerting and its delivery channel. M8 delivers alerts the Hub already derives.
+- Alerting and its delivery channel. M8 adds them after v1, delivering alerts the Hub already derives.
 - A watcher outside the System that hosts the Hub. The Hub cannot report an outage of its own System; M8's later phase adds one.
 - Comparing a provisioner's declarations with its records. That is the provisioner's own check, such as `fleet doctor`, reading the records the Hub mirrors.
 - A dashboard that adds or changes a System's records ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
@@ -120,7 +120,7 @@ Size: large. Sharp edges: tuning limits so notes stay quiet, per-process CPU acr
 A Condition at the alert level reaches the operator's phone, and nothing else interrupts ([ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md)).
 
 - The Hub pushes each Condition that reaches alert to one ntfy topic named in its configuration, once. A recovered message follows once it has stayed below alert for 10 minutes and counts how often it returned to alert. Notes and warnings are never pushed; a Condition that alerts wrongly is fixed by its limits.
-- Delivery sends what is true now: after a silence, an unreachable channel, or a Hub outage, an alert that already cleared sends nothing and one still open sends once.
+- Delivery sends what is true now: after a silence, an unreachable channel, or a Hub outage, an alert that reached alert and recovered during the hold sends nothing, one still at alert sends its push, and one already pushed before the hold sends nothing more until its recovered message.
 - `heimdall-hub silence` holds delivery for one System for a time window, such as a reboot. A silence never hides a Condition or changes health, and the dashboard shows it.
 - When sends keep failing, the dashboard's Fleet page says delivery is failing and since when, and `heimdall-hub delivery test` checks the channel.
 - Order: delivery first, then silences, then rollout with the provisioner writing the ntfy settings, proven live by stopping a Service. An external watcher for the System that hosts the Hub follows, posting to the same topic.
