@@ -13,12 +13,13 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
+import { configName } from './commands.ts';
 import { readConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits } from './condition-limits.ts';
 import { openDatabase } from './database.ts';
 import { readDeliveryChannel } from './delivery-config.ts';
 import type { DeliveryChannel } from './delivery-config.ts';
-import { deliverAlerts } from './delivery.ts';
+import { clearFailingRun, deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
@@ -67,8 +68,7 @@ export const serveAction: ActionHandler<typeof serve> = async ({
     path: servicePaths('hub', homeOf(host.env)).log,
   });
   try {
-    const named =
-      'config' in options && typeof options.config === 'string' ? options.config : undefined;
+    const named = configName(options);
     const limits = await readConditionLimits({ cwd: host.cwd, env: host.env, named }).catch(
       (error: unknown) => log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
     );
@@ -149,6 +149,12 @@ const serveUntilStopped = async ({
     await storeConditionLimits(sql, limits).catch((error: unknown) =>
       log.fatal(clean(`Could not store the Condition limits: ${describeError(error)}`)),
     );
+    // Turning delivery off must not leave the dashboard saying it is failing.
+    if (delivery === undefined) {
+      await clearFailingRun(sql).catch((error: unknown) =>
+        log.fatal(clean(`Could not clear the delivery status: ${describeError(error)}`)),
+      );
+    }
     // The insight reader is granted after the migrations, so it covers every
     // view they made. Neither a reader not created yet nor a failed grant stops
     // the Hub; both are tried again while it runs.

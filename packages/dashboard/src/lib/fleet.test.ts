@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
-import { fleetAttention, fleetVerdict, isAsleep } from './fleet.ts';
+import { DELIVERY_FAILING_SHOWN_AFTER_MS } from '../server/fleet-overview-types.ts';
+import { deliveryFailingShown, fleetAttention, fleetVerdict, isAsleep } from './fleet.ts';
 
 const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
   checkedAt: 100,
@@ -57,4 +58,16 @@ test('Fleet orders stored levels before freshness and excludes unpaired history 
   expect(result.evidence).toEqual([unknown]);
   expect(result.counts).toEqual({ alert: 1, note: 1, warning: 1 });
   expect(input[0]).toBe(warning);
+});
+
+test('delivery failing is shown only once the run of failures is 10 minutes old', () => {
+  const now = 10_000_000;
+  expect(DELIVERY_FAILING_SHOWN_AFTER_MS).toBe(10 * 60_000);
+  expect(deliveryFailingShown({ deliveryFailingSince: undefined, now })).toBeUndefined();
+  expect(
+    deliveryFailingShown({ deliveryFailingSince: now - DELIVERY_FAILING_SHOWN_AFTER_MS + 1, now }),
+  ).toBeUndefined();
+  expect(
+    deliveryFailingShown({ deliveryFailingSince: now - DELIVERY_FAILING_SHOWN_AFTER_MS, now }),
+  ).toBe(now - DELIVERY_FAILING_SHOWN_AFTER_MS);
 });

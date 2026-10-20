@@ -2210,6 +2210,21 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 34,
   },
+  {
+    // The Hub's delivery status (ADR-0020), one row that holds when the current
+    // run of failed sends began: the first failure since the last successful
+    // send. `failing_since` is null while sends succeed, and the dashboard
+    // shows delivery failing once a run is old enough. The key is always true,
+    // so the table cannot hold a second row.
+    sql: `
+      CREATE TABLE delivery_status (
+        only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
+        failing_since timestamptz
+      );
+      INSERT INTO delivery_status DEFAULT VALUES;
+    `,
+    version: 35,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

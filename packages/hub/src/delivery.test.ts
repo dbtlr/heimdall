@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import { clear, raise, recordClosedOccurrence } from './conditions.ts';
-import { clipBytes, deliverAlerts } from './delivery.ts';
+import { clearFailingRun, clipBytes, deliverAlerts } from './delivery.ts';
 import type { Message } from './delivery.ts';
 import { failure, migrate, NOW, storeToken, unpair } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
@@ -484,4 +484,109 @@ test('two Hubs sharing a database send a push once', async () => {
   await d.pass(1);
 
   expect([...sent, ...d.sent].map((m) => m.title)).toEqual(['Service down on server-1: nginx']);
+});
+
+// When the current run of failed sends began, none when delivery is not failing.
+const failingSince = async (d: Awaited<ReturnType<typeof setup>>) => {
+  const rows: { failing_since: Date | null }[] = await d.db.sql`
+    SELECT failing_since FROM delivery_status
+  `;
+  return rows.map((row) => row.failing_since?.getTime() ?? null);
+};
+
+test('a failed send stores when the run of failures began, and a second failure keeps that time', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+
+  await failure(d.pass(1));
+  expect(await failingSince(d)).toEqual([at(1)]);
+
+  await failure(d.pass(5));
+  expect(await failingSince(d)).toEqual([at(1)]);
+});
+
+test('a successful send ends the run, and the next failure starts a new one', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+  await failure(d.pass(1));
+
+  d.channel.down = false;
+  await d.pass(2);
+  expect(await failingSince(d)).toEqual([null]);
+
+  await d.down(3, 'postgres');
+  d.channel.down = true;
+  await failure(d.pass(4));
+  expect(await failingSince(d)).toEqual([at(4)]);
+});
+
+test('a pass with nothing due leaves the run as it was', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+  await failure(d.pass(1));
+  await d.up(1.5);
+
+  await d.pass(2);
+
+  expect(await failingSince(d)).toEqual([at(1)]);
+});
+
+test('a push that gets through ends the run even when a recovered message is still refused', async () => {
+  await using d = await setup();
+  await d.down(0, 'nginx');
+  await d.pass(0.5);
+  await d.up(1, 'nginx');
+  await d.down(11, 'postgres');
+  d.channel.refuses = 'low';
+
+  await failure(d.pass(11.5));
+
+  // The recovered message failed first, then the push got through.
+  expect(await failingSince(d)).toEqual([null]);
+});
+
+test('clearing the run, as serve does with delivery off, leaves no status behind', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+  await failure(d.pass(1));
+
+  await clearFailingRun(d.db.sql);
+
+  expect(await failingSince(d)).toEqual([null]);
+});
+
+// Makes every write to the delivery status that sets (`failing`) or clears
+// (`!failing`) the run fail, as a database that goes wrong mid-pass would.
+const breakStatusWrites = (d: Awaited<ReturnType<typeof setup>>, failing: boolean) =>
+  d.db.sql.unsafe(`
+    CREATE FUNCTION refuse_status() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'the status write failed'; END $$;
+    CREATE TRIGGER refuse_status BEFORE UPDATE ON delivery_status
+      FOR EACH ROW WHEN (NEW.failing_since IS ${failing ? 'NOT NULL' : 'NULL'})
+      EXECUTE FUNCTION refuse_status();
+  `);
+
+test('a delivered push is recorded even when clearing the status fails, so the next pass does not send it again', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await breakStatusWrites(d, false);
+
+  await failure(d.pass(1));
+  await d.db.sql`DROP TRIGGER refuse_status ON delivery_status`;
+  await d.pass(2);
+
+  expect(d.sent.map((message) => message.priority)).toEqual(['high']);
+});
+
+test('a status write that fails never hides why the send failed', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+  await breakStatusWrites(d, true);
+
+  expect(await failure(d.pass(1))).toEqual(new Error('ntfy is unreachable'));
 });

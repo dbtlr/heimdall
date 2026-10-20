@@ -235,6 +235,15 @@ export const readStretches = (
   ORDER BY st.system, st.started_at
 `;
 
+// When the Hub's current run of failed alert deliveries began, none while
+// delivery works or is off.
+const readDeliveryFailingSince = async (sql: SQL): Promise<number | undefined> => {
+  const [row]: { failing_since: Date | null }[] = await sql`
+    SELECT failing_since FROM delivery_status
+  `;
+  return row?.failing_since?.getTime();
+};
+
 // Whether the item is a Condition the Hub holds, not one the dashboard raises.
 const isHubCondition = ({ kind }: Attention) =>
   kind !== 'file_unreadable' && kind !== 'checks_missing';
@@ -259,11 +268,13 @@ const readFleetOverviewSnapshot = async (
     ORDER BY 1
   `;
   const unpairedCount = held.filter(({ paired }) => !paired).length;
+  const deliveryFailingSince = await readDeliveryFailingSince(sql);
   const systems = held.filter(({ paired }) => paired || unpaired);
   const names = systems.map(({ name }) => name);
   if (names.length === 0) {
     return {
       attention: [],
+      deliveryFailingSince,
       from,
       lanes: [],
       now,
@@ -362,6 +373,7 @@ const readFleetOverviewSnapshot = async (
   };
   return {
     attention,
+    deliveryFailingSince,
     from,
     lanes: systems.filter(({ paired }) => paired).map(laneOf),
     now,

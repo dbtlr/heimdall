@@ -18,6 +18,11 @@ type Context = {
   style: { escape: (text: string) => string };
 };
 
+// The configuration file `--config` names, none when the command was given no
+// such option.
+export const configName = (options: object): string | undefined =>
+  'config' in options && typeof options.config === 'string' ? options.config : undefined;
+
 // Opens the database at `url`, brings it to the latest schema, as `serve` does,
 // so a command works before `serve` first runs or while it runs, and runs `work`
 // against it. A failure is fatal; PostgreSQL's messages name the host and

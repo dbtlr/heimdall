@@ -7,6 +7,7 @@ import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { date, integer, text, url } from '@loomcli/validators';
 
+import { deliveryTestAction } from './delivery-commands.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
 import { serveAction } from './serve.ts';
@@ -177,6 +178,17 @@ const transcripts = new Command('transcripts', {
   .command(showTranscript)
   .command(deleteTranscripts);
 
+export const deliveryTest = new Command('test', {
+  description:
+    "Send one low-priority test message through the [delivery] channel, to check that alerts can reach a phone. A message that gets through ends the dashboard's delivery failing status.",
+})
+  .option('database', database)
+  .action(deliveryTestAction);
+
+const delivery = new Command('delivery', {
+  description: 'Check how the Hub delivers alerts.',
+}).command(deliveryTest);
+
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
@@ -192,4 +204,5 @@ export const app = new Application('heimdall-hub', {
   .command(pair)
   .command(unpair)
   .command(transcripts)
+  .command(delivery)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

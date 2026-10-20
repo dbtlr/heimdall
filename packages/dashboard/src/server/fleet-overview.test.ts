@@ -736,3 +736,28 @@ describe('last seen', () => {
     expect((await lane(h, 'laptop-1')).lastSeenAt).toBe(NOW);
   });
 });
+
+describe('delivery status', () => {
+  test('carries when the Hub began failing to deliver alerts, and none while delivery works', async () => {
+    await using h = await startHub();
+    expect((await overview(h)).deliveryFailingSince).toBeUndefined();
+
+    await h.db.sql`UPDATE delivery_status SET failing_since = ${new Date(NOW - 30 * MINUTE)}`;
+
+    expect((await overview(h)).deliveryFailingSince).toBe(NOW - 30 * MINUTE);
+  });
+
+  test('is carried when no System is paired, and changes neither the lanes nor the attention', async () => {
+    await using h = await startHub();
+    const before = await overview(h);
+    await h.db.sql`UPDATE delivery_status SET failing_since = ${new Date(NOW - 30 * MINUTE)}`;
+
+    const failing = await overview(h);
+
+    expect(failing.lanes).toEqual(before.lanes);
+    expect(failing.attention).toEqual(before.attention);
+    await unpair(h.db.sql, 'server-1');
+    await unpair(h.db.sql, 'laptop-1');
+    expect((await overview(h)).deliveryFailingSince).toBe(NOW - 30 * MINUTE);
+  });
+});
