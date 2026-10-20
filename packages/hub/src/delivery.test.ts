@@ -466,16 +466,18 @@ test('two Hubs sharing a database send a push once', async () => {
   await d.down(0);
   const sent: Message[] = [];
   const { promise: held, resolve: release } = Promise.withResolvers<void>();
+  const { promise: sending, resolve: startSending } = Promise.withResolvers<void>();
   const slow = deliverAlerts(d.db.sql, {
     dashboard: DASHBOARD,
     now: at(0.5),
     send: async (message) => {
+      startSending();
       await held;
       sent.push(message);
     },
   });
   // The second Hub's pass finds the first one's running and sends nothing.
-  await Bun.sleep(100);
+  await sending;
   await d.pass(0.5);
   release();
   await slow;
