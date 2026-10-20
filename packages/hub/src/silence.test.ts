@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
 
+import { SQL } from 'bun';
+
 import { DELIVERY_LOCK } from './delivery.ts';
 import { migrate } from './migrations.ts';
 import { unpair } from './pairing.ts';
@@ -207,4 +209,19 @@ test('a silence waits out a delivery pass in progress, so that pass cannot send 
 
   expect(duringPass).toEqual([]);
   expect(await s.silences()).toHaveLength(1);
+});
+
+test('a silence outlasts the statement timeout while it waits for a slow delivery pass', async () => {
+  await using s = await setup();
+  const impatient = new SQL({ connection: { statement_timeout: 100 }, url: s.db.url.href });
+  const pass = await s.db.sql.reserve();
+  await pass`SELECT pg_advisory_lock(hashtext(${DELIVERY_LOCK}))`;
+
+  const silenced = setSilence(impatient, { forMs: 3_600_000, now: Date.now(), system: 'laptop-1' });
+  await Bun.sleep(300);
+  await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
+  pass.release();
+
+  expect(await silenced).toBeInstanceOf(Date);
+  await impatient.close();
 });

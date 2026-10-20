@@ -14,6 +14,9 @@ export const setSilence = (
   { forMs, now, system }: { forMs: number; now: number; system: string },
 ): Promise<Date | undefined> =>
   sql.begin(async (tx) => {
+    // A pass can outlast the pool's statement timeout: two sends of up to 10 s
+    // each, behind queries that may wait on a lock.
+    await tx.unsafe(`SET LOCAL statement_timeout = '2min'`);
     await tx`SELECT pg_advisory_xact_lock(hashtext(${DELIVERY_LOCK}))`;
     const [row]: { until: Date }[] = await tx`
       INSERT INTO silences (system, until, created_at)
