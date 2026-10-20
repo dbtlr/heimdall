@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
+import type { SQL } from 'bun';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { raise } from './conditions.ts';
@@ -783,10 +784,15 @@ const stubNtfy = (status = 200) => {
   return { received, server, [Symbol.dispose]: () => void server.stop(true) };
 };
 
-// A configuration with only a `[delivery]` section, since the test command
-// opens no database.
-const deliveryConfig = (url: URL) =>
+// A database no test reaches, for the commands that name one but fail first.
+const UNREACHED_DATABASE = new URL('postgres://heimdall@127.0.0.1:1/heimdall');
+
+// A configuration with a `[delivery]` section and the database `delivery test`
+// clears the failing status in.
+const deliveryConfig = (url: URL, database = UNREACHED_DATABASE) =>
   configFile([
+    '[database]',
+    `url = "${database.href}"`,
     '[delivery]',
     `url = "${url.href}"`,
     'topic = "heimdall-x7Qp"',
@@ -794,9 +800,18 @@ const deliveryConfig = (url: URL) =>
     'dashboard = "https://dashboard.example/"',
   ]);
 
+const FAILING_SINCE = '2026-10-06T12:00:00Z';
+
+const failingRun = async (db: { sql: SQL }) => {
+  const rows: { failing_since: Date | null }[] =
+    await db.sql`SELECT failing_since FROM delivery_status`;
+  return rows.map((row) => row.failing_since?.toISOString() ?? null);
+};
+
 test('delivery test sends one low-priority message that opens the dashboard, and prints neither topic nor token', async () => {
   using ntfy = stubNtfy();
-  await using config = await deliveryConfig(ntfy.server.url);
+  await using db = await testDatabase();
+  await using config = await deliveryConfig(ntfy.server.url, db.url);
 
   const { code, stderr, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);
 
@@ -813,23 +828,40 @@ test('delivery test sends one low-priority message that opens the dashboard, and
       },
     },
   ]);
-  expect(stdout).toBe(`Sent a test message through ${ntfy.server.url.host}.\n`);
+  expect(stdout).toContain(`Sent a test message through ${ntfy.server.url.host}.\n`);
   expect(`${stdout}${stderr}`).not.toContain('heimdall-x7Qp');
   expect(`${stdout}${stderr}`).not.toContain('tk_s3cret');
   expect(stderr).toBe('');
   expect(code).toBe(0);
 });
 
-test('delivery test fails with the status when ntfy refuses the message', async () => {
+test('a delivery test that gets through ends a stored run of failed sends', async () => {
+  using ntfy = stubNtfy();
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql`UPDATE delivery_status SET failing_since = ${FAILING_SINCE}`;
+  await using config = await deliveryConfig(ntfy.server.url, db.url);
+
+  const { code, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);
+
+  expect(await failingRun(db)).toEqual([null]);
+  expect(stdout).toContain('Sent a test message');
+  expect(code).toBe(0);
+});
+
+test('delivery test fails with the status when ntfy refuses the message, and leaves a stored run alone', async () => {
   using ntfy = stubNtfy(403);
-  await using config = await deliveryConfig(ntfy.server.url);
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql`UPDATE delivery_status SET failing_since = ${FAILING_SINCE}`;
+  await using config = await deliveryConfig(ntfy.server.url, db.url);
 
   const { code, stderr, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);
 
   expect(stderr).toContain('Could not send the test message: The ntfy server answered 403.');
   expect(`${stdout}${stderr}`).not.toContain('heimdall-x7Qp');
   expect(`${stdout}${stderr}`).not.toContain('tk_s3cret');
-  expect(stdout).toBe('');
+  expect(await failingRun(db)).toEqual([new Date(FAILING_SINCE).toISOString()]);
   expect(code).toBe(1);
 });
 
@@ -848,7 +880,7 @@ test('delivery test fails when the ntfy server cannot be reached', async () => {
 });
 
 test('delivery test without a [delivery] section says delivery is off', async () => {
-  await using config = await configFile(['host = "127.0.0.1"']);
+  await using config = await configFile(['[database]', `url = "${UNREACHED_DATABASE.href}"`]);
 
   const { code, stderr, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);
 
@@ -859,6 +891,8 @@ test('delivery test without a [delivery] section says delivery is off', async ()
 
 test('delivery test refuses an invalid [delivery] section, naming the setting', async () => {
   await using config = await configFile([
+    '[database]',
+    `url = "${UNREACHED_DATABASE.href}"`,
     '[delivery]',
     'url = "https://ntfy.example"',
     'topic = "not a topic"',

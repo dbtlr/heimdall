@@ -180,8 +180,10 @@ const transcripts = new Command('transcripts', {
 
 export const deliveryTest = new Command('test', {
   description:
-    'Send one low-priority test message through the [delivery] channel, to check that alerts can reach a phone.',
-}).action(deliveryTestAction);
+    "Send one low-priority test message through the [delivery] channel, to check that alerts can reach a phone. A message that gets through ends the dashboard's delivery failing status.",
+})
+  .option('database', database)
+  .action(deliveryTestAction);
 
 const delivery = new Command('delivery', {
   description: 'Check how the Hub delivers alerts.',

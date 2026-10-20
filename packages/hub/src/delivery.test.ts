@@ -558,3 +558,35 @@ test('clearing the run, as serve does with delivery off, leaves no status behind
 
   expect(await failingSince(d)).toEqual([null]);
 });
+
+// Makes every write to the delivery status that sets (`failing`) or clears
+// (`!failing`) the run fail, as a database that goes wrong mid-pass would.
+const breakStatusWrites = (d: Awaited<ReturnType<typeof setup>>, failing: boolean) =>
+  d.db.sql.unsafe(`
+    CREATE FUNCTION refuse_status() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'the status write failed'; END $$;
+    CREATE TRIGGER refuse_status BEFORE UPDATE ON delivery_status
+      FOR EACH ROW WHEN (NEW.failing_since IS ${failing ? 'NOT NULL' : 'NULL'})
+      EXECUTE FUNCTION refuse_status();
+  `);
+
+test('a delivered push is recorded even when clearing the status fails, so the next pass does not send it again', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await breakStatusWrites(d, false);
+
+  await failure(d.pass(1));
+  await d.db.sql`DROP TRIGGER refuse_status ON delivery_status`;
+  await d.pass(2);
+
+  expect(d.sent.map((message) => message.priority)).toEqual(['high']);
+});
+
+test('a status write that fails never hides why the send failed', async () => {
+  await using d = await setup();
+  await d.down(0);
+  d.channel.down = true;
+  await breakStatusWrites(d, true);
+
+  expect(await failure(d.pass(1))).toEqual(new Error('ntfy is unreachable'));
+});

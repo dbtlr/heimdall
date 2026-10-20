@@ -218,27 +218,18 @@ const recoveredMessage = (recoveries: readonly DueRecovery[], dashboard: URL): M
   );
 };
 
-// Ends any run of failed sends. `serve` does this when delivery is off, so a
-// status from before it was turned off is not shown.
+// Ends any run of failed sends: after a send gets through, when `serve` starts
+// with delivery off so a status from before is not shown, and after a
+// successful `delivery test`.
 export const clearFailingRun = async (sql: SQL): Promise<void> => {
   await sql`UPDATE delivery_status SET failing_since = NULL`;
 };
 
-// Sends `message`, keeping the delivery status: a failed send starts a run of
-// failures unless one is under way, and a successful one ends it. A failed send
-// throws.
-const sendNoted = async (sql: SQL, send: Send, message: Message, at: Date): Promise<void> => {
-  try {
-    await send(message);
-  } catch (error) {
-    await sql`UPDATE delivery_status SET failing_since = ${at} WHERE failing_since IS NULL`;
-    throw error;
-  }
-  await clearFailingRun(sql);
-};
-
 // Sends `message`, then records what it covered in one transaction. A failed
-// send records nothing and answers the error, so the pass can go on.
+// send records nothing and answers the error, so the pass can go on. The
+// delivery status follows the record, never precedes it: a message that got
+// through is recorded whatever happens to the status, so it is not sent twice,
+// and a status write that fails never hides why a send failed.
 const sendAndRecord = async (
   sql: SQL,
   send: Send,
@@ -247,8 +238,16 @@ const sendAndRecord = async (
   record: (tx: SQL) => Promise<void>,
 ): Promise<unknown> => {
   try {
-    await sendNoted(sql, send, message, at);
+    await send(message);
+  } catch (error) {
+    await sql`UPDATE delivery_status SET failing_since = ${at} WHERE failing_since IS NULL`.catch(
+      () => undefined,
+    );
+    return error;
+  }
+  try {
     await sql.begin(record);
+    await clearFailingRun(sql);
     return undefined;
   } catch (error) {
     return error;
