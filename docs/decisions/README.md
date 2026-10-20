@@ -32,3 +32,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0017 — The Hub sets each Condition's level](0017-the-hub-sets-condition-levels.md)
 - [ADR-0018 — The Collector checks package managers on a schedule](0018-collector-checks-package-managers-on-a-schedule.md)
 - [ADR-0019 — A Session's project is the git repository of its working directory](0019-a-sessions-project-is-the-git-repository-of-its-working-directory.md)
+- [ADR-0020 — The Hub delivers alerts through ntfy, sending what is true now](0020-the-hub-delivers-alerts-through-ntfy.md)

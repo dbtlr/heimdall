@@ -1,11 +1,12 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
 
 Heimdall observes a fleet and the agent work done on it, whatever provisions its Systems. The terms below are Heimdall's own.
 Condition levels and level-change history follow [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
+Delivery and silences follow [ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md).
 
 ## Language
 
@@ -116,6 +117,14 @@ _Avoid_: alert (a level, not the Condition itself), finding, incident
 **level**:
 A Condition's urgency, set by the Hub: note means something to know about, warning means act this week, and alert means act now. A System's health is its worst open level; notes alone leave it healthy.
 _Avoid_: severity, priority, score, notification (delivery, not a level)
+
+**delivery**:
+The Hub's messages about one Condition's time at alert: a push when it reaches alert, and a recovered message once it has stayed below alert for 10 minutes. Returns to alert in between are counted, not pushed. Notes and warnings are never delivered.
+_Avoid_: notification, page, alert (a level, not the message)
+
+**silence**:
+A time-boxed hold on delivery for one System. A silence never hides a Condition or changes a System's health. A Collector that stops reporting is quiet, not silenced.
+_Avoid_: mute, snooze, acknowledgement
 
 **Last seen**:
 The most recent time the Hub heard from a System under that System's token, whether it stored the Report, rejected it, or took a transcript upload. A sleeping System shows its last-seen time and a gap.

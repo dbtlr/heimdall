@@ -1,5 +1,5 @@
 ---
-description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, graded System health, and alerting, with the settled scope of v1."
 ---
 
 # Roadmap
@@ -17,8 +17,8 @@ Heimdall gives one view of a personal fleet and the agent work done on it: wheth
 
 ## Out of v1
 
-- Alerting and its delivery channel. A later milestone delivers Conditions the Hub already derives.
-- A watcher outside the System that hosts the Hub. The Hub cannot report an outage of its own System.
+- Alerting and its delivery channel. M8 delivers alerts the Hub already derives.
+- A watcher outside the System that hosts the Hub. The Hub cannot report an outage of its own System; M8's later phase adds one.
 - Comparing a provisioner's declarations with its records. That is the provisioner's own check, such as `fleet doctor`, reading the records the Hub mirrors.
 - A dashboard that adds or changes a System's records ([ADR-0011](decisions/0011-collectors-hold-what-provisioners-record.md)).
 - Harness hooks; transcripts already hold what hooks would report.
@@ -115,8 +115,18 @@ The dashboard answers "is any System unhealthy, and what needs me?" first, on a 
 
 Size: large. Sharp edges: tuning limits so notes stay quiet, per-process CPU across sleeps, and running `brew` when the Collector's account does not own the Homebrew install.
 
+## M8: Alerting
+
+A Condition at the alert level reaches the operator's phone, and nothing else interrupts ([ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md)).
+
+- The Hub pushes each Condition that reaches alert to one ntfy topic named in its configuration, once. A recovered message follows once it has stayed below alert for 10 minutes and counts how often it returned to alert. Notes and warnings are never pushed; a Condition that alerts wrongly is fixed by its limits.
+- Delivery sends what is true now: after a silence, an unreachable channel, or a Hub outage, an alert that already cleared sends nothing and one still open sends once.
+- `heimdall-hub silence` holds delivery for one System for a time window, such as a reboot. A silence never hides a Condition or changes health, and the dashboard shows it.
+- When sends keep failing, the Hub raises a delivery failing Condition at warning on the dashboard, and `heimdall-hub delivery test` checks the channel.
+- Order: delivery first, then silences, then rollout with the provisioner writing the ntfy settings, proven live by stopping a Service. An external watcher for the System that hosts the Hub follows, posting to the same topic.
+
+Size: medium. Sharp edges: which System the delivery failing Condition belongs to, since the Hub does not know its own System, and keeping the topic and token out of logs.
+
 ## Later
 
 - Hardening before anyone else runs Heimdall: authentication for the dashboard and its reads, and handling of secrets that appear in transcripts. Full-text search over transcript content waits for it.
-- Alerting: deliver Conditions through a chosen channel, with silencing.
-- An external watcher for the System that hosts the Hub.
