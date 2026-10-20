@@ -25,9 +25,8 @@ type DuePush = Identity & { alertSince: Date; id: string; reason: string };
 
 // An open delivery that has closed: the first time since it opened that its
 // identity left alert and stayed below it for 10 minutes. It carries the level
-// the identity is at now, none when cleared, or the level it closed at when it
-// has since returned to alert; the occurrence it closed on; and how many times
-// it reached alert before it closed.
+// the identity is at now, none when cleared; the occurrence it closed on; and
+// how many times it reached alert before it closed.
 type DueRecovery = Identity & {
   delivery: string;
   latest: string;
@@ -65,11 +64,12 @@ const duePushes = (sql: SQL): Promise<DuePush[]> => sql`
 
 // Closing is read from the history, not only from the present, so a delivery
 // that closed while delivery was held closes even if its identity is back at
-// alert now.
+// alert now. A return to alert is a later transition, by id, so a wall clock
+// stepped back cannot hide one.
 const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
-  WITH identity_transitions AS (${sql.unsafe(IDENTITY_TRANSITIONS)})
+  WITH identity_transitions AS NOT MATERIALIZED (${sql.unsafe(IDENTITY_TRANSITIONS)})
   SELECT d.id::text AS delivery, d.system, d.kind, d.subject,
-    CASE WHEN open.level = 'alert' THEN closing.level ELSE open.level END AS level,
+    open.level,
     closing.condition::text AS latest,
     (
       SELECT count(*)::int FROM identity_transitions t
@@ -81,7 +81,7 @@ const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
     ON (open.system, open.kind, open.subject) = (d.system, d.kind, d.subject)
    AND open.cleared_at IS NULL
   CROSS JOIN LATERAL (
-    SELECT t.at, t.condition, CASE WHEN t.action = 'cleared' THEN NULL ELSE t.level END AS level
+    SELECT t.id, t.at, t.condition
     FROM identity_transitions t
     WHERE (t.system, t.kind, t.subject) = (d.system, d.kind, d.subject)
       AND ${sql.unsafe(LEFT_ALERT)}
@@ -91,10 +91,10 @@ const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
         SELECT 1 FROM identity_transitions back
         WHERE (back.system, back.kind, back.subject) = (d.system, d.kind, d.subject)
           AND back.level = 'alert' AND back.action <> 'cleared'
-          AND back.at > t.at
+          AND back.id > t.id
           AND back.at <= t.at + make_interval(secs => ${RECOVERED_AFTER_MS / 1000})
       )
-    ORDER BY t.at, t.id
+    ORDER BY t.id
     LIMIT 1
   ) closing
   WHERE d.closed_at IS NULL
@@ -166,12 +166,20 @@ const pushMessage = (pushes: readonly DuePush[], now: number, dashboard: URL): M
     { dashboard, noun: 'alerts', priority: 'high' },
   );
 
+// Where a closed delivery's identity stands now.
+const standing = (level: ConditionLevel | null) => {
+  if (level === null) {
+    return 'Cleared';
+  }
+  return level === 'alert' ? 'Below alert for 10 minutes, now back at alert' : `Now at ${level}`;
+};
+
 // A lone recovered message says so in its title; in a batch, the title does.
 const recoveredMessage = (recoveries: readonly DueRecovery[], dashboard: URL): Message => {
   const prefix = recoveries.length === 1 ? 'Recovered: ' : '';
   return batch(
     recoveries.map((recovery) => ({
-      body: `${recovery.level === null ? 'Cleared' : `Now at ${recovery.level}`}. Reached alert ${timesText(recovery.times)}.`,
+      body: `${standing(recovery.level)}. Reached alert ${timesText(recovery.times)}.`,
       click: conditionPage(dashboard, recovery.system, recovery.latest),
       title: `${prefix}${titleOf(recovery)}`,
     })),

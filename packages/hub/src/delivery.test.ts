@@ -349,7 +349,10 @@ test('a delivery that closed while delivery was held sends its recovered message
   await d.pass(60);
 
   expect(d.sent.slice(1).map((m) => [m.title, m.message])).toEqual([
-    ['Recovered: Service down on server-1: nginx', 'Cleared. Reached alert once.'],
+    [
+      'Recovered: Service down on server-1: nginx',
+      'Below alert for 10 minutes, now back at alert. Reached alert once.',
+    ],
     ['Service down on server-1: nginx', 'nginx: inactive (dead). At alert for 40 min.'],
   ]);
 });
@@ -418,4 +421,16 @@ test('Hub clock skew names whose clock is wrong', async () => {
   await d.pass(1);
 
   expect(d.sent[0]?.title).toBe("Clock skew on server-1: Hub's clock");
+});
+
+test('a return to alert stamped earlier by a clock stepped back still keeps the delivery open', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await d.pass(0.5);
+  await d.up(5);
+  await d.down(3);
+
+  await d.pass(20);
+
+  expect(d.sent.map((m) => m.priority)).toEqual(['high']);
 });
