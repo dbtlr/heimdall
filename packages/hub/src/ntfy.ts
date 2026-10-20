@@ -29,6 +29,9 @@ export const ntfySender =
         ...(channel.token === undefined ? {} : { Authorization: `Bearer ${channel.token}` }),
       },
       method: 'POST',
+      // A redirect would turn the publish into a GET without its body, which
+      // a server can answer 200 without publishing anything.
+      redirect: 'error',
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     await response.body?.cancel();

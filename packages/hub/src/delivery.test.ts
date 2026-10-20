@@ -21,13 +21,17 @@ const setup = async () => {
   await storeToken(db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('server-1', now()), ('laptop-1', now())`;
   const sent: Message[] = [];
-  const channel = { down: false };
+  // `down` refuses every message, `refuses` only those of one priority.
+  const channel: { down: boolean; refuses: Message['priority'] | undefined } = {
+    down: false,
+    refuses: undefined,
+  };
   const pass = (minutes: number) =>
     deliverAlerts(db.sql, {
       dashboard: DASHBOARD,
       now: at(minutes),
       send: async (message) => {
-        if (channel.down) {
+        if (channel.down || channel.refuses === message.priority) {
           throw new Error('ntfy is unreachable');
         }
         sent.push(message);
@@ -230,7 +234,7 @@ test('a delivery pushed before a hold sends its recovered message when the hold 
   ]);
 });
 
-test('what comes due in one pass goes out as one message per priority, opening the Fleet page', async () => {
+test('what comes due in one pass goes out as one message per priority, recovered first, opening the Fleet page', async () => {
   await using d = await setup();
   await d.down(0, 'nginx');
   await d.down(0, 'postgres');
@@ -255,20 +259,20 @@ test('what comes due in one pass goes out as one message per priority, opening t
     {
       click: 'https://dashboard.example/',
       message: [
-        'Service down on laptop-1: sshd. sshd: inactive (dead). At alert for 1 min.',
-        'Service down on server-1: redis. redis: inactive (dead). At alert for 1 min.',
-      ].join('\n'),
-      priority: 'high',
-      title: '2 alerts',
-    },
-    {
-      click: 'https://dashboard.example/',
-      message: [
         'Service down on server-1: nginx. Cleared. Reached alert once.',
         'Service down on server-1: postgres. Cleared. Reached alert once.',
       ].join('\n'),
       priority: 'low',
       title: '2 recovered',
+    },
+    {
+      click: 'https://dashboard.example/',
+      message: [
+        'Service down on laptop-1: sshd. sshd: inactive (dead). At alert for 1 min.',
+        'Service down on server-1: redis. redis: inactive (dead). At alert for 1 min.',
+      ].join('\n'),
+      priority: 'high',
+      title: '2 alerts',
     },
   ]);
 });
@@ -311,6 +315,91 @@ test('an unpaired System is not delivered', async () => {
   await d.pass(1);
 
   expect(d.sent).toEqual([]);
+});
+
+test('unpairing a System closes its open delivery without a message, so pairing it again starts afresh', async () => {
+  await using d = await setup();
+  await d.down(0, 'sshd', 'laptop-1');
+  await d.pass(0.5);
+  await unpair(d.db.sql, 'laptop-1');
+  await d.pass(1);
+  await d.up(2, 'sshd', 'laptop-1');
+  await d.pass(30);
+  await storeToken(d.db.sql, { pairedAt: at(40), system: 'laptop-1', token: 'laptop-token-2' });
+  await d.down(41, 'sshd', 'laptop-1');
+
+  await d.pass(41.5);
+
+  expect(d.sent.map((m) => m.title)).toEqual([
+    'Service down on laptop-1: sshd',
+    'Service down on laptop-1: sshd',
+  ]);
+});
+
+test('a delivery that closed while delivery was held sends its recovered message before the push for its return', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await d.pass(0.5);
+  await d.up(2);
+  d.channel.down = true;
+  expect(await failure(d.pass(12))).toBeInstanceOf(Error);
+  await d.down(20);
+  d.channel.down = false;
+
+  await d.pass(60);
+
+  expect(d.sent.slice(1).map((m) => [m.title, m.message])).toEqual([
+    ['Recovered: Service down on server-1: nginx', 'Cleared. Reached alert once.'],
+    ['Service down on server-1: nginx', 'nginx: inactive (dead). At alert for 40 min.'],
+  ]);
+});
+
+test('a step up from warning to alert pushes', async () => {
+  await using d = await setup();
+  await d.disk(0, 'warning');
+  await d.pass(1);
+  await d.disk(2, 'alert');
+
+  await d.pass(3);
+
+  expect(d.sent.map((m) => [m.title, m.message])).toEqual([
+    ['Low disk on server-1: /', 'Disk at alert. At alert for 1 min.'],
+  ]);
+});
+
+test('a refused recovered message holds back neither the pushes nor its own retry', async () => {
+  await using d = await setup();
+  await d.down(0, 'nginx');
+  await d.pass(0.5);
+  await d.up(1, 'nginx');
+  await d.down(11, 'postgres');
+  d.channel.refuses = 'low';
+  expect(await failure(d.pass(11.5))).toEqual(new Error('ntfy is unreachable'));
+  d.channel.refuses = undefined;
+
+  await d.pass(12);
+
+  expect(d.sent.map((m) => m.title)).toEqual([
+    'Service down on server-1: nginx',
+    'Service down on server-1: postgres',
+    'Recovered: Service down on server-1: nginx',
+  ]);
+});
+
+test('a batch lists ten lines and counts the rest', async () => {
+  await using d = await setup();
+  const services = Array.from({ length: 12 }, (_, i) => `svc-${String(i).padStart(2, '0')}`);
+  for (const service of services) {
+    // oxlint-disable-next-line no-await-in-loop -- raised in order.
+    await d.down(0, service);
+  }
+
+  await d.pass(0.5);
+
+  const lines = d.sent[0]?.message.split('\n') ?? [];
+  expect(d.sent[0]?.title).toBe('12 alerts');
+  expect(lines).toHaveLength(11);
+  expect(lines.at(-1)).toBe('And 2 more.');
 });
 
 test('Hub clock skew names whose clock is wrong', async () => {

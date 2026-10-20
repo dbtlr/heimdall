@@ -2,6 +2,8 @@ import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 import type { ConditionKind, ConditionLevel } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { describeError } from './errors.ts';
+
 // How long an identity stays below alert before its delivery closes.
 export const RECOVERED_AFTER_MS = 10 * 60_000;
 
@@ -21,9 +23,11 @@ type Identity = { kind: ConditionKind; subject: string; system: string };
 // the Hub gives now, and when it reached alert.
 type DuePush = Identity & { alertSince: Date; id: string; reason: string };
 
-// An open delivery whose identity has stayed below alert long enough: the
-// level it is at now, none when cleared, its latest occurrence, and how many
-// times it reached alert since the delivery opened.
+// An open delivery that has closed: the first time since it opened that its
+// identity left alert and stayed below it for 10 minutes. It carries the level
+// the identity is at now, none when cleared, or the level it closed at when it
+// has since returned to alert; the occurrence it closed on; and how many times
+// it reached alert before it closed.
 type DueRecovery = Identity & {
   delivery: string;
   latest: string;
@@ -32,7 +36,15 @@ type DueRecovery = Identity & {
 };
 
 // Transitions into alert: raised at alert, or stepped up to it.
-const REACHED_ALERT = `t.level = 'alert' AND t.action <> 'cleared'`;
+const REACHED_ALERT = `level = 'alert' AND action <> 'cleared'`;
+// Transitions out of alert: cleared at alert, or stepped down from it.
+const LEFT_ALERT = `((action = 'cleared' AND level = 'alert') OR (action = 'level_changed' AND previous_level = 'alert'))`;
+
+// Each identity's transitions, with the identity on every row.
+const IDENTITY_TRANSITIONS = `
+  SELECT t.id, t.action, t.level, t.previous_level, t.at, t.condition, c.system, c.kind, c.subject
+  FROM condition_transitions t JOIN conditions c ON c.id = t.condition
+`;
 
 const duePushes = (sql: SQL): Promise<DuePush[]> => sql`
   SELECT c.id::text AS id, c.system, c.kind, c.subject, c.latest_reason AS reason,
@@ -46,39 +58,46 @@ const duePushes = (sql: SQL): Promise<DuePush[]> => sql`
     AND NOT EXISTS (
       SELECT 1 FROM deliveries d
       WHERE (d.system, d.kind, d.subject) = (c.system, c.kind, c.subject)
-        AND d.recovered_at IS NULL
+        AND d.closed_at IS NULL
     )
   ORDER BY c.system, c.kind, c.subject
 `;
 
-// An identity is below alert from the latest time one of its occurrences left
-// alert, by clearing at alert or stepping down from it.
+// Closing is read from the history, not only from the present, so a delivery
+// that closed while delivery was held closes even if its identity is back at
+// alert now.
 const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
-  SELECT d.id::text AS delivery, d.system, d.kind, d.subject, open.level,
+  WITH identity_transitions AS (${sql.unsafe(IDENTITY_TRANSITIONS)})
+  SELECT d.id::text AS delivery, d.system, d.kind, d.subject,
+    CASE WHEN open.level = 'alert' THEN closing.level ELSE open.level END AS level,
+    closing.condition::text AS latest,
     (
-      SELECT max(c.id)::text FROM conditions c
-      WHERE (c.system, c.kind, c.subject) = (d.system, d.kind, d.subject)
-    ) AS latest,
-    (
-      SELECT count(*)::int FROM condition_transitions t
-      JOIN conditions c ON c.id = t.condition
-      WHERE (c.system, c.kind, c.subject) = (d.system, d.kind, d.subject)
-        AND ${sql.unsafe(REACHED_ALERT)} AND t.at >= d.alert_since
+      SELECT count(*)::int FROM identity_transitions t
+      WHERE (t.system, t.kind, t.subject) = (d.system, d.kind, d.subject)
+        AND ${sql.unsafe(REACHED_ALERT)} AND t.at >= d.alert_since AND t.at <= closing.at
     ) AS times
   FROM deliveries d
-  JOIN paired_systems p ON p.system = d.system
   LEFT JOIN conditions open
     ON (open.system, open.kind, open.subject) = (d.system, d.kind, d.subject)
    AND open.cleared_at IS NULL
-  WHERE d.recovered_at IS NULL
-    AND open.level IS DISTINCT FROM 'alert'
-    AND COALESCE((
-      SELECT max(t.at) FROM condition_transitions t
-      JOIN conditions c ON c.id = t.condition
-      WHERE (c.system, c.kind, c.subject) = (d.system, d.kind, d.subject)
-        AND ((t.action = 'cleared' AND t.level = 'alert')
-          OR (t.action = 'level_changed' AND t.previous_level = 'alert'))
-    ), d.pushed_at) <= ${new Date(now - RECOVERED_AFTER_MS)}
+  CROSS JOIN LATERAL (
+    SELECT t.at, t.condition, CASE WHEN t.action = 'cleared' THEN NULL ELSE t.level END AS level
+    FROM identity_transitions t
+    WHERE (t.system, t.kind, t.subject) = (d.system, d.kind, d.subject)
+      AND ${sql.unsafe(LEFT_ALERT)}
+      AND t.at >= d.alert_since
+      AND t.at <= ${new Date(now - RECOVERED_AFTER_MS)}
+      AND NOT EXISTS (
+        SELECT 1 FROM identity_transitions back
+        WHERE (back.system, back.kind, back.subject) = (d.system, d.kind, d.subject)
+          AND back.level = 'alert' AND back.action <> 'cleared'
+          AND back.at > t.at
+          AND back.at <= t.at + make_interval(secs => ${RECOVERED_AFTER_MS / 1000})
+      )
+    ORDER BY t.at, t.id
+    LIMIT 1
+  ) closing
+  WHERE d.closed_at IS NULL
   ORDER BY d.system, d.kind, d.subject
 `;
 
@@ -112,6 +131,10 @@ const timesText = (times: number) => {
 const conditionPage = (dashboard: URL, system: string, id: string) =>
   new URL(`systems/${encodeURIComponent(system)}/conditions/${id}`, dashboard).href;
 
+// The most lines a batched message lists; the rest are counted. ntfy turns a
+// long message into an attachment, or refuses it.
+const MAX_LINES = 10;
+
 // One message for everything due at one priority. A single Condition's opens
 // its page; several open the Fleet page and list one line each.
 const batch = (
@@ -124,7 +147,10 @@ const batch = (
   }
   return {
     click: dashboard.href,
-    message: items.map((item) => `${item.title}. ${item.body}`).join('\n'),
+    message: [
+      ...items.slice(0, MAX_LINES).map((item) => `${item.title}. ${item.body}`),
+      ...(items.length > MAX_LINES ? [`And ${String(items.length - MAX_LINES)} more.`] : []),
+    ].join('\n'),
     priority,
     title: `${String(items.length)} ${noun}`,
   };
@@ -153,52 +179,75 @@ const recoveredMessage = (recoveries: readonly DueRecovery[], dashboard: URL): M
   );
 };
 
+// Sends `message`, then records what it covered in one transaction. A failed
+// send records nothing and answers the error, so the pass can go on.
+const sendAndRecord = async (
+  sql: SQL,
+  send: Send,
+  message: Message,
+  record: (tx: SQL) => Promise<void>,
+): Promise<unknown> => {
+  try {
+    await send(message);
+    await sql.begin(record);
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+};
+
 // One delivery pass (ADR-0020): compares the Conditions stored now with the
 // deliveries recorded, sends what has come due, and records it once sent. A
 // send that fails records nothing, so the next pass sends what is true then:
 // an identity that left alert in between is never pushed, and one still at
-// alert is pushed with how long it has been there. Only paired Systems are
-// delivered. Throws when a send fails, after trying both priorities.
+// alert is pushed with how long it has been there. Recovered messages go first,
+// so a delivery that closed while delivery was held closes before its
+// identity's next one opens. Only paired Systems are delivered; unpairing a
+// System closes its open deliveries without a message. Throws when a send
+// fails, after trying both priorities.
 export const deliverAlerts = async (
   sql: SQL,
   { dashboard, now, send }: { dashboard: URL; now: number; send: Send },
 ): Promise<void> => {
-  const pushes = await duePushes(sql);
-  const recoveries = await dueRecoveries(sql, now);
+  const at = new Date(now);
+  await sql`
+    UPDATE deliveries d SET closed_at = ${at}
+    WHERE closed_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = d.system)
+  `;
   const failures: unknown[] = [];
-  if (pushes.length > 0) {
-    try {
-      await send(pushMessage(pushes, now, dashboard));
-      for (const push of pushes) {
-        // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
-        await sql`
-          INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at)
-          VALUES (${push.system}, ${push.kind}, ${push.subject}, ${push.alertSince}, ${new Date(now)})
-          ON CONFLICT (system, kind, subject) WHERE recovered_at IS NULL DO NOTHING
-        `;
-      }
-    } catch (error) {
-      failures.push(error);
-    }
-  }
+  const recoveries = await dueRecoveries(sql, now);
   if (recoveries.length > 0) {
-    try {
-      await send(recoveredMessage(recoveries, dashboard));
-      for (const recovery of recoveries) {
-        // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
-        await sql`
-          UPDATE deliveries SET recovered_at = ${new Date(now)} WHERE id = ${recovery.delivery}
-        `;
-      }
-    } catch (error) {
-      failures.push(error);
-    }
+    failures.push(
+      await sendAndRecord(sql, send, recoveredMessage(recoveries, dashboard), async (tx) => {
+        for (const recovery of recoveries) {
+          // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
+          await tx`UPDATE deliveries SET closed_at = ${at} WHERE id = ${recovery.delivery}`;
+        }
+      }),
+    );
   }
-  const [failure] = failures;
-  if (failures.length > 1) {
-    throw new AggregateError(failures, failures.map(String).join('; '));
+  const pushes = await duePushes(sql);
+  if (pushes.length > 0) {
+    failures.push(
+      await sendAndRecord(sql, send, pushMessage(pushes, now, dashboard), async (tx) => {
+        for (const push of pushes) {
+          // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
+          await tx`
+            INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at)
+            VALUES (${push.system}, ${push.kind}, ${push.subject}, ${push.alertSince}, ${at})
+            ON CONFLICT (system, kind, subject) WHERE closed_at IS NULL DO NOTHING
+          `;
+        }
+      }),
+    );
   }
-  if (failure !== undefined) {
-    throw failure;
+  const failed = failures.filter((failure) => failure !== undefined);
+  const [only] = failed;
+  if (failed.length > 1) {
+    throw new AggregateError(failed, failed.map(describeError).join('; '));
+  }
+  if (only !== undefined) {
+    throw only;
   }
 };

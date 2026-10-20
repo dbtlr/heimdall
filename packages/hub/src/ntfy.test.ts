@@ -9,17 +9,20 @@ import { testDatabase } from './testing/postgres.ts';
 
 type Received = { authorization: string | null; body: unknown; path: string };
 
-// A stand-in ntfy server that records each publish and answers `status`.
+// A stand-in ntfy server that records each publish and answers `status`, or
+// redirects elsewhere when `status` is 301.
 const stubNtfy = (status = 200) => {
   const received: Received[] = [];
   const server = Bun.serve({
     fetch: async (request) => {
       received.push({
         authorization: request.headers.get('authorization'),
-        body: await request.json(),
+        body: request.method === 'POST' ? await request.json() : undefined,
         path: new URL(request.url).pathname,
       });
-      return Response.json({ id: 'x' }, { status });
+      return status === 301
+        ? Response.redirect('/elsewhere', 301)
+        : Response.json({ id: 'x' }, { status });
     },
     hostname: '127.0.0.1',
     port: 0,
@@ -80,6 +83,20 @@ test('a refused publish throws with its status and never the topic or token', as
   expect(message).toContain('The ntfy server answered 403.');
   expect(message).not.toContain('heimdall-x7Qp');
   expect(message).not.toContain('tk_s3cret');
+});
+
+test('a redirect fails the send instead of publishing nothing', async () => {
+  using ntfy = stubNtfy(301);
+
+  const sent = ntfySender(channel(ntfy.server))({
+    click: 'https://dashboard.example/',
+    message: 'nginx: inactive (dead).',
+    priority: 'high',
+    title: 'Service down on server-1: nginx',
+  });
+
+  expect(await failure(sent)).toBeInstanceOf(Error);
+  expect(ntfy.received.map((r) => r.path)).toEqual(['/']);
 });
 
 test('a Condition at alert reaches ntfy as one push, then one recovered message 10 minutes after it clears', async () => {
