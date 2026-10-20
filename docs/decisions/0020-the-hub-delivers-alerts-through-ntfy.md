@@ -59,7 +59,7 @@ Pushes go out at high priority and recovered messages at low, each linking to th
 Without that configuration, delivery is off.
 
 **A failing channel shows on the dashboard.**
-The broken channel cannot report itself, so the Hub stores the time of its last successful send and its last failure, and the dashboard's Fleet page shows when delivery has been failing for 10 minutes or more.
+The broken channel cannot report itself, so the Hub stores when its current run of failed sends began, the first failure since the last successful send, and the dashboard's Fleet page shows delivery failing, and since when, once that run is 10 minutes old.
 This is a status of the Hub, not a Condition: every Condition belongs to a System ([ADR-0017](0017-the-hub-sets-condition-levels.md)), the Hub does not know which System it runs on, and delivery trouble says nothing about any System's health.
 It clears on the next successful send.
 
