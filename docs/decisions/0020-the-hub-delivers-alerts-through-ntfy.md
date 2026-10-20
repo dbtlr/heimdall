@@ -45,7 +45,7 @@ Delivery can be held by a silence, an unreachable channel, or the Hub being offl
 When it resumes, a delivery that would have opened and closed in the meantime sends nothing, and one still open sends its push with how long the Condition has been at alert.
 A delivery already pushed before the hold sends nothing more until its recovered message, which goes out when the hold ends if the delivery closed during it.
 The Timeline keeps the full history either way.
-Messages that come due in the same pass are sent as one, which links to the fleet's page instead of a single Condition's.
+Messages that come due in the same pass are sent together, one message per priority: pushes in one high-priority message and recovered messages in one low-priority message. A message covering several Conditions links to the fleet's page instead of a single Condition's.
 When the delivery record is empty, as when delivery is first configured, the first pass sends one message for the Conditions already open at alert; occurrences recorded closed, such as backfilled history, never send.
 
 **A silence holds delivery for one System for a time window.**
@@ -59,8 +59,9 @@ Pushes go out at high priority and recovered messages at low, each linking to th
 Without that configuration, delivery is off.
 
 **A failing channel shows on the dashboard.**
-When every send has failed for 10 minutes, the Hub raises a delivery failing Condition at warning, since the broken channel cannot report itself, and clears it on the next successful send.
-Which System's identity it carries is settled when it is built, since the Hub does not know its own System.
+The broken channel cannot report itself, so the Hub stores the time of its last successful send and its last failure, and the dashboard's Fleet page shows when delivery has been failing for 10 minutes or more.
+This is a status of the Hub, not a Condition: every Condition belongs to a System ([ADR-0017](0017-the-hub-sets-condition-levels.md)), the Hub does not know which System it runs on, and delivery trouble says nothing about any System's health.
+It clears on the next successful send.
 
 This ADR does not cover the Hub's own System going down, when nothing can be delivered, or outages too short to raise a Condition.
 
@@ -77,6 +78,7 @@ This ADR does not cover the Hub's own System going down, when nothing can be del
 - **A chat webhook.** Rejected: alerts would share a channel with conversation, under coarse notification controls.
 - **Email.** Rejected: too slow and too easy to ignore for act now.
 - **Push warnings too.** Rejected: a warning asks for action this week, which does not justify an interruption.
+- **Raise delivery failing as a Condition.** Rejected: a Condition needs a System, and the Hub would have to be configured with its own System, which may not be paired.
 - **Suppress a repeat push for 30 minutes after an alert.** Rejected: a recovered message between repeats would report a restart loop as fixed.
 - **Notify from the code that raises Conditions.** Rejected: it runs on every evaluation and after every restart, so it would resend or drop messages.
 - **Silences in Hub configuration.** Rejected: a maintenance window is temporary, and changing configuration restarts the Hub.
