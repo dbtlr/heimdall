@@ -2225,6 +2225,21 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 35,
   },
+  {
+    // Silences (ADR-0020): a time-boxed hold on delivery for one System, set
+    // and cleared by the Hub's command line. A System is silenced while `until`
+    // is in the future; a silence that has passed holds nothing and is replaced
+    // by the next one. Unpairing a System ends its silence. A silence never
+    // hides a Condition.
+    sql: `
+      CREATE TABLE silences (
+        system text PRIMARY KEY REFERENCES paired_systems (system) ON DELETE CASCADE,
+        until timestamptz NOT NULL,
+        created_at timestamptz NOT NULL
+      );
+    `,
+    version: 36,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -45,7 +45,10 @@ const IDENTITY_TRANSITIONS = `
   FROM condition_transitions t JOIN conditions c ON c.id = t.condition
 `;
 
-const duePushes = (sql: SQL): Promise<DuePush[]> => sql`
+// A System a silence holds at `now` is left out of both queries (ADR-0020).
+// Nothing else changes when the silence ends: reconciliation sends what is
+// true then.
+const duePushes = (sql: SQL, now: number): Promise<DuePush[]> => sql`
   SELECT c.id::text AS id, c.system, c.kind, c.subject, c.latest_reason AS reason,
     COALESCE((
       SELECT max(t.at) FROM condition_transitions t
@@ -59,13 +62,17 @@ const duePushes = (sql: SQL): Promise<DuePush[]> => sql`
       WHERE (d.system, d.kind, d.subject) = (c.system, c.kind, c.subject)
         AND d.closed_at IS NULL
     )
+    AND NOT EXISTS (
+      SELECT 1 FROM silences s WHERE s.system = c.system AND s.until > ${new Date(now)}
+    )
   ORDER BY c.system, c.kind, c.subject
 `;
 
 // Closing is read from the history, not only from the present, so a delivery
 // that closed while delivery was held closes even if its identity is back at
 // alert now. A return to alert is a later transition, by id, so a wall clock
-// stepped back cannot hide one.
+// stepped back cannot hide one. A silence holds the message back; the delivery
+// closes once the message is sent.
 const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
   WITH identity_transitions AS NOT MATERIALIZED (${sql.unsafe(IDENTITY_TRANSITIONS)})
   SELECT d.id::text AS delivery, d.system, d.kind, d.subject,
@@ -98,6 +105,9 @@ const dueRecoveries = (sql: SQL, now: number): Promise<DueRecovery[]> => sql`
     LIMIT 1
   ) closing
   WHERE d.closed_at IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM silences s WHERE s.system = d.system AND s.until > ${new Date(now)}
+    )
   ORDER BY d.system, d.kind, d.subject
 `;
 
@@ -107,7 +117,7 @@ const titleOf = ({ kind, subject, system }: Identity) => {
 };
 
 // A whole number of minutes, as hours and minutes.
-const minutesText = (ms: number) => {
+export const minutesText = (ms: number) => {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) {
     return 'under a minute';
@@ -260,10 +270,11 @@ const sendAndRecord = async (
 // an identity that left alert in between is never pushed, and one still at
 // alert is pushed with how long it has been there. Recovered messages go first,
 // so a delivery that closed while delivery was held closes before its
-// identity's next one opens. Only paired Systems are delivered; unpairing a
-// System closes its open deliveries without a message. Each send keeps the
-// delivery status, when the current run of failed sends began. Throws when a
-// send fails, after trying both priorities.
+// identity's next one opens. A silenced System sends nothing until its silence
+// ends. Only paired Systems are delivered; unpairing a System closes its open
+// deliveries without a message. Each send keeps the delivery status, when the
+// current run of failed sends began. Throws when a send fails, after trying
+// both priorities.
 const deliverPass = async (
   sql: SQL,
   { dashboard, now, send }: { dashboard: URL; now: number; send: Send },
@@ -286,7 +297,7 @@ const deliverPass = async (
       }),
     );
   }
-  const pushes = await duePushes(sql);
+  const pushes = await duePushes(sql, now);
   if (pushes.length > 0) {
     failures.push(
       await sendAndRecord(sql, send, pushMessage(pushes, now, dashboard), at, async (tx) => {
@@ -315,7 +326,7 @@ const deliverPass = async (
 // time across them: a Hub that finds another's pass running skips its own, so
 // a push is never sent twice. The lock is held by a session, not a
 // transaction, so sends stay outside any transaction.
-const DELIVERY_LOCK = 'heimdall-alert-delivery';
+export const DELIVERY_LOCK = 'heimdall-alert-delivery';
 
 export const deliverAlerts = async (
   sql: SQL,

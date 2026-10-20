@@ -8,9 +8,11 @@ import { version } from '@loomcli/plugins/version';
 import { date, integer, text, url } from '@loomcli/validators';
 
 import { deliveryTestAction } from './delivery-commands.ts';
+import { duration } from './duration.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
 import { serveAction } from './serve.ts';
+import { silenceAction } from './silence-commands.ts';
 import { deleteTranscriptsAction, showTranscriptAction } from './transcript-commands.ts';
 import { HUB_VERSION, versionPostfix } from './version.ts';
 
@@ -74,7 +76,7 @@ export const serve = new Command('serve', {
   })
   .action(serveAction);
 
-// The System a `pair` or `unpair` names, by Fleet's System name rule.
+// The System a `pair`, `unpair`, or `silence` names, by Fleet's System name rule.
 const system = {
   description: 'The Fleet System name, such as laptop-1.',
   required: true,
@@ -95,6 +97,23 @@ export const unpair = new Command('unpair', {
   .argument('system', system)
   .option('database', database)
   .action(unpairAction);
+
+export const silence = new Command('silence', {
+  description:
+    'Hold alert delivery for a System for a time, such as --for 2h. Its Conditions stay on the dashboard. With no System, list the silences; with --clear, end one.',
+})
+  .argument('system', { ...system, required: false })
+  .option('for', {
+    description: 'How long to hold delivery: days, hours, and minutes, such as 30m, 2h, or 1d12h.',
+    type: 'string',
+    validate: duration(),
+  })
+  .option('clear', {
+    description: "End the System's silence, so delivery resumes.",
+    type: 'boolean',
+  })
+  .option('database', database)
+  .action(silenceAction);
 
 export const deleteTranscripts = new Command('delete', {
   description:
@@ -203,6 +222,7 @@ export const app = new Application('heimdall-hub', {
   .command(serve)
   .command(pair)
   .command(unpair)
+  .command(silence)
   .command(transcripts)
   .command(delivery)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

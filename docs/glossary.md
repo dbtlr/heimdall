@@ -123,7 +123,7 @@ The Hub's messages about one Condition's time at alert: a push when it reaches a
 _Avoid_: notification, page, alert (a level, not the message)
 
 **silence**:
-A time-boxed hold on delivery for one System. A silence never hides a Condition or changes a System's health. A Collector that stops reporting is quiet, not silenced.
+A time-boxed hold on delivery for one System, set and ended with `heimdall-hub silence` and stored in the Hub's database. A silence never hides a Condition or changes a System's health. A Collector that stops reporting is quiet, not silenced.
 _Avoid_: mute, snooze, acknowledgement
 
 **Last seen**:

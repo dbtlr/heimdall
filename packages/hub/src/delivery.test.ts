@@ -63,6 +63,12 @@ const setup = async () => {
         system: 'server-1',
       }),
     );
+  // Silences `system` until a minute, as `heimdall-hub silence` does.
+  const silence = (until: number, system = 'server-1') =>
+    db.sql`
+      INSERT INTO silences (system, until, created_at) VALUES (${system}, ${new Date(at(until))}, ${new Date(NOW)})
+      ON CONFLICT (system) DO UPDATE SET until = excluded.until
+    `;
   const conditionId = async (kind: string) => {
     const [row]: { id: string }[] = await db.sql`
       SELECT id::text FROM conditions WHERE kind = ${kind} ORDER BY id DESC LIMIT 1
@@ -77,6 +83,7 @@ const setup = async () => {
     down,
     pass,
     sent,
+    silence,
     up,
     [Symbol.asyncDispose]: () => db[Symbol.asyncDispose](),
   };
@@ -232,6 +239,91 @@ test('a delivery pushed before a hold sends its recovered message when the hold 
     'Service down on server-1: nginx',
     'Recovered: Service down on server-1: nginx',
   ]);
+});
+
+test('a silenced System sends nothing while silenced, then one push saying how long it has been at alert', async () => {
+  await using d = await setup();
+  await d.silence(60);
+  await d.down(0);
+
+  await d.pass(1);
+  await d.pass(59.9);
+  expect(d.sent).toEqual([]);
+
+  await d.pass(60);
+  await d.pass(61);
+  expect(d.sent.map((m) => [m.priority, m.message])).toEqual([
+    ['high', 'nginx: inactive (dead). At alert for 1 h.'],
+  ]);
+});
+
+test('a Condition raised and cleared during a silence sends nothing, before or after', async () => {
+  await using d = await setup();
+  await d.silence(60);
+  await d.down(5);
+  await d.pass(6);
+  await d.up(20);
+
+  await d.pass(40);
+  await d.pass(61);
+  await d.pass(90);
+
+  expect(d.sent).toEqual([]);
+});
+
+test('a delivery pushed before a silence withholds its recovered message during it, and sends it after', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await d.pass(0.5);
+  await d.silence(60);
+  await d.up(5);
+
+  await d.pass(20);
+  await d.pass(59);
+  expect(d.sent.map((m) => m.priority)).toEqual(['high']);
+
+  await d.pass(60);
+  await d.pass(61);
+  expect(d.sent.map((m) => m.title)).toEqual([
+    'Service down on server-1: nginx',
+    'Recovered: Service down on server-1: nginx',
+  ]);
+});
+
+test('a delivery pushed before a silence and still open after it sends nothing more', async () => {
+  await using d = await setup();
+  await d.down(0);
+  await d.pass(0.5);
+  await d.silence(60);
+
+  await d.pass(30);
+  await d.pass(61);
+  await d.pass(120);
+
+  expect(d.sent).toHaveLength(1);
+});
+
+test('a silence holds one System, and the others are delivered as usual', async () => {
+  await using d = await setup();
+  await d.silence(60, 'laptop-1');
+  await d.down(0);
+  await d.down(0, 'sshd', 'laptop-1');
+
+  await d.pass(1);
+
+  expect(d.sent.map((m) => m.title)).toEqual(['Service down on server-1: nginx']);
+});
+
+test('a later silence replaces an earlier one, so delivery is held until the new end', async () => {
+  await using d = await setup();
+  await d.silence(10);
+  await d.down(0);
+  await d.silence(100);
+  await d.pass(20);
+  expect(d.sent).toEqual([]);
+
+  await d.pass(100);
+  expect(d.sent).toHaveLength(1);
 });
 
 test('what comes due in one pass goes out as one message per priority, recovered first, opening the Fleet page', async () => {
