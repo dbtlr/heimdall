@@ -82,6 +82,9 @@ export type SystemDetail = {
   processes: ProcessSeries[];
   range: Range;
   sessions: SessionRow[];
+  // When the Hub's silence on this System's alerts ends, epoch ms; undefined
+  // when none holds. It changes no status, count, or Condition (ADR-0020).
+  silencedUntil: number | undefined;
   sleeps: boolean;
   status: LaneStatus;
   to: number;

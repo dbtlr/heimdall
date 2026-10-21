@@ -9,6 +9,7 @@ import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
 import { SampleInspector } from '../components/sample-inspector.tsx';
 import { SampleSheet } from '../components/sample-sheet.tsx';
+import { SilenceBanner } from '../components/silence-line.tsx';
 import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
@@ -139,6 +140,7 @@ function SystemPage() {
           <PhraseText phrase={header.tail} />
         </p>
         {!detail.paired && <UnpairedBanner name={detail.name} />}
+        <SilenceBanner now={detail.now} until={detail.silencedUntil} />
         {search.tab === 'now' && (
           <>
             <h2 className="mb-2 text-lg font-semibold">Open Conditions</h2>

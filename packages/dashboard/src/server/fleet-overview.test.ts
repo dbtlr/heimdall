@@ -761,3 +761,64 @@ describe('delivery status', () => {
     expect((await overview(h)).deliveryFailingSince).toBe(NOW - 30 * MINUTE);
   });
 });
+
+const silence = (h: Hub, system: string, until: number) =>
+  h.db.sql`
+    INSERT INTO silences (system, until, created_at)
+    VALUES (${system}, ${new Date(until)}, ${new Date(NOW - HOUR)})
+  `;
+
+describe('silences', () => {
+  test('carry the end of an active silence on that System only', async () => {
+    await using h = await startHub();
+    await silence(h, 'server-1', NOW + 2 * HOUR);
+
+    expect((await lane(h, 'server-1')).silencedUntil).toBe(NOW + 2 * HOUR);
+    expect((await lane(h, 'laptop-1')).silencedUntil).toBeUndefined();
+  });
+
+  test('are ignored once they end, though the row remains', async () => {
+    await using h = await startHub();
+    await silence(h, 'server-1', NOW);
+    await silence(h, 'laptop-1', NOW - MINUTE);
+
+    expect((await lane(h, 'server-1')).silencedUntil).toBeUndefined();
+    expect((await lane(h, 'laptop-1')).silencedUntil).toBeUndefined();
+    expect((await lane(h, 'server-1', NOW - MINUTE)).silencedUntil).toBe(NOW);
+  });
+
+  test('end when the System is unpaired', async () => {
+    await using h = await startHub();
+    await silence(h, 'server-1', NOW + 2 * HOUR);
+    await unpair(h.db.sql, 'server-1');
+
+    const found = await overview(h, '24h', NOW, true);
+
+    expect(found.unpairedLanes.map((l) => l.silencedUntil)).toEqual([undefined]);
+  });
+
+  test('change neither the lanes nor the attention beyond the silence itself', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'alert',
+      raisedAt: -3600,
+      subject: '/',
+      system: 'server-1',
+    });
+    const before = await overview(h);
+
+    await silence(h, 'server-1', NOW + 2 * HOUR);
+    const silenced = await overview(h);
+
+    expect(silenced.attention).toEqual(before.attention);
+    for (const l of before.lanes) {
+      if (l.name === 'server-1') {
+        l.silencedUntil = NOW + 2 * HOUR;
+      }
+    }
+    expect(silenced.lanes).toEqual(before.lanes);
+    expect(silenced.lanes.find((l) => l.name === 'server-1')?.status).toBe('needs_you');
+  });
+});

@@ -596,6 +596,35 @@ describe('an unpaired System', () => {
   });
 });
 
+const silence = (h: Hub, until: number) =>
+  h.db.sql`
+    INSERT INTO silences (system, until, created_at)
+    VALUES ('server-1', ${new Date(until)}, ${new Date(NOW - HOUR)})
+  `;
+
+describe('a silence', () => {
+  test('is carried while it holds, and changes nothing else', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    const { silencedUntil: none, ...before } = await detail(h);
+    expect(none).toBeUndefined();
+
+    await silence(h, NOW + 2 * HOUR);
+    const { silencedUntil, ...silenced } = await detail(h);
+
+    expect(silencedUntil).toBe(NOW + 2 * HOUR);
+    expect(silenced).toEqual(before);
+  });
+
+  test('is ignored once it ends, though the row remains', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await silence(h, NOW);
+
+    expect((await detail(h)).silencedUntil).toBeUndefined();
+  });
+});
+
 describe('readSample', () => {
   test('snaps to the sample nearest the time asked for, and the newest when none is', async () => {
     await using h = await startHub();

@@ -26,6 +26,7 @@ import {
   toRun,
 } from './hub-rows.ts';
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
+import { readSilencedUntil } from './silences.ts';
 import type {
   Disk,
   FileIssue,
@@ -205,7 +206,7 @@ const readSystemDetailSnapshot = async (
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
   const firstBucket = new Date(bucketStart(from));
-  const [installs, latest, buckets, memory, cores, stretches, marks, open]: [
+  const [installs, latest, buckets, memory, cores, stretches, marks, open, silenced]: [
     { installs: HarnessInstall[] }[],
     LatestRow[],
     BucketRow[],
@@ -214,6 +215,7 @@ const readSystemDetailSnapshot = async (
     StretchRow[],
     ConditionRow[],
     { n: number }[],
+    Map<string, number>,
   ] = await Promise.all([
     sql`SELECT installs FROM harness_installs WHERE system = ${name}`,
     sql`
@@ -266,6 +268,7 @@ const readSystemDetailSnapshot = async (
       ORDER BY raised_at, id
     `,
     sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL AND level <> 'note'`,
+    readSilencedUntil(sql, { now, systems: [name] }),
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
@@ -316,6 +319,7 @@ const readSystemDetailSnapshot = async (
     processes: toProcesses(cores),
     range,
     sessions: toSessions(stretches),
+    silencedUntil: silenced.get(name),
     sleeps,
     status: laneStatus({
       hasOpenCondition: (open[0]?.n ?? 0) > 0,

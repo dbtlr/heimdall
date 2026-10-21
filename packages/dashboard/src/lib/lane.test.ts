@@ -82,6 +82,7 @@ const lane = (overrides: Partial<Lane>): Lane => ({
   lastSeenAt: undefined,
   latest: undefined,
   name: 'laptop',
+  silencedUntil: undefined,
   sleeps: false,
   status: 'up',
   stretches: [],
