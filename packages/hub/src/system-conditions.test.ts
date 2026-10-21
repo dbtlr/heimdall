@@ -202,6 +202,18 @@ describe('stale System', () => {
     expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
   });
 
+  test('a Hub clock that ran a day ahead and was corrected holds for no longer than 10 minutes', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await listen(h, NOW, NOW + MINUTE);
+    await recordListening(h.db.sql, NOW + DAY);
+
+    await listen(h, NOW + MINUTE + 30 * SECOND, NOW + 12 * MINUTE);
+    await evaluate(h, NOW + 12 * MINUTE);
+
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+  });
+
   test('stays open through a Hub outage, and clears only once the System is heard from', async () => {
     await using h = await startHub();
     await send(h, NOW);

@@ -8,13 +8,17 @@ export const LISTENING_GAP_MS = 2 * 60_000;
 // Records that the Hub is listening at `now` (epoch milliseconds). After a gap
 // longer than LISTENING_GAP_MS since any Hub sharing the database last recorded
 // it, the Hub has been listening only since `now`. The latest record replaces
-// the one before, so a clock that ran ahead cannot hide a later gap.
+// the one before, and a start later than `now` begins again at `now`, so a
+// clock that ran ahead and was corrected neither hides a later gap nor holds
+// past the grace.
 export const recordListening = async (sql: SQL, now: number): Promise<void> => {
   const at = new Date(now);
   await sql`
     UPDATE hub_listening SET
       listening_since = CASE
-        WHEN heard_at IS NULL OR heard_at < ${new Date(now - LISTENING_GAP_MS)} THEN ${at}
+        WHEN heard_at IS NULL
+          OR heard_at < ${new Date(now - LISTENING_GAP_MS)}
+          OR listening_since > ${at} THEN ${at}
         ELSE listening_since
       END,
       heard_at = ${at}
