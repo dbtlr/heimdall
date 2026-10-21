@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { sample } from '@heimdall/schema/testing';
 
+import { recordListening } from './listening.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { unpair } from './pairing.ts';
 import {
@@ -73,6 +74,14 @@ const evaluate = (
   return evaluateSystemConditions(h.db.sql, () => h.clock.now, thresholds);
 };
 
+// The Hub records that it is listening every 30 seconds from `from` through `to`.
+const listen = async (h: Hub, from: number, to: number) => {
+  for (let at = from; at <= to; at += 30 * SECOND) {
+    // oxlint-disable-next-line no-await-in-loop -- one moment after another.
+    await recordListening(h.db.sql, at);
+  }
+};
+
 // A System's open Conditions and Timeline.
 const conditionsOf = async (h: Hub, system = 'laptop-1') => {
   const found = (await listSystems(h.db.sql)).find((s) => s.name === system);
@@ -132,6 +141,82 @@ describe('stale System', () => {
     const { open, timeline } = await conditionsOf(h);
     expect(open).toEqual([expect.objectContaining({ raisedAt: NOW + 11 * MINUTE })]);
     expect(timeline).toHaveLength(1);
+  });
+
+  test('is not raised for time the Hub was not listening, only once it has listened past the limit', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await listen(h, NOW, NOW + 5 * MINUTE);
+
+    // An hour-long outage: the Hub listens again from NOW + 65 minutes.
+    await listen(h, NOW + 65 * MINUTE, NOW + 75 * MINUTE);
+    await evaluate(h, NOW + 75 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
+
+    await listen(h, NOW + 75 * MINUTE + SECOND, NOW + 75 * MINUTE + SECOND);
+    await evaluate(h, NOW + 75 * MINUTE + SECOND);
+    expect((await conditionsOf(h)).open).toEqual([
+      expect.objectContaining({
+        kind: 'system_stale',
+        reason: 'Not heard from since 2026-10-06 12:00 UTC, more than 10 minutes ago.',
+      }),
+    ]);
+  });
+
+  test('a System that sleeps waits only 10 minutes after an outage, not its own limit', async () => {
+    await using h = await startHub();
+    await send(h, NOW, { sleeps: true });
+    await listen(h, NOW, NOW + 5 * MINUTE);
+
+    // The Hub is down from NOW + 5 minutes to NOW + 8 days.
+    await listen(h, NOW + 8 * DAY, NOW + 8 * DAY + 10 * MINUTE);
+    await evaluate(h, NOW + 8 * DAY + 10 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
+
+    await listen(h, NOW + 8 * DAY + 10 * MINUTE + SECOND, NOW + 8 * DAY + 10 * MINUTE + SECOND);
+    await evaluate(h, NOW + 8 * DAY + 10 * MINUTE + SECOND);
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+  });
+
+  test('a gap in listening of up to 2 minutes, such as a quick restart, does not restart the count', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await listen(h, NOW, NOW + 5 * MINUTE);
+    await listen(h, NOW + 7 * MINUTE, NOW + 11 * MINUTE);
+
+    await evaluate(h, NOW + 11 * MINUTE);
+
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+  });
+
+  test('is not raised by a judgment that comes back from an outage before the Hub records it', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await listen(h, NOW, NOW + 5 * MINUTE);
+
+    await evaluate(h, NOW + 30 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
+
+    await listen(h, NOW + 30 * MINUTE + SECOND, NOW + 40 * MINUTE + SECOND);
+    await evaluate(h, NOW + 40 * MINUTE + 2 * SECOND);
+    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+  });
+
+  test('stays open through a Hub outage, and clears only once the System is heard from', async () => {
+    await using h = await startHub();
+    await send(h, NOW);
+    await listen(h, NOW, NOW + 11 * MINUTE);
+    await evaluate(h, NOW + 11 * MINUTE);
+
+    await listen(h, NOW + 3 * 60 * MINUTE, NOW + 3 * 60 * MINUTE);
+    await evaluate(h, NOW + 3 * 60 * MINUTE);
+    const held = await conditionsOf(h);
+    expect(held.open).toEqual([expect.objectContaining({ raisedAt: NOW + 11 * MINUTE })]);
+    expect(held.timeline).toHaveLength(1);
+
+    await send(h, NOW + 3 * 60 * MINUTE + MINUTE);
+    await evaluate(h, NOW + 3 * 60 * MINUTE + 2 * MINUTE);
+    expect((await conditionsOf(h)).open).toEqual([]);
   });
 
   test('clears when the System reports again, and the Timeline keeps both', async () => {
