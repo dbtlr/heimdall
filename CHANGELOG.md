@@ -8,6 +8,51 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.8.0 - 2026-10-21
+
+### Added
+
+- **Alerts reach a phone through ntfy** (HMD-149). With a `[delivery]` section in
+  `hub.toml`, the Hub pushes each Condition that reaches alert to one ntfy topic,
+  once, and sends a quiet recovered message after it has stayed below alert for
+  10 minutes, counting how often it returned. A Condition that was raised and
+  cleared while ntfy or the Hub was down sends nothing.
+- **The Fleet page says when alert delivery is failing, and `heimdall-hub delivery test`
+  checks the channel** (HMD-150). When sends to ntfy have been failing for 10 minutes,
+  the Fleet page shows "Alert delivery failing since" and the time, in the warning
+  color, until a send succeeds. The line is a status of the Hub, not a Condition, so the
+  verdict and counts do not change. `heimdall-hub delivery test` sends one low-priority
+  message through the `[delivery]` channel and reports whether ntfy took it, without
+  printing the topic or the token. A test message that gets through also clears the
+  failing status. Migration 35 adds the `delivery_status` table.
+- **Silence alert delivery for one System** (HMD-151). `heimdall-hub silence <system> --for 2h`
+  holds ntfy pushes and recovered messages for that System until the time is up;
+  `--clear` ends it, and `heimdall-hub silence` with no System lists the active ones. The dashboard
+  still shows every Condition. When the silence ends, a Condition still at alert
+  sends its push with how long it has been there, and one that was raised and
+  cleared during the silence sends nothing.
+- **The dashboard shows a System's active silence** (HMD-152). A silenced System's
+  Fleet card and System page say "Alerts silenced until" the time and how long is left.
+  The silence changes no health, count, or Condition shown.
+
+### Changed
+
+- **Phone tab bar stands apart from the page** (HMD-156). The bottom bar is
+  raised above the page with an icon over each label, and the current tab turns
+  the primary color. Each tab fills a third of the bar, and the labels sit above
+  the iOS home indicator.
+
+### Fixed
+
+- **Mobile header stays clear of the status area** (HMD-155). A solid raised
+  header and safe-area spacing keep titles readable. A fixed opaque strip provides
+  Safari a persistent background to sample while scrolling.
+- **A Hub outage no longer marks every System stale** (HMD-159). After the Hub or
+  its database was down for more than 2 minutes, the Hub waits 10 minutes before it
+  raises stale System, so the Collectors can deliver what they queued and no alert
+  is pushed for the Hub's own downtime. A stale System that was already open stays
+  open through the outage.
+
 ## v0.7.2 - 2026-10-18
 
 ### Added
