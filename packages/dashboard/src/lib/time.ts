@@ -61,11 +61,24 @@ export const formatWhen = (t: number, now: number, timeZone: string): string =>
     ? formatClock(t, timeZone)
     : `${formatWeekday(t, timeZone)} ${formatClock(t, timeZone)}`;
 
+// A time ahead of `now`: "HH:MM" on the same local day, "Mon 14:02" within the
+// coming week, else "Tue 20 Oct 14:02", so a far time never reads as this week.
+export const formatAhead = (t: number, now: number, timeZone: string): string => {
+  const days = localDayNumber(t, timeZone) - localDayNumber(now, timeZone);
+  if (days === 0) {
+    return formatClock(t, timeZone);
+  }
+  const date =
+    days < 7 ? '' : ` ${formatter(timeZone, { day: 'numeric', month: 'short' }).format(t)}`;
+  return `${formatWeekday(t, timeZone)}${date} ${formatClock(t, timeZone)}`;
+};
+
 // How a time is written: a clock time, with or without seconds, a weekday, or
-// `when`, the clock time or the weekday and clock time relative to `now`.
+// `when`, the clock time or the weekday and clock time relative to `now`, or
+// `ahead`, the same for a time after `now`, dated beyond the coming week.
 export type TimeFormat =
   | { format: 'clock' | 'clockSeconds' | 'weekday' }
-  | { format: 'when'; now: number };
+  | { format: 'ahead' | 'when'; now: number };
 
 // `t` written as `spec` says, in `timeZone`.
 export const formatTime = (t: number, timeZone: string, spec: TimeFormat): string => {
@@ -81,6 +94,9 @@ export const formatTime = (t: number, timeZone: string, spec: TimeFormat): strin
     }
     case 'when': {
       return formatWhen(t, spec.now, timeZone);
+    }
+    case 'ahead': {
+      return formatAhead(t, spec.now, timeZone);
     }
     default: {
       const _exhaustive: never = spec;

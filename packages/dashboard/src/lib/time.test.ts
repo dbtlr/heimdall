@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import {
   formatClock,
+  formatAhead,
   formatClockSeconds,
   formatCost,
   formatTime,
@@ -81,4 +82,19 @@ test('a span is clipped to the window', () => {
   expect(spanBox({ end: 300, start: -200 }, window)).toEqual({ left: 0, width: 30 });
   expect(spanBox({ end: 1400, start: 900 }, window)).toEqual({ left: 90, width: 10 });
   expect(spanBox({ end: -10, start: -50 }, window).width).toBe(0);
+});
+
+test('a time ahead names its weekday within the coming week, and its date beyond', () => {
+  expect(formatAhead(NOON + 2 * HOUR, NOON, 'UTC')).toBe('14:00');
+  expect(formatAhead(NOON + 6 * 24 * HOUR, NOON, 'UTC')).toBe('Mon 12:00');
+  expect(formatAhead(NOON + 7 * 24 * HOUR, NOON, 'UTC')).toBe('Tue 20 Oct 12:00');
+  expect(formatAhead(NOON + 300 * 24 * HOUR, NOON, 'UTC')).toBe('Mon 9 Aug 12:00');
+});
+
+test('a time ahead counts days in the named zone', () => {
+  // At 22:00 UTC it is already the next day in Tokyo, so the time is six local
+  // days ahead there, not seven.
+  expect(formatAhead(NOON + 7 * 24 * HOUR - 3 * HOUR, NOON + 10 * HOUR, 'Asia/Tokyo')).toBe(
+    'Tue 18:00',
+  );
 });

@@ -1,14 +1,27 @@
 import { formatSpan } from '../lib/time.ts';
-import { DateTime } from './date-time.tsx';
+import { DateTime, InZone } from './date-time.tsx';
 
 type Silence = { now: number; until: number | undefined };
 
-// "Alerts silenced until <when> · <span> left", shared by the card and the banner.
+const MINUTE_MS = 60_000;
+
+// "Alerts silenced until <when> · <span> left", shared by the card and the
+// banner. "until <when>" waits for the viewer's zone; the rest reads whole
+// without it. Time left rounds up, as `heimdall-hub silence` lists it, so a
+// silence just set for 2 h reads as 2 h left.
 function SilenceText({ now, until }: { now: number; until: number }) {
   return (
     <>
-      Alerts silenced until <DateTime at={until} format="when" now={now} /> ·{' '}
-      {formatSpan(until - now)} left
+      Alerts silenced
+      <InZone>
+        {() => (
+          <>
+            {' '}
+            until <DateTime at={until} format="ahead" now={now} />
+          </>
+        )}
+      </InZone>{' '}
+      · {formatSpan(Math.ceil((until - now) / MINUTE_MS) * MINUTE_MS)} left
     </>
   );
 }

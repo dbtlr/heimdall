@@ -797,7 +797,7 @@ describe('silences', () => {
     expect(found.unpairedLanes.map((l) => l.silencedUntil)).toEqual([undefined]);
   });
 
-  test('change neither the lanes nor the attention beyond the silence itself', async () => {
+  test('change nothing in the overview beyond the silence itself', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await addCondition(h.db.sql, {
@@ -812,13 +812,12 @@ describe('silences', () => {
     await silence(h, 'server-1', NOW + 2 * HOUR);
     const silenced = await overview(h);
 
-    expect(silenced.attention).toEqual(before.attention);
-    for (const l of before.lanes) {
-      if (l.name === 'server-1') {
-        l.silencedUntil = NOW + 2 * HOUR;
-      }
+    const expected = structuredClone(before);
+    const server = expected.lanes.find((l) => l.name === 'server-1');
+    if (server !== undefined) {
+      server.silencedUntil = NOW + 2 * HOUR;
     }
-    expect(silenced.lanes).toEqual(before.lanes);
+    expect(silenced).toEqual(expected);
     expect(silenced.lanes.find((l) => l.name === 'server-1')?.status).toBe('needs_you');
   });
 });
