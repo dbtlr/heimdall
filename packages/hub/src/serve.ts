@@ -24,6 +24,7 @@ import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { keepInsightReaderGranted } from './insight-reader.ts';
+import { recordListening } from './listening.ts';
 import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
 import { ntfySender } from './ntfy.ts';
 import { loadPriceOverrides, syncPrices } from './price-table.ts';
@@ -37,6 +38,9 @@ import { pairedSystemCount } from './tokens.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
+// How often serve records that it is listening, well inside the gap that
+// counts as an outage (LISTENING_GAP_MS).
+const LISTENING_INTERVAL_MS = 30_000;
 // How often serve compares stored Conditions with its deliveries. A failed send
 // is tried again this much later.
 const DELIVERY_INTERVAL_MS = 30_000;
@@ -178,6 +182,7 @@ const serveUntilStopped = async ({
     // Pruning, judging Conditions, delivering alerts, and parsing transcripts
     // are routine, so only a failure, a parser switch, or a parser left behind
     // is logged, and the next round tries again.
+    let stopListening: (() => Promise<void>) | undefined;
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
     let stopDelivering: (() => Promise<void>) | undefined;
@@ -187,6 +192,15 @@ const serveUntilStopped = async ({
     try {
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
+      stopListening = every({
+        intervalMs: LISTENING_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(
+            clean(`Could not record that the Hub is listening: ${describeError(error)}`),
+          );
+        },
+        task: () => recordListening(sql, Date.now()),
+      });
       stopPruning = every({
         intervalMs: PRUNE_INTERVAL_MS,
         onError: (error) => {
@@ -199,8 +213,12 @@ const serveUntilStopped = async ({
         onError: (error) => {
           void log.warn(clean(`Could not judge Conditions: ${describeError(error)}`));
         },
-        task: () =>
-          evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits }),
+        // Recording first means no judgment runs unless the Hub could record
+        // that it listens, so none misses an outage the record would reveal.
+        task: async () => {
+          await recordListening(sql, Date.now());
+          await evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits });
+        },
       });
       if (delivery !== undefined) {
         // The server's host is no secret; the topic and token never reach the log.
@@ -238,7 +256,8 @@ const serveUntilStopped = async ({
         await once(signal, 'abort');
       }
     } finally {
-      // A prune, judgment, delivery, parse, or refresh still running must finish before the database closes.
+      // A record, prune, judgment, delivery, parse, or refresh still running must finish before the database closes.
+      await stopListening?.();
       await stopPruning?.();
       await stopJudging?.();
       await stopDelivering?.();

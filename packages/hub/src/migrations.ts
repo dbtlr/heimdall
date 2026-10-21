@@ -2240,6 +2240,22 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 36,
   },
+  {
+    // When the Hub has been listening since, one row: `heard_at` is the latest
+    // time any Hub recorded that it listens, and `listening_since` when it last
+    // began to after an outage. Stale System does not count the time before
+    // it. Both are null until a Hub records it. The key is always true, so the
+    // table cannot hold a second row.
+    sql: `
+      CREATE TABLE hub_listening (
+        only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
+        listening_since timestamptz,
+        heard_at timestamptz
+      );
+      INSERT INTO hub_listening DEFAULT VALUES;
+    `,
+    version: 37,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

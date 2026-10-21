@@ -5,6 +5,7 @@ import type { SQL } from 'bun';
 import { gradedLevel, parseConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits, DiskLimits } from './condition-limits.ts';
 import { clear, evaluateEach, raise } from './conditions.ts';
+import { whenListening } from './listening.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
 // Stale time limits and measurement limits used by each evaluation pass.
@@ -56,21 +57,31 @@ const spanText = (ms: number) => {
 
 // Stale System: the System was not heard from for longer than its limit,
 // counted from when the Hub last heard from it, or, if it never has, from when
-// it was paired.
+// it was paired. The Hub cannot hear from a System while it is not listening,
+// so for `graceMs` after its last outage, time for Collectors to send what they
+// queued, it neither raises nor clears the Condition; only hearing from the
+// System clears it.
 const staleVerdict = ({
+  graceMs,
   lastSeenAt,
   limitMs,
+  listeningSince,
   now,
   pairedAt,
 }: {
+  graceMs: number;
   lastSeenAt: number | undefined;
   limitMs: number;
+  listeningSince: number | undefined;
   now: number;
   pairedAt: number;
 }): Verdict => {
   const since = lastSeenAt ?? pairedAt;
   if (now - since <= limitMs) {
     return 'clear';
+  }
+  if (listeningSince !== undefined && now - listeningSince <= graceMs) {
+    return 'hold';
   }
   const from = lastSeenAt === undefined ? `it was paired at ${utcMinute(since)}` : utcMinute(since);
   return { raise: `Not heard from since ${from}, more than ${spanText(limitMs)} ago.` };
@@ -219,8 +230,13 @@ export const evaluateSystem = (
       'system_stale',
       '',
       staleVerdict({
+        // The always-on limit, so that a sleeping System that died is not held
+        // for days after every outage. It outlasts the Collector's longest
+        // wait between retries (MAX_BACKOFF_MS, 5 minutes).
+        graceMs: thresholds.staleAfterMs,
         lastSeenAt: held.last_seen_at?.getTime(),
         limitMs: held.sleeps === true ? thresholds.sleepingStaleAfterMs : thresholds.staleAfterMs,
+        listeningSince: await whenListening(tx, now),
         now,
         pairedAt: pairedAtMs,
       }),

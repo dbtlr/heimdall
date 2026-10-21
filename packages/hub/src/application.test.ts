@@ -402,14 +402,26 @@ test('serve prunes old Vitals as it starts, and says nothing about it', async ()
   expect(code).toBe(130);
 });
 
-test('serve judges Conditions as it starts: a paired System never heard from is stale', async () => {
-  await using db = await testDatabase();
+// A database where server-1 was paired an hour ago and never heard from, and a
+// Hub last recorded listening `heardAgoMs` ago, having listened for two hours.
+const databaseWithSilentSystem = async (heardAgoMs: number) => {
+  const db = await testDatabase();
   await migrate(db.sql);
   await storeToken(db.sql, {
     pairedAt: Date.now() - 3_600_000,
     system: 'server-1',
     token: 'server-token',
   });
+  await db.sql`
+    UPDATE hub_listening SET
+      heard_at = ${new Date(Date.now() - heardAgoMs)},
+      listening_since = ${new Date(Date.now() - 7_200_000)}
+  `;
+  return db;
+};
+
+test('serve judges Conditions as it starts: a paired System never heard from is stale', async () => {
+  await using db = await databaseWithSilentSystem(30_000);
   await using config = await configFile([
     'host = "127.0.0.1"',
     'port = 0',
@@ -426,6 +438,23 @@ test('serve judges Conditions as it starts: a paired System never heard from is 
     ['server-1', 'system_stale'],
   ]);
   expect(stderr).not.toContain('judge');
+  expect(code).toBe(130);
+});
+
+test('serve back from an outage does not raise stale System for the time it was down', async () => {
+  await using db = await databaseWithSilentSystem(3_600_000);
+  await using config = await configFile([
+    'host = "127.0.0.1"',
+    'port = 0',
+    '[database]',
+    `url = "${db.url.href}"`,
+  ]);
+
+  const { code } = await invoke(serveArgs(config));
+
+  const open: { kind: string }[] =
+    await db.sql`SELECT kind FROM conditions WHERE cleared_at IS NULL`;
+  expect(open).toEqual([]);
   expect(code).toBe(130);
 });
 
