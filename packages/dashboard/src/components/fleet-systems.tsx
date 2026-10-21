@@ -10,6 +10,7 @@ import { ConditionGlyph } from './condition-glyph.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
 import { DateTime } from './date-time.tsx';
 import { FleetSystemVitals } from './fleet-system-vitals.tsx';
+import { SilenceLine } from './silence-line.tsx';
 
 export function FleetSystems({
   lanes,
@@ -84,6 +85,7 @@ export function FleetSystems({
               </>
             )}
           </p>
+          <SilenceLine now={now} until={lane.silencedUntil} />
           <FleetSystemVitals latest={lane.latest} now={now} />
           {lane.buckets.length === 0 ? (
             <p className="py-3 text-sm text-muted-foreground">No CPU samples in this period.</p>

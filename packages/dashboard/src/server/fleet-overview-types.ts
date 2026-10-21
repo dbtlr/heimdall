@@ -71,6 +71,9 @@ export type Lane = {
     | { cpuBusyPercent: number; disks: Disk[]; memoryUsedPercent: number | undefined; t: number }
     | undefined;
   name: string;
+  // When the Hub's silence on this System's alerts ends, epoch ms; undefined
+  // when none holds. It changes no status, count, or Condition (ADR-0020).
+  silencedUntil: number | undefined;
   sleeps: boolean;
   status: LaneStatus;
   stretches: Stretch[];

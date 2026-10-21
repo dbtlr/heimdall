@@ -18,6 +18,7 @@ import type {
   Stretch,
 } from './fleet-overview-types.ts';
 import { bySystem, conditionKind, field } from './hub-rows.ts';
+import { readSilencedUntil } from './silences.ts';
 
 // What an overview request asks for: its `range`, 24h when it names none, and
 // whether it wants the unpaired Systems too.
@@ -284,12 +285,13 @@ const readFleetOverviewSnapshot = async (
       unpairedLanes: [],
     };
   }
-  const [buckets, latest, stretches, marks, attention]: [
+  const [buckets, latest, stretches, marks, attention, silenced]: [
     BucketRow[],
     LatestRow[],
     StretchRow[],
     ConditionRow[],
     Attention[],
+    Map<string, number>,
   ] = await Promise.all([
     sql`
       SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
@@ -322,6 +324,7 @@ const readFleetOverviewSnapshot = async (
       ORDER BY raised_at, id
     `,
     readAttention(sql, { now, systems }),
+    readSilencedUntil(sql, { now, systems: names }),
   ]);
   const bucketsOf = bySystem(buckets);
   const latestOf = bySystem(latest);
@@ -360,6 +363,7 @@ const readFleetOverviewSnapshot = async (
               t: newest.t.getTime(),
             },
       name: system.name,
+      silencedUntil: silenced.get(system.name),
       sleeps,
       status: laneStatus({
         hasOpenCondition: withOpenCondition.has(system.name),
