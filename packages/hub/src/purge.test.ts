@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import type { SQL } from 'bun';
 
+import { DELIVERY_LOCK } from './delivery.ts';
 import { migrate } from './migrations.ts';
 import { issueCode } from './pairing.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
@@ -518,6 +519,7 @@ const setupServices = async () => {
   });
   await seedServiceDown(db.sql, {
     cleared: later,
+    delivered: true,
     kind: 'drift',
     subject: 'old-web',
     system: 'laptop-1',
@@ -559,6 +561,7 @@ test("purge service deletes a forgotten Service's Conditions, Timeline, and deli
       { kind: 'service_down', open: true, subject: 'old-web', system: 'server-1', transitions: 1 },
     ],
     deliveries: [
+      { kind: 'drift', subject: 'old-web', system: 'laptop-1' },
       { kind: 'service_down', subject: 'web', system: 'laptop-1' },
       { kind: 'service_down', subject: 'old-web', system: 'server-1' },
     ],
@@ -603,4 +606,22 @@ test('purge service on a Service the Hub holds nothing for says so and exits 1',
     'The Hub holds nothing for the Service old-web on laptop-2.',
   );
   expect(unknownSystem.code).toBe(1);
+});
+
+test('purge service waits out a delivery pass in progress, so that pass cannot record a delivery it purges', async () => {
+  await using s = await setupServices();
+  const pass = await s.db.sql.reserve();
+  await pass`SELECT pg_advisory_lock(hashtext(${DELIVERY_LOCK}))`;
+
+  const purged = invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
+  await Bun.sleep(500);
+  const duringPass = await conditionRows(s.db.sql);
+  await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
+  pass.release();
+  const { code } = await purged;
+
+  expect(duringPass.conditions).toContainEqual(
+    expect.objectContaining({ kind: 'service_down', subject: 'old-web', system: 'laptop-1' }),
+  );
+  expect(code).toBe(0);
 });

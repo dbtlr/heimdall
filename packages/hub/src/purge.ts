@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { DELIVERY_LOCK } from './delivery.ts';
 import { holdProjection } from './projection.ts';
 import { retryOnDeadlock } from './transcripts.ts';
 import type { Removed } from './transcripts.ts';
@@ -176,12 +177,18 @@ const SERVICE_HISTORY = [
 // It refuses while the Hub mirrors a record of the Service; an unreadable
 // service record does not hold it back, since the operator names a Service
 // they know is gone. An open Service down goes too, and its delivery with it,
-// so no recovered message follows.
+// so no recovered message follows. It waits out a delivery pass in progress,
+// as a silence does, so the pass cannot record a delivery for a Condition it
+// deletes, which nothing would close.
 export const purgeService = (
   sql: SQL,
   { service, system }: { service: string; system: string },
 ): Promise<PurgedService> =>
   sql.begin(async (tx) => {
+    // A pass can outlast the pool's statement timeout. Its lock comes before
+    // the System's row, which a pass's delivery insert waits on.
+    await tx.unsafe(`SET LOCAL statement_timeout = '2min'`);
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${DELIVERY_LOCK}))`;
     const held: unknown[] = await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
     if (held.length === 0) {
       return { kind: 'nothing' };
