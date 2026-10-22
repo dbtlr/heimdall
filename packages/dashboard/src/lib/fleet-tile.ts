@@ -2,7 +2,9 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention, AttentionKind } from '../server/attention-types.ts';
 import type { Lane } from '../server/fleet-overview-types.ts';
+import type { Disk } from '../server/system-detail-types.ts';
 import { ATTENTION_NAMES, subjectText } from './attention.ts';
+import { diskUsage, fullestDisk } from './facts.ts';
 import { fleetAttention, isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
 
 // The resources a System tile draws a meter for.
@@ -86,3 +88,25 @@ export const tileOrder = (
         a.lane.name.localeCompare(b.lane.name),
     )
     .map(({ asleep, items, lane, level }) => ({ asleep, items, lane, level }));
+
+// The mount the Disk meter reads and its percent used: the mount carrying the
+// worst open low_disk Condition (its subject is the mount), else the fullest.
+// Undefined when the sample lists no disk.
+export const diskReading = (
+  disks: readonly Disk[],
+  items: readonly Attention[],
+): { mount: string; percent: number } | undefined => {
+  const named = items
+    .flatMap((item) => {
+      const disk = disks.find(({ mount, totalBytes }) => mount === item.subject && totalBytes > 0);
+      return item.kind === 'low_disk' && item.level !== undefined && disk !== undefined
+        ? [{ disk, level: item.level, percent: diskUsage(disk).percent }]
+        : [];
+    })
+    .toSorted(
+      (a, b) =>
+        WORST_FIRST.indexOf(a.level) - WORST_FIRST.indexOf(b.level) || b.percent - a.percent,
+    )[0];
+  const disk = named?.disk ?? fullestDisk(disks);
+  return disk === undefined ? undefined : { mount: disk.mount, percent: diskUsage(disk).percent };
+};

@@ -4,7 +4,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
 import type { Lane } from '../server/fleet-overview-types.ts';
-import { canWaitRows, meterLevels, tileOrder } from './fleet-tile.ts';
+import { canWaitRows, diskReading, meterLevels, tileOrder } from './fleet-tile.ts';
 
 const condition = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
   checkedAt: 100,
@@ -164,5 +164,42 @@ describe('tileOrder', () => {
     const [tile] = tileOrder([lane('a')], items, 0);
 
     expect(tile?.items).toEqual(items.slice(0, 1));
+  });
+});
+
+describe('diskReading', () => {
+  const disks = [
+    { mount: '/', totalBytes: 100, usedBytes: 40 },
+    { mount: '/data', totalBytes: 100, usedBytes: 90 },
+    { mount: '/var', totalBytes: 100, usedBytes: 70 },
+  ];
+
+  test('without a low_disk Condition it reads the fullest mount', () => {
+    expect(diskReading(disks, [])).toEqual({ mount: '/data', percent: 90 });
+  });
+
+  test('a low_disk Condition makes it read the mount the Condition names, not the fullest', () => {
+    expect(diskReading(disks, [condition({ subject: '/' })])).toEqual({ mount: '/', percent: 40 });
+  });
+
+  test('with several low_disk Conditions it reads the mount of the worst level', () => {
+    const items = [
+      condition({ level: 'warning', subject: '/data' }),
+      condition({ level: 'alert', subject: '/var' }),
+      condition({ level: 'note', subject: '/' }),
+    ];
+
+    expect(diskReading(disks, items)).toEqual({ mount: '/var', percent: 70 });
+  });
+
+  test('a low_disk mount the newest sample lacks falls back to the fullest mount', () => {
+    expect(diskReading(disks, [condition({ subject: '/gone' })])).toEqual({
+      mount: '/data',
+      percent: 90,
+    });
+  });
+
+  test('a System with no disks reads nothing', () => {
+    expect(diskReading([], [condition()])).toBeUndefined();
   });
 });

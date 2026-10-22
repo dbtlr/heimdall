@@ -38,13 +38,14 @@ function Fleet() {
   const tiles = tileOrder(overview.lanes, overview.attention, now);
   return (
     <>
-      <AppHeader inline={overview.lanes.length > 0 && <FleetVerdict counts={counts} />} />
+      <AppHeader inline={empty === undefined ? <FleetVerdict counts={counts} /> : undefined} />
       <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
         <h1 className="sr-only">Fleet</h1>
         {deliveryFailingSince !== undefined && (
           <DeliveryFailing now={now} since={deliveryFailingSince} />
         )}
         {empty !== undefined && <p className="pt-4 text-lg font-semibold">{empty.text}</p>}
+        <h2 className="sr-only">Systems</h2>
         <div className="pt-3">
           <FleetTiles now={now} tiles={tiles} />
         </div>

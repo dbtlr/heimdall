@@ -3,11 +3,11 @@ import { Link } from '@tanstack/react-router';
 import { BellOff, Moon } from 'lucide-react';
 
 import { laneSummary } from '../lib/attention.ts';
-import { diskUsage, fullestDisk } from '../lib/facts.ts';
-import { meterLevels } from '../lib/fleet-tile.ts';
+import { diskReading, meterLevels } from '../lib/fleet-tile.ts';
 import type { SystemTile } from '../lib/fleet-tile.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
+import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Lane } from '../server/fleet-overview-types.ts';
 import {
   AttentionStatus,
@@ -26,66 +26,89 @@ const FILL_COLOR: Record<ConditionLevel, string> = {
   warning: 'bg-status-serious',
 };
 
+const METER_LAYOUT =
+  'grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-1.5 text-xs text-muted-foreground';
+
 // One resource on a tile: its label, a thin bar filled to the percent, and the
-// rounded percent. A level from an open Condition on the resource colors both;
-// an unknown percent reads as a dash with an empty bar.
+// rounded percent. A level from an open Condition on the resource colors both
+// and is also said in words. An unknown percent reads as a dash with an empty
+// bar and is labelled unknown rather than given a meter role. `mount` names the
+// disk the percent is of.
 function Meter({
   label,
   level,
+  mount,
   percent,
 }: {
   label: string;
   level: ConditionLevel | undefined;
+  mount?: string | undefined;
   percent: number | undefined;
 }) {
-  const filled = Math.min(100, Math.max(0, percent ?? 0));
-  return (
-    <div
-      aria-label={label}
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={percent === undefined ? undefined : Math.round(percent)}
-      className="grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-1.5 text-xs text-muted-foreground"
-      role="meter"
-    >
-      <span>{label}</span>
+  const rounded = percent === undefined ? undefined : Math.round(percent);
+  const parts = (
+    <>
+      <span title={mount}>
+        {label}
+        {mount !== undefined && <span className="sr-only"> {mount}</span>}
+      </span>
       <span aria-hidden="true" className="h-1.5 rounded-full bg-border">
         <span
           className={cn(
             'block h-full rounded-full',
             level === undefined ? 'bg-[#6f8fc4]' : FILL_COLOR[level],
           )}
-          style={{ width: `${String(filled)}%` }}
+          style={{ width: `${String(Math.min(100, Math.max(0, percent ?? 0)))}%` }}
         />
       </span>
       <span
         className={cn('text-right', level === undefined ? 'text-foreground/80' : MARK_COLOR[level])}
       >
-        {percent === undefined ? '—' : `${String(Math.round(percent))}%`}
+        {rounded === undefined ? '—' : `${String(rounded)}%`}
       </span>
+    </>
+  );
+  if (rounded === undefined) {
+    return (
+      <div aria-label={`${label} unknown`} className={METER_LAYOUT} role="img">
+        {parts}
+      </div>
+    );
+  }
+  const reading = `${mount === undefined ? label : `${label} ${mount}`} ${String(rounded)}%`;
+  return (
+    <div
+      aria-label={label}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={rounded}
+      aria-valuetext={level === undefined ? reading : `${reading}, ${level}`}
+      className={METER_LAYOUT}
+      role="meter"
+    >
+      {parts}
     </div>
   );
 }
 
-// The CPU, Mem, and fullest Disk meters from the newest Vitals sample, or a
-// short line when none has arrived.
-function TileMeters({ tile }: { tile: SystemTile }) {
+// The CPU, Mem, and Disk meters from the newest Vitals sample, or a short line
+// when none has arrived. A sample older than QUIET_AFTER_MS is muted and dated
+// for screen readers, so its values do not read as current.
+function TileMeters({ now, tile }: { now: number; tile: SystemTile }) {
   const { latest } = tile.lane;
   if (latest === undefined) {
     return <p className="text-xs text-muted-foreground">No Vitals yet</p>;
   }
   const levels = meterLevels(tile.items);
-  const disk = fullestDisk(latest.disks);
+  const disk = diskReading(latest.disks, tile.items);
+  const stale = now - latest.t > QUIET_AFTER_MS;
   return (
-    <>
+    <div className={cn('flex flex-col gap-1', stale && 'opacity-50')}>
+      {stale && <span className="sr-only">Vitals as of {formatSpanShort(now - latest.t)} ago</span>}
       <Meter label="CPU" level={levels.cpu} percent={latest.cpuBusyPercent} />
       <Meter label="Mem" level={levels.memory} percent={latest.memoryUsedPercent} />
-      <Meter
-        label="Disk"
-        level={levels.disk}
-        percent={disk === undefined ? undefined : diskUsage(disk).percent}
-      />
-    </>
+      <Meter label="Disk" level={levels.disk} mount={disk?.mount} percent={disk?.percent} />
+    </div>
   );
 }
 
@@ -110,35 +133,49 @@ function TileCondition({ tile }: { tile: SystemTile }) {
   );
 }
 
-// The status slot: the worst alert or warning, else asleep as a moon, else the
-// healthy circle for an up System and an unknown ring for one never seen or unpaired.
-function StatusSlot({ lane, tile }: { lane: Lane; tile: SystemTile }) {
-  if (tile.level === undefined && tile.asleep) {
+// The status slot, labelled so a screen reader tells the states apart: the worst
+// alert or warning, else asleep as a moon, else the healthy circle for an up
+// System and an unknown ring for one never seen or unpaired.
+function StatusSlot({ tile }: { tile: SystemTile }) {
+  const { asleep, lane, level } = tile;
+  if (level === undefined && asleep) {
     return (
       <span aria-label="Asleep" className="flex-none text-muted-foreground" role="img">
         <Moon aria-hidden="true" className="size-3" />
       </span>
     );
   }
+  if (level !== undefined) {
+    return (
+      <span aria-label={level === 'alert' ? 'Alert' : 'Warning'} role="img">
+        <ConditionGlyph kind={level} />
+      </span>
+    );
+  }
+  if (lane.status === 'never_seen' || lane.status === 'unpaired') {
+    return (
+      <span aria-label={lane.status === 'unpaired' ? 'Unpaired' : 'Never seen'} role="img">
+        <ConditionGlyph kind="unknown" />
+      </span>
+    );
+  }
   return (
-    <ConditionGlyph
-      kind={
-        tile.level ??
-        (lane.status === 'never_seen' || lane.status === 'unpaired' ? 'unknown' : 'cleared')
-      }
-    />
+    <span aria-label="Healthy" role="img">
+      <ConditionGlyph kind="cleared" />
+    </span>
   );
 }
 
 // The tile's top-right: the time left on a silence with a crossed-out bell, else
-// the short time since Last seen, a dash when never seen.
+// the short time since Last seen, or "Never seen". Screen readers get the long form.
 function TileCorner({ lane, now }: { lane: Lane; now: number }) {
+  const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground';
   if (lane.silencedUntil !== undefined) {
     const left = silenceLeft(now, lane.silencedUntil);
     return (
       <span
         aria-label={`Alerts silenced, ${left} left`}
-        className="inline-flex flex-none items-center gap-1 text-xs whitespace-nowrap text-muted-foreground"
+        className={cn(corner, 'inline-flex items-center gap-1')}
         role="img"
       >
         <BellOff aria-hidden="true" className="size-3" />
@@ -146,9 +183,14 @@ function TileCorner({ lane, now }: { lane: Lane; now: number }) {
       </span>
     );
   }
+  if (lane.lastSeenAt === undefined) {
+    return <span className={corner}>Never seen</span>;
+  }
+  const age = formatSpanShort(now - lane.lastSeenAt);
   return (
-    <span className="flex-none text-xs whitespace-nowrap text-muted-foreground">
-      {lane.lastSeenAt === undefined ? '—' : formatSpanShort(now - lane.lastSeenAt)}
+    <span className={corner}>
+      <span className="sr-only">{`Last seen ${age} ago`}</span>
+      <span aria-hidden="true">{age}</span>
     </span>
   );
 }
@@ -177,7 +219,7 @@ export function FleetTiles({ now, tiles }: { now: number; tiles: readonly System
                 tile.asleep && 'text-muted-foreground',
               )}
             >
-              <StatusSlot lane={tile.lane} tile={tile} />
+              <StatusSlot tile={tile} />
               {tile.lane.name}
             </h3>
             <TileCorner lane={tile.lane} now={now} />
@@ -185,7 +227,7 @@ export function FleetTiles({ now, tiles }: { now: number; tiles: readonly System
           {tile.lane.status === 'unpaired' && (
             <span className={cn('self-start text-xs', STATUS_COLOR.unpaired)}>Unpaired</span>
           )}
-          <TileMeters tile={tile} />
+          <TileMeters now={now} tile={tile} />
           <TileCondition tile={tile} />
         </Link>
       ))}

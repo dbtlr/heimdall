@@ -49,41 +49,68 @@ const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Att
 const render = (lanes: Lane[], items: Attention[] = []) =>
   renderRouted(<FleetTiles now={NOW} tiles={tileOrder(lanes, items, NOW)} />);
 
-// The markup from the meter named `label` up to the next meter.
+// The markup from the meter named `label` up to the next meter. A meter with an
+// unknown percent is labelled "<label> unknown".
 const meter = (html: string, label: string) =>
-  html.split('<div aria-label="').find((part) => part.startsWith(`${label}"`)) ?? '';
+  html
+    .split('<div aria-label="')
+    .find((part) => part.startsWith(`${label}"`) || part.startsWith(`${label} unknown"`)) ?? '';
 
 describe('a System tile', () => {
   test('links to its System and shows CPU, Mem, and the fullest Disk with rounded percents', async () => {
     const html = await render([lane('gateway-1')]);
 
     expect(html).toContain('href="/systems/gateway-1"');
-    expect(meter(html, 'CPU')).toContain('>12%<');
-    expect(meter(html, 'Mem')).toContain('>41%<');
+    expect(meter(html, 'CPU')).toContain('aria-valuetext="CPU 12%"');
+    expect(meter(html, 'Mem')).toContain('aria-valuetext="Mem 41%"');
+    expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk /data 74%"');
     expect(meter(html, 'Disk')).toContain('>74%<');
     expect(meter(html, 'Disk')).toContain('width:74%');
   });
 
-  test('an up System shows the healthy circle and the time since Last seen', async () => {
+  test('a meter says its level in words as well as color', async () => {
+    const html = await render([lane('gateway-1')], [disk({ level: 'warning' })]);
+
+    expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk /data 74%, warning"');
+    expect(meter(html, 'CPU')).not.toContain('warning');
+  });
+
+  test('the Disk meter reads the mount a low_disk Condition names, not the fullest mount', async () => {
+    const html = await render([lane('gateway-1')], [disk({ subject: '/' })]);
+
+    expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk / 40%, note"');
+    expect(meter(html, 'Disk')).toContain('>40%<');
+  });
+
+  test('an up System reads as healthy, with its Last seen age', async () => {
     const html = await render([lane('gateway-1')]);
 
-    expect(html).toContain('stroke-status-good');
+    expect(html).toContain('aria-label="Healthy"');
+    expect(html).toContain('Last seen 20 s ago');
     expect(html).toContain('>20 s<');
   });
 
-  test('a System never seen shows an unknown glyph and a dash for its age', async () => {
+  test('alert and warning tiles say which they are', async () => {
+    const alert = await render([lane('gateway-1')], [disk({ level: 'alert' })]);
+    const warning = await render([lane('gateway-1')], [disk({ level: 'warning' })]);
+
+    expect(alert).toContain('aria-label="Alert"');
+    expect(alert).not.toContain('aria-label="Healthy"');
+    expect(warning).toContain('aria-label="Warning"');
+  });
+
+  test('a System never seen says so, with no meters', async () => {
     const html = await render([
       lane('gateway-1', { lastSeenAt: undefined, latest: undefined, status: 'never_seen' }),
     ]);
 
-    expect(html).toContain('stroke-muted-foreground');
-    expect(html).not.toContain('stroke-status-good');
-    expect(html).toContain('>—<');
+    expect(html).toContain('aria-label="Never seen"');
+    expect(html).toContain('>Never seen<');
     expect(html).toContain('No Vitals yet');
     expect(html).not.toContain('role="meter"');
   });
 
-  test('missing memory reads as a dash with an empty bar', async () => {
+  test('missing memory is unknown: no value, an empty bar, and a label that says so', async () => {
     const base = lane('gateway-1');
     const html = await render([
       lane('gateway-1', {
@@ -92,45 +119,67 @@ describe('a System tile', () => {
       }),
     ]);
 
+    expect(meter(html, 'Mem')).toStartWith('Mem unknown"');
+    expect(meter(html, 'Mem')).not.toContain('aria-valuenow');
+    expect(meter(html, 'Mem')).not.toContain('role="meter"');
     expect(meter(html, 'Mem')).toContain('>—<');
     expect(meter(html, 'Mem')).toContain('width:0%');
   });
 
-  test('an unpaired System keeps a visible Unpaired marker and an unknown glyph', async () => {
+  test('an unpaired System keeps a visible Unpaired marker and says so', async () => {
     const html = await render([lane('gateway-1', { status: 'unpaired' })]);
 
+    expect(html).toContain('aria-label="Unpaired"');
     expect(html).toContain('>Unpaired<');
-    expect(html).toContain('border-dashed');
-    expect(html).not.toContain('stroke-status-good');
+    expect(html).not.toContain('aria-label="Healthy"');
+  });
+});
+
+describe('stale Vitals', () => {
+  test('old Vitals are muted and dated for screen readers, so they do not read as current', async () => {
+    const base = lane('gateway-1');
+    const html = await render([
+      lane('gateway-1', {
+        latest: base.latest === undefined ? undefined : { ...base.latest, t: NOW - 5 * 60_000 },
+      }),
+    ]);
+
+    expect(html).toContain('Vitals as of 5 min ago');
+    expect(html).toContain('opacity-50');
+  });
+
+  test('fresh Vitals are neither muted nor dated', async () => {
+    const html = await render([lane('gateway-1')]);
+
+    expect(html).not.toContain('Vitals as of');
+    expect(html).not.toContain('opacity-50');
   });
 });
 
 describe('asleep and silenced Systems', () => {
-  test('an asleep System shows a labelled moon in the status slot instead of the healthy circle', async () => {
+  test('an asleep System shows the moon labelled Asleep instead of the healthy circle', async () => {
     const html = await render([
       lane('gateway-1', { lastSeenAt: NOW - 7 * 3_600_000, sleeps: true }),
     ]);
 
     expect(html).toContain('aria-label="Asleep"');
-    expect(html).toContain('lucide-moon');
-    expect(html).not.toContain('stroke-status-good');
-    expect(html).toContain('>7 h<');
+    expect(html).not.toContain('aria-label="Healthy"');
+    expect(html).toContain('Last seen 7 h ago');
   });
 
-  test('a silenced System keeps its health glyph and shows the bell with the time left', async () => {
+  test('a silenced System keeps its health glyph and shows the time left', async () => {
     const html = await render(
       [lane('gateway-1', { silencedUntil: NOW + 2 * 3_600_000 - 30_000 })],
       [disk({ level: 'alert', subject: '/' })],
     );
 
     expect(html).toContain('aria-label="Alerts silenced, 2 h left"');
-    expect(html).toContain('lucide-bell-off');
-    expect(html).toContain('fill-status-critical');
-    expect(html).not.toContain('>20 s<');
+    expect(html).toContain('aria-label="Alert"');
+    expect(html).not.toContain('Last seen');
   });
 
-  test('a System that is not silenced shows no bell', async () => {
-    expect(await render([lane('gateway-1')])).not.toContain('lucide-bell-off');
+  test('a System that is not silenced says nothing of silence', async () => {
+    expect(await render([lane('gateway-1')])).not.toContain('Alerts silenced');
   });
 });
 
@@ -147,7 +196,7 @@ describe('meter levels and the worst Condition', () => {
   test('a note leaves the System healthy and names no Condition under the meters', async () => {
     const html = await render([lane('gateway-1')], [disk()]);
 
-    expect(html).toContain('stroke-status-good');
+    expect(html).toContain('aria-label="Healthy"');
     expect(html).not.toContain('Low disk');
   });
 
@@ -163,7 +212,7 @@ describe('meter levels and the worst Condition', () => {
     expect(html).toContain('Low disk');
     expect(html).toContain('>/<');
     expect(html).toContain('>+1<');
-    expect(html).toContain('fill-status-critical');
+    expect(html).toContain('aria-label="Alert"');
     expect(html).not.toContain('>/data<');
   });
 

@@ -135,7 +135,7 @@ export const formatSpan = (ms: number): string => {
 // "3 d". For a corner where the two-unit form of formatSpan would not fit.
 export const formatSpanShort = (ms: number): string => {
   if (ms < MINUTE_MS) {
-    return `${String(Math.max(0, Math.round(ms / SECOND_MS)))} s`;
+    return `${String(Math.max(0, Math.floor(ms / SECOND_MS)))} s`;
   }
   if (ms < HOUR_MS) {
     return `${String(Math.floor(ms / MINUTE_MS))} min`;

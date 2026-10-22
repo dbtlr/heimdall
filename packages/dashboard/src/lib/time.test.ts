@@ -105,5 +105,6 @@ test('a short span keeps only its largest unit, rounded down', () => {
   expect(formatSpanShort(4 * 60_000 + 59_000)).toBe('4 min');
   expect(formatSpanShort(7 * HOUR + 33 * 60_000)).toBe('7 h');
   expect(formatSpanShort(51 * HOUR)).toBe('2 d');
+  expect(formatSpanShort(59_600)).toBe('59 s');
   expect(formatSpanShort(-5000)).toBe('0 s');
 });

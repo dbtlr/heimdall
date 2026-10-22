@@ -14,6 +14,15 @@ test('the time left rounds up to the minute, as heimdall-hub silence lists it', 
   expect(silenceLeft(NOW, NOW + 90 * MINUTE + 1)).toBe('1 h 31 min');
 });
 
+test('the time left never reads below a minute, even at or past the end of the silence', () => {
+  expect(silenceLeft(NOW, NOW)).toBe('1 min');
+  expect(silenceLeft(NOW, NOW - 5000)).toBe('1 min');
+});
+
+test('at day scale the time left shows its two largest units', () => {
+  expect(silenceLeft(NOW, NOW + 26 * 60 * MINUTE + 30 * MINUTE)).toBe('1 d 2 h');
+});
+
 // The server cannot know the viewer's zone, so "until <time>" is written by the
 // browser, and the rest reads whole without it.
 test('the System page banner also says Conditions still show and count toward health', () => {
