@@ -135,7 +135,7 @@ A System's history of Conditions being raised, changing level, and being cleared
 _Avoid_: event feed, event log (a Report is never an event)
 
 **Pairing**:
-How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's overview and the records read, and keeps its history, which the dashboard's unpaired lanes (`/?unpaired`, shown for any value but `false`) and its page still show; the records read needs exactly `?unpaired=include` to add its last records.
+How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's overview and the records read, and keeps its history, which the dashboard's unpaired lanes (`/?unpaired`, shown for any value but `false`) and its page still show; the records read needs exactly `?unpaired=include` to add its last records. Purging an unpaired System deletes that history, keeping its transcripts unless asked.
 _Avoid_: enrollment, registration, provisioning (a provisioner's install, not Heimdall's identity)
 
 **Pairing code**:

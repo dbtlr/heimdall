@@ -715,6 +715,22 @@ Cost is list-price cost (glossary): what a request's tokens would cost at the mo
 - `input_cost_usd`, `output_cost_usd`, `cache_read_cost_usd`, and `cache_write_cost_usd` split `cost_usd` by kind of token. A cache write is the 5-minute write plus the 1-hour write. Each is null when no entry applies to the request, and when the entry has no price for the kind of token it covers and the request used it. When `cost_usd` is not null none is, and the four sum to it.
 - `insight.session_totals` and `insight.main_conversation_totals` end with `cost_usd`, `priced_cost_usd`, and `unpriced_requests`. `unpriced_requests` counts the Session's unpriced requests. `cost_usd` is the sum of the requests' costs, and is null when any request is unpriced, so a partial sum is never read as the total; a Session with no requests costs 0. `priced_cost_usd` is the sum over the priced requests alone, a lower bound when some are not, and null when none is priced.
 
+## Purging a retired System
+
+`heimdall-hub purge system <system>` deletes everything the Hub holds for a System that is no longer paired:
+
+- its row, with its Last seen and Collector details
+- its Vitals samples and rollups, and its disk rollups
+- its Conditions, with their Timeline, their deliveries, and its stored limits
+- its load and hot-process evaluations
+- its mirrored records, runs, and checks
+- its Harness installs and Harness processes
+- its update and reboot observations, and its transcript spool status
+
+The purge runs in one transaction, so a purge that fails deletes nothing. It refuses a System that is paired or that holds a pending Pairing code, and `heimdall-hub unpair` clears both. It exits 1 when the Hub holds nothing for the name, so a mistyped name purges nothing. Once purged, the System leaves the dashboard, its unpaired view included, and the records read.
+
+The System's transcripts stay, with the [Session insight](#session-insight) derived from them, so its Sessions and their cost still count. When the Hub next refreshes the stored stretches, none links to a purged Harness process. `--transcripts` deletes the transcripts and their Session insight too. Unlike `heimdall-hub transcripts delete`, it deletes each generation's row, so the Hub keeps no record of their paths. After a purge that kept them, `purge system --transcripts` deletes them; without `--transcripts`, it exits 1 and says to add it. A System paired again under a purged name starts with no history, and the transcripts kept under that name are its own again. Like `serve`, the command first applies any pending database migrations.
+
 ## Trust
 
 Collectors send Reports with their System's token, but the dashboard, its records read included, has no authentication; it relies on a tailnet only its operator can reach. Its database holds every transcript, including anything an agent read. Authentication, and handling of secrets in transcripts, come before Heimdall is used anywhere else.
