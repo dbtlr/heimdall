@@ -13,7 +13,7 @@ import type { Attention } from '../server/attention-types.ts';
 import type { LaneStatus } from '../server/fleet-overview-types.ts';
 
 // The text colour of each status word.
-const STATUS_COLOR: Record<LaneStatus, string> = {
+export const STATUS_COLOR: Record<LaneStatus, string> = {
   asleep: 'text-muted-foreground',
   needs_you: 'text-[color-mix(in_srgb,var(--status-serious)_70%,white)]',
   never_seen: 'text-muted-foreground',
@@ -47,7 +47,7 @@ const PILL = 'ml-1.5 rounded-lg px-[5px] text-xs';
 
 // How many pieces of evidence do not confirm a failure; hollow and dashed, so
 // it never reads as one.
-function UnconfirmedPill({ count, plus }: { count: number; plus: boolean }) {
+export function UnconfirmedPill({ count, plus }: { count: number; plus: boolean }) {
   return (
     <span
       className={cn(PILL, 'border border-dashed border-muted-foreground text-muted-foreground')}
@@ -60,14 +60,17 @@ function UnconfirmedPill({ count, plus }: { count: number; plus: boolean }) {
 }
 
 // A System's worst open level calls for action independently of freshness.
-// Notes alone leave its plain healthy status visible.
+// Notes alone leave its plain healthy status visible. `showSubject`
+// adds what the worst one is about after its name.
 export function AttentionStatus({
   className,
   items,
+  showSubject = false,
   status,
 }: {
   className?: string;
   items: readonly Attention[];
+  showSubject?: boolean;
   status: LaneStatus;
 }) {
   const named = namedItem(items, status);
@@ -95,6 +98,12 @@ export function AttentionStatus({
       <b className={cn('font-semibold', MARK_COLOR[attentionMark(named)])}>
         {ATTENTION_NAMES[named.kind]}
       </b>
+      {showSubject && subject !== '' && (
+        <span className={MARK_COLOR[attentionMark(named)]}>
+          {' '}
+          <AttentionSubject item={named} />
+        </span>
+      )}
       {more > 0 && (
         <span className={cn(PILL, 'bg-status-serious/15', MARK_COLOR.warning)}>+{more}</span>
       )}

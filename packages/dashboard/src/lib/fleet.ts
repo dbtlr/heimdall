@@ -38,8 +38,6 @@ export const fleetAttention = (items: readonly Attention[]) => {
   );
   return {
     counts: levelCounts(conditions),
-    evidence: conditions.filter((item) => item.level === undefined),
-    needsYou: conditions.filter((item) => item.level === 'alert' || item.level === 'warning'),
     notes: conditions.filter((item) => item.level === 'note'),
   };
 };
@@ -62,15 +60,3 @@ export const deliveryFailingShown = ({
   now - deliveryFailingSince >= DELIVERY_FAILING_SHOWN_AFTER_MS
     ? deliveryFailingSince
     : undefined;
-
-export const fleetVerdict = (items: readonly Attention[]) => {
-  const { needsYou, counts } = fleetAttention(items);
-  const worst = counts.alert > 0 ? 'alert' : 'warning';
-  const names = [
-    ...new Set(needsYou.filter((item) => item.level === worst).map((item) => item.system)),
-  ];
-  const who = names.length === 1 ? names[0] : `${String(names.length)} Systems`;
-  return needsYou.length === 0
-    ? 'No Conditions need action'
-    : `${who} ${names.length === 1 ? 'needs' : 'need'} you ${worst === 'alert' ? 'now' : 'this week'}`;
-};
