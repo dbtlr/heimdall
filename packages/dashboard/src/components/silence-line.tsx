@@ -5,10 +5,13 @@ type Silence = { now: number; until: number | undefined };
 
 const MINUTE_MS = 60_000;
 
-// "Alerts silenced until <when> · <span> left", shared by the card and the
-// banner. "until <when>" waits for the viewer's zone; the rest reads whole
-// without it. Time left rounds up, as `heimdall-hub silence` lists it, so a
-// silence just set for 2 h reads as 2 h left.
+// The time left on a silence: "2 h", "1 h 31 min". Rounds up to the minute, as
+// `heimdall-hub silence` lists it, so a silence just set for 2 h reads as 2 h.
+export const silenceLeft = (now: number, until: number): string =>
+  formatSpan(Math.ceil((until - now) / MINUTE_MS) * MINUTE_MS);
+
+// "Alerts silenced until <when> · <span> left", for the banner. "until <when>"
+// waits for the viewer's zone; the rest reads whole without it.
 function SilenceText({ now, until }: { now: number; until: number }) {
   return (
     <>
@@ -21,18 +24,8 @@ function SilenceText({ now, until }: { now: number; until: number }) {
           </>
         )}
       </InZone>{' '}
-      · {formatSpan(Math.ceil((until - now) / MINUTE_MS) * MINUTE_MS)} left
+      · {silenceLeft(now, until)} left
     </>
-  );
-}
-
-// A Fleet card's line when the Hub holds alerts for that System (ADR-0020).
-// Nothing without a silence.
-export function SilenceLine({ now, until }: Silence) {
-  return until === undefined ? null : (
-    <p className="mt-1 text-sm text-muted-foreground">
-      <SilenceText now={now} until={until} />
-    </p>
   );
 }
 

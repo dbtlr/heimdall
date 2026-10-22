@@ -2,22 +2,16 @@ import { Link, createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
-import { MARK_COLOR } from '../components/attention-status.tsx';
+import { CanWait } from '../components/can-wait.tsx';
 import { DeliveryFailing } from '../components/delivery-failing.tsx';
-import { FleetAttention } from '../components/fleet-attention.tsx';
-import { FleetSystems } from '../components/fleet-systems.tsx';
+import { FleetTiles } from '../components/fleet-tiles.tsx';
+import { FleetVerdict } from '../components/fleet-verdict.tsx';
 import { OpenNow } from '../components/open-now.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
-import {
-  deliveryFailingShown,
-  fleetAttention,
-  fleetVerdict,
-  isAsleep,
-  levelCountsText,
-} from '../lib/fleet.ts';
+import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
+import { deliveryFailingShown, fleetAttention } from '../lib/fleet.ts';
 import { rangeFromSearch } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
-import { cn } from '../lib/utils.ts';
 import { getFleetOverview } from '../server/fleet-overview-fn.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 
@@ -41,66 +35,41 @@ function Fleet() {
   const empty = emptyFleetText(overview.lanes);
   const { counts } = fleetAttention(overview.attention);
   const deliveryFailingSince = deliveryFailingShown(overview);
-  const asleep = overview.lanes.filter((lane) => isAsleep(lane, now));
-  const window = { from: overview.from, to: overview.to };
+  const tiles = tileOrder(overview.lanes, overview.attention, now);
   return (
     <>
-      <AppHeader />
+      <AppHeader inline={overview.lanes.length > 0 && <FleetVerdict counts={counts} />} />
       <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 pt-3.5 pb-2 sm:pt-[18px] sm:pb-2.5">
-          <p className="text-lg font-semibold">Fleet</p>
-          <Link
-            className="inline-flex min-h-11 items-center text-base text-primary underline underline-offset-4"
-            search={{ range, unpaired: showUnpaired || undefined }}
-            to="/compare"
-          >
-            Compare on one time axis →
-          </Link>
+        <h1 className="sr-only">Fleet</h1>
+        {deliveryFailingSince !== undefined && (
+          <DeliveryFailing now={now} since={deliveryFailingSince} />
+        )}
+        {empty !== undefined && <p className="pt-4 text-lg font-semibold">{empty.text}</p>}
+        <div className="pt-3">
+          <FleetTiles now={now} tiles={tiles} />
         </div>
-        <section className="border-b pt-2 pb-4">
-          <h1
-            className={cn(
-              'text-3xl leading-tight font-semibold wrap-anywhere',
-              counts.alert > 0 ? MARK_COLOR.alert : counts.warning > 0 && MARK_COLOR.warning,
-            )}
-          >
-            {counts.alert + counts.warning > 0
-              ? fleetVerdict(overview.attention)
-              : (empty?.text ?? fleetVerdict(overview.attention))}
-          </h1>
-          {overview.lanes.length > 0 && (
-            <p className="mt-2 text-base text-muted-foreground">
-              {levelCountsText(counts) || 'No open Conditions'} across {overview.lanes.length}{' '}
-              System{overview.lanes.length === 1 ? '' : 's'}.{' '}
-              {asleep.length > 0 &&
-                `${asleep.map((lane) => lane.name).join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep.`}
-            </p>
+        <CanWait
+          rows={canWaitRows(
+            tiles.map(({ lane }) => lane.name),
+            overview.attention,
           )}
-          {deliveryFailingSince !== undefined && (
-            <DeliveryFailing now={now} since={deliveryFailingSince} />
-          )}
-        </section>
-        <FleetAttention items={overview.attention} now={now} />
-        <h2 className="py-3 text-lg font-semibold">Systems</h2>
-        <FleetSystems
-          attention={overview.attention}
-          lanes={overview.lanes}
-          now={now}
-          range={range}
-          window={window}
         />
+        <Link
+          className="mt-2 inline-flex min-h-11 items-center text-base text-primary underline underline-offset-4"
+          search={{ range, unpaired: showUnpaired || undefined }}
+          to="/compare"
+        >
+          Compare on one time axis →
+        </Link>
         {showUnpaired && (
           <section className="mt-4">
             <h2 className="mb-3 text-lg font-semibold">Unpaired, history kept</h2>
             {overview.unpairedLanes.length === 0 ? (
               <p>No System is unpaired.</p>
             ) : (
-              <FleetSystems
-                attention={overview.attention}
-                lanes={overview.unpairedLanes}
+              <FleetTiles
                 now={now}
-                range={range}
-                window={window}
+                tiles={tileOrder(overview.unpairedLanes, overview.attention, now)}
               />
             )}
             <OpenNow items={overview.attention.filter((item) => item.unpaired)} now={now} />

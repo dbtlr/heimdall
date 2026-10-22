@@ -131,6 +131,21 @@ export const formatSpan = (ms: number): string => {
   return pair(Math.floor(ms / DAY_MS), 'd', Math.floor((ms % DAY_MS) / HOUR_MS), 'h');
 };
 
+// A length of time in its largest unit only, rounded down: "20 s", "4 min", "7 h",
+// "3 d". For a corner where the two-unit form of formatSpan would not fit.
+export const formatSpanShort = (ms: number): string => {
+  if (ms < MINUTE_MS) {
+    return `${String(Math.max(0, Math.round(ms / SECOND_MS)))} s`;
+  }
+  if (ms < HOUR_MS) {
+    return `${String(Math.floor(ms / MINUTE_MS))} min`;
+  }
+  if (ms < DAY_MS) {
+    return `${String(Math.floor(ms / HOUR_MS))} h`;
+  }
+  return `${String(Math.floor(ms / DAY_MS))} d`;
+};
+
 // A cost as "$4.05", or "cost unknown" when a request was unpriced.
 export const formatCost = (costUsd: number | undefined): string =>
   costUsd === undefined ? 'cost unknown' : `$${costUsd.toFixed(2)}`;

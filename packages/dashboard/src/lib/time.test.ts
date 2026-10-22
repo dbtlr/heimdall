@@ -5,6 +5,7 @@ import {
   formatAhead,
   formatClockSeconds,
   formatCost,
+  formatSpanShort,
   formatTime,
   formatWhen,
   spanBox,
@@ -97,4 +98,12 @@ test('a time ahead counts days in the named zone', () => {
   expect(formatAhead(NOON + 7 * 24 * HOUR - 3 * HOUR, NOON + 10 * HOUR, 'Asia/Tokyo')).toBe(
     'Tue 18:00',
   );
+});
+
+test('a short span keeps only its largest unit, rounded down', () => {
+  expect(formatSpanShort(20_000)).toBe('20 s');
+  expect(formatSpanShort(4 * 60_000 + 59_000)).toBe('4 min');
+  expect(formatSpanShort(7 * HOUR + 33 * 60_000)).toBe('7 h');
+  expect(formatSpanShort(51 * HOUR)).toBe('2 d');
+  expect(formatSpanShort(-5000)).toBe('0 s');
 });
