@@ -1,8 +1,8 @@
 import type { ActionHandler } from '@loomcli/core';
 
-import type { purgeSystem } from './application.ts';
+import type { purgeService, purgeSystem } from './application.ts';
 import { withDatabase } from './commands.ts';
-import { purgeSystem as purge } from './purge.ts';
+import { purgeService as purgeOneService, purgeSystem as purge } from './purge.ts';
 import { count } from './transcript-commands.ts';
 
 // `heimdall-hub purge system <system>`: deletes everything the Hub holds for a
@@ -40,5 +40,30 @@ export const purgeSystemAction: ActionHandler<typeof purgeSystem> = async ({
     await out.print(
       `Purged ${system} and ${count(generations, 'generation')} of its transcripts, ${count(bytes, 'gzipped byte')}.`,
     );
+  }
+};
+
+// `heimdall-hub purge service <system> <service>`: deletes a forgotten
+// Service's Conditions, their Timeline, and their deliveries. A Service its
+// System still records, and one the Hub holds nothing for, are errors.
+export const purgeServiceAction: ActionHandler<typeof purgeService> = async ({
+  args,
+  options,
+  out,
+  signal,
+  style,
+}) => {
+  const { service, system } = args;
+  const purged = await withDatabase(options.database, { out, signal, style }, (sql) =>
+    purgeOneService(sql, { service, system }),
+  );
+  if (purged.kind === 'recorded') {
+    out.fatal(
+      `${system} still records the Service ${service}. Run heimdall-collector forget service ${service} on ${system} first.`,
+    );
+  } else if (purged.kind === 'nothing') {
+    out.fatal(`The Hub holds nothing for the Service ${service} on ${system}.`);
+  } else {
+    await out.print(`Purged the Service ${service} from ${system}.`);
   }
 };

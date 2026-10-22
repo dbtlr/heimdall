@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { DELIVERY_LOCK } from './delivery.ts';
 import { holdProjection } from './projection.ts';
 import { retryOnDeadlock } from './transcripts.ts';
 import type { Removed } from './transcripts.ts';
@@ -69,13 +70,13 @@ const TRANSCRIPTS = [
   'DELETE FROM stale_ranges WHERE system = $1',
 ] as const;
 
-// Runs each statement against `system` in order and answers how many rows
-// they deleted in all.
-const deleteAll = async (tx: SQL, statements: readonly string[], system: string) => {
+// Runs each statement with `params` in order and answers how many rows they
+// deleted in all.
+const deleteAll = async (tx: SQL, statements: readonly string[], params: readonly string[]) => {
   let deleted = 0;
   for (const statement of statements) {
     // oxlint-disable-next-line no-await-in-loop -- children go before their parents.
-    const result = await tx.unsafe(statement, [system]);
+    const result = await tx.unsafe(statement, [...params]);
     deleted += result.count;
   }
   return deleted;
@@ -134,9 +135,9 @@ const purgeOnce = (
       SELECT 1 FROM transcript_source_harnesses WHERE system = ${system}
     `;
     await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
-    let deleted = await deleteAll(tx, HISTORY, system);
+    let deleted = await deleteAll(tx, HISTORY, [system]);
     if (transcripts) {
-      deleted += await deleteAll(tx, TRANSCRIPTS, system);
+      deleted += await deleteAll(tx, TRANSCRIPTS, [system]);
     }
     if (deleted === 0) {
       const kept = generations.length > 0 || harnesses.length > 0;
@@ -153,4 +154,52 @@ const purgeOnce = (
           }
         : undefined,
     };
+  });
+
+// What `purgeService` did: refused a Service its System still records, found
+// nothing of it, or purged it.
+export type PurgedService = { kind: 'recorded' } | { kind: 'nothing' } | { kind: 'purged' };
+
+// What a Service's checks left: its Service down Conditions, their Timeline,
+// and their deliveries. Each statement takes the System's name as $1 and the
+// Service's as $2.
+const SERVICE_HISTORY = [
+  `DELETE FROM condition_transitions WHERE condition IN (
+     SELECT id FROM conditions WHERE system = $1 AND kind = 'service_down' AND subject = $2
+   )`,
+  `DELETE FROM conditions WHERE system = $1 AND kind = 'service_down' AND subject = $2`,
+  `DELETE FROM deliveries WHERE system = $1 AND kind = 'service_down' AND subject = $2`,
+] as const;
+
+// Deletes every Condition the Hub holds for `service` on `system`, with its
+// Timeline and deliveries, in one transaction under the System's row lock, so
+// it orders with the System's Reports and Service down evaluation (ADR-0005).
+// It refuses while the Hub mirrors a record of the Service; an unreadable
+// service record does not hold it back, since the operator names a Service
+// they know is gone. An open Service down goes too, and its delivery with it,
+// so no recovered message follows. It waits out a delivery pass in progress,
+// as a silence does, so the pass cannot record a delivery for a Condition it
+// deletes, which nothing would close.
+export const purgeService = (
+  sql: SQL,
+  { service, system }: { service: string; system: string },
+): Promise<PurgedService> =>
+  sql.begin(async (tx) => {
+    // A pass can outlast the pool's statement timeout. Its lock comes before
+    // the System's row, which a pass's delivery insert waits on.
+    await tx.unsafe(`SET LOCAL statement_timeout = '2min'`);
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${DELIVERY_LOCK}))`;
+    const held: unknown[] = await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
+    if (held.length === 0) {
+      return { kind: 'nothing' };
+    }
+    const recorded: unknown[] = await tx`
+      SELECT 1 FROM mirrored_records
+      WHERE system = ${system} AND kind = 'service' AND name = ${service}
+    `;
+    if (recorded.length > 0) {
+      return { kind: 'recorded' };
+    }
+    const deleted = await deleteAll(tx, SERVICE_HISTORY, [system, service]);
+    return { kind: deleted === 0 ? 'nothing' : 'purged' };
   });
