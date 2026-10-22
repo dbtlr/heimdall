@@ -1,6 +1,7 @@
 import type { SQL } from 'bun';
 
 import { holdProjection } from './projection.ts';
+import { retryOnDeadlock } from './transcripts.ts';
 import type { Removed } from './transcripts.ts';
 
 // What `purgeSystem` did: refused a System that is paired or holds a pending
@@ -17,7 +18,9 @@ export type Purged =
 const PURGE_TIMEOUT = '10min';
 
 // What a System's Reports left, children before the rows they reference and
-// the System's row last. Each statement takes the System's name as $1.
+// the System's row last. Vitals go before Harness process readings, the order
+// the Vitals prune deletes them in, so the two cannot deadlock. Each statement
+// takes the System's name as $1.
 const HISTORY = [
   'DELETE FROM condition_transitions WHERE condition IN (SELECT id FROM conditions WHERE system = $1)',
   'DELETE FROM load_episode_samples WHERE condition IN (SELECT id FROM conditions WHERE system = $1)',
@@ -26,13 +29,13 @@ const HISTORY = [
   'DELETE FROM condition_limits WHERE system = $1',
   'DELETE FROM load_evaluations WHERE system = $1',
   'DELETE FROM hot_process_evaluations WHERE system = $1',
+  'DELETE FROM vitals_samples WHERE system = $1',
+  'DELETE FROM vitals_rollups WHERE system = $1',
+  'DELETE FROM disk_rollups WHERE system = $1',
   'DELETE FROM harness_process_samples WHERE process IN (SELECT id FROM harness_processes WHERE system = $1)',
   'DELETE FROM harness_process_rollups WHERE process IN (SELECT id FROM harness_processes WHERE system = $1)',
   'DELETE FROM harness_processes WHERE system = $1',
   'DELETE FROM harness_installs WHERE system = $1',
-  'DELETE FROM vitals_samples WHERE system = $1',
-  'DELETE FROM vitals_rollups WHERE system = $1',
-  'DELETE FROM disk_rollups WHERE system = $1',
   'DELETE FROM record_sets WHERE system = $1',
   'DELETE FROM mirrored_records WHERE system = $1',
   'DELETE FROM records_first_mirrored WHERE system = $1',
@@ -83,8 +86,20 @@ const deleteAll = async (tx: SQL, statements: readonly string[], system: string)
 // insight derived from them stay unless `transcripts`, which deletes them and
 // their generations' rows outright, so nothing refuses the name's paths again.
 // Kept transcripts recompute their stretches without the deleted Harness
-// processes, as the stale marks their deletion adds say to.
+// processes, as the stale marks their deletion adds say to. A refresh that
+// marks the same Sessions stale can deadlock with the purge, which then tries
+// again, as a transcript delete does.
 export const purgeSystem = (
+  sql: SQL,
+  options: { system: string; transcripts: boolean },
+): Promise<Purged> =>
+  retryOnDeadlock(
+    (ms) => Bun.sleep(ms),
+    () => purgeOnce(sql, options),
+  );
+
+// One transaction of `purgeSystem`.
+const purgeOnce = (
   sql: SQL,
   { system, transcripts }: { system: string; transcripts: boolean },
 ): Promise<Purged> =>
@@ -115,13 +130,17 @@ export const purgeSystem = (
       ORDER BY id
       FOR UPDATE
     `;
+    const harnesses: unknown[] = await tx`
+      SELECT 1 FROM transcript_source_harnesses WHERE system = ${system}
+    `;
     await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
     let deleted = await deleteAll(tx, HISTORY, system);
     if (transcripts) {
       deleted += await deleteAll(tx, TRANSCRIPTS, system);
     }
     if (deleted === 0) {
-      return { kind: generations.length > 0 && !transcripts ? 'transcripts_only' : 'nothing' };
+      const kept = generations.length > 0 || harnesses.length > 0;
+      return { kind: kept && !transcripts ? 'transcripts_only' : 'nothing' };
     }
     // Generations deleted before hold no transcripts to count.
     const live = generations.filter((row) => row.deleted_at === null);

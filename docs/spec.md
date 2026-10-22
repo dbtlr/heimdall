@@ -721,7 +721,7 @@ Cost is list-price cost (glossary): what a request's tokens would cost at the mo
 
 - its row, with its Last seen and Collector details
 - its Vitals samples and rollups, and its disk rollups
-- its Conditions, with their Timeline, their deliveries, and its stored limits
+- its Conditions, with their Timeline, their deliveries, and its stored limits. `serve` stores the limits again when it starts, if `hub.toml` still names the System.
 - its load and hot-process evaluations
 - its mirrored records, runs, and checks
 - its Harness installs and Harness processes

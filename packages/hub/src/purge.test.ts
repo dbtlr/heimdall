@@ -417,3 +417,22 @@ test('a Session purge system keeps no longer links to the Harness process it del
   `;
   expect(stretches).toEqual([{ link: 'unmatched', pid: null, session_id: 's1' }]);
 });
+
+test('purge system without --transcripts, when only transcript sources are left, says to add it', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('old-1', now())`;
+  await db.sql`
+    INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
+    VALUES ('old-1', 'claude-code', 'claude-code', now())
+  `;
+  await using config = await hubConfig(db);
+  await invoke(['purge', 'system', 'old-1', ...configArgs(config)]);
+
+  const { code, stderr } = await invoke(['purge', 'system', 'old-1', ...configArgs(config)]);
+
+  expect(stderr).toContain(
+    'The Hub holds only transcripts for old-1. Add --transcripts to delete them.',
+  );
+  expect(code).toBe(1);
+});

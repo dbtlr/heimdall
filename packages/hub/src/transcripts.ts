@@ -184,7 +184,10 @@ export const deleteTranscripts = (
   return retryOnDeadlock(sleep, () => deleteOnce(sql, { before, dryRun, filter, now }));
 };
 
-const retryOnDeadlock = async <T>(
+// Runs `attempt`, a transaction, again when PostgreSQL aborts it for a
+// deadlock, up to three tries with a short backoff, and rejects with the
+// deadlock when every try ends in one. A purge uses it too.
+export const retryOnDeadlock = async <T>(
   sleep: (ms: number) => Promise<void>,
   attempt: () => Promise<T>,
 ): Promise<T> => {
