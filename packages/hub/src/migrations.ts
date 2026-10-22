@@ -2256,6 +2256,16 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 37,
   },
+  {
+    // A System's transcripts name it without needing its row, so purging a
+    // System can keep them, and the Session insight derived from them, after
+    // its row is gone. A System paired again under the name gets a new row.
+    sql: `
+      ALTER TABLE transcript_generations DROP CONSTRAINT transcript_generations_system_fkey;
+      ALTER TABLE transcript_source_harnesses DROP CONSTRAINT transcript_source_harnesses_system_fkey;
+    `,
+    version: 38,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

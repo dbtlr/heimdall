@@ -17,7 +17,8 @@ import {
 } from './transcript-reader.ts';
 import { deleteTranscripts as deleteGenerations } from './transcripts.ts';
 
-const count = (n: number, noun: string) =>
+// `n` and its noun, plural unless one, such as "1,024 gzipped bytes".
+export const count = (n: number, noun: string) =>
   `${n.toLocaleString('en-US')} ${noun}${n === 1 ? '' : 's'}`;
 
 // `heimdall-hub transcripts delete`: deletes whole generations matching every

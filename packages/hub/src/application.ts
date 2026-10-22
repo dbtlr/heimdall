@@ -11,6 +11,7 @@ import { deliveryTestAction } from './delivery-commands.ts';
 import { duration } from './duration.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
+import { purgeSystemAction } from './purge-commands.ts';
 import { serveAction } from './serve.ts';
 import { silenceAction } from './silence-commands.ts';
 import { deleteTranscriptsAction, showTranscriptAction } from './transcript-commands.ts';
@@ -76,7 +77,7 @@ export const serve = new Command('serve', {
   })
   .action(serveAction);
 
-// The System a `pair`, `unpair`, or `silence` names, by Fleet's System name rule.
+// The System a `pair`, `unpair`, `silence`, or `purge system` names, by Fleet's System name rule.
 const system = {
   description: 'The Fleet System name, such as laptop-1.',
   required: true,
@@ -114,6 +115,22 @@ export const silence = new Command('silence', {
   })
   .option('database', database)
   .action(silenceAction);
+
+export const purgeSystem = new Command('system', {
+  description:
+    'Delete everything the Hub holds for an unpaired System. Its transcripts stay unless --transcripts.',
+})
+  .argument('system', system)
+  .option('transcripts', {
+    description: "Delete the System's transcripts and the Session insight derived from them too.",
+    type: 'boolean',
+  })
+  .option('database', database)
+  .action(purgeSystemAction);
+
+const purge = new Command('purge', {
+  description: 'Delete what the Hub holds for something retired.',
+}).command(purgeSystem);
 
 export const deleteTranscripts = new Command('delete', {
   description:
@@ -223,6 +240,7 @@ export const app = new Application('heimdall-hub', {
   .command(pair)
   .command(unpair)
   .command(silence)
+  .command(purge)
   .command(transcripts)
   .command(delivery)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));
