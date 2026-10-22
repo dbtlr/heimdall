@@ -436,3 +436,171 @@ test('purge system without --transcripts, when only transcript sources are left,
   );
   expect(code).toBe(1);
 });
+
+// One Service down occurrence of `subject` on `system`, open when `cleared` is
+// null, with its Timeline and, when `delivered`, its delivery.
+const seedServiceDown = async (
+  sql: SQL,
+  {
+    cleared,
+    delivered = false,
+    kind = 'service_down',
+    subject,
+    system,
+  }: { cleared: Date | null; delivered?: boolean; kind?: string; subject: string; system: string },
+) => {
+  const [condition]: { id: string }[] = await sql`
+    INSERT INTO conditions (
+      system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level, cleared_at
+    ) VALUES (${system}, ${kind}, ${subject}, ${AT}, 'Stopped.', ${AT}, 'Stopped.', 'alert', ${cleared})
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO condition_transitions (condition, action, level, at, reason)
+    VALUES (${condition?.id}, 'raised', 'alert', ${AT}, 'Stopped.')
+  `;
+  if (cleared !== null) {
+    await sql`
+      INSERT INTO condition_transitions (condition, action, level, at, reason)
+      VALUES (${condition?.id}, 'cleared', 'alert', ${cleared}, 'Stopped.')
+    `;
+  }
+  if (delivered) {
+    await sql`
+      INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at)
+      VALUES (${system}, ${kind}, ${subject}, ${AT}, ${AT})
+    `;
+  }
+};
+
+// What the Hub holds of Conditions and their deliveries, as kind, subject, and
+// System, with each Condition's Timeline.
+const conditionRows = async (sql: SQL) => ({
+  conditions: await sql`
+    SELECT c.system, c.kind, c.subject, c.cleared_at IS NULL AS open,
+           (SELECT count(*)::int FROM condition_transitions t WHERE t.condition = c.id) AS transitions
+    FROM conditions c ORDER BY c.system, c.kind, c.subject, c.id
+  `,
+  deliveries: await sql`
+    SELECT system, kind, subject FROM deliveries ORDER BY system, kind, subject
+  `,
+  transitions: (await sql`SELECT count(*)::int AS n FROM condition_transitions`)[0].n as number,
+});
+
+// A migrated database where laptop-1, which is paired, forgot the Service
+// old-web after it went down twice, and still records web; server-1 still has
+// an old-web of its own. A drift Condition on laptop-1 happens to have old-web
+// as its subject.
+const setupServices = async () => {
+  const db = await testDatabase();
+  await migrate(db.sql);
+  const later = new Date(AT.getTime() + 60_000);
+  for (const system of ['laptop-1', 'server-1']) {
+    // oxlint-disable-next-line no-await-in-loop -- two Systems.
+    await db.sql`INSERT INTO systems (name, last_seen_at) VALUES (${system}, ${AT})`;
+    // oxlint-disable-next-line no-await-in-loop -- two Systems.
+    await db.sql`
+      INSERT INTO record_sets (system, sent_at, received_at) VALUES (${system}, ${AT}, ${AT})
+    `;
+  }
+  await storeToken(db.sql, { pairedAt: AT.getTime(), system: 'laptop-1', token: 'laptop-token' });
+  await db.sql`
+    INSERT INTO mirrored_records (system, kind, name, record)
+    VALUES ('laptop-1', 'service', 'web', '{}'), ('server-1', 'service', 'old-web', '{}')
+  `;
+  await seedServiceDown(db.sql, { cleared: later, subject: 'old-web', system: 'laptop-1' });
+  // Not yet cleared: forgetting clears it at the next evaluation.
+  await seedServiceDown(db.sql, {
+    cleared: null,
+    delivered: true,
+    subject: 'old-web',
+    system: 'laptop-1',
+  });
+  await seedServiceDown(db.sql, {
+    cleared: later,
+    kind: 'drift',
+    subject: 'old-web',
+    system: 'laptop-1',
+  });
+  await seedServiceDown(db.sql, {
+    cleared: null,
+    delivered: true,
+    subject: 'web',
+    system: 'laptop-1',
+  });
+  await seedServiceDown(db.sql, {
+    cleared: null,
+    delivered: true,
+    subject: 'old-web',
+    system: 'server-1',
+  });
+  const config = await hubConfig(db);
+  return {
+    args: configArgs(config),
+    db,
+    [Symbol.asyncDispose]: async () => {
+      await config[Symbol.asyncDispose]();
+      await db[Symbol.asyncDispose]();
+    },
+  };
+};
+
+test("purge service deletes a forgotten Service's Conditions, Timeline, and deliveries on its System alone", async () => {
+  await using s = await setupServices();
+
+  const { code, stdout } = await invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
+
+  expect(stdout).toBe('Purged the Service old-web from laptop-1.\n');
+  expect(code).toBe(0);
+  expect(await conditionRows(s.db.sql)).toEqual({
+    conditions: [
+      { kind: 'drift', open: false, subject: 'old-web', system: 'laptop-1', transitions: 2 },
+      { kind: 'service_down', open: true, subject: 'web', system: 'laptop-1', transitions: 1 },
+      { kind: 'service_down', open: true, subject: 'old-web', system: 'server-1', transitions: 1 },
+    ],
+    deliveries: [
+      { kind: 'service_down', subject: 'web', system: 'laptop-1' },
+      { kind: 'service_down', subject: 'old-web', system: 'server-1' },
+    ],
+    transitions: 4,
+  });
+});
+
+test('purge service refuses a Service its System still records, deletes nothing, and exits 1', async () => {
+  await using s = await setupServices();
+  const before = await conditionRows(s.db.sql);
+
+  const { code, stderr } = await invoke(['purge', 'service', 'laptop-1', 'web', ...s.args]);
+
+  expect(stderr).toContain(
+    'laptop-1 still records the Service web. Run heimdall-collector forget service web on laptop-1 first.',
+  );
+  expect(code).toBe(1);
+  expect(await conditionRows(s.db.sql)).toEqual(before);
+});
+
+test('purge service is not held back by an unreadable service record', async () => {
+  await using s = await setupServices();
+  await s.db.sql`
+    UPDATE record_sets SET unreadable = '[{"kind": "service", "name": "old-web"}]'
+    WHERE system = 'laptop-1'
+  `;
+
+  const { code } = await invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
+
+  expect(code).toBe(0);
+});
+
+test('purge service on a Service the Hub holds nothing for says so and exits 1', async () => {
+  await using s = await setupServices();
+
+  const unknownService = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
+  const unknownSystem = await invoke(['purge', 'service', 'laptop-2', 'old-web', ...s.args]);
+
+  expect(unknownService.stderr).toContain('The Hub holds nothing for the Service db on laptop-1.');
+  expect(unknownService.code).toBe(1);
+  expect(unknownSystem.stderr).toContain(
+    'The Hub holds nothing for the Service old-web on laptop-2.',
+  );
+  expect(unknownSystem.code).toBe(1);
+});

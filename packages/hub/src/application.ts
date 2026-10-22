@@ -1,4 +1,4 @@
-import { SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
+import { RECORD_NAME, SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command, plugin } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
@@ -11,7 +11,7 @@ import { deliveryTestAction } from './delivery-commands.ts';
 import { duration } from './duration.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
-import { purgeSystemAction } from './purge-commands.ts';
+import { purgeServiceAction, purgeSystemAction } from './purge-commands.ts';
 import { serveAction } from './serve.ts';
 import { silenceAction } from './silence-commands.ts';
 import { deleteTranscriptsAction, showTranscriptAction } from './transcript-commands.ts';
@@ -77,7 +77,7 @@ export const serve = new Command('serve', {
   })
   .action(serveAction);
 
-// The System a `pair`, `unpair`, `silence`, or `purge system` names, by Fleet's System name rule.
+// The System a `pair`, `unpair`, `silence`, or `purge` names, by Fleet's System name rule.
 const system = {
   description: 'The Fleet System name, such as laptop-1.',
   required: true,
@@ -128,9 +128,24 @@ export const purgeSystem = new Command('system', {
   .option('database', database)
   .action(purgeSystemAction);
 
+export const purgeService = new Command('service', {
+  description:
+    "Delete a forgotten Service's Conditions and their Timeline from one System. The System must no longer record it.",
+})
+  .argument('system', system)
+  .argument('service', {
+    description: 'The Service, as its record names it, such as web.',
+    required: true,
+    validate: text({ message: 'Use a record name, such as web.', pattern: RECORD_NAME }),
+  })
+  .option('database', database)
+  .action(purgeServiceAction);
+
 const purge = new Command('purge', {
   description: 'Delete what the Hub holds for something retired.',
-}).command(purgeSystem);
+})
+  .command(purgeSystem)
+  .command(purgeService);
 
 export const deleteTranscripts = new Command('delete', {
   description:
