@@ -1,6 +1,7 @@
-// The data the Fleet overview renders: every paired System as a lane on one
-// time axis, the unpaired Systems when asked for, and what needs the operator now.
-// Times are epoch milliseconds.
+// The data the Fleet pages render: every paired System, the unpaired Systems
+// when asked for, and what needs the operator now. The Fleet page's tiles read
+// a glance; Compare reads the overview, which draws each System as a lane on
+// one time axis. Times are epoch milliseconds.
 
 import type { ConditionKind, ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
@@ -61,10 +62,9 @@ export type ConditionMark = {
   transitions: ConditionTransition[];
 };
 
-export type Lane = {
-  buckets: CpuBucket[];
-  conditions: ConditionMark[];
-  gaps: Gap[];
+// What a Fleet tile draws of one System: its status, its newest Vitals, and
+// its silence, none of its history over a range.
+export type SystemGlance = {
   lastSeenAt: number | undefined;
   // The newest Vitals sample, undefined for a System that never sent one.
   latest:
@@ -76,10 +76,17 @@ export type Lane = {
   silencedUntil: number | undefined;
   sleeps: boolean;
   status: LaneStatus;
+};
+
+// A System's glance with its history over the range, drawn on Compare.
+export type Lane = SystemGlance & {
+  buckets: CpuBucket[];
+  conditions: ConditionMark[];
+  gaps: Gap[];
   stretches: Stretch[];
 };
 
-export type FleetOverview = {
+export type FleetGlance<L extends SystemGlance = SystemGlance> = {
   // Everything that needs the operator on the Systems shown, with the evidence
   // behind it: newest first detected first, those on paired Systems first.
   attention: Attention[];
@@ -87,13 +94,12 @@ export type FleetOverview = {
   // while delivery works or is off. A status of the Hub, not a Condition: it
   // joins no count or list (ADR-0020).
   deliveryFailingSince: number | undefined;
-  from: number;
-  lanes: Lane[];
+  lanes: L[];
   now: number;
-  range: Range;
-  to: number;
   // How many Systems the Hub holds that are no longer paired, asked for or not.
   unpairedCount: number;
   // The unpaired Systems' lanes, empty unless they were asked for.
-  unpairedLanes: Lane[];
+  unpairedLanes: L[];
 };
+
+export type FleetOverview = FleetGlance<Lane> & { from: number; range: Range; to: number };

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
-import type { Lane } from '../server/fleet-overview-types.ts';
+import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import { canWaitRows, diskReading, meterLevels, tileOrder } from './fleet-tile.ts';
 
 const condition = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
@@ -47,17 +47,13 @@ const reboot = (level: ConditionLevel): Attention => ({
   unpaired: false,
 });
 
-const lane = (name: string, over: Partial<Lane> = {}): Lane => ({
-  buckets: [],
-  conditions: [],
-  gaps: [],
+const lane = (name: string, over: Partial<SystemGlance> = {}): SystemGlance => ({
   lastSeenAt: 1_000_000,
   latest: undefined,
   name,
   silencedUntil: undefined,
   sleeps: false,
   status: 'up',
-  stretches: [],
   ...over,
 });
 

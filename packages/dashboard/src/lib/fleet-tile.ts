@@ -1,7 +1,7 @@
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention, AttentionKind } from '../server/attention-types.ts';
-import type { Lane } from '../server/fleet-overview-types.ts';
+import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import type { Disk } from '../server/system-detail-types.ts';
 import { ATTENTION_NAMES, subjectText } from './attention.ts';
 import { diskUsage, fullestDisk } from './facts.ts';
@@ -63,14 +63,14 @@ export const canWaitRows = (
 export type SystemTile = {
   asleep: boolean;
   items: Attention[];
-  lane: Lane;
+  lane: SystemGlance;
   level: 'alert' | 'warning' | undefined;
 };
 
 // The tiles in reading order: Systems with alerts, then warnings, awake before
 // asleep, then by name.
 export const tileOrder = (
-  lanes: readonly Lane[],
+  lanes: readonly SystemGlance[],
   attention: readonly Attention[],
   now: number,
 ): SystemTile[] =>

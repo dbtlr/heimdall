@@ -8,7 +8,7 @@ import type { SystemTile } from '../lib/fleet-tile.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
-import type { Lane } from '../server/fleet-overview-types.ts';
+import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import {
   AttentionStatus,
   MARK_COLOR,
@@ -168,7 +168,7 @@ function StatusSlot({ tile }: { tile: SystemTile }) {
 
 // The tile's top-right: the time left on a silence with a crossed-out bell, else
 // the short time since Last seen, or "Never seen". Screen readers get the long form.
-function TileCorner({ lane, now }: { lane: Lane; now: number }) {
+function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
   const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground';
   if (lane.silencedUntil !== undefined) {
     const left = silenceLeft(now, lane.silencedUntil);
