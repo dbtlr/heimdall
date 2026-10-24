@@ -8,6 +8,22 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.9.0 - 2026-10-24
+
+### Added
+
+- **Purge a retired System from the Hub** (HMD-137). `heimdall-hub purge system <system>` deletes everything the Hub holds for an unpaired System, which removes the System from the dashboard and from the records read. Its transcripts and their Session insight stay unless given `--transcripts` ([Purging a retired System](docs/spec.md#purging-a-retired-system)).
+- **Purge a forgotten Service from the Hub** (HMD-138). `heimdall-hub purge service <system> <service>` deletes the Service down Conditions, Timeline, and deliveries the Hub holds for a Service its System no longer records, which removes the Service from the System's history ([Purging a forgotten Service](docs/spec.md#purging-a-forgotten-service)).
+- **The Collector logs systemd Service stops** (HMD-164). At each Service check the Collector compares what systemd holds about a unit with a baseline it keeps per Service and per boot. It logs each stop, even one shorter than a check, with when it stopped and ran again and its restarts, and with how it ended when a check saw it stopped. The log rides Reports in a new `serviceStops` section until the Hub takes it; upgrade the Hub before its Collectors, and run systemd 247 or later ([Service stops](docs/spec.md#service-stops)).
+- **The Hub keeps Service stops and raises a Service restarted note** (HMD-165). The note shows the latest run's stop count, first and last stop, and latest result in Can wait, and clears 24 hours after the latest stop began. It never escalates or sends a push. Ended stops stay for 90 days; System and Service purges remove them and their Conditions ([Service stops](docs/spec.md#service-stops)).
+- **A page for each Service's stops** (HMD-166). A Service's name in a System page's Recorded panel opens `/systems/<System>/services/<Service>`, which shows its stops from the last 90 days on a strip and in a list by day, with how each ended, how long the Service was down, and when the Hub received it. The dashboard also answers `GET /api/v1/service-stops`, which reads the same stops back, filtered by `system`, `service`, and `since`, and by `unpaired=include` for Systems no longer paired ([Service stops](docs/spec.md#service-stops)).
+- **The Collector logs Docker container stops** (HMD-167). At each check of a `docker` Service the Collector compares when the container last started and finished, its restart count, and how its last run ended with the baseline it keeps, and logs each stop as it does for systemd. A recreated container, as after a deploy, counts as a stop from its creation to its start. Container stops reach the Hub's Service restarted note and the Service page unchanged ([Service stops](docs/spec.md#service-stops)).
+- **The Collector logs launchd Service stops** (HMD-168). At each check of a `launchd` Service the Collector compares launchd's run count, the pid of the running process, and how its last run ended with the baseline it keeps, and logs each stop it finds, timed to the minute between the two checks around it, since launchd holds no times. On macOS the Collector now reads the boot from `sysctl`, so Docker Desktop container stops are logged there too. Both reach the Hub's Service restarted note and the Service page unchanged ([Service stops](docs/spec.md#service-stops)).
+
+### Changed
+
+- **The Fleet page opens on System tiles** (HMD-160). Each System is a tile with its health, how long ago it was last seen, and CPU, memory, and disk meters. Asleep Systems show a moon and silenced ones a crossed-out bell with the time left; the fleet verdict moves into the header, and notes gather in a "Can wait" list under the tiles.
+
 ## v0.8.0 - 2026-10-21
 
 ### Added
