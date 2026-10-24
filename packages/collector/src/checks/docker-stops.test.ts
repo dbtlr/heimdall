@@ -453,3 +453,32 @@ test('a dead container is logged with its exit code, and an exit code the Hub ca
     { exitStatus: null, result: null, stoppedAt: T + 130 * S },
   ]);
 });
+
+test('a container replaced while stopped keeps how the old one ended when the new one is seen before it starts', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(
+    inspected({ exit: 143, finished: T + 10 * S, started: T - 60 * MIN, status: 'exited' }),
+  );
+  const replacement = { created: T + 70 * S, finished: null, id: 'b'.repeat(64) };
+  await c.check(inspected({ ...replacement, started: null, status: 'created' }));
+  const pendingBefore = c.logged();
+  await c.check(inspected({ ...replacement, started: T + 130 * S }));
+  const logged = c.logged();
+  c.close();
+
+  expect(pendingBefore).toMatchObject([{ exitStatus: 143, ongoing: true, result: 'exit-code' }]);
+  expect(logged).toEqual([
+    {
+      exitStatus: 143,
+      ongoing: false,
+      restarts: 0,
+      result: 'exit-code',
+      service: 'web',
+      startedAt: T + 130 * S,
+      stoppedAt: T + 10 * S,
+    },
+  ]);
+});

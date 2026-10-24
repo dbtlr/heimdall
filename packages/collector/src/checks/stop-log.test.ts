@@ -167,3 +167,19 @@ test('a log from before stops were unique by Service and time opens with one of 
 
   expect(pending).toMatchObject([{ startedAt: T + 7000, stoppedAt: T }]);
 });
+
+test('a check that sees a stop under way with no word on how it went keeps the word and sends nothing new', async () => {
+  await using dir = await tempStateDir();
+  const { observe, stops } = await setup(dir);
+  observe(facts(T, null));
+  stops.pending().settle();
+
+  observe({ ...facts(T, null), exitStatus: null, result: null });
+  const pending = stops.pending().stops;
+  observe(facts(T, T + 60_000));
+  const ended = stops.pending().stops;
+  stops.close();
+
+  expect(pending).toEqual([]);
+  expect(ended).toMatchObject([{ exitStatus: 1, ongoing: false, result: 'exit-code' }]);
+});
