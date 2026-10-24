@@ -13,11 +13,15 @@ export const MAX_STOPS_PER_SERVICE = 1000;
 
 const DAY_MS = 86_400_000;
 
-// What a supervisor holds about one Service at one check: whether it is
+// The most restarts a stop carries, since the Hub refuses a Report with a
+// count past a 32-bit integer.
+const MAX_RESTARTS = 2_147_483_647;
+
+// What systemd or Docker holds about one Service at one check: whether it is
 // running, when it last entered and left its running state, the automatic
 // restarts it counted, and how its last run ended. A time or a word the
 // supervisor does not hold is null.
-export type StopFacts = {
+export type TimedStopFacts = {
   exitStatus: number | null;
   restarts: number;
   result: string | null;
@@ -25,6 +29,20 @@ export type StopFacts = {
   startedAt: number | null;
   stoppedAt: number | null;
 };
+
+// What launchd holds about one Service at one check: whether it is running,
+// the pid of its process, how many times it started the Service since loading
+// it, and how its last run ended, which launchd keeps after the next start. It
+// holds no times, so the log times a stop by its own checks (ADR-0021).
+export type CountedStopFacts = {
+  exitStatus: number | null;
+  pid: number | null;
+  result: string | null;
+  running: boolean;
+  runs: number;
+};
+
+export type StopFacts = CountedStopFacts | TimedStopFacts;
 
 // A page of the log the Hub has not taken, and how to settle it once a Report
 // carrying it is delivered.
@@ -38,8 +56,15 @@ export type StopLog = {
   close: () => void;
   // Compares one check's facts with the Service's baseline, logs the stop they
   // show, if any, and makes them the baseline. A Service with no baseline, or
-  // one from another boot, gets a fresh baseline and no stop.
-  observe: (check: { boot: string; facts: StopFacts; key: string; service: string }) => void;
+  // one from another boot, gets a fresh baseline and no stop. `checkedAt` is
+  // when the check began, no later than the supervisor answered it.
+  observe: (check: {
+    boot: string;
+    checkedAt: number;
+    facts: StopFacts;
+    key: string;
+    service: string;
+  }) => void;
   // The stops not yet taken, oldest first, at most one Report's worth.
   pending: () => PendingStops;
   // Forgets the baseline of every Service but those named, ending the stop each
@@ -47,10 +72,15 @@ export type StopLog = {
   retain: (keys: readonly string[]) => void;
 };
 
+// `restarts` holds launchd's runs for a launchd Service, and `checkedAt`,
+// `running`, and `pid` are what the log times its stops by.
 type BaselineRow = {
   boot: string;
+  checkedAt: number;
   openStop: number | null;
+  pid: number | null;
   restarts: number;
+  running: number;
   stoppedAt: number | null;
 };
 
@@ -84,7 +114,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
   db.run('PRAGMA busy_timeout = 5000');
   db.run('PRAGMA journal_mode = WAL');
   db.run(
-    'CREATE TABLE IF NOT EXISTS baselines (key TEXT PRIMARY KEY, boot TEXT NOT NULL, stopped_at INTEGER, restarts INTEGER NOT NULL, open_stop INTEGER)',
+    'CREATE TABLE IF NOT EXISTS baselines (key TEXT PRIMARY KEY, boot TEXT NOT NULL, stopped_at INTEGER, restarts INTEGER NOT NULL, open_stop INTEGER, checked_at INTEGER NOT NULL, running INTEGER NOT NULL, pid INTEGER)',
   );
   db.run(
     'CREATE TABLE IF NOT EXISTS stops (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, service TEXT NOT NULL, stopped_at INTEGER NOT NULL, started_at INTEGER, ongoing INTEGER NOT NULL, restarts INTEGER NOT NULL, result TEXT, exit_status INTEGER, revision INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0, changed_at INTEGER NOT NULL)',
@@ -100,10 +130,10 @@ const logOver = (db: Database, now: () => number): StopLog => {
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS stops_name ON stops (service, stopped_at)');
 
   const baselineOf = db.query<BaselineRow, { key: string }>(
-    'SELECT boot, stopped_at AS stoppedAt, restarts, open_stop AS openStop FROM baselines WHERE key = $key',
+    'SELECT boot, stopped_at AS stoppedAt, restarts, open_stop AS openStop, checked_at AS checkedAt, running, pid FROM baselines WHERE key = $key',
   );
   const putBaseline = db.query(
-    'INSERT OR REPLACE INTO baselines (key, boot, stopped_at, restarts, open_stop) VALUES ($key, $boot, $stoppedAt, $restarts, $openStop)',
+    'INSERT OR REPLACE INTO baselines (key, boot, stopped_at, restarts, open_stop, checked_at, running, pid) VALUES ($key, $boot, $stoppedAt, $restarts, $openStop, $checkedAt, $running, $pid)',
   );
   const insertStop = db.query<{ id: number }, Record<string, number | string | null>>(
     `INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, result, exit_status, revision, changed_at)
@@ -115,17 +145,18 @@ const logOver = (db: Database, now: () => number): StopLog => {
   );
   // The facts of a check that saw the Service still stopped are its latest word
   // on how the stop went, and a check that saw it running again ends the stop
-  // and keeps the word it had, since systemd forgets it on the new start. A
-  // check that saw it stopped with no word, as a Docker container created to
-  // replace one that ended, keeps the word too. A check that changes nothing
-  // leaves the stop as it was, so it is not sent again.
+  // and keeps the word it had, since systemd forgets it on the new start;
+  // launchd keeps it, so its word is taken then too (`takeExit`). A check that
+  // saw it stopped with no word, as a Docker container created to replace one
+  // that ended, keeps the word too. A check that changes nothing leaves the
+  // stop as it was, so it is not sent again.
   const extendStop = db.query(
     `UPDATE stops SET restarts = restarts + $restarts, revision = revision + 1, changed_at = $now,
       ongoing = $ongoing, started_at = $startedAt,
-      result = CASE WHEN $ongoing = 1 AND $result IS NOT NULL THEN $result ELSE result END,
-      exit_status = CASE WHEN $ongoing = 1 AND $exitStatus IS NOT NULL THEN $exitStatus ELSE exit_status END
+      result = CASE WHEN $takeExit = 1 AND $result IS NOT NULL THEN $result ELSE result END,
+      exit_status = CASE WHEN $takeExit = 1 AND $exitStatus IS NOT NULL THEN $exitStatus ELSE exit_status END
     WHERE id = $id AND ($restarts > 0 OR ongoing IS NOT $ongoing OR started_at IS NOT $startedAt
-      OR ($ongoing = 1 AND (($result IS NOT NULL AND result IS NOT $result)
+      OR ($takeExit = 1 AND (($result IS NOT NULL AND result IS NOT $result)
         OR ($exitStatus IS NOT NULL AND exit_status IS NOT $exitStatus))))`,
   );
   const endUnknown = db.query(
@@ -150,8 +181,15 @@ const logOver = (db: Database, now: () => number): StopLog => {
 
   // The stop a check's facts show against the baseline, logged or carried
   // into the stop under way, and the stop still under way after it.
+  // `exitHeld` is whether the supervisor still holds how the last run ended
+  // once the Service runs again, as launchd does.
   const logStop = (
-    { facts, key, service }: { facts: StopFacts; key: string; service: string },
+    {
+      exitHeld,
+      facts,
+      key,
+      service,
+    }: { exitHeld: boolean; facts: TimedStopFacts; key: string; service: string },
     baseline: BaselineRow,
   ): number | null => {
     const left = facts.stoppedAt !== null && facts.stoppedAt !== baseline.stoppedAt;
@@ -163,6 +201,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
       (facts.stoppedAt === null || facts.startedAt >= facts.stoppedAt);
     const ongoing = ranAgain ? 0 : 1;
     const startedAt = ranAgain ? facts.startedAt : null;
+    const takeExit = !ranAgain || exitHeld;
     if (baseline.openStop !== null) {
       extendStop.run({
         exitStatus: facts.exitStatus,
@@ -172,6 +211,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
         restarts,
         result: facts.result,
         startedAt,
+        takeExit: takeExit ? 1 : 0,
       });
       return ranAgain ? null : baseline.openStop;
     }
@@ -179,12 +219,12 @@ const logOver = (db: Database, now: () => number): StopLog => {
       return null;
     }
     const inserted = insertStop.get({
-      exitStatus: ranAgain ? null : facts.exitStatus,
+      exitStatus: takeExit ? facts.exitStatus : null,
       key,
       now: now(),
       ongoing,
       restarts,
-      result: ranAgain ? null : facts.result,
+      result: takeExit ? facts.result : null,
       service,
       startedAt,
       stoppedAt: facts.stoppedAt,
@@ -194,21 +234,28 @@ const logOver = (db: Database, now: () => number): StopLog => {
   };
 
   const observe = db.transaction((check: Parameters<StopLog['observe']>[0]) => {
-    const baseline = baselineOf.get({ key: check.key });
+    const held = baselineOf.get({ key: check.key });
+    const baseline = held?.boot === check.boot ? held : null;
+    const seen = check.facts;
+    const counted = 'runs' in seen;
+    const facts = 'runs' in seen ? timedByChecks(seen, baseline, now()) : seen;
     let openStop: number | null = null;
-    if (baseline === null || baseline.boot !== check.boot) {
-      if (baseline?.openStop != null) {
-        endUnknown.run({ id: baseline.openStop, now: now() });
+    if (baseline === null) {
+      if (held?.openStop != null) {
+        endUnknown.run({ id: held.openStop, now: now() });
       }
     } else {
-      openStop = logStop(check, baseline);
+      openStop = logStop({ ...check, exitHeld: counted, facts }, baseline);
     }
     putBaseline.run({
       boot: check.boot,
+      checkedAt: check.checkedAt,
       key: check.key,
       openStop,
-      restarts: check.facts.restarts,
-      stoppedAt: check.facts.stoppedAt,
+      pid: 'pid' in seen ? seen.pid : null,
+      restarts: facts.restarts,
+      running: facts.running ? 1 : 0,
+      stoppedAt: facts.stoppedAt,
     });
   });
 
@@ -243,7 +290,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
           ({ exitStatus, ongoing, restarts, result, service, startedAt, stoppedAt }) => ({
             exitStatus,
             ongoing: ongoing === 1,
-            restarts,
+            restarts: Math.min(restarts, MAX_RESTARTS),
             result,
             service,
             startedAt,
@@ -256,15 +303,37 @@ const logOver = (db: Database, now: () => number): StopLog => {
   };
 };
 
-// The id of the boot the System is running, which changes at every boot, or
-// undefined when it cannot be read.
-export const linuxBootId = async (
-  read: (path: string) => Promise<string> = (path) => Bun.file(path).text(),
-): Promise<string | undefined> => {
-  try {
-    const id = (await read('/proc/sys/kernel/random/boot_id')).trim();
-    return id === '' ? undefined : id;
-  } catch {
-    return undefined;
+// launchd's facts as the times the log compares (ADR-0021). A run ended since
+// the last check when the Service no longer runs, when another known pid runs
+// it, as after launchd loaded it again, or when launchd started it more often
+// than one start that brought it back from a stop. A run that ended is timed
+// from when the last check began, no later than the Service was seen in it,
+// and a Service running now ran again by `seenAt`, so the logged stop covers
+// the real one to the minute. A lower run count, as after launchd loaded the
+// Service again, is the new baseline. A Service with no baseline has no times
+// to compare.
+const timedByChecks = (
+  facts: CountedStopFacts,
+  baseline: BaselineRow | null,
+  seenAt: number,
+): TimedStopFacts => {
+  const { exitStatus, result, running, runs } = facts;
+  const timed = { exitStatus, restarts: runs, result, running };
+  if (baseline === null) {
+    return { ...timed, startedAt: null, stoppedAt: null };
   }
+  const wasRunning = baseline.running === 1;
+  const starts = Math.max(0, runs - baseline.restarts);
+  const ended = starts + (wasRunning ? 1 : 0) - (running ? 1 : 0);
+  const replaced =
+    wasRunning &&
+    running &&
+    facts.pid !== null &&
+    baseline.pid !== null &&
+    facts.pid !== baseline.pid;
+  return {
+    ...timed,
+    startedAt: running ? seenAt : null,
+    stoppedAt: ended > 0 || replaced ? baseline.checkedAt : baseline.stoppedAt,
+  };
 };

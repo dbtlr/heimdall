@@ -1,6 +1,7 @@
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { basename } from 'node:path';
 
+import { linuxBootId } from '../boot-id.ts';
 import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import { readCommand } from '../subprocess.ts';
 import type { ProcessEntry, ProcessSamplingReader } from './table.ts';
@@ -185,13 +186,7 @@ export const createLinuxReader = ({
     };
   };
   return {
-    bootId: async () => {
-      const id = (await fs.readText(`${root}/sys/kernel/random/boot_id`)).trim();
-      if (!id) {
-        throw new Error('The kernel returned no boot identity.');
-      }
-      return id;
-    },
+    bootId: () => linuxBootId((path) => fs.readText(path), root),
     cwdOf: async (pid) => {
       try {
         return await linkTarget(fs, `${root}/${String(pid)}/cwd`);

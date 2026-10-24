@@ -2,6 +2,7 @@ import { RECORD_NAME } from '@heimdall/schema';
 import type { SentServiceCheck, ServiceRecord } from '@heimdall/schema';
 import { every, httpGet as defaultHttpGet } from '@heimdall/service';
 
+import { systemBootId } from '../boot-id.ts';
 import type { Log } from '../collector.ts';
 import { describeError } from '../errors.ts';
 import type { RecordStore } from '../records.ts';
@@ -10,7 +11,6 @@ import { runCommand } from '../subprocess.ts';
 import type { CheckParts } from './parts.ts';
 import { checkService, findSystemctl } from './services.ts';
 import type { ServiceOutcome, ServiceTools } from './services.ts';
-import { linuxBootId } from './stop-log.ts';
 import type { StopLog } from './stop-log.ts';
 
 // How often the Services are checked.
@@ -87,13 +87,14 @@ const stopKeyOf = (record: ServiceRecord) =>
 // A check's `since` is when this Collector's clock first saw it in its current
 // state, kept while the Collector runs. A supervisor check that reads the
 // supervisor's stop facts also hands them to the stop log, with the boot they
-// came from, and a tick that cannot read the boot hands it none (ADR-0021). It holds a connection to the store of
-// its own, opened on the first tick and again on each tick until it opens, so a
-// database that cannot be opened costs the checks, never the daemon. `latest`
+// came from, and a tick that cannot read the boot hands it none (ADR-0021).
+// It holds a connection to the store of its own, opened on the first tick and
+// again on each tick until it opens, so a database that cannot be opened costs
+// the checks, never the daemon. `latest`
 // answers the part, or undefined before the first tick finishes and while the
 // last tick failed. `tick` never throws.
 export const createServiceChecks = ({
-  bootId = linuxBootId,
+  bootId = systemBootId,
   docker,
   findSystemctl: locateSystemctl = findSystemctl,
   httpGet = defaultHttpGet,
@@ -124,14 +125,14 @@ export const createServiceChecks = ({
   // stops, never the checks, and is warned about once until it works again.
   const logStops = (
     held: StopLog,
-    boot: string | undefined,
+    { boot, checkedAt }: { boot: string | undefined; checkedAt: number },
     checked: { outcomes: ServiceOutcome[]; record: ServiceRecord }[],
   ) => {
     try {
       for (const { outcomes, record } of checked) {
         const facts = outcomes.find((outcome) => outcome.stopFacts !== undefined)?.stopFacts;
         if (boot !== undefined && facts !== undefined) {
-          held.observe({ boot, facts, key: stopKeyOf(record), service: record.name });
+          held.observe({ boot, checkedAt, facts, key: stopKeyOf(record), service: record.name });
         }
       }
       held.retain(checked.map(({ record }) => stopKeyOf(record)));
@@ -161,14 +162,14 @@ export const createServiceChecks = ({
       uid: process.getuid?.(),
     };
     const checkedAt = now();
-    const boot = stops === undefined ? undefined : await bootId();
+    const boot = stops === undefined ? undefined : await bootId().catch((): undefined => undefined);
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.
     const outcomes = await Promise.all(
       records.map(async (record) => ({ outcomes: await checkService(record, tools), record })),
     );
     if (stops !== undefined) {
-      logStops(stops, boot, outcomes);
+      logStops(stops, { boot, checkedAt }, outcomes);
     }
     const found = outcomes.flatMap(({ outcomes: checked, record }) =>
       checked.map(({ check, detail, state }) => {

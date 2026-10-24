@@ -1,8 +1,9 @@
 import { basename } from 'node:path';
 
+import { darwinBootId } from '../boot-id.ts';
 import { HARNESS_NAMES, HARNESSES, isHarnessExecutable } from '../harnesses.ts';
 import type { Harness } from '../harnesses.ts';
-import { readCommand, runCommand } from '../subprocess.ts';
+import { runCommand } from '../subprocess.ts';
 import {
   darwinCwd,
   darwinKernelStart,
@@ -106,8 +107,7 @@ export const parsePs = (output: string, nowMs: number): ProcessEntry[] =>
 // kernel recorded, which no wall-clock step moves.
 // A process whose kernel start cannot be read keeps the start `ps` implies.
 export const createDarwinReader = ({
-  bootId = async () =>
-    (await readCommand(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'])).trim(),
+  bootId = () => darwinBootId(),
   cwdOf,
   kernelStartOf,
   now,
