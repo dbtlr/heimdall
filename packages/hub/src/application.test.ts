@@ -384,8 +384,16 @@ const databaseWithOldSample = async () => {
 
 const serveArgs = (config: { path: string }) => ['serve', '--config', config.path];
 
-test('serve prunes old Vitals as it starts, and says nothing about it', async () => {
+test('serve prunes old Vitals and ended Service stops as it starts, and says nothing about it', async () => {
   await using db = await databaseWithOldSample();
+  const old = new Date(Date.now() - 91 * 86_400_000);
+  const recent = new Date();
+  await db.sql`
+    INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+    VALUES ('laptop-1', 'old', ${old}, false, 0, ${recent}, ${recent}),
+           ('laptop-1', 'ongoing', ${old}, true, 0, ${recent}, ${recent}),
+           ('laptop-1', 'recent', ${recent}, false, 0, ${recent}, ${recent})
+  `;
   await using config = await configFile([
     'host = "127.0.0.1"',
     'port = 0',
@@ -397,6 +405,9 @@ test('serve prunes old Vitals as it starts, and says nothing about it', async ()
 
   const remaining = await db.sql`SELECT count(*)::int AS n FROM vitals_samples`;
   expect(remaining[0].n).toBe(0);
+  const stops: { service: string }[] =
+    await db.sql`SELECT service FROM service_stops ORDER BY service`;
+  expect(stops.map((row) => row.service)).toEqual(['ongoing', 'recent']);
   expect(stdout).not.toContain('prune');
   expect(stderr).not.toContain('prune');
   expect(code).toBe(130);
@@ -482,7 +493,9 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
     },
   });
 
-  expect(stdout.match(/Could not prune old Vitals: .*delete refused/gu)).toHaveLength(1);
+  expect(
+    stdout.match(/Could not prune old Vitals and Service stops: .*delete refused/gu),
+  ).toHaveLength(1);
   expect(health).toBe(200);
   expect(code).toBe(130);
 });

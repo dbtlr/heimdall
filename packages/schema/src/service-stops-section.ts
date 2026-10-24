@@ -20,9 +20,9 @@ export const MAX_SERVICE_STOPS_PER_REPORT = 1000;
 // one only a newer supervisor knows does not reject a Report (ADR-0004). A stop
 // still under way is sent again once it ends, with the same `stoppedAt`.
 const SentServiceStopSchema = z.object({
-  exitStatus: z.int().nullable(),
+  exitStatus: z.int32().nullable(),
   ongoing: z.boolean(),
-  restarts: z.int().nonnegative(),
+  restarts: z.int32().nonnegative(),
   result: z.string().min(1).max(64).nullable(),
   service: z.string().regex(RECORD_NAME),
   startedAt: epochMs.nullable(),
@@ -33,7 +33,15 @@ const SentServiceStopSchema = z.object({
 // has not yet taken, oldest first. A Collector sends it while it holds any, and
 // drops each stop once a Report carrying it is delivered.
 export const ServiceStopsSectionSchema = z.object({
-  stops: z.array(SentServiceStopSchema).max(MAX_SERVICE_STOPS_PER_REPORT),
+  stops: z
+    .array(SentServiceStopSchema)
+    .max(MAX_SERVICE_STOPS_PER_REPORT)
+    .refine(
+      (stops) =>
+        new Set(stops.map(({ service, stoppedAt }) => JSON.stringify([service, stoppedAt])))
+          .size === stops.length,
+      { message: 'duplicate Service stop' },
+    ),
 });
 
 export type ServiceStopsSection = z.infer<typeof ServiceStopsSectionSchema>;

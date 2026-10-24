@@ -53,8 +53,36 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report({ serviceStops: { stops } })).serviceStops).toEqual({ stops });
   });
 
+  test('refuses two stops with the same Service and stoppedAt, even with different details', () => {
+    const stops = [ENDED, { ...ENDED, restarts: 2 }];
+    const parsed = ReportSchema.safeParse(report({ serviceStops: { stops } }));
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues).toContainEqual(
+        expect.objectContaining({
+          message: 'duplicate Service stop',
+          path: ['serviceStops', 'stops'],
+        }),
+      );
+    }
+  });
+
+  test('accepts another stop for the same Service and another Service stopped at the same time', () => {
+    const stops = [
+      ENDED,
+      { ...ENDED, stoppedAt: ENDED.stoppedAt + 1 },
+      { ...ENDED, service: 'web' },
+    ];
+
+    expect(ReportSchema.parse(report({ serviceStops: { stops } })).serviceStops).toEqual({ stops });
+  });
+
   test.each([
     ['a negative restart count', { restarts: -1 }],
+    ['a restart count above the PostgreSQL integer range', { restarts: 2_147_483_648 }],
+    ['an exit status above the PostgreSQL integer range', { exitStatus: 2_147_483_648 }],
+    ['an exit status below the PostgreSQL integer range', { exitStatus: -2_147_483_649 }],
     ['a Service name the records refuse', { service: 'Not A Name' }],
     ['an empty result', { result: '' }],
   ])('refuses a stop with %s', (_, change) => {
@@ -63,5 +91,14 @@ describe('a Report', () => {
     );
 
     expect(parsed.success).toBe(false);
+  });
+
+  test.each([
+    { exitStatus: -2_147_483_648, restarts: 0 },
+    { exitStatus: 2_147_483_647, restarts: 2_147_483_647 },
+  ])('accepts integer limits: $exitStatus exit status and $restarts restarts', (limits) => {
+    const stops = [{ ...ENDED, ...limits }];
+
+    expect(ReportSchema.parse(report({ serviceStops: { stops } })).serviceStops).toEqual({ stops });
   });
 });

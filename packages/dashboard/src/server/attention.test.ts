@@ -898,3 +898,32 @@ test.each([
     });
   },
 );
+
+test.each([true, false])(
+  'Service restarted retains the Hub reason and level, with Service record held: %s',
+  async (recorded) => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records: recorded ? records : { records: [], unreadable: [] } });
+    const reason = 'The Service stopped once at 2026-10-06 11:00 UTC. It last stopped cleanly.';
+    await addCondition(h.db.sql, {
+      kind: 'service_restarted',
+      level: 'note',
+      raisedAt: -3600,
+      reason,
+      subject: 'web',
+      system: 'server-1',
+    });
+
+    expect(await only(h, 'service_restarted')).toMatchObject({
+      checkedAt: NOW - HOUR,
+      evidence: 'current',
+      kind: 'service_restarted',
+      level: 'note',
+      reason,
+      service: recorded
+        ? { health: WEB.health, supervisor: 'systemd', target: 'web.service' }
+        : undefined,
+      subject: 'web',
+    });
+  },
+);

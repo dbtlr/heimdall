@@ -7,6 +7,7 @@ import { evaluateHotProcessConditions } from './hot-process-conditions.ts';
 import { evaluateJobConditions } from './job-conditions.ts';
 import { evaluateLoadConditions } from './load-conditions.ts';
 import { evaluateServiceConditions } from './service-conditions.ts';
+import { evaluateServiceStopConditions } from './service-stop-conditions.ts';
 import { evaluateSystemConditions } from './system-conditions.ts';
 import type { SystemConditionThresholds } from './system-conditions.ts';
 import { evaluateUpdateConditions } from './update-conditions.ts';
@@ -29,9 +30,9 @@ export const runInTurn = async (evaluators: readonly (() => Promise<void>)[]): P
   }
 };
 
-// Judges every Condition the Hub derives from what it holds: the job
-// Conditions, then stale System and disk, then clock skew, then rolling load, then Drift, then
-// Service down, each at the time `clock` (epoch milliseconds) reads. `serve` runs it every minute.
+// Judges the Hub's Conditions in turn, with Service restarted after Service
+// down, each at the time `clock` (epoch milliseconds) reads. `serve` runs it
+// every minute.
 export const evaluateConditions = (
   sql: SQL,
   clock: () => number,
@@ -46,4 +47,5 @@ export const evaluateConditions = (
     () => evaluateUpdateConditions(sql, clock, thresholds),
     () => evaluateDrift(sql, clock),
     () => evaluateServiceConditions(sql, clock),
+    () => evaluateServiceStopConditions(sql, clock),
   ]);

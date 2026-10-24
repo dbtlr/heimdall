@@ -7,6 +7,7 @@ import type {
   RecordsSection,
   Report,
   RunsSection,
+  ServiceStopsSection,
   TranscriptsSection,
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
@@ -188,6 +189,9 @@ export const storeReport = (
     }
     if (report.checks !== undefined) {
       await storeChecks(tx, { receivedAt: seenAt, report, section: report.checks });
+    }
+    if (report.serviceStops !== undefined) {
+      await storeServiceStops(tx, { receivedAt: seenAt, report, section: report.serviceStops });
     }
     if (report.updates !== undefined) {
       await storeUpdates(tx, { receivedAt, section: report.updates, system: report.system });
@@ -399,6 +403,45 @@ const storeChecks = async (
       services = excluded.services
     WHERE check_sets.sent_at <= excluded.sent_at
        OR check_sets.sent_at > ${receivedAt}
+  `;
+};
+
+// Each stop is a whole view, including nulls. A corrected clock can replace
+// a future-dated view under the same sent-time guard as the latest checks.
+const storeServiceStops = async (
+  sql: SQL,
+  {
+    receivedAt,
+    report,
+    section,
+  }: { receivedAt: Date; report: Report; section: ServiceStopsSection },
+) => {
+  await sql`
+    INSERT INTO service_stops (
+      system, service, stopped_at, started_at, ongoing, restarts, result, exit_status, sent_at, received_at
+    )
+    SELECT ${report.system}, s->>'service',
+           -- As with samples, whole days keep milliseconds exact across the
+           -- wire's timestamp range, without parsing extended ISO years.
+           (timestamp 'epoch'
+             + ((s->>'stoppedAt')::bigint / 86400000) * interval '1 day'
+             + ((s->>'stoppedAt')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
+           (timestamp 'epoch'
+             + ((s->>'startedAt')::bigint / 86400000) * interval '1 day'
+             + ((s->>'startedAt')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
+           (s->>'ongoing')::boolean, (s->>'restarts')::integer,
+           s->>'result', (s->>'exitStatus')::integer, ${new Date(report.sentAt)}, ${receivedAt}
+    FROM jsonb_array_elements(${storableJson(section.stops)}::text::jsonb) AS s
+    ON CONFLICT (system, service, stopped_at) DO UPDATE SET
+      started_at = excluded.started_at,
+      ongoing = excluded.ongoing,
+      restarts = excluded.restarts,
+      result = excluded.result,
+      exit_status = excluded.exit_status,
+      sent_at = excluded.sent_at,
+      received_at = excluded.received_at
+    WHERE service_stops.sent_at <= excluded.sent_at
+       OR service_stops.sent_at > ${receivedAt}
   `;
 };
 

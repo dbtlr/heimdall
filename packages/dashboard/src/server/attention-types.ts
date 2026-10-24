@@ -31,6 +31,7 @@ export type JobTarget = { scheduler: string; target: string };
 
 export type AttentionFacts =
   | { kind: 'clock_skew'; reason: string }
+  | { kind: 'service_restarted'; reason: string; service: ServiceTarget | undefined }
   | { kind: 'high_cpu' | 'high_memory'; reason: string }
   | { kind: 'hot_process'; reason: string }
   | { kind: 'pending_update' | 'reboot_required'; reason: string }

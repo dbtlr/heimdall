@@ -3,7 +3,12 @@ import { expect, test } from 'bun:test';
 import { sample } from '@heimdall/schema/testing';
 import type { SQL } from 'bun';
 
-import { pruneVitals, RAW_RETENTION_MS, ROLLUP_RETENTION_MS } from './retention.ts';
+import {
+  pruneServiceStops,
+  pruneVitals,
+  RAW_RETENTION_MS,
+  ROLLUP_RETENTION_MS,
+} from './retention.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 
 const DAY = 86_400_000;
@@ -80,4 +85,27 @@ test('pruning an empty database deletes nothing', async () => {
     samples: 0,
     vitalsRollups: 0,
   });
+});
+
+test('pruning Service stops deletes only ended stops strictly older than 90 days', async () => {
+  await using h = await startHub();
+  const cutoff = NOW - 90 * DAY;
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1') ON CONFLICT DO NOTHING`;
+  for (const [time, ongoing] of [
+    [cutoff - 1, false],
+    [cutoff - DAY, true],
+    [cutoff, false],
+    [NOW, false],
+  ] satisfies [number, boolean][]) {
+    // oxlint-disable-next-line no-await-in-loop -- four retention boundaries.
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+      VALUES ('laptop-1', 'web', ${new Date(time)}, ${ongoing}, 0, ${new Date(NOW)}, ${new Date(NOW)})
+    `;
+  }
+
+  expect(await pruneServiceStops(h.db.sql, NOW)).toBe(1);
+  const kept: { stopped_at: Date }[] = await h.db
+    .sql`SELECT stopped_at FROM service_stops ORDER BY stopped_at`;
+  expect(kept.map((row) => row.stopped_at.getTime())).toEqual([cutoff - DAY, cutoff, NOW]);
 });

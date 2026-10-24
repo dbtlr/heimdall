@@ -868,6 +868,14 @@ const seedConditions = async (sql: SQL, now: number) => {
   const conditions: Parameters<typeof addCondition>[1][] = [];
 
   conditions.push({
+    kind: 'service_restarted',
+    level: 'note',
+    raisedAt: -hours(1),
+    reason: `The Service stopped once at ${new Date(now - HOUR).toISOString().slice(0, 16).replace('T', ' ')} UTC. It last stopped cleanly.`,
+    subject: 'ollama',
+    system: SYSTEM,
+  });
+  conditions.push({
     kind: 'job_failing',
     raisedAt: secondsFromNow(scenario.borgFinished),
     reason: `${failedRun(scenario.borgStarted)} 2.`,

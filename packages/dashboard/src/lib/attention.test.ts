@@ -989,3 +989,43 @@ test('update and reboot cards retain the Hub reason and offer manual next steps'
   expect(evidenceWords(reboot, NOW).observed).toEqual(['A reboot is required.']);
   expect(nextSteps(reboot)).toMatchObject({ short: 'Plan a reboot', steps: [{ commands: [] }] });
 });
+
+test('Service restarted names the Service, shows the Hub reason, and offers its log without a start command', () => {
+  const item = attention(
+    {
+      kind: 'service_restarted',
+      reason: 'The Service stopped once at 2026-10-06 15:00 UTC. It last stopped cleanly.',
+      service: { health: undefined, supervisor: 'systemd', target: 'web.service' },
+    },
+    { level: 'note', subject: 'web' },
+  );
+
+  expect(ATTENTION_NAMES.service_restarted).toBe('Service restarted');
+  expect(subjectText(item)).toBe('web');
+  expect(attentionMark(item)).toBe('note');
+  expect(laneSummary([item]).lead).toBeUndefined();
+  expect(evidenceWords(item, NOW)).toMatchObject({
+    expected: ['Running without stopping'],
+    observed: [item.reason],
+  });
+  expect(evidenceNote(item, NOW)).toBeUndefined();
+  expect(nextSteps(item)).toMatchObject({
+    short: 'Read its log to see why it stopped',
+    steps: [{ commands: ['journalctl -u web.service -n 50'] }],
+  });
+  expect(nextSteps(item).steps[0]?.text).toContain(
+    "On valhalla, read web's log to see why it stopped.",
+  );
+});
+
+test('Service restarted still offers plain log advice when its Service record is gone', () => {
+  const item = attention(
+    { kind: 'service_restarted', reason: 'The latest result is unknown.', service: undefined },
+    { level: 'note', subject: 'web' },
+  );
+
+  expect(nextSteps(item).steps[0]).toMatchObject({
+    commands: [],
+    text: "On valhalla, read web's log to see why it stopped.",
+  });
+});

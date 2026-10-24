@@ -100,6 +100,7 @@ const CONDITION_KINDS: Record<ConditionKind, true> = {
   reboot_required: true,
   reports_rejected: true,
   service_down: true,
+  service_restarted: true,
   system_stale: true,
 };
 
