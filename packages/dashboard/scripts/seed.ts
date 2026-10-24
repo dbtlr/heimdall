@@ -1049,11 +1049,18 @@ const syncthingStop = (
 // failed, a clean stop and one whose result systemd forgot, and one that ran again
 // after one automatic restart minutes ago.
 const seedServiceStops = async (sql: SQL, now: number) => {
+  const base = report(SYSTEM, []);
+  const workstation = PROFILES.find((profile) => profile.name === SYSTEM);
+  if (workstation === undefined) {
+    throw new Error(`No profile for ${SYSTEM}.`);
+  }
   const send = (sentAt: number, delayMs: number, stops: Omit<SentServiceStop, 'service'>[]) =>
     storeReport(sql, {
       receivedAt: sentAt + delayMs,
       report: {
-        ...report(SYSTEM, []),
+        ...base,
+        // report() names darwin; keep the platform the workstation's Vitals set.
+        collector: { ...base.collector, platform: workstation.platform },
         sentAt,
         serviceStops: { stops: stops.map((stop) => ({ ...stop, service: 'syncthing' })) },
       },

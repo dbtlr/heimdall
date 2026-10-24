@@ -220,6 +220,9 @@ test.each([
   '?since=2026-10-06',
   '?since=October%206,%202026%2012:00:00%20UTC',
   '?since=2026-13-06T12:00:00Z',
+  '?since=2026-02-30T00:00:00Z',
+  '?since=2026-04-31T00:00:00Z',
+  '?since=2026-10-06T24:00:00Z',
 ])('refuses an invalid filter before opening the database: %s', async (query) => {
   const response = await serviceStopsAnswer({
     database: () => {

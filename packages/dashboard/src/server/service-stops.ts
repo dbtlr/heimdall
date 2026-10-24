@@ -59,8 +59,29 @@ export const readServiceStops = async (
   }));
 };
 
+// A date, `T`, and a time to the minute or second with optional fractions,
+// then `Z` or an offset.
 const ISO_TIME =
-  /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^([+-]\d{6}|\d{4})-(\d{2})-(\d{2})T(\d{2}):\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+// `since` as an instant, or undefined unless it is an ISO_TIME whose date and
+// hour exist: Date.parse alone rolls 2026-02-30 over to March and 24:00 over
+// to the next day.
+const sinceOf = (value: string): Date | undefined => {
+  const match = ISO_TIME.exec(value);
+  const at = Date.parse(value);
+  if (match === null || !Number.isFinite(at)) {
+    return undefined;
+  }
+  const [year, month, day, hour] = match.slice(1, 5).map(Number);
+  if (year === undefined || month === undefined || day === undefined || hour === undefined) {
+    return undefined;
+  }
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month - 1, day);
+  const exists = calendar.getUTCMonth() === month - 1 && calendar.getUTCDate() === day && hour < 24;
+  return exists ? new Date(at) : undefined;
+};
 
 // Database failures answer 503 and reach the dashboard's error log.
 export const serviceStopsAnswer = async ({
@@ -82,8 +103,9 @@ export const serviceStopsAnswer = async ({
       return plain(400, `Give ${name} once, with a non-empty value.`);
     }
   }
-  const since = url.searchParams.get('since');
-  if (since !== null && (!ISO_TIME.test(since) || !Number.isFinite(Date.parse(since)))) {
+  const sinceParam = url.searchParams.get('since');
+  const since = sinceParam === null ? undefined : sinceOf(sinceParam);
+  if (sinceParam !== null && since === undefined) {
     return plain(400, 'Give since as an ISO 8601 date and time, such as 2026-10-24T07:40:05Z.');
   }
   const system = url.searchParams.get('system');
@@ -92,7 +114,7 @@ export const serviceStopsAnswer = async ({
     const stops = await readServiceStops(await database(), {
       includeUnpaired: unpaired,
       ...(service === null ? {} : { service }),
-      ...(since === null ? {} : { since: new Date(since) }),
+      ...(since === undefined ? {} : { since }),
       ...(system === null ? {} : { system }),
     });
     return Response.json({ stops });
