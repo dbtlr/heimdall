@@ -55,6 +55,7 @@ The evidence of why a Service stopped, such as a provisioner's own health events
 - A Report gains a section, additively ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)).
 - Every deliberate restart of a recorded Service leaves a note for a day, the Hub's own Service on each rollout included.
 - Two clean stops of a systemd unit within one check read as one, since systemd counts only automatic restarts.
+- systemd forgets a unit's result and exit status when it starts again, so a stop that begins and ends between two checks carries neither, and its note cannot tell a clean stop from a failure.
 - A launchd stop is timed only to the minute between two checks.
 
 ## Considered options

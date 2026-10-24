@@ -6,6 +6,7 @@ import type {
   RecordsSection,
   Report,
   RunsSection,
+  ServiceStopsSection,
   TranscriptsSection,
   UpdatesSection,
 } from '@heimdall/schema';
@@ -89,6 +90,7 @@ export type PendingSections = {
   harnessProcesses?: PendingSection<HarnessProcessesSection>;
   records?: PendingSection<RecordsSection>;
   runs?: PendingSection<RunsSection>;
+  serviceStops?: PendingSection<ServiceStopsSection>;
 };
 
 // Where `flushQueue` asks for the records, runs, checks, and harnesses sections to put in a Report.
@@ -157,7 +159,13 @@ export const flushQueue = async ({
     const reportWith = (
       carried: Pick<
         Report,
-        'checks' | 'harnesses' | 'harnessProcesses' | 'records' | 'runs' | 'updates'
+        | 'checks'
+        | 'harnesses'
+        | 'harnessProcesses'
+        | 'records'
+        | 'runs'
+        | 'serviceStops'
+        | 'updates'
       >,
     ): Report => ({
       ...base,
@@ -167,7 +175,7 @@ export const flushQueue = async ({
       // must not carry the first request's time.
       sentAt: Math.trunc(now()),
     });
-    const { checks, harnesses, harnessProcesses, records, runs, updates } = waiting;
+    const { checks, harnesses, harnessProcesses, records, runs, serviceStops, updates } = waiting;
     const withSections = reportWith({
       ...(updates === undefined ? {} : { updates: updates.section }),
       ...(checks === undefined ? {} : { checks: checks.section }),
@@ -175,6 +183,7 @@ export const flushQueue = async ({
       ...(harnessProcesses === undefined ? {} : { harnessProcesses: harnessProcesses.section }),
       ...(records === undefined ? {} : { records: records.section }),
       ...(runs === undefined ? {} : { runs: runs.section }),
+      ...(serviceStops === undefined ? {} : { serviceStops: serviceStops.section }),
     });
     const carrying =
       (updates !== undefined ||
@@ -182,7 +191,8 @@ export const flushQueue = async ({
         harnesses !== undefined ||
         harnessProcesses !== undefined ||
         records !== undefined ||
-        runs !== undefined) &&
+        runs !== undefined ||
+        serviceStops !== undefined) &&
       Buffer.byteLength(JSON.stringify(withSections)) <= MAX_REPORT_BYTES;
     // oxlint-disable-next-line no-await-in-loop -- batches go one at a time, oldest first.
     let outcome = await send(carrying ? withSections : reportWith({}));
@@ -194,6 +204,7 @@ export const flushQueue = async ({
       harnessProcesses?.settle(outcome);
       records?.settle(outcome);
       runs?.settle(outcome);
+      serviceStops?.settle(outcome);
       if (outcome.kind === 'rejected') {
         // oxlint-disable-next-line no-await-in-loop -- the same batch, once more.
         outcome = await send(reportWith({}));

@@ -96,8 +96,69 @@ describe('a systemd Service', () => {
     const { ran } = await check(WEB, shown({ active: 'active' }));
 
     expect(ran).toEqual([
-      [SYSTEMCTL, 'show', '--property=ActiveState,SubState,LoadState', '--', 'web.service'],
+      [
+        SYSTEMCTL,
+        'show',
+        '--timestamp=us+utc',
+        '--property=ActiveState,SubState,LoadState,NRestarts,ActiveEnterTimestamp,ActiveExitTimestamp,Result,ExecMainStatus',
+        '--',
+        'web.service',
+      ],
     ]);
+  });
+
+  test('carries the facts the stop log compares, as systemd holds them', async () => {
+    const { outcomes } = await check(WEB, {
+      exitCode: 0,
+      kind: 'exited',
+      stderr: '',
+      stdout: [
+        'Result=exit-code',
+        'NRestarts=2',
+        'ExecMainStatus=3',
+        'LoadState=loaded',
+        'ActiveState=activating',
+        'SubState=auto-restart',
+        'ActiveEnterTimestamp=Sat 2026-10-24 02:30:09.433563 UTC',
+        'ActiveExitTimestamp=Sat 2026-10-24 02:30:12.473979 UTC',
+        '',
+      ].join('\n'),
+    });
+
+    expect(outcomes).toEqual([
+      {
+        check: 'supervisor',
+        detail: 'ActiveState=activating',
+        state: 'stopped',
+        stopFacts: {
+          exitStatus: 3,
+          restarts: 2,
+          result: 'exit-code',
+          running: false,
+          startedAt: Date.parse('2026-10-24T02:30:09.433Z'),
+          stoppedAt: Date.parse('2026-10-24T02:30:12.473Z'),
+        },
+      },
+    ]);
+  });
+
+  test('carries no stop facts when a time is not in the form asked for, so nothing is inferred from them', async () => {
+    const { outcomes } = await check(WEB, {
+      exitCode: 0,
+      kind: 'exited',
+      stderr: '',
+      stdout: [
+        'NRestarts=0',
+        'LoadState=loaded',
+        'ActiveState=active',
+        'SubState=running',
+        'ActiveEnterTimestamp=Sat 2026-10-24 04:30:09 CEST',
+        'ActiveExitTimestamp=',
+        '',
+      ].join('\n'),
+    });
+
+    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'ActiveState=active', state: 'up' }]);
   });
 
   test('is unknown when systemctl cannot reach systemd, and the detail says so', async () => {
@@ -232,7 +293,8 @@ describe('a systemd-user Service', () => {
         SYSTEMCTL,
         '--user',
         'show',
-        '--property=ActiveState,SubState,LoadState',
+        '--timestamp=us+utc',
+        '--property=ActiveState,SubState,LoadState,NRestarts,ActiveEnterTimestamp,ActiveExitTimestamp,Result,ExecMainStatus',
         '--',
         'web.service',
       ],

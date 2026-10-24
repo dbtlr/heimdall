@@ -1,11 +1,15 @@
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceCheckKind, ServiceCheckState } from '@heimdall/schema';
 
-// What one check of a Service found.
+import type { StopFacts } from './stop-log.ts';
+
+// What one check of a Service found, and, for a supervisor check that reached a
+// supervisor whose facts the Collector logs stops from, those facts.
 export type ServiceOutcome = {
   check: ServiceCheckKind;
   detail: string;
   state: ServiceCheckState;
+  stopFacts?: StopFacts;
 };
 
 // The UTF-16 code units 0xD800 to 0xDBFF, which begin a surrogate pair.

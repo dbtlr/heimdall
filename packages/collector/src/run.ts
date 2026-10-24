@@ -11,6 +11,7 @@ import type { run } from './application.ts';
 import { startChecks } from './checks/loop.ts';
 import { combineParts } from './checks/parts.ts';
 import { startServiceChecks } from './checks/services-loop.ts';
+import { openStopLog } from './checks/stop-log.ts';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import type { ReportIdentity } from './delivery.ts';
@@ -170,6 +171,9 @@ export const runAction: ActionHandler<typeof run> = async ({
     const { system, token } = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
     const queue = await openQueue({ capacity: QUEUE_CAPACITY, stateDir });
     const spool = await openSpool({ stateDir });
+    // The Service stops the checks log and the reporter sends until the Hub
+    // takes them, apart from the records (ADR-0021).
+    const stops = await openStopLog({ stateDir });
     const runtime = {
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
@@ -207,6 +211,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      stops,
     });
     // Harness installs are found by reading install directories and package
     // metadata; no Harness is run.
@@ -238,6 +243,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      stops,
       updates,
     });
     try {
@@ -267,6 +273,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       await fileChecks.stop();
       spool.close();
       sections.close();
+      stops.close();
       processNames.close();
       queue.close();
     }

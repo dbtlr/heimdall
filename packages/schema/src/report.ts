@@ -6,6 +6,7 @@ import { HarnessesSectionSchema } from './harnesses-section.ts';
 import { ProcessObservationSchema } from './process-observation.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
+import { ServiceStopsSectionSchema } from './service-stops-section.ts';
 import { TranscriptsSectionSchema } from './transcripts.ts';
 import { UpdatesSectionSchema } from './updates-section.ts';
 import { bytes, epochMs } from './values.ts';
@@ -28,10 +29,10 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 
 // The largest Report body the Hub reads; a larger one is rejected, Vitals with
 // it. The records section may take 8 MiB, the runs section 1 MiB, and the
-// checks section 1 MiB, which leaves 2 MiB for the samples, transcripts, and
-// harnesses (at most about 16 KiB) when all three are at their budget. A full
-// batch of 1,000 samples of 24 disks each
-// comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
+// checks section 1 MiB, which leaves 2 MiB for the samples, transcripts,
+// harnesses (at most about 16 KiB), and Service stops (about 200 KB) when
+// those three are at their budget. A full batch of 1,000 samples of 24 disks
+// each comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
 // sends a Report that would exceed this without its sections, which ride a
 // later, smaller Report.
 export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
@@ -110,6 +111,9 @@ export const ReportSchema = z.object({
     .refine(isStrictlyIncreasing, { message: 'sample times must strictly increase' }),
   schemaVersion: z.literal(REPORT_SCHEMA_VERSION),
   sentAt: epochMs,
+  // While the Collector holds Service stops the Hub has not taken; each stop
+  // rides Reports until one carrying it is delivered (ADR-0021).
+  serviceStops: ServiceStopsSectionSchema.optional(),
   // Whether the System sleeps, as its collector.toml says. In every Report;
   // optional for Collectors that predate it, for which the Hub keeps what it
   // holds, and a System that never sent it counts as always on. A value that
