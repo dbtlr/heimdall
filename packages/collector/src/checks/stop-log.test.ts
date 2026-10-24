@@ -118,3 +118,30 @@ test('a later check that sees a stopped Service end another way takes that resul
 
   expect(updated).toMatchObject([{ exitStatus: 9, ongoing: true, result: 'timeout' }]);
 });
+
+test('a long stop that a new boot ends is still sent as ended with no known end', async () => {
+  await using dir = await tempStateDir();
+  const { advance, observe, stops } = await setup(dir);
+  observe(facts(T, null));
+  stops.pending().settle();
+
+  advance(8 * DAY);
+  stops.observe({ boot: 'b2', facts: facts(null, T + 8 * DAY), key: 'proxy', service: 'proxy' });
+  const ended = stops.pending().stops;
+  stops.close();
+
+  expect(ended).toMatchObject([{ ongoing: false, startedAt: null, stoppedAt: T }]);
+});
+
+test('a later check that sees only another exit status takes it', async () => {
+  await using dir = await tempStateDir();
+  const { observe, stops } = await setup(dir);
+  observe({ ...facts(T, null), exitStatus: 1, result: 'exit-code' });
+  stops.pending().settle();
+
+  observe({ ...facts(T, null), exitStatus: 2, result: 'exit-code' });
+  const updated = stops.pending().stops;
+  stops.close();
+
+  expect(updated).toMatchObject([{ exitStatus: 2, ongoing: true }]);
+});
