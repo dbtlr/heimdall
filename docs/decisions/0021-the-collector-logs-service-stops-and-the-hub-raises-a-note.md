@@ -67,3 +67,7 @@ The evidence of why a Service stopped, such as a provisioner's own health events
 - **Count health-URL blips.** Rejected: one slow answer would raise a day-long note.
 - **Return stops with the records.** Rejected: it mixes what Heimdall observed into what the provisioner recorded.
 - **Collect cause evidence from journals.** Rejected for now: the Collector would read a provisioner's own output, and a provisioner can push its evidence through `record` instead.
+
+## Changelog
+
+- 2026-10-24: Clarification. systemd forgets a unit's result and exit status when the unit starts again, so a stop that begins and ends between two checks carries neither, and its note cannot tell a clean stop from a failure (HMD-164). The decision is unchanged.

@@ -21,6 +21,8 @@ import { sample } from '@heimdall/schema/testing';
 
 import { createChecks } from './checks/loop.ts';
 import type { CheckParts } from './checks/parts.ts';
+import { openStopLog } from './checks/stop-log.ts';
+import type { StopFacts, StopLog } from './checks/stop-log.ts';
 import { flushQueue } from './delivery.ts';
 import type { Delivery } from './delivery.ts';
 import type { HarnessesSource } from './harness-scan.ts';
@@ -64,6 +66,7 @@ const setup = async (
     maxRunsBytes,
     open = () => openRecords({ stateDir: dir.path }),
     respond,
+    stops,
   }: {
     batchSize?: number;
     checks?: ChecksSource;
@@ -74,6 +77,7 @@ const setup = async (
     maxRunsBytes?: number;
     open?: () => Promise<RecordStore>;
     respond?: (report: Report) => Delivery;
+    stops?: StopLog;
   } = {},
 ) => {
   const queue = await openQueue({ capacity: 100, stateDir: dir.path });
@@ -93,6 +97,7 @@ const setup = async (
     ...(maxRunsBytes === undefined ? {} : { maxRunsBytes }),
     now: () => now,
     open,
+    ...(stops === undefined ? {} : { stops }),
   });
   let t = 0;
   const push = async (samples = 1) => {
@@ -1320,4 +1325,102 @@ test('updates retry unchanged evidence and refresh hourly even when records cann
   expect((await reporter.pending()).updates).toBeUndefined();
   now += SECTIONS_REFRESH_MS;
   expect((await reporter.pending()).updates?.section).toEqual(evidence);
+});
+
+// Facts of a running proxy that last stopped at `stoppedAt` and ran again at
+// `startedAt`, or is still stopped when `startedAt` is null.
+const proxyFacts = (stoppedAt: number | null, startedAt: number | null): StopFacts => ({
+  exitStatus: startedAt === null ? 1 : 0,
+  restarts: 0,
+  result: startedAt === null ? 'exit-code' : 'success',
+  running: startedAt !== null,
+  startedAt: startedAt ?? 1000,
+  stoppedAt,
+});
+
+// A stop log in `dir` that saw the proxy running, then stop at 5,000 and, unless
+// `ongoing`, run again at 6,000.
+const loggedStop = async (dir: { path: string }, { ongoing = false } = {}) => {
+  const stops = await openStopLog({ now: () => 1_000_000, stateDir: dir.path });
+  const observe = (facts: StopFacts) =>
+    stops.observe({ boot: 'b', facts, key: 'proxy', service: 'proxy' });
+  observe(proxyFacts(null, 1000));
+  observe(proxyFacts(5000, ongoing ? null : 6000));
+  return { observe, stops };
+};
+
+test('a logged stop rides Reports until one carrying it is delivered, and a failed delivery keeps it', async () => {
+  await using dir = await tempStateDir();
+  const { stops } = await loggedStop(dir);
+  const collector = await setup(dir, { stops });
+  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
+
+  const failed = await collector.push();
+  const delivered = await collector.push();
+  const after = await collector.push();
+  collector.close();
+  stops.close();
+
+  const stop = { ongoing: false, service: 'proxy', startedAt: 6000, stoppedAt: 5000 };
+  expect(failed[0]?.serviceStops).toMatchObject({ stops: [stop] });
+  expect(delivered[0]?.serviceStops).toMatchObject({ stops: [stop] });
+  expect(after[0]?.serviceStops).toBeUndefined();
+});
+
+test('a stop still under way when a Report carried it is sent again once it ends', async () => {
+  await using dir = await tempStateDir();
+  const { observe, stops } = await loggedStop(dir, { ongoing: true });
+  const collector = await setup(dir, { stops });
+
+  const underWay = await collector.push();
+  const quiet = await collector.push();
+  observe(proxyFacts(5000, 6000));
+  const ended = await collector.push();
+  const after = await collector.push();
+  collector.close();
+  stops.close();
+
+  expect(underWay[0]?.serviceStops).toMatchObject({
+    stops: [{ ongoing: true, result: 'exit-code', startedAt: null, stoppedAt: 5000 }],
+  });
+  expect(quiet[0]?.serviceStops).toBeUndefined();
+  expect(ended[0]?.serviceStops).toMatchObject({
+    stops: [{ ongoing: false, result: 'exit-code', startedAt: 6000, stoppedAt: 5000 }],
+  });
+  expect(after[0]?.serviceStops).toBeUndefined();
+});
+
+test('a rejected Report keeps the stops, warns once, and sends them again after the hourly refresh', async () => {
+  await using dir = await tempStateDir();
+  const { stops } = await loggedStop(dir);
+  const collector = await setup(dir, { stops });
+  collector.outcomes.push({ detail: 'bad stops', kind: 'rejected' });
+
+  const rejected = await collector.push();
+  const next = await collector.push();
+  collector.advance(SECTIONS_REFRESH_MS);
+  const hourly = await collector.push();
+  const after = await collector.push();
+  collector.close();
+  stops.close();
+
+  expect(rejected[0]?.serviceStops).toBeDefined();
+  expect(next[0]?.serviceStops).toBeUndefined();
+  expect(hourly[0]?.serviceStops).toMatchObject({ stops: [{ stoppedAt: 5000 }] });
+  expect(after[0]?.serviceStops).toBeUndefined();
+  expect(collector.warnings.filter((m) => m.includes('Service stops'))).toEqual([
+    expect.stringContaining('carrying the Service stops (bad stops)'),
+  ]);
+});
+
+test('a Collector with no stops logged sends no Service stops section', async () => {
+  await using dir = await tempStateDir();
+  const stops = await openStopLog({ stateDir: dir.path });
+  const collector = await setup(dir, { stops });
+
+  const reports = await collector.push();
+  collector.close();
+  stops.close();
+
+  expect(reports[0]?.serviceStops).toBeUndefined();
 });

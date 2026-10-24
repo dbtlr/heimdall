@@ -12,10 +12,12 @@ import type {
   HarnessProcessesSection,
   RecordsSection,
   RunsSection,
+  ServiceStopsSection,
   UpdatesSection,
 } from '@heimdall/schema';
 
 import type { CheckParts, CheckPartsSource } from './checks/parts.ts';
+import type { StopLog } from './checks/stop-log.ts';
 import type { Log } from './collector.ts';
 import type { PendingSection, SectionsSource } from './delivery.ts';
 import { describeError } from './errors.ts';
@@ -203,6 +205,67 @@ const createSectionState = <Section, Input>({
   };
 };
 
+// Decides when the Service stops ride a Report: whenever the log holds stops
+// the Hub has not taken (ADR-0021). A delivered Report settles the stops it
+// carried, so the log drops those that ended and sends again those that change
+// later. A failed delivery keeps them, and so does the Hub's refusal (422),
+// which holds every stop back until `refreshMs` has passed, so a log the Hub
+// will not take cannot reject every later Report with its Vitals, and is never
+// dropped for it. A log that cannot be read or settled costs the stops, never
+// the Vitals, and is warned about once until it works again.
+const createStopsState = ({
+  log,
+  now,
+  refreshMs,
+  stops,
+}: {
+  log: Log;
+  now: () => number;
+  refreshMs: number;
+  stops: StopLog;
+}) => {
+  let refusedAt: number | undefined;
+  let failing = false;
+  const guarded = <T>(use: () => T): T | undefined => {
+    try {
+      const value = use();
+      failing = false;
+      return value;
+    } catch (error) {
+      if (!failing) {
+        log.warn(`Could not read the Service stops to report: ${describeError(error)}`);
+      }
+      failing = true;
+      return undefined;
+    }
+  };
+  return {
+    pending: (): PendingSection<ServiceStopsSection> | undefined => {
+      if (refusedAt !== undefined && now() - refusedAt < refreshMs) {
+        return undefined;
+      }
+      const due = guarded(() => stops.pending());
+      if (due === undefined || due.stops.length === 0) {
+        return undefined;
+      }
+      return {
+        section: { stops: due.stops },
+        settle: (outcome) => {
+          if (outcome.kind === 'delivered') {
+            refusedAt = undefined;
+            guarded(() => due.settle());
+            return;
+          }
+          refusedAt = now();
+          log.warn(
+            `The Hub rejected a Report carrying the Service stops (${outcome.detail}); they are kept and sent again within ${String(refreshMs / 60_000)} minutes.`,
+          );
+        },
+      };
+    },
+  };
+};
+
 // What the checks section is built from: the parts the Collector's loops built
 // last, or undefined while none has finished a pass.
 export type ChecksSource = CheckPartsSource;
@@ -217,10 +280,11 @@ const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
 };
 
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, its checks, the Harness installs it found, and the
-// Harness processes it sees. Each section is due at start, when its content may
-// have changed and its digest differs from the last one settled, and once
-// `refreshMs` after the last one the Hub answered. The store's content
+// jobs' latest runs, its checks, the Harness installs it found, the Harness
+// processes it sees, and the Service stops it logged (ADR-0021). The stops are
+// due while the log holds any the Hub has not taken. Every other section is due
+// at start, when its content may have changed and its digest differs from the
+// last one settled, and once `refreshMs` after the last one the Hub answered. The store's content
 // may have changed when another process commits; the checks' when `checks`
 // answers another section than before, which is none until the loop's first
 // pass. The sections settle apart, so recording a run sends the runs and not the
@@ -248,6 +312,7 @@ export const createSectionsReporter = ({
   now,
   open,
   refreshMs = SECTIONS_REFRESH_MS,
+  stops,
 }: {
   checks: ChecksSource;
   updates?: UpdatesSource;
@@ -260,6 +325,7 @@ export const createSectionsReporter = ({
   now: () => number;
   open: () => Promise<RecordStore>;
   refreshMs?: number;
+  stops?: StopLog;
 }): SectionsSource & { close: () => void } => {
   let store: RecordStore | undefined;
   let seenVersion: number | undefined;
@@ -275,6 +341,9 @@ export const createSectionsReporter = ({
     now,
     refreshMs,
   });
+
+  const stopped =
+    stops === undefined ? undefined : createStopsState({ log, now, refreshMs, stops });
 
   const records = createSectionState<RecordsSection, RecordStore>({
     build: (held) => buildRecords(held, maxRecordsBytes, log),
@@ -325,9 +394,9 @@ export const createSectionsReporter = ({
     refreshMs,
   });
 
-  // The Harness installs and processes, which come from the scan and the
-  // process table and not from the store, so a store that will not open costs
-  // them nothing.
+  // The Harness installs and processes, the updates, and the Service stops,
+  // which come from the scan, the process table, and logs of their own, not
+  // from the store, so a store that will not open costs them nothing.
   const pendingHarnesses = () => {
     const latest = harnesses.latest();
     const latestProcesses = harnessProcesses.latest();
@@ -347,7 +416,9 @@ export const createSectionsReporter = ({
     };
     seenHarnesses = latest;
     seenProcesses = latestProcesses;
+    const serviceStops = stopped?.pending();
     return {
+      ...(serviceStops === undefined ? {} : { serviceStops }),
       ...(pendingUpdates === undefined ? {} : { updates: pendingUpdates }),
       ...(due.harnesses === undefined ? {} : { harnesses: due.harnesses }),
       ...(due.harnessProcesses === undefined ? {} : { harnessProcesses: due.harnessProcesses }),

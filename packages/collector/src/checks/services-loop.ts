@@ -9,7 +9,9 @@ import { describeRows } from '../sections-report.ts';
 import { runCommand } from '../subprocess.ts';
 import type { CheckParts } from './parts.ts';
 import { checkService, findSystemctl } from './services.ts';
-import type { ServiceTools } from './services.ts';
+import type { ServiceOutcome, ServiceTools } from './services.ts';
+import { linuxBootId } from './stop-log.ts';
+import type { StopLog } from './stop-log.ts';
 
 // How often the Services are checked.
 export const SERVICE_CHECK_INTERVAL_MS = 60_000;
@@ -70,6 +72,11 @@ const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
     check === 'health' ? (record.health ?? null) : null,
   ]);
 
+// Names a Service in the stop log: one recorded again under another supervisor
+// or target starts a baseline of its own.
+const stopKeyOf = (record: ServiceRecord) =>
+  JSON.stringify([record.name, record.supervisor, targetOf(record)]);
+
 // The checks of every Service the Collector's provisioner recorded, run on a
 // cadence of their own so a Service that stops is seen within a minute, however
 // long the file checks take. Each tick checks every `service` record and
@@ -78,12 +85,15 @@ const keyOf = (record: ServiceRecord, check: SentServiceCheck['check']) =>
 // Service whose state holds causes no resend.
 //
 // A check's `since` is when this Collector's clock first saw it in its current
-// state, kept while the Collector runs. It holds a connection to the store of
+// state, kept while the Collector runs. A supervisor check that reads the
+// supervisor's stop facts also hands them to the stop log, with the boot they
+// came from, and a tick that cannot read the boot hands it none (ADR-0021). It holds a connection to the store of
 // its own, opened on the first tick and again on each tick until it opens, so a
 // database that cannot be opened costs the checks, never the daemon. `latest`
 // answers the part, or undefined before the first tick finishes and while the
 // last tick failed. `tick` never throws.
 export const createServiceChecks = ({
+  bootId = linuxBootId,
   docker,
   findSystemctl: locateSystemctl = findSystemctl,
   httpGet = defaultHttpGet,
@@ -91,7 +101,9 @@ export const createServiceChecks = ({
   now,
   open,
   run = runCommand,
+  stops,
 }: {
+  bootId?: () => Promise<string | undefined>;
   docker?: ServiceTools['docker'];
   findSystemctl?: () => Promise<string | undefined>;
   httpGet?: ServiceTools['httpGet'];
@@ -99,12 +111,38 @@ export const createServiceChecks = ({
   now: () => number;
   open: () => Promise<RecordStore>;
   run?: ServiceTools['run'];
+  stops?: StopLog;
 }) => {
   let store: RecordStore | undefined;
   let previous = new Map<string, SentServiceCheck>();
   let latest: CheckParts | undefined;
   let warnedAbout = '';
   let failing = false;
+  let stopsFailing = false;
+
+  // Hands each Service's stop facts to the stop log. A log that fails costs the
+  // stops, never the checks, and is warned about once until it works again.
+  const logStops = (
+    held: StopLog,
+    boot: string | undefined,
+    checked: { outcomes: ServiceOutcome[]; record: ServiceRecord }[],
+  ) => {
+    try {
+      for (const { outcomes, record } of checked) {
+        const facts = outcomes.find((outcome) => outcome.stopFacts !== undefined)?.stopFacts;
+        if (boot !== undefined && facts !== undefined) {
+          held.observe({ boot, facts, key: stopKeyOf(record), service: record.name });
+        }
+      }
+      held.retain(checked.map(({ record }) => stopKeyOf(record)));
+      stopsFailing = false;
+    } catch (error) {
+      if (!stopsFailing) {
+        log.warn(`Could not log Service stops: ${describeError(error)}`);
+      }
+      stopsFailing = true;
+    }
+  };
 
   const pass = async (held: RecordStore) => {
     const { records, refused } = serviceRecordsOf(held.readRecords().records);
@@ -123,28 +161,31 @@ export const createServiceChecks = ({
       uid: process.getuid?.(),
     };
     const checkedAt = now();
+    const boot = stops === undefined ? undefined : await bootId();
     // In the order the store lists the records, by name, so the part is the same
     // while nothing changes.
-    const found = (
-      await Promise.all(
-        records.map(async (record) =>
-          (await checkService(record, tools)).map(({ check, detail, state }) => {
-            const key = keyOf(record, check);
-            const before = previous.get(key);
-            return {
-              key,
-              sent: {
-                check,
-                detail,
-                service: record.name,
-                since: before?.state === state ? before.since : checkedAt,
-                state,
-              },
-            };
-          }),
-        ),
-      )
-    ).flat();
+    const outcomes = await Promise.all(
+      records.map(async (record) => ({ outcomes: await checkService(record, tools), record })),
+    );
+    if (stops !== undefined) {
+      logStops(stops, boot, outcomes);
+    }
+    const found = outcomes.flatMap(({ outcomes: checked, record }) =>
+      checked.map(({ check, detail, state }) => {
+        const key = keyOf(record, check);
+        const before = previous.get(key);
+        return {
+          key,
+          sent: {
+            check,
+            detail,
+            service: record.name,
+            since: before?.state === state ? before.since : checkedAt,
+            state,
+          },
+        };
+      }),
+    );
     previous = new Map(found.map(({ key, sent }) => [key, sent]));
     const sent = found.map((entry) => entry.sent);
     if (JSON.stringify(sent) !== JSON.stringify(latest?.services)) {

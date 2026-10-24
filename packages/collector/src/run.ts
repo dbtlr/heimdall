@@ -11,6 +11,7 @@ import type { run } from './application.ts';
 import { startChecks } from './checks/loop.ts';
 import { combineParts } from './checks/parts.ts';
 import { startServiceChecks } from './checks/services-loop.ts';
+import { openStopLog } from './checks/stop-log.ts';
 import { runCollector } from './collector.ts';
 import { sendReport } from './delivery.ts';
 import type { ReportIdentity } from './delivery.ts';
@@ -174,6 +175,15 @@ export const runAction: ActionHandler<typeof run> = async ({
       info: (m: string) => log.info(clean(m)),
       warn: (m: string) => log.warn(clean(m)),
     };
+    // The Service stops the checks log and the reporter sends until the Hub
+    // takes them, apart from the records (ADR-0021). A log that will not open
+    // costs the stops until the Collector restarts, never the daemon.
+    const stops = await openStopLog({ stateDir }).catch(async (error: unknown) => {
+      await runtime.warn(
+        `Could not open the Service stop log; no stops are logged: ${describeError(error)}`,
+      );
+      return undefined;
+    });
     const capture = createCapture({
       hub: transcriptHub({ hub: options.hub, signal, token }),
       log: runtime,
@@ -207,6 +217,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      ...(stops === undefined ? {} : { stops }),
     });
     // Harness installs are found by reading install directories and package
     // metadata; no Harness is run.
@@ -238,6 +249,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      ...(stops === undefined ? {} : { stops }),
       updates,
     });
     try {
@@ -267,6 +279,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       await fileChecks.stop();
       spool.close();
       sections.close();
+      stops?.close();
       processNames.close();
       queue.close();
     }

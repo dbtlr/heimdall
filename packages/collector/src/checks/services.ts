@@ -8,8 +8,9 @@ import { checkContainer, dockerEndpoint } from './docker.ts';
 import type { DockerTools } from './docker.ts';
 import { checkHealth } from './health.ts';
 import { launchdOutcome } from './launchd.ts';
-import { supervisorOutcome } from './outcome.ts';
+import { clampDetail, supervisorOutcome } from './outcome.ts';
 import type { ServiceOutcome } from './outcome.ts';
+import type { StopFacts } from './stop-log.ts';
 
 export type { ServiceOutcome } from './outcome.ts';
 
@@ -71,11 +72,53 @@ const unitBlocks = (stdout: string) =>
         ),
     );
 
+// A time as `systemctl show --timestamp=us+utc` prints it, such as
+// `Sat 2026-10-24 02:30:12.473979 UTC`, in epoch milliseconds, or null for the
+// empty value of a time systemd does not hold. The weekday is not read, so its
+// language does not matter. Undefined for a value of any other shape.
+const unitTime = (value: string): number | null | undefined => {
+  if (value === '') {
+    return null;
+  }
+  const match = /(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(\.\d{1,6})? UTC$/u.exec(value);
+  if (match === null) {
+    return undefined;
+  }
+  const parsed = Date.parse(`${match[1] ?? ''}T${match[2] ?? ''}${(match[3] ?? '').slice(0, 4)}Z`);
+  return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+const MAX_RESULT_LENGTH = 64;
+
+// What systemd holds about a unit that the stop log compares (ADR-0021), or
+// undefined when its answer lacks a time or holds one the Collector cannot
+// read, so a check infers nothing from it. A systemd that predates NRestarts
+// counts no restarts.
+const unitStopFacts = (shown: Map<string, string>): StopFacts | undefined => {
+  const startedAt = unitTime(shown.get('ActiveEnterTimestamp') ?? 'missing');
+  const stoppedAt = unitTime(shown.get('ActiveExitTimestamp') ?? 'missing');
+  const restarts = Number(shown.get('NRestarts') ?? '0');
+  if (startedAt === undefined || stoppedAt === undefined || !Number.isSafeInteger(restarts)) {
+    return undefined;
+  }
+  const status = shown.get('ExecMainStatus') ?? '';
+  const result = clampDetail(shown.get('Result') ?? '').slice(0, MAX_RESULT_LENGTH);
+  return {
+    exitStatus: /^-?\d{1,9}$/u.test(status) ? Number(status) : null,
+    restarts: Math.max(0, restarts),
+    result: result === '' ? null : result,
+    running: shown.get('ActiveState') === 'active',
+    startedAt,
+    stoppedAt,
+  };
+};
+
 // The state a unit's properties put it in. systemd answers a unit it does not
 // know with LoadState=not-found, so that is a Service that is not running. Any
 // ActiveState but `active` is not running, including `activating`, which a unit
 // that keeps failing and restarting shows between attempts. An answer for no
 // unit or for several is unknown, since it is not about the one unit recorded.
+// A known state carries the unit's stop facts when they can be read.
 const unitOutcome = (stdout: string): ServiceOutcome => {
   const blocks = unitBlocks(stdout);
   const [shown, ...others] = blocks;
@@ -90,10 +133,12 @@ const unitOutcome = (stdout: string): ServiceOutcome => {
   if (load === undefined || active === undefined || !shown.has('SubState')) {
     return supervisorOutcome('unknown', 'unexpected systemctl output');
   }
-  if (load === 'not-found') {
-    return supervisorOutcome('stopped', 'LoadState=not-found');
-  }
-  return supervisorOutcome(active === 'active' ? 'up' : 'stopped', `ActiveState=${active}`);
+  const outcome =
+    load === 'not-found'
+      ? supervisorOutcome('stopped', 'LoadState=not-found')
+      : supervisorOutcome(active === 'active' ? 'up' : 'stopped', `ActiveState=${active}`);
+  const stopFacts = unitStopFacts(shown);
+  return stopFacts === undefined ? outcome : { ...outcome, stopFacts };
 };
 
 // What systemctl prints when it cannot reach the manager's bus. Only these
@@ -112,8 +157,21 @@ const unreachable = (stderr: string, exitCode: number): ServiceOutcome => {
   return supervisorOutcome('unknown', `systemctl exited ${String(exitCode)}`);
 };
 
+// What the Collector asks systemd about a unit: its state, and the facts the
+// stop log compares (ADR-0021).
+const SYSTEMD_PROPERTIES = [
+  'ActiveState',
+  'SubState',
+  'LoadState',
+  'NRestarts',
+  'ActiveEnterTimestamp',
+  'ActiveExitTimestamp',
+  'Result',
+  'ExecMainStatus',
+].join(',');
+
 // Asks systemd, the system manager or the account's user manager, whether a
-// unit is running. The unit follows `--` so a name that starts with a dash is
+// unit is running, and what it holds about the unit's stops. The unit follows `--` so a name that starts with a dash is
 // never read as an option.
 const systemdOutcome = async (
   { run, systemctl }: ServiceTools,
@@ -128,7 +186,8 @@ const systemdOutcome = async (
       systemctl,
       ...(scope === 'user' ? ['--user'] : []),
       'show',
-      '--property=ActiveState,SubState,LoadState',
+      '--timestamp=us+utc',
+      `--property=${SYSTEMD_PROPERTIES}`,
       '--',
       unit,
     ]);
