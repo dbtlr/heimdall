@@ -380,3 +380,76 @@ test('times with an offset, as Podman gives them, are read as the instants they 
 
   expect(logged).toMatchObject([{ startedAt: T + 70 * S, stoppedAt: T + 65.5 * S }]);
 });
+
+test('a time before 1970, as a zero time in another form, is a time the Engine does not hold', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(
+    answered(
+      inspectedJson({
+        created: T + 30 * S,
+        finished: null,
+        id: 'b'.repeat(64),
+        started: T + 31 * S,
+      }).replace(/"FinishedAt":"[^"]*"/u, '"FinishedAt":"0000-12-31T19:03:58-04:56"'),
+    ),
+  );
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([{ startedAt: T + 31 * S, stoppedAt: T + 30 * S }]);
+});
+
+test('a container its name points back to is the stop already logged, never a second one with the same time', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  const blue = { created: T - 61 * MIN, finished: null, started: T - 60 * MIN };
+  const green = { created: T + 30 * S, finished: null, id: 'b'.repeat(64), started: T + 31 * S };
+  await c.first();
+
+  await c.check(inspected(green));
+  await c.check(inspected(blue));
+  await c.check(inspected(green));
+  const logged = c.logged();
+  c.close();
+
+  expect(logged.map(({ stoppedAt }) => stoppedAt)).toEqual([T + 30 * S, T - 61 * MIN]);
+});
+
+test('a container paused after a stop has run again, so the pause ends the stop', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(
+    inspected({ exit: 1, finished: T + 10 * S, started: T - 60 * MIN, status: 'exited' }),
+  );
+  await c.check(inspected({ finished: T + 10 * S, started: T + 70 * S, status: 'paused' }));
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([{ ongoing: false, startedAt: T + 70 * S, stoppedAt: T + 10 * S }]);
+});
+
+test('a dead container is logged with its exit code, and an exit code the Hub cannot take is unknown', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(
+    inspected({ exit: 255, finished: T + 10 * S, started: T - 60 * MIN, status: 'dead' }),
+  );
+  await c.check(inspected({ finished: T + 10 * S, started: T + 70 * S }));
+  await c.check(
+    inspected({ exit: 2 ** 31, finished: T + 130 * S, started: T + 70 * S, status: 'exited' }),
+  );
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([
+    { exitStatus: 255, result: 'exit-code', stoppedAt: T + 10 * S },
+    { exitStatus: null, result: null, stoppedAt: T + 130 * S },
+  ]);
+});

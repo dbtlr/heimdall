@@ -97,7 +97,8 @@ const ZERO_TIME = '0001-01-01T00:00:00Z';
 
 // A time as the Engine prints it, RFC 3339 to the nanosecond, in UTC from
 // Docker and with an offset from Podman, in epoch milliseconds, or null for the
-// zero time. Undefined for a value of any other shape.
+// zero time or any time before 1970, which is the zero time in another form.
+// Undefined for a value of any other shape.
 const engineTime = (value: unknown): number | null | undefined => {
   if (value === ZERO_TIME) {
     return null;
@@ -112,7 +113,10 @@ const engineTime = (value: unknown): number | null | undefined => {
     return undefined;
   }
   const parsed = Date.parse(`${match[1] ?? ''}${(match[2] ?? '').slice(0, 4)}${match[3] ?? ''}`);
-  return Number.isNaN(parsed) ? undefined : parsed;
+  if (Number.isNaN(parsed)) {
+    return undefined;
+  }
+  return parsed < 0 ? null : parsed;
 };
 
 // How a container's last run ended, while the Engine still holds it: it forgets
@@ -142,13 +146,13 @@ const lastRun = (
 // cannot read, so a check infers nothing from it. A container that never
 // stopped takes its creation as when it last stopped, since the Engine forgets
 // the container it replaced, so a recreated container is a stop from its
-// creation to its start. Only a running container is running: a pause holds no
-// time, so it is no stop, and one restarting is stopped. `RestartCount` counts
-// the restarts its restart policy made, and a manual start sets it back to 0.
+// creation to its start. A container restarting is stopped, and any other the
+// Engine says is running has run again: a pause holds no time, so it is no stop
+// of its own, but it ends one under way. `RestartCount` counts the restarts its
+// restart policy made, and a start or restart from outside sets it back to 0.
 const containerStopFacts = (
   body: Record<string, unknown>,
-  state: Record<string, unknown>,
-  status: string | undefined,
+  { running, state, status }: { running: boolean; state: Record<string, unknown>; status?: string },
 ): StopFacts | undefined => {
   const created = engineTime(body.Created);
   const finished = engineTime(state.FinishedAt);
@@ -166,7 +170,7 @@ const containerStopFacts = (
   return {
     ...lastRun(state, status),
     restarts: Math.max(0, restarts),
-    running: status === 'running',
+    running: running && status !== 'restarting',
     startedAt,
     stoppedAt: finished ?? created,
   };
@@ -191,7 +195,11 @@ const containerOutcome = (body: unknown, container: string): ContainerOutcome =>
   }
   const { ExitCode: exitCode, Running: running, Status: rawStatus } = body.State;
   const status = typeof rawStatus === 'string' ? rawStatus : undefined;
-  const stopFacts = containerStopFacts(body, body.State, status);
+  const stopFacts = containerStopFacts(body, {
+    running,
+    state: body.State,
+    ...(status === undefined ? {} : { status }),
+  });
   const withFacts = (outcome: ContainerOutcome): ContainerOutcome =>
     stopFacts === undefined ? outcome : { ...outcome, stopFacts };
   if (running && status !== 'paused' && status !== 'restarting') {
