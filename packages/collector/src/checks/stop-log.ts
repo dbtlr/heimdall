@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { MAX_SERVICE_STOPS_PER_REPORT } from '@heimdall/schema';
 import type { SentServiceStop } from '@heimdall/schema';
 
-// How long a logged stop the Hub has not taken is kept, and how many are kept
+// How long a logged stop the Hub has not taken is kept after it last changed,
+// and how many are kept
 // per Service, so a Hub out of reach for days costs a bounded log (ADR-0021).
 export const STOP_LOG_DAYS = 7;
 export const MAX_STOPS_PER_SERVICE = 1000;
@@ -77,6 +78,8 @@ export const openStopLog = async ({
 
 // `revision` counts the changes to a stop, and `settled` is the revision the
 // Hub last took, so a stop that changes after a Report carried it is sent again.
+// `changed_at` is when it last changed, on the Collector's clock, which ages it,
+// so a long stop that just ended is kept until the Hub learns of its end.
 const logOver = (db: Database, now: () => number): StopLog => {
   db.run('PRAGMA busy_timeout = 5000');
   db.run('PRAGMA journal_mode = WAL');
@@ -84,7 +87,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
     'CREATE TABLE IF NOT EXISTS baselines (key TEXT PRIMARY KEY, boot TEXT NOT NULL, stopped_at INTEGER, restarts INTEGER NOT NULL, open_stop INTEGER)',
   );
   db.run(
-    'CREATE TABLE IF NOT EXISTS stops (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, service TEXT NOT NULL, stopped_at INTEGER NOT NULL, started_at INTEGER, ongoing INTEGER NOT NULL, restarts INTEGER NOT NULL, result TEXT, exit_status INTEGER, revision INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0)',
+    'CREATE TABLE IF NOT EXISTS stops (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, service TEXT NOT NULL, stopped_at INTEGER NOT NULL, started_at INTEGER, ongoing INTEGER NOT NULL, restarts INTEGER NOT NULL, result TEXT, exit_status INTEGER, revision INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0, changed_at INTEGER NOT NULL)',
   );
 
   const baselineOf = db.query<BaselineRow, { key: string }>(
@@ -94,26 +97,28 @@ const logOver = (db: Database, now: () => number): StopLog => {
     'INSERT OR REPLACE INTO baselines (key, boot, stopped_at, restarts, open_stop) VALUES ($key, $boot, $stoppedAt, $restarts, $openStop)',
   );
   const insertStop = db.query<{ id: number }, Record<string, number | string | null>>(
-    'INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, result, exit_status, revision) VALUES ($key, $service, $stoppedAt, $startedAt, $ongoing, $restarts, $result, $exitStatus, 1) RETURNING id',
+    'INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, result, exit_status, revision, changed_at) VALUES ($key, $service, $stoppedAt, $startedAt, $ongoing, $restarts, $result, $exitStatus, 1, $now) RETURNING id',
   );
   // The facts of a check that saw the Service still stopped are its latest word
   // on how the stop went, and a check that saw it running again ends the stop
-  // and keeps the word it had, since systemd forgets it on the new start.
+  // and keeps the word it had, since systemd forgets it on the new start. A
+  // check that changes nothing leaves the stop as it was, so it is not sent again.
   const extendStop = db.query(
-    `UPDATE stops SET restarts = restarts + $restarts, revision = revision + 1,
+    `UPDATE stops SET restarts = restarts + $restarts, revision = revision + 1, changed_at = $now,
       ongoing = $ongoing, started_at = $startedAt,
       result = CASE WHEN $ongoing = 1 THEN $result ELSE result END,
       exit_status = CASE WHEN $ongoing = 1 THEN $exitStatus ELSE exit_status END
-    WHERE id = $id`,
+    WHERE id = $id AND ($restarts > 0 OR ongoing IS NOT $ongoing OR started_at IS NOT $startedAt
+      OR ($ongoing = 1 AND (result IS NOT $result OR exit_status IS NOT $exitStatus)))`,
   );
   const endUnknown = db.query(
-    'UPDATE stops SET ongoing = 0, started_at = NULL, revision = revision + 1 WHERE id = $id AND ongoing = 1',
+    'UPDATE stops SET ongoing = 0, started_at = NULL, revision = revision + 1, changed_at = $now WHERE id = $id AND ongoing = 1',
   );
   const pruneService = db.query(
     `DELETE FROM stops WHERE key = $key AND ongoing = 0 AND id NOT IN
       (SELECT id FROM stops WHERE key = $key ORDER BY id DESC LIMIT ${String(MAX_STOPS_PER_SERVICE)})`,
   );
-  const pruneOld = db.query('DELETE FROM stops WHERE ongoing = 0 AND stopped_at < $cutoff');
+  const pruneOld = db.query('DELETE FROM stops WHERE ongoing = 0 AND changed_at < $cutoff');
   const selectPending = db.query<StopRow, []>(
     `SELECT id, service, stopped_at AS stoppedAt, started_at AS startedAt, ongoing, restarts,
       result, exit_status AS exitStatus, revision
@@ -142,16 +147,15 @@ const logOver = (db: Database, now: () => number): StopLog => {
     const ongoing = ranAgain ? 0 : 1;
     const startedAt = ranAgain ? facts.startedAt : null;
     if (baseline.openStop !== null) {
-      if (left || restarts > 0 || ranAgain) {
-        extendStop.run({
-          exitStatus: facts.exitStatus,
-          id: baseline.openStop,
-          ongoing,
-          restarts,
-          result: facts.result,
-          startedAt,
-        });
-      }
+      extendStop.run({
+        exitStatus: facts.exitStatus,
+        id: baseline.openStop,
+        now: now(),
+        ongoing,
+        restarts,
+        result: facts.result,
+        startedAt,
+      });
       return ranAgain ? null : baseline.openStop;
     }
     if (!left) {
@@ -160,6 +164,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
     const inserted = insertStop.get({
       exitStatus: ranAgain ? null : facts.exitStatus,
       key,
+      now: now(),
       ongoing,
       restarts,
       result: ranAgain ? null : facts.result,
@@ -176,7 +181,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
     let openStop: number | null = null;
     if (baseline === null || baseline.boot !== check.boot) {
       if (baseline?.openStop != null) {
-        endUnknown.run({ id: baseline.openStop });
+        endUnknown.run({ id: baseline.openStop, now: now() });
       }
     } else {
       openStop = logStop(check, baseline);
@@ -195,7 +200,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
     for (const { key, openStop } of selectKeys.all()) {
       if (!kept.has(key)) {
         if (openStop !== null) {
-          endUnknown.run({ id: openStop });
+          endUnknown.run({ id: openStop, now: now() });
         }
         removeBaseline.run({ key });
       }

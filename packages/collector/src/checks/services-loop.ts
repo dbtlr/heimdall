@@ -9,7 +9,7 @@ import { describeRows } from '../sections-report.ts';
 import { runCommand } from '../subprocess.ts';
 import type { CheckParts } from './parts.ts';
 import { checkService, findSystemctl } from './services.ts';
-import type { ServiceTools } from './services.ts';
+import type { ServiceOutcome, ServiceTools } from './services.ts';
 import { linuxBootId } from './stop-log.ts';
 import type { StopLog } from './stop-log.ts';
 
@@ -118,6 +118,31 @@ export const createServiceChecks = ({
   let latest: CheckParts | undefined;
   let warnedAbout = '';
   let failing = false;
+  let stopsFailing = false;
+
+  // Hands each Service's stop facts to the stop log. A log that fails costs the
+  // stops, never the checks, and is warned about once until it works again.
+  const logStops = (
+    held: StopLog,
+    boot: string | undefined,
+    checked: { outcomes: ServiceOutcome[]; record: ServiceRecord }[],
+  ) => {
+    try {
+      for (const { outcomes, record } of checked) {
+        const facts = outcomes.find((outcome) => outcome.stopFacts !== undefined)?.stopFacts;
+        if (boot !== undefined && facts !== undefined) {
+          held.observe({ boot, facts, key: stopKeyOf(record), service: record.name });
+        }
+      }
+      held.retain(checked.map(({ record }) => stopKeyOf(record)));
+      stopsFailing = false;
+    } catch (error) {
+      if (!stopsFailing) {
+        log.warn(`Could not log Service stops: ${describeError(error)}`);
+      }
+      stopsFailing = true;
+    }
+  };
 
   const pass = async (held: RecordStore) => {
     const { records, refused } = serviceRecordsOf(held.readRecords().records);
@@ -143,13 +168,7 @@ export const createServiceChecks = ({
       records.map(async (record) => ({ outcomes: await checkService(record, tools), record })),
     );
     if (stops !== undefined) {
-      for (const { outcomes: checked, record } of outcomes) {
-        const facts = checked.find((outcome) => outcome.stopFacts !== undefined)?.stopFacts;
-        if (boot !== undefined && facts !== undefined) {
-          stops.observe({ boot, facts, key: stopKeyOf(record), service: record.name });
-        }
-      }
-      stops.retain(records.map(stopKeyOf));
+      logStops(stops, boot, outcomes);
     }
     const found = outcomes.flatMap(({ outcomes: checked, record }) =>
       checked.map(({ check, detail, state }) => {

@@ -101,10 +101,10 @@ const unitStopFacts = (shown: Map<string, string>): StopFacts | undefined => {
   if (startedAt === undefined || stoppedAt === undefined || !Number.isSafeInteger(restarts)) {
     return undefined;
   }
-  const status = Number(shown.get('ExecMainStatus') ?? '');
+  const status = shown.get('ExecMainStatus') ?? '';
   const result = clampDetail(shown.get('Result') ?? '').slice(0, MAX_RESULT_LENGTH);
   return {
-    exitStatus: shown.has('ExecMainStatus') && Number.isSafeInteger(status) ? status : null,
+    exitStatus: /^-?\d{1,9}$/u.test(status) ? Number(status) : null,
     restarts: Math.max(0, restarts),
     result: result === '' ? null : result,
     running: shown.get('ActiveState') === 'active',

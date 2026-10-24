@@ -142,6 +142,27 @@ describe('a systemd Service', () => {
     ]);
   });
 
+  test('carries no exit status when systemd holds none', async () => {
+    const { outcomes } = await check(WEB, {
+      exitCode: 0,
+      kind: 'exited',
+      stderr: '',
+      stdout: [
+        'Result=',
+        'NRestarts=0',
+        'ExecMainStatus=',
+        'LoadState=loaded',
+        'ActiveState=active',
+        'SubState=running',
+        'ActiveEnterTimestamp=Sat 2026-10-24 02:30:09.433563 UTC',
+        'ActiveExitTimestamp=',
+        '',
+      ].join('\n'),
+    });
+
+    expect(outcomes[0]?.stopFacts).toMatchObject({ exitStatus: null, result: null });
+  });
+
   test('carries no stop facts when a time is not in the form asked for, so nothing is inferred from them', async () => {
     const { outcomes } = await check(WEB, {
       exitCode: 0,

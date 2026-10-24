@@ -69,9 +69,10 @@ const BUS_DOWN: CommandResult = {
 };
 
 // The Service checks of a Collector that recorded the proxy, in `dir`, with a
-// systemd the test sets through `unit`, a boot the test sets through `boot`,
+// systemd the test sets through `check`, a boot the test sets through `reboot`,
 // and a clock the test moves. `restart` stands for the Collector restarting:
-// the checks and the stop log are opened again over the same state.
+// the checks and the stop log are opened again over the same state, and
+// `forget` for the provisioner forgetting the proxy's record.
 const setup = async (dir: { path: string }) => {
   const stateDir = join(dir.path, 'state');
   const records = await openRecords({ stateDir });
@@ -108,6 +109,11 @@ const setup = async (dir: { path: string }) => {
       held.stops.close();
     },
     first: () => held.checks.tick(),
+    forget: async () => {
+      const store = await openRecords({ stateDir });
+      store.forget('service', 'proxy');
+      store.close();
+    },
     logged: () => held.stops.pending().stops,
     reboot: (boot: string | undefined) => {
       system.boot = boot;
@@ -187,7 +193,7 @@ test('a stop that ends between two checks is logged with its times and no result
   ]);
 });
 
-test('a restart storm is one stop with its restart count, however many checks it spans', async () => {
+test('a restart storm is one stop with its restart count while the checks see the Service stopped', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
   await c.first();
@@ -312,5 +318,82 @@ test('a reboot is no stop, and a stop still under way before it ends with no kno
       startedAt: null,
       stoppedAt: T + 30 * S,
     },
+  ]);
+});
+
+test('a storm that is running at each check is one stop per check, each with its own restarts', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(shown({ enter: T + 59 * S, exit: T + 58 * S, restarts: 20 }));
+  await c.check(shown({ enter: T + 119 * S, exit: T + 118 * S, restarts: 41 }));
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([
+    { restarts: 20, result: null, startedAt: T + 59 * S, stoppedAt: T + 58 * S },
+    { restarts: 21, result: null, startedAt: T + 119 * S, stoppedAt: T + 118 * S },
+  ]);
+});
+
+test('forgetting a Service ends its stop under way with no known end', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+  await c.check(
+    shown({
+      active: 'failed',
+      enter: T - 60 * MIN,
+      exit: T + 30 * S,
+      result: 'exit-code',
+      status: 1,
+    }),
+  );
+
+  await c.forget();
+  await c.check(
+    shown({
+      active: 'failed',
+      enter: T - 60 * MIN,
+      exit: T + 30 * S,
+      result: 'exit-code',
+      status: 1,
+    }),
+  );
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([{ ongoing: false, startedAt: null, stoppedAt: T + 30 * S }]);
+});
+
+const failing = () => {
+  throw new Error('database or disk is full');
+};
+
+test('a stop log that fails costs the stops, never the Service checks, and is warned about once', async () => {
+  await using dir = await tempStateDir();
+  const stateDir = join(dir.path, 'state');
+  const records = await openRecords({ stateDir });
+  records.put('service', PROXY);
+  records.close();
+  const warnings: string[] = [];
+  const checks = createServiceChecks({
+    bootId: () => Promise.resolve('boot-1'),
+    findSystemctl: () => Promise.resolve('/usr/bin/systemctl'),
+    log: { info: () => 0, warn: (m) => warnings.push(m) },
+    now: () => T,
+    open: () => openRecords({ stateDir }),
+    run: () => Promise.resolve(shown({ enter: T - MIN, exit: null })),
+    stops: { close: () => {}, observe: failing, pending: failing, retain: failing },
+  });
+
+  await checks.tick();
+  await checks.tick();
+  checks.close();
+
+  expect(checks.latest()?.services).toMatchObject([{ service: 'proxy', state: 'up' }]);
+  expect(warnings).toEqual([
+    expect.stringContaining('Could not log Service stops: database or disk is full'),
   ]);
 });
