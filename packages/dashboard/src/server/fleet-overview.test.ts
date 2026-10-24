@@ -13,8 +13,14 @@ import {
 } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import type { Range } from './fleet-overview-types.ts';
-import { findGaps, parseOverviewInput, projectOf, readFleetOverview } from './fleet-overview.ts';
+import type { Lane, Range } from './fleet-overview-types.ts';
+import {
+  findGaps,
+  parseOverviewInput,
+  projectOf,
+  readFleetGlance,
+  readFleetOverview,
+} from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -819,5 +825,46 @@ describe('silences', () => {
     }
     expect(silenced).toEqual(expected);
     expect(silenced.lanes.find((l) => l.name === 'server-1')?.status).toBe('needs_you');
+  });
+});
+
+// What a Fleet tile draws of a lane.
+const glanceOf = ({ lastSeenAt, latest, name, silencedUntil, sleeps, status }: Lane) => ({
+  lastSeenAt,
+  latest,
+  name,
+  silencedUntil,
+  sleeps,
+  status,
+});
+
+describe('readFleetGlance', () => {
+  test('agrees with the overview on all the Fleet tiles draw, and reads no timeline', async () => {
+    await using h = await startHub();
+    await unpairedLaptop(h);
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'alert',
+      raisedAt: -3600,
+      subject: '/',
+      system: 'server-1',
+    });
+    await silence(h, 'server-1', NOW + 2 * HOUR);
+    await h.db.sql`UPDATE delivery_status SET failing_since = ${new Date(NOW - 30 * MINUTE)}`;
+
+    const agrees = async (unpaired: boolean) => {
+      const full = await overview(h, '24h', NOW, unpaired);
+      expect(await readFleetGlance(h.db.sql, { now: NOW, unpaired })).toEqual({
+        attention: full.attention,
+        deliveryFailingSince: NOW - 30 * MINUTE,
+        lanes: full.lanes.map(glanceOf),
+        now: NOW,
+        unpairedCount: 1,
+        unpairedLanes: full.unpairedLanes.map(glanceOf),
+      });
+    };
+
+    await agrees(false);
+    await agrees(true);
   });
 });

@@ -9,6 +9,7 @@ import { isRange, QUIET_AFTER_MS, RANGES } from './fleet-overview-types.ts';
 import type {
   ConditionMark,
   CpuBucket,
+  FleetGlance,
   FleetOverview,
   Gap,
   Lane,
@@ -16,9 +17,15 @@ import type {
   Link,
   Range,
   Stretch,
+  SystemGlance,
 } from './fleet-overview-types.ts';
 import { bySystem, conditionKind, field } from './hub-rows.ts';
 import { readSilencedUntil } from './silences.ts';
+
+// What a glance request asks for: whether it wants the unpaired Systems too.
+export const parseGlanceInput = (input: unknown): { unpaired: boolean } => ({
+  unpaired: field(input, 'unpaired') === true,
+});
 
 // What an overview request asks for: its `range`, 24h when it names none, and
 // whether it wants the unpaired Systems too.
@@ -27,7 +34,7 @@ export const parseOverviewInput = (input: unknown): { range: Range; unpaired: bo
   if (asked !== undefined && !isRange(asked)) {
     throw new Error(`The range ${JSON.stringify(asked)} is not one of ${RANGES.join(', ')}.`);
   }
-  return { range: asked ?? '24h', unpaired: field(input, 'unpaired') === true };
+  return { range: asked ?? '24h', ...parseGlanceInput(input) };
 };
 
 const MINUTE_MS = 60_000;
@@ -123,7 +130,7 @@ export type BucketRow = {
 
 type LatestRow = {
   cpu_busy_percent: number;
-  disks: NonNullable<Lane['latest']>['disks'];
+  disks: NonNullable<SystemGlance['latest']>['disks'];
   memory_used_percent: number | null;
   system: string;
   t: Date;
@@ -249,16 +256,13 @@ const readDeliveryFailingSince = async (sql: SQL): Promise<number | undefined> =
 const isHubCondition = ({ kind }: Attention) =>
   kind !== 'file_unreadable' && kind !== 'checks_missing';
 
-// Every paired System as a lane on one time axis, over the `range` that ends
-// at `now`, and what needs the operator now. The Systems no longer paired are
-// counted, and get lanes and attention of their own only when `unpaired`
-// asks for them. Read-only.
-const readFleetOverviewSnapshot = async (
+// What the Fleet tiles draw of every paired System at `now`, and what needs
+// the operator now. The Systems no longer paired are counted, and get a glance
+// and attention of their own only when `unpaired` asks for them. Read-only.
+const readGlanceSnapshot = async (
   sql: SQL,
-  { now, range, unpaired = false }: { now: number; range: Range; unpaired?: boolean },
-): Promise<FleetOverview> => {
-  const from = now - RANGE_MS[range];
-  const [fromAt, toAt] = [new Date(from), new Date(now)];
+  { now, unpaired = false }: { now: number; unpaired?: boolean },
+): Promise<FleetGlance> => {
   // A paired System the Hub has not heard from has no `systems` row; an
   // unpaired one keeps its row, and so its history.
   const held: SystemRow[] = await sql`
@@ -276,61 +280,32 @@ const readFleetOverviewSnapshot = async (
     return {
       attention: [],
       deliveryFailingSince,
-      from,
       lanes: [],
       now,
-      range,
-      to: now,
       unpairedCount,
       unpairedLanes: [],
     };
   }
-  const [buckets, latest, stretches, marks, attention, silenced]: [
-    BucketRow[],
-    LatestRow[],
-    StretchRow[],
-    ConditionRow[],
-    Attention[],
-    Map<string, number>,
-  ] = await Promise.all([
-    sql`
-      SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
-      FROM vitals_rollups
-      WHERE system IN ${sql(names)}
-        AND bucket >= date_bin('5 minutes', ${fromAt}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
-        AND bucket < ${toAt}
-      ORDER BY system, bucket
-    `,
-    // One newest sample per System, read through the (system, t) key.
-    sql`
-      SELECT s.name AS system, v.t, v.cpu_busy_percent, v.memory_used_percent, v.disks
-      FROM systems s
-      CROSS JOIN LATERAL (
-        SELECT t, cpu_busy_percent, disks,
-               memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
-        FROM vitals_samples
-        WHERE system = s.name
-        ORDER BY t DESC
-        LIMIT 1
-      ) v
-      WHERE s.name IN ${sql(names)}
-    `,
-    readStretches(sql, { from, systems: names, to: now }),
-    sql`
-      SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
-      FROM conditions
-      WHERE system IN ${sql(names)}
-        AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
-      ORDER BY raised_at, id
-    `,
-    readAttention(sql, { now, systems }),
-    readSilencedUntil(sql, { now, systems: names }),
-  ]);
-  const bucketsOf = bySystem(buckets);
+  const [latest, attention, silenced]: [LatestRow[], Attention[], Map<string, number>] =
+    await Promise.all([
+      // One newest sample per System, read through the (system, t) key.
+      sql`
+        SELECT s.name AS system, v.t, v.cpu_busy_percent, v.memory_used_percent, v.disks
+        FROM systems s
+        CROSS JOIN LATERAL (
+          SELECT t, cpu_busy_percent, disks,
+                 memory_used_bytes::float8 * 100 / NULLIF(memory_total_bytes, 0) AS memory_used_percent
+          FROM vitals_samples
+          WHERE system = s.name
+          ORDER BY t DESC
+          LIMIT 1
+        ) v
+        WHERE s.name IN ${sql(names)}
+      `,
+      readAttention(sql, { now, systems }),
+      readSilencedUntil(sql, { now, systems: names }),
+    ]);
   const latestOf = bySystem(latest);
-  const stretchesOf = bySystem(stretches);
-  const marksOf = bySystem(marks);
-  const transitions = await readConditionTransitions(sql, marks);
   // Notes remain visible without making the System need action. Evidence
   // freshness does not change the level the Hub stored.
   const withOpenCondition = new Set(
@@ -338,20 +313,11 @@ const readFleetOverviewSnapshot = async (
       .filter((item) => isHubCondition(item) && item.level !== 'note')
       .map(({ system }) => system),
   );
-  const laneOf = (system: SystemRow): Lane => {
-    const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
+  const glanceOf = (system: SystemRow): SystemGlance => {
     const newest = latestOf.get(system.name)?.[0];
     const lastSeenAt = system.last_seen_at?.getTime();
     const sleeps = system.sleeps === true;
     return {
-      buckets: own,
-      conditions: (marksOf.get(system.name) ?? []).map((row) =>
-        toMark(row, transitions.get(row.id) ?? []),
-      ),
-      gaps: findGaps(
-        own.map(({ t }) => t),
-        { from, now },
-      ),
       lastSeenAt,
       latest:
         newest === undefined
@@ -372,27 +338,86 @@ const readFleetOverviewSnapshot = async (
         paired: system.paired,
         sleeps,
       }),
-      stretches: (stretchesOf.get(system.name) ?? []).map(toStretch),
     };
   };
   return {
     attention,
     deliveryFailingSince,
-    from,
-    lanes: systems.filter(({ paired }) => paired).map(laneOf),
+    lanes: systems.filter(({ paired }) => paired).map(glanceOf),
     now,
-    range,
-    to: now,
     unpairedCount,
-    unpairedLanes: systems.filter(({ paired }) => !paired).map(laneOf),
+    unpairedLanes: systems.filter(({ paired }) => !paired).map(glanceOf),
   };
 };
 
-// Current levels and their transitions must come from the same snapshot.
-export const readFleetOverview = (
+// The glance with every System drawn as a lane on one time axis over the
+// `range` that ends at `now`. Read-only.
+const readFleetOverviewSnapshot = async (
   sql: SQL,
-  input: Parameters<typeof readFleetOverviewSnapshot>[1],
-) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
-    readFleetOverviewSnapshot(tx, input),
-  );
+  { now, range, unpaired = false }: { now: number; range: Range; unpaired?: boolean },
+): Promise<FleetOverview> => {
+  const glance = await readGlanceSnapshot(sql, { now, unpaired });
+  const from = now - RANGE_MS[range];
+  const [fromAt, toAt] = [new Date(from), new Date(now)];
+  const names = [...glance.lanes, ...glance.unpairedLanes].map(({ name }) => name);
+  if (names.length === 0) {
+    return { ...glance, from, lanes: [], range, to: now, unpairedLanes: [] };
+  }
+  const [buckets, stretches, marks]: [BucketRow[], StretchRow[], ConditionRow[]] =
+    await Promise.all([
+      sql`
+        SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
+        FROM vitals_rollups
+        WHERE system IN ${sql(names)}
+          AND bucket >= date_bin('5 minutes', ${fromAt}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
+          AND bucket < ${toAt}
+        ORDER BY system, bucket
+      `,
+      readStretches(sql, { from, systems: names, to: now }),
+      sql`
+        SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
+        FROM conditions
+        WHERE system IN ${sql(names)}
+          AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
+        ORDER BY raised_at, id
+      `,
+    ]);
+  const bucketsOf = bySystem(buckets);
+  const stretchesOf = bySystem(stretches);
+  const marksOf = bySystem(marks);
+  const transitions = await readConditionTransitions(sql, marks);
+  const laneOf = (system: SystemGlance): Lane => {
+    const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
+    return {
+      ...system,
+      buckets: own,
+      conditions: (marksOf.get(system.name) ?? []).map((row) =>
+        toMark(row, transitions.get(row.id) ?? []),
+      ),
+      gaps: findGaps(
+        own.map(({ t }) => t),
+        { from, now },
+      ),
+      stretches: (stretchesOf.get(system.name) ?? []).map(toStretch),
+    };
+  };
+  return {
+    ...glance,
+    from,
+    lanes: glance.lanes.map(laneOf),
+    range,
+    to: now,
+    unpairedLanes: glance.unpairedLanes.map(laneOf),
+  };
+};
+
+// Each read sees one snapshot, so a System's status agrees with the attention
+// beside it, and current levels with their transitions.
+const inSnapshot =
+  <I, O>(read: (sql: SQL, input: I) => Promise<O>) =>
+  (sql: SQL, input: I) =>
+    sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => read(tx, input));
+
+export const readFleetGlance = inSnapshot(readGlanceSnapshot);
+
+export const readFleetOverview = inSnapshot(readFleetOverviewSnapshot);

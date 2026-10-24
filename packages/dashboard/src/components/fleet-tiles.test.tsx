@@ -2,17 +2,14 @@ import { describe, expect, test } from 'bun:test';
 
 import { tileOrder } from '../lib/fleet-tile.ts';
 import type { Attention } from '../server/attention-types.ts';
-import type { Lane } from '../server/fleet-overview-types.ts';
+import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { FleetTiles } from './fleet-tiles.tsx';
 import { renderRouted } from './render-routed.tsx';
 
 const NOW = 10_000_000;
 
-const lane = (name: string, over: Partial<Lane> = {}): Lane => ({
-  buckets: [],
-  conditions: [],
-  gaps: [],
+const lane = (name: string, over: Partial<SystemGlance> = {}): SystemGlance => ({
   lastSeenAt: NOW - 20_000,
   latest: {
     cpuBusyPercent: 12.4,
@@ -27,7 +24,6 @@ const lane = (name: string, over: Partial<Lane> = {}): Lane => ({
   silencedUntil: undefined,
   sleeps: false,
   status: 'up',
-  stretches: [],
   ...over,
 });
 
@@ -46,7 +42,7 @@ const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Att
   ...over,
 });
 
-const render = (lanes: Lane[], items: Attention[] = []) =>
+const render = (lanes: SystemGlance[], items: Attention[] = []) =>
   renderRouted(<FleetTiles now={NOW} tiles={tileOrder(lanes, items, NOW)} />);
 
 // The markup from the meter named `label` up to the next meter. A meter with an

@@ -12,15 +12,14 @@ import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
 import { deliveryFailingShown, fleetAttention } from '../lib/fleet.ts';
 import { rangeFromSearch } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
-import { getFleetOverview } from '../server/fleet-overview-fn.ts';
-import type { Range } from '../server/fleet-overview-types.ts';
+import { getFleetGlance } from '../server/fleet-overview-fn.ts';
 
 export const Route = createFileRoute('/')({
   component: Fleet,
   // Annotated, because Router infers `deps` only from a `loaderDeps` written first, which key order forbids.
-  loader: ({ deps }: { deps: { range: Range; unpaired: boolean } }) =>
-    getFleetOverview({ data: deps }),
-  loaderDeps: ({ search }) => ({ range: search.range, unpaired: search.unpaired === true }),
+  loader: ({ deps }: { deps: { unpaired: boolean } }) => getFleetGlance({ data: deps }),
+  // The tiles draw no range; `range` is only carried on to Compare.
+  loaderDeps: ({ search }) => ({ unpaired: search.unpaired === true }),
   // `unpaired` is true or absent, so a URL without it is the plain overview.
   validateSearch: (search: { range?: unknown; unpaired?: unknown } & SearchSchemaInput) => ({
     range: rangeFromSearch(search),
@@ -30,8 +29,10 @@ export const Route = createFileRoute('/')({
 
 function Fleet() {
   const overview = Route.useLoaderData();
-  const showUnpaired = Route.useSearch().unpaired === true;
-  const { now, range } = overview;
+  const search = Route.useSearch();
+  const showUnpaired = search.unpaired === true;
+  const { range } = search;
+  const { now } = overview;
   const empty = emptyFleetText(overview.lanes);
   const { counts } = fleetAttention(overview.attention);
   const deliveryFailingSince = deliveryFailingShown(overview);
