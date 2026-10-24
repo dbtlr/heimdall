@@ -46,3 +46,21 @@ export const ServiceStopsSectionSchema = z.object({
 
 export type ServiceStopsSection = z.infer<typeof ServiceStopsSectionSchema>;
 export type SentServiceStop = z.infer<typeof SentServiceStopSchema>;
+
+// One stop in the dashboard's read, with its times in ISO 8601: `stoppedAt`,
+// `startedAt`, and `sentAt` on the System's clock, `receivedAt` on the Hub's.
+const ServiceStopReadSchema = ServiceStopsSectionSchema.shape.stops.element.extend({
+  paired: z.boolean(),
+  receivedAt: z.string(),
+  sentAt: z.string(),
+  startedAt: z.string().nullable(),
+  stoppedAt: z.string(),
+  system: z.string(),
+});
+
+// The answer of `GET /api/v1/service-stops`, apart from the records read (ADR-0011).
+export const ServiceStopsReadSchema = z.object({
+  stops: z.array(ServiceStopReadSchema),
+});
+
+export type ServiceStopsRead = z.infer<typeof ServiceStopsReadSchema>;
