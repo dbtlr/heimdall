@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -7,6 +7,7 @@ description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, 
 Heimdall observes a fleet and the agent work done on it, whatever provisions its Systems. The terms below are Heimdall's own.
 Condition levels and level-change history follow [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
 Delivery and silences follow [ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md).
+Service stops follow [ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md).
 
 ## Language
 
@@ -31,8 +32,12 @@ Software a provisioner installed on a System and recorded with its version. The 
 _Avoid_: package, app
 
 **Service**:
-A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, and optionally a loopback health URL. The Collector checks its supervisor state and health; a stopped or unhealthy Service raises the Service down Condition.
+A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, and optionally a loopback health URL. The Collector checks its supervisor state and health; a stopped or unhealthy Service raises the Service down Condition, and any Service stop raises the Service restarted note.
 _Avoid_: daemon, process
+
+**Service stop**:
+A time a Service's supervisor shows it stopped, from when it stopped to when it ran again, with the result, exit status, and restart count the supervisor holds. A reboot is not a Service stop, and a failed health check is not one either.
+_Avoid_: incident, outage, restart event
 
 **job**:
 A scheduled program a provisioner recorded, with its scheduler and schedule, such as a backup. It reports each run to the Collector, and the Hub judges whether it is failing, because its latest run failed, or overdue, because its System was awake for the job's grace period after a scheduled time with no successful run since.

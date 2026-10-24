@@ -1,5 +1,5 @@
 ---
-description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1, and alerting (M8), which follows v1."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1, alerting (M8), which follows v1, and short Service stops (M9)."
 ---
 
 # Roadmap
@@ -126,6 +126,18 @@ A Condition at the alert level reaches the operator's phone, and nothing else in
 - Order: delivery first, then silences, then rollout with the provisioner writing the ntfy settings, proven live by stopping a Service. An external watcher for the System that hosts the Hub follows, posting to the same topic.
 
 Size: medium. Sharp edges: batching without losing which Condition a message is about, and keeping the topic and token out of logs.
+
+## M9: Short Service stops
+
+Every stop of a recorded Service leaves evidence and a quiet note, however short, without changing when Service down raises or what is delivered ([ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md)).
+
+- At each check the Collector reads what the supervisor holds, such as restart counts, state timestamps, and exit results, and logs each stop it finds against a baseline it keeps per Service and per boot. The log rides Reports until the Hub settles it, so a stop survives recovery before delivery, a network gap, and a Collector restart.
+- A restart storm is one stop with its count. A reboot is not a stop of every Service, and a check that cannot reach the supervisor infers nothing.
+- The Hub keeps stops for 90 days and raises a Service restarted note per Service, which names the count and the latest result and clears after 24 hours with no new stop. It never steps up or alerts.
+- The Service page lists its recent stops, and the dashboard's `GET /api/v1/service-stops` returns them with when they were seen and received.
+- Order: the ADR first, then systemd end to end through the Collector, the Hub, and the dashboard, then Docker, then launchd, whose stops are timed only to the minute. Proven live by a deliberate restart of a recorded Service. Evidence of why a Service stopped, pushed by its provisioner, is a later initiative.
+
+Size: medium. Sharp edges: telling a reboot from a stop on each supervisor, and a Service its provisioner leaves unrecorded, such as one on a System whose Collector runs under another account, stays invisible.
 
 ## Later
 
