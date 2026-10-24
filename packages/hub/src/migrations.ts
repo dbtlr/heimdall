@@ -2266,6 +2266,27 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 38,
   },
+  {
+    // The Collector's whole view of each Service stop (ADR-0021), ordered by
+    // Report sent time. The primary key also serves the per-System evaluator.
+    sql: `
+      CREATE TABLE service_stops (
+        system text NOT NULL REFERENCES systems (name),
+        service text NOT NULL,
+        stopped_at timestamptz NOT NULL,
+        started_at timestamptz,
+        ongoing boolean NOT NULL,
+        restarts integer NOT NULL,
+        result text,
+        exit_status integer,
+        sent_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL,
+        PRIMARY KEY (system, service, stopped_at)
+      );
+      CREATE INDEX service_stops_ended ON service_stops (stopped_at) WHERE NOT ongoing;
+    `,
+    version: 39,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

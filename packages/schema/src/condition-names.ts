@@ -4,9 +4,9 @@ import { parseUpdateSubject, UPDATE_MANAGER_NAMES } from './updates-section.ts';
 
 // What a Condition is about. Its subject tells occurrences of one kind apart: a
 // job Condition's is the job's name, a low disk Condition's the mount, a Drift
-// Condition's the file's path, and a Service down Condition's the Service's
-// name. A clock skew Condition's is empty for the System's own clock and `hub`
-// for the Hub's. The rest are empty: stale System, high CPU and memory.
+// Condition's the file's path, and Service down and Service restarted use the
+// Service's name. A clock skew Condition's is empty for the System's own
+// clock and `hub` for the Hub's. The rest are empty: stale System, high CPU and memory.
 export type ConditionKind =
   | 'clock_skew'
   | 'drift'
@@ -20,6 +20,7 @@ export type ConditionKind =
   | 'reboot_required'
   | 'reports_rejected'
   | 'service_down'
+  | 'service_restarted'
   | 'system_stale';
 
 // How the dashboard and the Hub's deliveries name each kind of Condition.
@@ -36,6 +37,7 @@ export const CONDITION_KIND_NAMES: Record<ConditionKind, string> = {
   reboot_required: 'Reboot required',
   reports_rejected: 'Reports rejected',
   service_down: 'Service down',
+  service_restarted: 'Service restarted',
   system_stale: 'Stale System',
 };
 

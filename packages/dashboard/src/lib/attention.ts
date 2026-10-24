@@ -350,6 +350,12 @@ export const evidenceWords = (item: Attention, now: number): EvidenceWords => {
         serviceObserved(item.checks, item.reason),
       );
     }
+    case 'service_restarted': {
+      return evidence(same('Running without stopping'), {
+        long: [item.reason],
+        short: [truncate(item.reason, SHORT_LIMIT)],
+      });
+    }
     case 'job_failing': {
       return evidence(same('Exit status 0'), jobFailingObserved(item.latestRun, now));
     }
@@ -433,7 +439,7 @@ const arrivedThing = (item: Attention) => {
   if (item.kind === 'job_failing' || item.kind === 'job_overdue') {
     return 'run';
   }
-  if (item.kind === 'clock_skew') {
+  if (item.kind === 'clock_skew' || item.kind === 'service_restarted') {
     return 'Report';
   }
   return item.kind === 'low_disk' ||
@@ -717,6 +723,18 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
     }
     case 'service_down': {
       return serviceSteps(item);
+    }
+    case 'service_restarted': {
+      return {
+        short: 'Read its log to see why it stopped',
+        steps: [
+          step(
+            'Read its log to see why it stopped',
+            `On ${item.system}, read ${item.subject}'s log to see why it stopped.${item.service?.supervisor === 'launchd' ? LAUNCH_DAEMON_HINT : ''}`,
+            serviceCommands(item.service).log,
+          ),
+        ],
+      };
     }
     case 'job_failing': {
       return {

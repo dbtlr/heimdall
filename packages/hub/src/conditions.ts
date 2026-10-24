@@ -9,6 +9,7 @@ export const FIXED_LEVELS = {
   job_overdue: 'warning',
   reports_rejected: 'alert',
   service_down: 'alert',
+  service_restarted: 'note',
   system_stale: 'alert',
 } as const satisfies Record<
   Exclude<

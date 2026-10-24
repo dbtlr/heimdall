@@ -5,6 +5,7 @@ import { CONDITION_KIND_NAMES, conditionSubject } from './condition-names.ts';
 test.each([
   ['system_stale', 'Stale System'],
   ['service_down', 'Service down'],
+  ['service_restarted', 'Service restarted'],
   ['low_disk', 'Low disk'],
   ['job_failing', 'Job failing'],
   ['reports_rejected', 'Reports rejected'],

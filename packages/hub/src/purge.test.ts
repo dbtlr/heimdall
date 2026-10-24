@@ -118,6 +118,15 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
     INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at)
     VALUES (${system}, 'cpu_load', '', ${AT}, ${AT})
   `;
+  const [note]: { id: string }[] = await sql`
+    INSERT INTO conditions (system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level)
+    VALUES (${system}, 'service_restarted', 'web', ${AT}, 'Stopped cleanly.', ${AT}, 'Stopped cleanly.', 'note')
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO condition_transitions (condition, action, level, at, reason)
+    VALUES (${note?.id}, 'raised', 'note', ${AT}, 'Stopped cleanly.')
+  `;
   await sql`INSERT INTO condition_limits (system, limits) VALUES (${system}, '{}')`;
   await sql`INSERT INTO load_evaluations (system, through) VALUES (${system}, ${AT})`;
   await sql`INSERT INTO hot_process_evaluations (system, through) VALUES (${system}, ${AT})`;
@@ -132,6 +141,10 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   `;
   await sql`INSERT INTO run_sets (system, sent_at, received_at) VALUES (${system}, ${AT}, ${AT})`;
   await sql`INSERT INTO mirrored_runs (system, job, latest_run) VALUES (${system}, 'backup', '{}')`;
+  await sql`
+    INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+    VALUES (${system}, 'web', ${AT}, false, 0, ${AT}, ${AT})
+  `;
   await sql`INSERT INTO check_sets (system, sent_at, received_at) VALUES (${system}, ${AT}, ${AT})`;
   await sql`INSERT INTO harness_installs (system, installs, sent_at) VALUES (${system}, '[]', ${AT})`;
   const [process]: { id: string }[] = await sql`
@@ -450,20 +463,21 @@ const seedServiceDown = async (
     system,
   }: { cleared: Date | null; delivered?: boolean; kind?: string; subject: string; system: string },
 ) => {
+  const level = kind === 'service_restarted' ? 'note' : 'alert';
   const [condition]: { id: string }[] = await sql`
     INSERT INTO conditions (
       system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level, cleared_at
-    ) VALUES (${system}, ${kind}, ${subject}, ${AT}, 'Stopped.', ${AT}, 'Stopped.', 'alert', ${cleared})
+    ) VALUES (${system}, ${kind}, ${subject}, ${AT}, 'Stopped.', ${AT}, 'Stopped.', ${level}, ${cleared})
     RETURNING id
   `;
   await sql`
     INSERT INTO condition_transitions (condition, action, level, at, reason)
-    VALUES (${condition?.id}, 'raised', 'alert', ${AT}, 'Stopped.')
+    VALUES (${condition?.id}, 'raised', ${level}, ${AT}, 'Stopped.')
   `;
   if (cleared !== null) {
     await sql`
       INSERT INTO condition_transitions (condition, action, level, at, reason)
-      VALUES (${condition?.id}, 'cleared', 'alert', ${cleared}, 'Stopped.')
+      VALUES (${condition?.id}, 'cleared', ${level}, ${cleared}, 'Stopped.')
     `;
   }
   if (delivered) {
@@ -549,10 +563,36 @@ const setupServices = async () => {
 
 test("purge service deletes a forgotten Service's Conditions, Timeline, and deliveries on its System alone", async () => {
   await using s = await setupServices();
+  await seedServiceDown(s.db.sql, {
+    cleared: null,
+    kind: 'service_restarted',
+    subject: 'old-web',
+    system: 'laptop-1',
+  });
+  await seedServiceDown(s.db.sql, {
+    cleared: AT,
+    kind: 'service_restarted',
+    subject: 'old-web',
+    system: 'laptop-1',
+  });
+  await s.db.sql`
+    INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+    VALUES ('laptop-1', 'old-web', ${AT}, false, 0, ${AT}, ${AT}),
+           ('laptop-1', 'web', ${AT}, true, 0, ${AT}, ${AT}),
+           ('server-1', 'old-web', ${AT}, false, 0, ${AT}, ${AT})
+  `;
 
   const { code, stdout } = await invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
 
   expect(stdout).toBe('Purged the Service old-web from laptop-1.\n');
+  expect(
+    await s.db.sql<
+      Record<string, unknown>[]
+    >`SELECT system, service FROM service_stops ORDER BY system, service`,
+  ).toEqual([
+    { service: 'web', system: 'laptop-1' },
+    { service: 'old-web', system: 'server-1' },
+  ]);
   expect(code).toBe(0);
   expect(await conditionRows(s.db.sql)).toEqual({
     conditions: [
@@ -624,4 +664,38 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
     expect.objectContaining({ kind: 'service_down', subject: 'old-web', system: 'laptop-1' }),
   );
   expect(code).toBe(0);
+});
+
+test('purge service succeeds when only Service stops are held', async () => {
+  await using s = await setupServices();
+  await s.db.sql`
+    INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+    VALUES ('laptop-1', 'db', ${AT}, true, 0, ${AT}, ${AT})
+  `;
+
+  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
+
+  expect(code).toBe(0);
+  expect(
+    await s.db.sql<
+      Record<string, unknown>[]
+    >`SELECT service FROM service_stops WHERE service = 'db'`,
+  ).toEqual([]);
+});
+
+test('purge service succeeds when only a Service restarted note is held', async () => {
+  await using s = await setupServices();
+  await seedServiceDown(s.db.sql, {
+    cleared: null,
+    kind: 'service_restarted',
+    subject: 'db',
+    system: 'laptop-1',
+  });
+
+  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
+
+  expect(code).toBe(0);
+  expect(
+    await s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'db'`,
+  ).toEqual([]);
 });

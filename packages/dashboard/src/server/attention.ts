@@ -299,6 +299,19 @@ const conditionFound = (
   if (kind === 'service_down') {
     return serviceDownFacts(held, row, now);
   }
+  if (kind === 'service_restarted') {
+    // A recorded stop remains evidence of that stop through the note's life;
+    // newer checks do not need to reconfirm it.
+    return {
+      checkedAt: row.latest_at.getTime(),
+      evidence: 'current',
+      facts: {
+        kind,
+        reason: row.latest_reason,
+        service: serviceTarget(recordOf(held, 'service', row.subject)),
+      },
+    };
+  }
   if (kind === 'job_failing' || kind === 'job_overdue') {
     return jobFacts(held, row, now);
   }

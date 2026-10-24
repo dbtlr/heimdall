@@ -130,7 +130,7 @@ export const purgeSystem = new Command('system', {
 
 export const purgeService = new Command('service', {
   description:
-    "Delete a forgotten Service's Conditions and their Timeline from one System. The System must no longer record it.",
+    "Delete a forgotten Service's stops and Conditions with their Timeline from one System. The System must no longer record it.",
 })
   .argument('system', system)
   .argument('service', {

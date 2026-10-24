@@ -43,6 +43,7 @@ const HISTORY = [
   'DELETE FROM run_sets WHERE system = $1',
   'DELETE FROM mirrored_runs WHERE system = $1',
   'DELETE FROM check_sets WHERE system = $1',
+  'DELETE FROM service_stops WHERE system = $1',
   'DELETE FROM update_managers WHERE system = $1',
   'DELETE FROM update_subjects WHERE system = $1',
   'DELETE FROM reboot_observations WHERE system = $1',
@@ -160,20 +161,21 @@ const purgeOnce = (
 // nothing of it, or purged it.
 export type PurgedService = { kind: 'recorded' } | { kind: 'nothing' } | { kind: 'purged' };
 
-// What a Service's checks left: its Service down Conditions, their Timeline,
-// and their deliveries. Each statement takes the System's name as $1 and the
-// Service's as $2.
+// A Service's stops and its Service down and Service restarted Conditions,
+// with their Timeline and deliveries. Each statement takes the System's name
+// as $1 and the Service's as $2.
 const SERVICE_HISTORY = [
   `DELETE FROM condition_transitions WHERE condition IN (
-     SELECT id FROM conditions WHERE system = $1 AND kind = 'service_down' AND subject = $2
+     SELECT id FROM conditions WHERE system = $1 AND kind IN ('service_down', 'service_restarted') AND subject = $2
    )`,
-  `DELETE FROM conditions WHERE system = $1 AND kind = 'service_down' AND subject = $2`,
-  `DELETE FROM deliveries WHERE system = $1 AND kind = 'service_down' AND subject = $2`,
+  `DELETE FROM conditions WHERE system = $1 AND kind IN ('service_down', 'service_restarted') AND subject = $2`,
+  `DELETE FROM deliveries WHERE system = $1 AND kind IN ('service_down', 'service_restarted') AND subject = $2`,
+  `DELETE FROM service_stops WHERE system = $1 AND service = $2`,
 ] as const;
 
-// Deletes every Condition the Hub holds for `service` on `system`, with its
-// Timeline and deliveries, in one transaction under the System's row lock, so
-// it orders with the System's Reports and Service down evaluation (ADR-0005).
+// Deletes the stops and Service Conditions held for `service` on `system`,
+// with their Timeline and deliveries, under the System's row lock, so
+// it orders with the System's Reports and Service evaluations (ADR-0005).
 // It refuses while the Hub mirrors a record of the Service; an unreadable
 // service record does not hold it back, since the operator names a Service
 // they know is gone. An open Service down goes too, and its delivery with it,

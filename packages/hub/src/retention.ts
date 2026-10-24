@@ -38,3 +38,11 @@ export const pruneVitals = (sql: SQL, now: number): Promise<Pruned> =>
       vitalsRollups: vitalsRollups.count,
     };
   });
+
+// Retention follows stopped_at, not when an ended view arrives. An ongoing
+// stop stays however old it is, so a later Report can settle it (ADR-0021).
+export const pruneServiceStops = async (sql: SQL, now: number): Promise<number> => {
+  const cutoff = new Date(now - 90 * DAY_MS);
+  const deleted = await sql`DELETE FROM service_stops WHERE NOT ongoing AND stopped_at < ${cutoff}`;
+  return deleted.count;
+};

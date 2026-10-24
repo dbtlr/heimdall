@@ -44,7 +44,7 @@ export const purgeSystemAction: ActionHandler<typeof purgeSystem> = async ({
 };
 
 // `heimdall-hub purge service <system> <service>`: deletes a forgotten
-// Service's Conditions, their Timeline, and their deliveries. A Service its
+// Service's stops and Conditions, their Timeline, and their deliveries. A Service its
 // System still records, and one the Hub holds nothing for, are errors.
 export const purgeServiceAction: ActionHandler<typeof purgeService> = async ({
   args,
