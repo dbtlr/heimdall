@@ -90,6 +90,15 @@ const logOver = (db: Database, now: () => number): StopLog => {
     'CREATE TABLE IF NOT EXISTS stops (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, service TEXT NOT NULL, stopped_at INTEGER NOT NULL, started_at INTEGER, ongoing INTEGER NOT NULL, restarts INTEGER NOT NULL, result TEXT, exit_status INTEGER, revision INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0, changed_at INTEGER NOT NULL)',
   );
 
+  // The Hub names a stop by its Service and `stoppedAt`, and refuses a Report
+  // that sends one twice, so the log holds one stop per name. A Docker
+  // container's name can point back to a container whose stop is already
+  // logged, which is that stop seen again.
+  db.run(
+    'DELETE FROM stops WHERE id NOT IN (SELECT MAX(id) FROM stops GROUP BY service, stopped_at)',
+  );
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS stops_name ON stops (service, stopped_at)');
+
   const baselineOf = db.query<BaselineRow, { key: string }>(
     'SELECT boot, stopped_at AS stoppedAt, restarts, open_stop AS openStop FROM baselines WHERE key = $key',
   );
@@ -97,19 +106,27 @@ const logOver = (db: Database, now: () => number): StopLog => {
     'INSERT OR REPLACE INTO baselines (key, boot, stopped_at, restarts, open_stop) VALUES ($key, $boot, $stoppedAt, $restarts, $openStop)',
   );
   const insertStop = db.query<{ id: number }, Record<string, number | string | null>>(
-    'INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, result, exit_status, revision, changed_at) VALUES ($key, $service, $stoppedAt, $startedAt, $ongoing, $restarts, $result, $exitStatus, 1, $now) RETURNING id',
+    `INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, result, exit_status, revision, changed_at)
+      VALUES ($key, $service, $stoppedAt, $startedAt, $ongoing, $restarts, $result, $exitStatus, 1, $now)
+    ON CONFLICT (service, stopped_at) DO UPDATE SET key = excluded.key, started_at = excluded.started_at,
+      ongoing = excluded.ongoing, restarts = excluded.restarts, result = excluded.result,
+      exit_status = excluded.exit_status, revision = revision + 1, changed_at = excluded.changed_at
+    RETURNING id`,
   );
   // The facts of a check that saw the Service still stopped are its latest word
   // on how the stop went, and a check that saw it running again ends the stop
   // and keeps the word it had, since systemd forgets it on the new start. A
-  // check that changes nothing leaves the stop as it was, so it is not sent again.
+  // check that saw it stopped with no word, as a Docker container created to
+  // replace one that ended, keeps the word too. A check that changes nothing
+  // leaves the stop as it was, so it is not sent again.
   const extendStop = db.query(
     `UPDATE stops SET restarts = restarts + $restarts, revision = revision + 1, changed_at = $now,
       ongoing = $ongoing, started_at = $startedAt,
-      result = CASE WHEN $ongoing = 1 THEN $result ELSE result END,
-      exit_status = CASE WHEN $ongoing = 1 THEN $exitStatus ELSE exit_status END
+      result = CASE WHEN $ongoing = 1 AND $result IS NOT NULL THEN $result ELSE result END,
+      exit_status = CASE WHEN $ongoing = 1 AND $exitStatus IS NOT NULL THEN $exitStatus ELSE exit_status END
     WHERE id = $id AND ($restarts > 0 OR ongoing IS NOT $ongoing OR started_at IS NOT $startedAt
-      OR ($ongoing = 1 AND (result IS NOT $result OR exit_status IS NOT $exitStatus)))`,
+      OR ($ongoing = 1 AND (($result IS NOT NULL AND result IS NOT $result)
+        OR ($exitStatus IS NOT NULL AND exit_status IS NOT $exitStatus))))`,
   );
   const endUnknown = db.query(
     'UPDATE stops SET ongoing = 0, started_at = NULL, revision = revision + 1, changed_at = $now WHERE id = $id AND ongoing = 1',

@@ -1,4 +1,6 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
 import { MAX_STOPS_PER_SERVICE, openStopLog } from './stop-log.ts';
@@ -144,4 +146,40 @@ test('a later check that sees only another exit status takes it', async () => {
   stops.close();
 
   expect(updated).toMatchObject([{ exitStatus: 2, ongoing: true }]);
+});
+
+test('a log from before stops were unique by Service and time opens with one of each', async () => {
+  await using dir = await tempStateDir();
+  const old = new Database(join(dir.path, 'stops.sqlite'), { create: true });
+  old.run(
+    'CREATE TABLE stops (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, service TEXT NOT NULL, stopped_at INTEGER NOT NULL, started_at INTEGER, ongoing INTEGER NOT NULL, restarts INTEGER NOT NULL, result TEXT, exit_status INTEGER, revision INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0, changed_at INTEGER NOT NULL)',
+  );
+  const insert = old.query(
+    "INSERT INTO stops (key, service, stopped_at, started_at, ongoing, restarts, revision, changed_at) VALUES ('proxy', 'proxy', ?, ?, 0, 0, 1, ?)",
+  );
+  insert.run(T, T + 5000, T);
+  insert.run(T, T + 7000, T);
+  old.close();
+
+  const stops = await openStopLog({ now: () => T, stateDir: dir.path });
+  const pending = stops.pending().stops;
+  stops.close();
+
+  expect(pending).toMatchObject([{ startedAt: T + 7000, stoppedAt: T }]);
+});
+
+test('a check that sees a stop under way with no word on how it went keeps the word and sends nothing new', async () => {
+  await using dir = await tempStateDir();
+  const { observe, stops } = await setup(dir);
+  observe(facts(T, null));
+  stops.pending().settle();
+
+  observe({ ...facts(T, null), exitStatus: null, result: null });
+  const pending = stops.pending().stops;
+  observe(facts(T, T + 60_000));
+  const ended = stops.pending().stops;
+  stops.close();
+
+  expect(pending).toEqual([]);
+  expect(ended).toMatchObject([{ exitStatus: 1, ongoing: false, result: 'exit-code' }]);
 });
