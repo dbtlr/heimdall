@@ -85,9 +85,14 @@ export { MAX_RUNS_SECTION_BYTES, mirrorRuns, RunsSectionSchema } from './runs-se
 export type { JobRuns, MirroredRuns, RunsSection, SentJobRuns } from './runs-section.ts';
 export {
   MAX_SERVICE_STOPS_PER_REPORT,
+  ServiceStopsReadSchema,
   ServiceStopsSectionSchema,
 } from './service-stops-section.ts';
-export type { SentServiceStop, ServiceStopsSection } from './service-stops-section.ts';
+export type {
+  SentServiceStop,
+  ServiceStopsRead,
+  ServiceStopsSection,
+} from './service-stops-section.ts';
 export {
   ChecksReadSchema,
   ChecksSectionSchema,

@@ -5,6 +5,8 @@ import {
   formatAhead,
   formatClockSeconds,
   formatCost,
+  formatDate,
+  formatDayHeading,
   formatSpanShort,
   formatTime,
   formatWhen,
@@ -107,4 +109,11 @@ test('a short span keeps only its largest unit, rounded down', () => {
   expect(formatSpanShort(51 * HOUR)).toBe('2 d');
   expect(formatSpanShort(59_600)).toBe('59 s');
   expect(formatSpanShort(-5000)).toBe('0 s');
+});
+
+test('formatDate and formatDayHeading write the date in the zone asked', () => {
+  const late = Date.UTC(2026, 9, 24, 3, 30);
+  expect(formatDate(late, 'UTC')).toBe('24 Oct');
+  expect(formatDate(late, 'America/New_York')).toBe('23 Oct');
+  expect(formatDayHeading(late, 'America/New_York')).toBe('Friday 23 Oct');
 });

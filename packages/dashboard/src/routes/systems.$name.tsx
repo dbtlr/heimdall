@@ -193,7 +193,7 @@ function SystemPage() {
             {detail.harnesses !== undefined && (
               <SystemFacts detail={{ ...detail, latest: undefined }} />
             )}
-            <RecordedPanel now={detail.now} recorded={records.recorded} />
+            <RecordedPanel now={detail.now} recorded={records.recorded} system={detail.name} />
           </>
         )}
         {search.tab === 'timeline' && (

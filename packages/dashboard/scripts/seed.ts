@@ -20,6 +20,7 @@ import type { RequestFixture, SubagentFixture, ToolCallFixture } from '@heimdall
 //
 //   HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packages/dashboard seed
 import { filesRecordDigest } from '@heimdall/schema';
+import type { SentServiceStop } from '@heimdall/schema';
 import { SQL } from 'bun';
 
 import { readFleetOverview } from '../src/server/fleet-overview.ts';
@@ -876,6 +877,14 @@ const seedConditions = async (sql: SQL, now: number) => {
     system: SYSTEM,
   });
   conditions.push({
+    kind: 'service_restarted',
+    level: 'note',
+    raisedAt: -hours(20),
+    reason: `The Service stopped 3 times, first at ${utcMinute(now - 20 * HOUR)} and last at ${utcMinute(now - 4 * MINUTE)}. It last failed (exit-code, exit status 1), with 1 automatic restart in total.`,
+    subject: 'syncthing',
+    system: SYSTEM,
+  });
+  conditions.push({
     kind: 'job_failing',
     raisedAt: secondsFromNow(scenario.borgFinished),
     reason: `${failedRun(scenario.borgStarted)} 2.`,
@@ -1019,6 +1028,62 @@ const seedConditions = async (sql: SQL, now: number) => {
   }
 };
 
+// A stop of syncthing that began at `stoppedAt` and lasted `downMs`.
+const syncthingStop = (
+  stoppedAt: number,
+  downMs: number,
+  over: Partial<SentServiceStop> = {},
+): SentServiceStop => ({
+  exitStatus: 0,
+  ongoing: false,
+  restarts: 0,
+  result: 'success',
+  service: 'syncthing',
+  startedAt: stoppedAt + downMs,
+  stoppedAt,
+  ...over,
+});
+
+// Service stops of the workstation's syncthing, each Report sent and received as
+// its Collector would: a killed one that arrived hours late, a restart storm that
+// failed, a clean stop and one whose result systemd forgot, and one that ran again
+// after one automatic restart minutes ago.
+const seedServiceStops = async (sql: SQL, now: number) => {
+  const base = report(SYSTEM, []);
+  const workstation = PROFILES.find((profile) => profile.name === SYSTEM);
+  if (workstation === undefined) {
+    throw new Error(`No profile for ${SYSTEM}.`);
+  }
+  const send = (sentAt: number, delayMs: number, stops: Omit<SentServiceStop, 'service'>[]) =>
+    storeReport(sql, {
+      receivedAt: sentAt + delayMs,
+      report: {
+        ...base,
+        // report() names darwin; keep the platform the workstation's Vitals set.
+        collector: { ...base.collector, platform: workstation.platform },
+        sentAt,
+        serviceStops: { stops: stops.map((stop) => ({ ...stop, service: 'syncthing' })) },
+      },
+    });
+  await send(now - 9 * DAY + 3 * MINUTE, 6 * HOUR, [
+    syncthingStop(now - 9 * DAY, 3 * MINUTE, { exitStatus: 9, result: 'signal' }),
+  ]);
+  await send(now - 2 * DAY + 45 * MINUTE, 2 * SECOND, [
+    syncthingStop(now - 2 * DAY, 44 * MINUTE, { exitStatus: 1, restarts: 12, result: 'exit-code' }),
+  ]);
+  await send(now - 19 * HOUR, 2 * SECOND, [
+    syncthingStop(now - 20 * HOUR, SECOND, { exitStatus: null, result: null }),
+    syncthingStop(now - 19 * HOUR - 5 * MINUTE, 2 * SECOND),
+  ]);
+  await send(now - 3 * MINUTE, 2 * SECOND, [
+    syncthingStop(now - 4 * MINUTE, 30 * SECOND, {
+      exitStatus: 1,
+      restarts: 1,
+      result: 'exit-code',
+    }),
+  ]);
+};
+
 // Every table the seed writes. Truncating `systems` cascades to the rest.
 const TABLES = [
   'systems',
@@ -1088,6 +1153,7 @@ const fill = async (sql: SQL) => {
       }),
     ),
   );
+  await seedServiceStops(sql, now);
   await seedConditions(sql, now);
   await seedSessions(sql, now);
   await seedWorkSession(sql, now);

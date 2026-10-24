@@ -12,7 +12,7 @@ import { formatSpan } from './time.ts';
 // How a recorded thing stands, as its dot shows it.
 export type RecordState = 'bad' | 'good' | 'unknown' | 'warning';
 
-const SUPERVISOR_NAMES: Record<string, string> = {
+export const SUPERVISOR_NAMES: Record<string, string> = {
   docker: 'Docker',
   launchd: 'launchd',
   systemd: 'systemd',
