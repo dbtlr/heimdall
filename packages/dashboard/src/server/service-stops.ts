@@ -1,6 +1,8 @@
 import type { ServiceStopsRead } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { plain, UNAVAILABLE, unpairedParam } from './read-answer.ts';
+
 type Stop = ServiceStopsRead['stops'][number];
 
 type StopRow = {
@@ -57,9 +59,6 @@ export const readServiceStops = async (
   }));
 };
 
-const plain = (status: number, body: string) =>
-  new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' }, status });
-
 const ISO_TIME =
   /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -73,9 +72,9 @@ export const serviceStopsAnswer = async ({
   onError: (error: unknown) => void;
   url: URL;
 }): Promise<Response> => {
-  const unpaired = url.searchParams.getAll('unpaired');
-  if (unpaired.some((value) => value !== 'include')) {
-    return plain(400, 'The only value for unpaired is include: ?unpaired=include.');
+  const unpaired = unpairedParam(url);
+  if (unpaired instanceof Response) {
+    return unpaired;
   }
   for (const name of ['system', 'service', 'since']) {
     const values = url.searchParams.getAll(name);
@@ -85,13 +84,13 @@ export const serviceStopsAnswer = async ({
   }
   const since = url.searchParams.get('since');
   if (since !== null && (!ISO_TIME.test(since) || !Number.isFinite(Date.parse(since)))) {
-    return plain(400, 'Give since as an ISO 8601 time.');
+    return plain(400, 'Give since as an ISO 8601 date and time, such as 2026-10-24T07:40:05Z.');
   }
   const system = url.searchParams.get('system');
   const service = url.searchParams.get('service');
   try {
     const stops = await readServiceStops(await database(), {
-      includeUnpaired: unpaired.length > 0,
+      includeUnpaired: unpaired,
       ...(service === null ? {} : { service }),
       ...(since === null ? {} : { since: new Date(since) }),
       ...(system === null ? {} : { system }),
@@ -99,6 +98,6 @@ export const serviceStopsAnswer = async ({
     return Response.json({ stops });
   } catch (error) {
     onError(error);
-    return plain(503, 'The dashboard cannot answer right now; try again later.');
+    return plain(503, UNAVAILABLE);
   }
 };

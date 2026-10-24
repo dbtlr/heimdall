@@ -39,6 +39,8 @@ export type StopRow = {
   // How long after it was sent it was received, when later than 2 minutes.
   late: string | undefined;
   restarts: string | undefined;
+  // A stop the supervisor still shows under way; the list puts it apart, first.
+  stillDown: boolean;
   stoppedAt: number;
   title: Phrase;
 };
@@ -118,6 +120,7 @@ const rowOf = (stop: ServiceStop, now: number): StopRow => {
     failure: isFailure(stop),
     late: lateBy > LATE_MS ? formatSpanShort(lateBy) : undefined,
     restarts: stop.restarts > 0 ? plural(stop.restarts, 'restart', 'restarts') : undefined,
+    stillDown: stillDown(stop),
     stoppedAt,
     title: stillDown(stop) ? ['Still down since ', whenAt(stoppedAt, now)] : [resultWords(stop)],
   };
@@ -135,12 +138,14 @@ export const stopRows = (stops: readonly ServiceStop[], now: number): StopRow[] 
 
 export type DayGroup = { label: string; rows: StopRow[] };
 
-// The rows, in order, grouped by the calendar day of the viewer's zone they
-// stopped on: Today, Yesterday, then the weekday and date.
+// The rows, in order: those still down under "Still down", then the rest
+// grouped by the calendar day of the viewer's zone they stopped on: Today,
+// Yesterday, then the weekday and date.
 export const dayGroups = (rows: readonly StopRow[], now: number, timeZone: string): DayGroup[] => {
   const today = localDayNumber(now, timeZone);
+  const down = rows.filter((row) => row.stillDown);
   const groups: (DayGroup & { day: number })[] = [];
-  for (const row of rows) {
+  for (const row of rows.filter((found) => !found.stillDown)) {
     const day = localDayNumber(row.stoppedAt, timeZone);
     const last = groups.at(-1);
     if (last?.day === day) {
@@ -155,9 +160,24 @@ export const dayGroups = (rows: readonly StopRow[], now: number, timeZone: strin
     }
     groups.push({ day, label, rows: [row] });
   }
-  return groups.map(({ label, rows: of }) => ({ label, rows: of }));
+  return [
+    ...(down.length === 0 ? [] : [{ label: 'Still down', rows: down }]),
+    ...groups.map(({ label, rows: of }) => ({ label, rows: of })),
+  ];
 };
 
+// The rows the list shows: the newest LIST_LIMIT until asked for all, and how
+// many more there are.
+export const listedRows = (
+  rows: readonly StopRow[],
+  all: boolean,
+): { hidden: number; shown: readonly StopRow[] } =>
+  all || rows.length <= LIST_LIMIT
+    ? { hidden: 0, shown: rows }
+    : { hidden: rows.length - LIST_LIMIT, shown: rows.slice(0, LIST_LIMIT) };
+
+// The stops that began in the 90 days the summary counts and the strip draws.
+// A stop still under way from before them stays in the list but not here.
 const inWindow = (stops: readonly ServiceStop[], now: number) =>
   stops.filter((stop) => Date.parse(stop.stoppedAt) >= now - WINDOW_MS);
 

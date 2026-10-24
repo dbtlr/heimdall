@@ -6,10 +6,6 @@ import type { ServiceDetail } from './service-detail-types.ts';
 import { readServiceStops } from './service-stops.ts';
 import { recordedService } from './system-detail.ts';
 
-const DAY_MS = 24 * 60 * 60_000;
-// The Hub keeps stops for this long; the page shows all of them.
-const STOPS_MS = 90 * DAY_MS;
-
 const nameField = (input: unknown, key: string, what: string): string => {
   const name = field(input, key);
   if (typeof name !== 'string' || name === '') {
@@ -62,12 +58,9 @@ export const readServiceDetail = (
           AND cleared_at IS NULL
         ORDER BY id DESC LIMIT 1
       `,
-      readServiceStops(tx, {
-        includeUnpaired: true,
-        service,
-        since: new Date(now - STOPS_MS),
-        system,
-      }),
+      // Every stop the Hub holds: those of its 90 days, and one still under way
+      // however old, which the Hub keeps until it ends.
+      readServiceStops(tx, { includeUnpaired: true, service, system }),
     ]);
     const record = records[0]?.record;
     if (record === undefined && stops.length === 0) {

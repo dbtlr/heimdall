@@ -6,6 +6,7 @@ import type { Phrase } from './phrase.ts';
 import {
   dayGroups,
   LIST_LIMIT,
+  listedRows,
   newestReceived,
   stopRows,
   stopSummary,
@@ -125,8 +126,19 @@ describe('order and limit', () => {
     expect(rows.map(({ stoppedAt }) => NOW - stoppedAt)).toEqual([30 * HOUR, HOUR, 5 * HOUR]);
   });
 
-  test('the list shows 50 stops', () => {
+  test('the list shows the newest 50 stops until asked for all', () => {
+    const rows = stopRows(
+      Array.from({ length: 52 }, (_, index) => stop({ stoppedAt: at(NOW - (index + 1) * HOUR) })),
+      NOW,
+    );
+    const cut = listedRows(rows, false);
     expect(LIST_LIMIT).toBe(50);
+    expect(cut.shown.map(({ stoppedAt }) => stoppedAt)).toEqual(
+      rows.slice(0, 50).map(({ stoppedAt }) => stoppedAt),
+    );
+    expect(cut.hidden).toBe(2);
+    expect(listedRows(rows, true)).toEqual({ hidden: 0, shown: rows });
+    expect(listedRows(rows.slice(0, 50), false)).toEqual({ hidden: 0, shown: rows.slice(0, 50) });
   });
 });
 
@@ -155,6 +167,22 @@ describe('day groups', () => {
       ['Monday 19 Oct', 1],
     ]);
   });
+
+  test('a stop still down heads the list apart, and its day does not repeat', () => {
+    const rows = stopRows(
+      [
+        stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 30 * HOUR) }),
+        stop({ stoppedAt: at(NOW - HOUR) }),
+        stop({ stoppedAt: at(NOW - 26 * HOUR) }),
+      ],
+      NOW,
+    );
+    expect(dayGroups(rows, NOW, 'UTC').map(({ label, rows: of }) => [label, of.length])).toEqual([
+      ['Still down', 1],
+      ['Today', 1],
+      ['Yesterday', 1],
+    ]);
+  });
 });
 
 const height = (restarts: number) =>
@@ -170,6 +198,13 @@ describe('summary and strip', () => {
 
   test('counts the stops in the 90 days and the last 24 hours', () => {
     expect(stopSummary(stops, NOW)).toEqual({ last24h: 2, total: 3 });
+  });
+
+  test('a stop still down from before the 90 days is listed but neither counted nor drawn', () => {
+    const old = stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 100 * DAY) });
+    expect(stopSummary([old], NOW)).toEqual({ last24h: 0, total: 0 });
+    expect(stripTicks([old], NOW)).toEqual([]);
+    expect(stopRows([old], NOW)).toHaveLength(1);
   });
 
   test('a tick sits at its stop in the window, tall for restarts, serious for failure', () => {

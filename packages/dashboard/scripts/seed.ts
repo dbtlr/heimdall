@@ -880,7 +880,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     kind: 'service_restarted',
     level: 'note',
     raisedAt: -hours(20),
-    reason: `The Service stopped 3 times, first at ${utcMinute(now - 20 * HOUR)} and last at ${utcMinute(now - 4 * MINUTE)}. It last failed (exit-code, exit status 1), with 1 automatic restart in total; it is still stopped.`,
+    reason: `The Service stopped 3 times, first at ${utcMinute(now - 20 * HOUR)} and last at ${utcMinute(now - 4 * MINUTE)}. It last failed (exit-code, exit status 1), with 1 automatic restart in total.`,
     subject: 'syncthing',
     system: SYSTEM,
   });
@@ -1028,7 +1028,6 @@ const seedConditions = async (sql: SQL, now: number) => {
   }
 };
 
-// Every table the seed writes. Truncating `systems` cascades to the rest.
 // A stop of syncthing that began at `stoppedAt` and lasted `downMs`.
 const syncthingStop = (
   stoppedAt: number,
@@ -1078,6 +1077,7 @@ const seedServiceStops = async (sql: SQL, now: number) => {
   ]);
 };
 
+// Every table the seed writes. Truncating `systems` cascades to the rest.
 const TABLES = [
   'systems',
   'paired_systems',

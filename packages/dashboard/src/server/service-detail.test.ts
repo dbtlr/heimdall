@@ -57,7 +57,7 @@ const records = { records: [{ kind: 'service', name: 'web', record: WEB }], unre
 const read = (h: Hub, system = 'server-1', service = 'web') =>
   readServiceDetail(h.db.sql, { now: NOW, service, system });
 
-test('reads the record, its checks, the open note, and the stops, newest first', async () => {
+test('reads the record, its checks, the open note, and every stop the Hub holds, newest first', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', {
     checks,
@@ -103,6 +103,7 @@ test('reads the record, its checks, the open note, and the stops, newest first',
   expect(found?.stops.map(({ service, stoppedAt }) => [service, Date.parse(stoppedAt)])).toEqual([
     ['web', NOW - HOUR],
     ['web', NOW - 5 * HOUR],
+    ['web', NOW - 100 * DAY],
   ]);
   expect(found).toMatchObject({ now: NOW, service: 'web', system: 'server-1' });
 });
@@ -122,6 +123,20 @@ test('a Service its provisioner forgot still opens while it has stops', async ()
   expect(found?.recorded).toBeUndefined();
   expect(found?.unit).toBeUndefined();
   expect(found?.stops).toHaveLength(1);
+});
+
+test('a forgotten Service still down from before the 90 days opens with that stop', async () => {
+  await using h = await startHub();
+  const since = NOW - 100 * DAY;
+  await hear(h, 'server-1', {
+    serviceStops: { stops: [stop({ ongoing: true, startedAt: null, stoppedAt: since })] },
+  });
+
+  const found = await read(h);
+
+  expect(found?.stops.map(({ ongoing, stoppedAt }) => [stoppedAt, ongoing])).toEqual([
+    [new Date(since).toISOString(), true],
+  ]);
 });
 
 test('a recorded Service with no stops opens', async () => {

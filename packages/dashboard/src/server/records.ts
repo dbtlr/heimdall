@@ -8,6 +8,8 @@ import type {
 } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { plain, UNAVAILABLE, unpairedParam } from './read-answer.ts';
+
 // Orders text by UTF-16 code unit, the same in every locale, as the Hub orders
 // the records it mirrors.
 const compareCodeUnits = (a: string, b: string): number => {
@@ -207,13 +209,6 @@ export const readRecords = (
       );
   });
 
-const REFUSED_UNPAIRED = 'The only value for unpaired is include: ?unpaired=include.';
-
-const UNAVAILABLE = 'The dashboard cannot answer right now; try again later.';
-
-const plain = (status: number, body: string) =>
-  new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' }, status });
-
 // `GET /api/v1/records`: the records read as JSON. `?unpaired=include`, given
 // any number of times, adds the Systems that were unpaired; any other value is
 // a 400. A database that cannot be opened or read is a 503, and `onError`
@@ -227,12 +222,12 @@ export const recordsAnswer = async ({
   onError: (error: unknown) => void;
   url: URL;
 }): Promise<Response> => {
-  const unpaired = url.searchParams.getAll('unpaired');
-  if (unpaired.some((value) => value !== 'include')) {
-    return plain(400, REFUSED_UNPAIRED);
+  const unpaired = unpairedParam(url);
+  if (unpaired instanceof Response) {
+    return unpaired;
   }
   try {
-    const systems = await readRecords(await database(), { includeUnpaired: unpaired.length > 0 });
+    const systems = await readRecords(await database(), { includeUnpaired: unpaired });
     return Response.json({ systems });
   } catch (error) {
     onError(error);

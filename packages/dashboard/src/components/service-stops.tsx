@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 
 import {
   dayGroups,
-  LIST_LIMIT,
+  listedRows,
   newestReceived,
   stopRows,
   stopSummary,
@@ -129,7 +129,7 @@ export function StopList({ detail }: { detail: ServiceDetail }) {
   const { now, stops } = detail;
   const [showAll, setShowAll] = useState(false);
   const rows = useMemo(() => stopRows(stops, now), [stops, now]);
-  const shown = showAll ? rows : rows.slice(0, LIST_LIMIT);
+  const { hidden, shown } = listedRows(rows, showAll);
   if (rows.length === 0) {
     return null;
   }
@@ -149,7 +149,7 @@ export function StopList({ detail }: { detail: ServiceDetail }) {
           ))
         }
       </InZone>
-      {!showAll && rows.length > LIST_LIMIT && (
+      {hidden > 0 && (
         <button
           className="mt-2 min-h-11 cursor-pointer text-base text-primary"
           onClick={() => {
