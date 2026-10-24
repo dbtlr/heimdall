@@ -1,8 +1,12 @@
 import type { ServiceCheckState } from '@heimdall/schema';
 import type { HttpGet, HttpGetResult } from '@heimdall/service';
 
-// What one container check found, before the supervisor check clamps the detail.
-export type ContainerOutcome = { detail: string; state: ServiceCheckState };
+import type { StopFacts } from './stop-log.ts';
+
+// What one container check found, before the supervisor check clamps the
+// detail, and the container's stop facts when the Engine answered for it with
+// times the Collector can read.
+export type ContainerOutcome = { detail: string; state: ServiceCheckState; stopFacts?: StopFacts };
 
 // Where the Docker Engine listens: a unix socket, or an address this Collector
 // cannot talk to (`DOCKER_HOST` names another transport).
@@ -87,11 +91,93 @@ const isForContainer = (body: Record<string, unknown>, container: string): boole
   );
 };
 
+// The Engine's time for a time it does not hold, such as the finish of a
+// container that never stopped.
+const ZERO_TIME = '0001-01-01T00:00:00Z';
+
+// A time as the Engine prints it, RFC 3339 to the nanosecond, in UTC from
+// Docker and with an offset from Podman, in epoch milliseconds, or null for the
+// zero time. Undefined for a value of any other shape.
+const engineTime = (value: unknown): number | null | undefined => {
+  if (value === ZERO_TIME) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/u.exec(
+    value,
+  );
+  if (match === null) {
+    return undefined;
+  }
+  const parsed = Date.parse(`${match[1] ?? ''}${(match[2] ?? '').slice(0, 4)}${match[3] ?? ''}`);
+  return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+// How a container's last run ended, while the Engine still holds it: it forgets
+// the exit code and the out-of-memory kill when the container starts again,
+// and a container that was only created has never ended.
+const lastRun = (
+  state: Record<string, unknown>,
+  status: string | undefined,
+): Pick<StopFacts, 'exitStatus' | 'result'> => {
+  const { ExitCode: code, OOMKilled: oom } = state;
+  if (
+    (status !== 'exited' && status !== 'dead' && status !== 'restarting') ||
+    typeof code !== 'number' ||
+    !Number.isInteger(code) ||
+    Math.abs(code) >= 1e9
+  ) {
+    return { exitStatus: null, result: null };
+  }
+  if (oom === true) {
+    return { exitStatus: code, result: 'oom-kill' };
+  }
+  return { exitStatus: code, result: code === 0 ? 'success' : 'exit-code' };
+};
+
+// What the Engine holds about a container that the stop log compares
+// (ADR-0021), or undefined when a time is missing or in a form the Collector
+// cannot read, so a check infers nothing from it. A container that never
+// stopped takes its creation as when it last stopped, since the Engine forgets
+// the container it replaced, so a recreated container is a stop from its
+// creation to its start. Only a running container is running: a pause holds no
+// time, so it is no stop, and one restarting is stopped. `RestartCount` counts
+// the restarts its restart policy made, and a manual start sets it back to 0.
+const containerStopFacts = (
+  body: Record<string, unknown>,
+  state: Record<string, unknown>,
+  status: string | undefined,
+): StopFacts | undefined => {
+  const created = engineTime(body.Created);
+  const finished = engineTime(state.FinishedAt);
+  const startedAt = engineTime(state.StartedAt);
+  const { RestartCount: restarts } = body;
+  if (
+    created === undefined ||
+    finished === undefined ||
+    startedAt === undefined ||
+    typeof restarts !== 'number' ||
+    !Number.isSafeInteger(restarts)
+  ) {
+    return undefined;
+  }
+  return {
+    ...lastRun(state, status),
+    restarts: Math.max(0, restarts),
+    running: status === 'running',
+    startedAt,
+    stoppedAt: finished ?? created,
+  };
+};
+
 // A container's state from the Engine's `GET /containers/<id>/json` body. The
 // Engine says Running for a paused container and for one between restarts, so
 // the status decides those; Docker's own healthcheck is not read, since the
 // health URL covers health. The exit code is only meaningful once a container
-// has run and stopped.
+// has run and stopped. A container's state carries its stop facts when they can
+// be read.
 const containerOutcome = (body: unknown, container: string): ContainerOutcome => {
   if (!isRecord(body) || !isRecord(body.State) || typeof body.State.Running !== 'boolean') {
     return unknown('unexpected Docker answer');
@@ -105,14 +191,17 @@ const containerOutcome = (body: unknown, container: string): ContainerOutcome =>
   }
   const { ExitCode: exitCode, Running: running, Status: rawStatus } = body.State;
   const status = typeof rawStatus === 'string' ? rawStatus : undefined;
+  const stopFacts = containerStopFacts(body, body.State, status);
+  const withFacts = (outcome: ContainerOutcome): ContainerOutcome =>
+    stopFacts === undefined ? outcome : { ...outcome, stopFacts };
   if (running && status !== 'paused' && status !== 'restarting') {
-    return { detail: `status ${status ?? 'running'}`, state: 'up' };
+    return withFacts({ detail: `status ${status ?? 'running'}`, state: 'up' });
   }
   const code =
     typeof exitCode === 'number' && (status === 'exited' || status === 'dead')
       ? `, exit code ${String(exitCode)}`
       : '';
-  return { detail: `status ${status ?? 'not running'}${code}`, state: 'stopped' };
+  return withFacts({ detail: `status ${status ?? 'not running'}${code}`, state: 'stopped' });
 };
 
 // What a GET that got no answer says. A refused or missing socket, a reset,
