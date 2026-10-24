@@ -397,3 +397,44 @@ test('a stop log that fails costs the stops, never the Service checks, and is wa
     expect.stringContaining('Could not log Service stops: database or disk is full'),
   ]);
 });
+
+test('a boot that cannot be read logs nothing, and the Service checks go on', async () => {
+  await using dir = await tempStateDir();
+  const stateDir = join(dir.path, 'state');
+  const records = await openRecords({ stateDir });
+  records.put('service', PROXY);
+  records.close();
+  const stops = await openStopLog({ stateDir });
+  let answer = shown({ enter: T - MIN, exit: null });
+  const checks = createServiceChecks({
+    bootId: () => Promise.reject(new Error('sysctl exited 1')),
+    findSystemctl: () => Promise.resolve('/usr/bin/systemctl'),
+    log: { info: () => 0, warn: () => 0 },
+    now: () => T,
+    open: () => openRecords({ stateDir }),
+    run: () => Promise.resolve(answer),
+    stops,
+  });
+
+  await checks.tick();
+  answer = shown({ enter: T + 30 * S, exit: T + 20 * S, restarts: 1 });
+  await checks.tick();
+  const logged = stops.pending().stops;
+  checks.close();
+  stops.close();
+
+  expect(logged).toEqual([]);
+  expect(checks.latest()?.services).toMatchObject([{ service: 'proxy', state: 'up' }]);
+});
+
+test('a restart count past what the Hub takes is sent as the most it takes', async () => {
+  await using dir = await tempStateDir();
+  const c = await setup(dir);
+  await c.first();
+
+  await c.check(shown({ enter: T + 40 * S, exit: T + 20 * S, restarts: 4_000_000_000 }));
+  const logged = c.logged();
+  c.close();
+
+  expect(logged).toMatchObject([{ restarts: 2_147_483_647 }]);
+});

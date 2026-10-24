@@ -25,7 +25,7 @@ const setup = async (dir: { path: string }) => {
   let now = T;
   const stops = await openStopLog({ now: () => now, stateDir: dir.path });
   const observe = (seen: StopFacts) =>
-    stops.observe({ boot: 'b', facts: seen, key: 'proxy', service: 'proxy' });
+    stops.observe({ boot: 'b', checkedAt: now, facts: seen, key: 'proxy', service: 'proxy' });
   observe(facts(null, T - DAY));
   return {
     advance: (ms: number) => {
@@ -128,7 +128,13 @@ test('a long stop that a new boot ends is still sent as ended with no known end'
   stops.pending().settle();
 
   advance(8 * DAY);
-  stops.observe({ boot: 'b2', facts: facts(null, T + 8 * DAY), key: 'proxy', service: 'proxy' });
+  stops.observe({
+    boot: 'b2',
+    checkedAt: T,
+    facts: facts(null, T + 8 * DAY),
+    key: 'proxy',
+    service: 'proxy',
+  });
   const ended = stops.pending().stops;
   stops.close();
 

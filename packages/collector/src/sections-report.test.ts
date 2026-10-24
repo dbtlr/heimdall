@@ -1343,7 +1343,7 @@ const proxyFacts = (stoppedAt: number | null, startedAt: number | null): StopFac
 const loggedStop = async (dir: { path: string }, { ongoing = false } = {}) => {
   const stops = await openStopLog({ now: () => 1_000_000, stateDir: dir.path });
   const observe = (facts: StopFacts) =>
-    stops.observe({ boot: 'b', facts, key: 'proxy', service: 'proxy' });
+    stops.observe({ boot: 'b', checkedAt: 0, facts, key: 'proxy', service: 'proxy' });
   observe(proxyFacts(null, 1000));
   observe(proxyFacts(5000, ongoing ? null : 6000));
   return { observe, stops };

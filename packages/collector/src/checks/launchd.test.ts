@@ -80,7 +80,9 @@ describe('a launchd Service', () => {
   test('is up when its agent has a running process in the account domain', async () => {
     const { outcomes, ran } = await check({ [GUI]: printed(RUNNING) });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
+    expect(outcomes).toMatchObject([
+      { check: 'supervisor', detail: 'state = running', state: 'up' },
+    ]);
     expect(ran).toEqual([['/bin/launchctl', 'print', GUI]]);
   });
 
@@ -89,13 +91,15 @@ describe('a launchd Service', () => {
       [GUI]: printed(RUNNING.replace('state = running', 'state = xpc proxy')),
     });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = xpc proxy', state: 'up' }]);
+    expect(outcomes).toMatchObject([
+      { check: 'supervisor', detail: 'state = xpc proxy', state: 'up' },
+    ]);
   });
 
   test('is stopped when its agent is loaded with no running process, with the last exit code', async () => {
     const { outcomes } = await check({ [GUI]: printed(LOADED_NOT_RUNNING) });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       {
         check: 'supervisor',
         detail: 'state = not running, last exit code = 0',
@@ -109,7 +113,7 @@ describe('a launchd Service', () => {
       [GUI]: printed(LOADED_NOT_RUNNING.replace('\tlast exit code = 0\n', '')),
     });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       { check: 'supervisor', detail: 'state = not running', state: 'stopped' },
     ]);
   });
@@ -117,7 +121,7 @@ describe('a launchd Service', () => {
   test("reads only the service's own fields, not those of a block inside it", async () => {
     const { outcomes } = await check({ [GUI]: printed(NESTED_FIELDS_ONLY) });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       {
         check: 'supervisor',
         detail: 'state = not running, last exit code = 0',
@@ -132,7 +136,9 @@ describe('a launchd Service', () => {
       [SYSTEM]: printed(DAEMON),
     });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
+    expect(outcomes).toMatchObject([
+      { check: 'supervisor', detail: 'state = running', state: 'up' },
+    ]);
     expect(ran).toEqual([
       ['/bin/launchctl', 'print', GUI],
       ['/bin/launchctl', 'print', SYSTEM],
@@ -151,7 +157,9 @@ describe('a launchd Service', () => {
   test('is stopped when neither domain has it loaded', async () => {
     const { outcomes } = await check({ [GUI]: notFoundIn('gui'), [SYSTEM]: notFoundIn('system') });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'not loaded', state: 'stopped' }]);
+    expect(outcomes).toMatchObject([
+      { check: 'supervisor', detail: 'not loaded', state: 'stopped' },
+    ]);
   });
 
   test('asks the gui domain of the account the Collector runs as', async () => {
@@ -169,7 +177,7 @@ describe('a launchd Service', () => {
   test('is unknown when the Collector has no user id to name a gui domain with', async () => {
     const { outcomes, ran } = await check({}, { uid: undefined });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       { check: 'supervisor', detail: 'no user id for the gui domain', state: 'unknown' },
     ]);
     expect(ran).toEqual([]);
@@ -199,7 +207,7 @@ describe('a launchd Service', () => {
       [SYSTEM]: TIMED_OUT,
     });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       { check: 'supervisor', detail: 'launchctl timed out', state: 'unknown' },
     ]);
   });
@@ -224,7 +232,7 @@ describe('a launchd Service', () => {
       ),
     });
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       {
         check: 'supervisor',
         detail:
@@ -253,7 +261,9 @@ describe('a launchd Service', () => {
   test('is up when its state is running even if launchctl prints no pid', async () => {
     const { outcomes } = await check({ [GUI]: printed(RUNNING.replace('\tpid = 59099\n', '')) });
 
-    expect(outcomes).toEqual([{ check: 'supervisor', detail: 'state = running', state: 'up' }]);
+    expect(outcomes).toMatchObject([
+      { check: 'supervisor', detail: 'state = running', state: 'up' },
+    ]);
   });
 
   test('takes root as an account like any other, asking gui/0', async () => {
@@ -270,7 +280,9 @@ describe('a launchd Service', () => {
     async (_name, answer) => {
       const { outcomes } = await check({ [GUI]: answer, [SYSTEM]: answer });
 
-      expect(outcomes).toEqual([{ check: 'supervisor', detail: 'not loaded', state: 'stopped' }]);
+      expect(outcomes).toMatchObject([
+        { check: 'supervisor', detail: 'not loaded', state: 'stopped' },
+      ]);
     },
   );
 
@@ -299,7 +311,7 @@ describe('a launchd Service', () => {
       { uid: 4_242_424 },
     );
 
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       { check: 'supervisor', detail: 'launchctl exited 112', state: 'unknown' },
     ]);
     expect(ran).toEqual([['/bin/launchctl', 'print', 'gui/4242424/com.dbtlr.heimdall.collector']]);
@@ -313,5 +325,97 @@ describe('a launchd Service', () => {
     });
 
     expect(outcomes[0]?.detail.length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('the stop facts of a launchd Service', () => {
+  test('are its runs, its process, and how its last run ended, while it runs', async () => {
+    const { outcomes } = await check({ [GUI]: printed(RUNNING) });
+
+    expect(outcomes[0]?.stopFacts).toEqual({
+      exitStatus: 143,
+      pid: 59_099,
+      result: 'exit-code',
+      running: true,
+      runs: 4,
+    });
+  });
+
+  test('are its runs and a clean last exit while it has no process', async () => {
+    const { outcomes } = await check({ [GUI]: printed(LOADED_NOT_RUNNING) });
+
+    expect(outcomes[0]?.stopFacts).toEqual({
+      exitStatus: 0,
+      pid: null,
+      result: 'success',
+      running: false,
+      runs: 4,
+    });
+  });
+
+  test('take a terminating signal over the exit code, with its number', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(
+        LOADED_NOT_RUNNING.replace(
+          '\tlast exit code = 0\n',
+          '\tlast exit code = 0\n\tlast terminating signal = Terminated: 15\n',
+        ),
+      ),
+    });
+
+    expect(outcomes[0]?.stopFacts).toMatchObject({ exitStatus: 15, result: 'signal' });
+  });
+
+  test('have no last exit for a service that never exited, or an exit code the Hub cannot take', async () => {
+    const never = await check({ [SYSTEM]: printed(DAEMON) });
+    const huge = await check({
+      [GUI]: printed(
+        LOADED_NOT_RUNNING.replace('last exit code = 0', 'last exit code = 9999999999'),
+      ),
+    });
+
+    expect(never.outcomes[0]?.stopFacts).toMatchObject({ exitStatus: null, result: null });
+    expect(huge.outcomes[0]?.stopFacts).toMatchObject({ exitStatus: null, result: null });
+  });
+
+  test('have no exit status for a signal number the Hub cannot take', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(
+        LOADED_NOT_RUNNING.replace(
+          '\tlast exit code = 0\n',
+          '\tlast terminating signal = Signal: 12345678901\n',
+        ),
+      ),
+    });
+
+    expect(outcomes[0]?.stopFacts).toMatchObject({ exitStatus: null, result: 'signal' });
+  });
+
+  test('are no process and no runs for a label neither domain has loaded', async () => {
+    const { outcomes } = await check({});
+
+    expect(outcomes[0]?.stopFacts).toEqual({
+      exitStatus: null,
+      pid: null,
+      result: null,
+      running: false,
+      runs: 0,
+    });
+  });
+
+  test('are left out when launchctl prints no runs, so the check infers no stop', async () => {
+    const { outcomes } = await check({
+      [GUI]: printed(LOADED_NOT_RUNNING.replace('\truns = 4\n', '')),
+    });
+
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: 'state = not running, last exit code = 0', state: 'stopped' },
+    ]);
+  });
+
+  test('are left out when the check is unknown', async () => {
+    const { outcomes } = await check({ [GUI]: TIMED_OUT });
+
+    expect(outcomes[0]?.stopFacts).toBeUndefined();
   });
 });

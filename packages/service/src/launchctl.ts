@@ -36,24 +36,30 @@ const topLevel = (stdout: string) =>
 
 // What `launchctl print` says about a loaded service. `running` is true for
 // `state = running` and for a pid made of digits, whatever the state says.
-// `state` is undefined when launchctl printed none, or only whitespace.
+// `runs` is how many times launchd started it since it was loaded, or
+// undefined when launchctl printed no count of digits. `state` is undefined
+// when launchctl printed none, or only whitespace.
 export type PrintedService = {
   exitCode: string | undefined;
   pid: number | undefined;
   running: boolean;
+  runs: number | undefined;
   signal: string | undefined;
   state: string | undefined;
 };
 
+const digits = (text: string | undefined) =>
+  text !== undefined && /^\d+$/u.test(text) ? Number(text) : undefined;
+
 export const readPrintedService = (stdout: string): PrintedService => {
   const props = topLevel(stdout);
-  const pidText = props.get('pid');
-  const pid = pidText !== undefined && /^\d+$/u.test(pidText) ? Number(pidText) : undefined;
+  const pid = digits(props.get('pid'));
   const state = props.get('state') || undefined;
   return {
     exitCode: props.get('last exit code'),
     pid,
     running: state === 'running' || pid !== undefined,
+    runs: digits(props.get('runs')),
     signal: props.get('last terminating signal'),
     state,
   };

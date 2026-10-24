@@ -3,6 +3,7 @@ import { isServiceNotLoaded, readPrintedService } from '@heimdall/service';
 import type { CommandResult } from '../subprocess.ts';
 import { supervisorOutcome } from './outcome.ts';
 import type { ServiceOutcome } from './outcome.ts';
+import type { CountedStopFacts } from './stop-log.ts';
 
 // launchctl lives here on every macOS. A launchd agent has a minimal PATH, so
 // the Collector runs it by absolute path.
@@ -16,28 +17,68 @@ type DomainAnswer = { kind: 'answered'; outcome: ServiceOutcome } | { kind: 'not
 
 const answered = (outcome: ServiceOutcome): DomainAnswer => ({ kind: 'answered', outcome });
 
+// How a service's last run ended, as launchctl printed it: by a signal, with
+// its number, which launchctl gives after the signal's name, as in `Killed: 9`;
+// otherwise by its exit code, cleanly for 0. A service that never exited, or
+// a code the Hub cannot take, ended in a way the Collector does not know.
+const lastExit = (
+  exitCode: string | undefined,
+  signal: string | undefined,
+): Pick<CountedStopFacts, 'exitStatus' | 'result'> => {
+  if (signal !== undefined) {
+    const number = /(?:^|\D)(\d{1,9})$/u.exec(signal)?.[1];
+    return { exitStatus: number === undefined ? null : Number(number), result: 'signal' };
+  }
+  if (exitCode !== undefined && /^\d{1,9}$/u.test(exitCode)) {
+    const status = Number(exitCode);
+    return { exitStatus: status, result: status === 0 ? 'success' : 'exit-code' };
+  }
+  return { exitStatus: null, result: null };
+};
+
+// What launchd holds about a label that the stop log compares (ADR-0021): its
+// runs, the pid of its process, and how its last run ended. A label neither
+// domain has loaded has no process and no runs.
+const NOT_LOADED_FACTS: CountedStopFacts = {
+  exitStatus: null,
+  pid: null,
+  result: null,
+  running: false,
+  runs: 0,
+};
+
 // The outcome for a service launchctl printed. A process makes it up, whether
 // launchctl says `state = running` or only gives a pid. A service that is
 // loaded with no process, which includes one waiting to be started again after
 // it exited, is stopped, with the status it last exited with and the signal
 // that ended it, when launchctl printed them. Output without the service's
-// state is not about a service the Collector can judge.
+// state is not about a service the Collector can judge. A known state carries
+// the service's stop facts when launchctl printed its runs.
 const loadedOutcome = (stdout: string): ServiceOutcome => {
-  const { exitCode, running, signal, state } = readPrintedService(stdout);
+  const { exitCode, pid, running, runs, signal, state } = readPrintedService(stdout);
   if (state === undefined) {
     return supervisorOutcome('unknown', 'unexpected launchctl output');
   }
-  if (running) {
-    return supervisorOutcome('up', `state = ${state}`);
+  const outcome = running
+    ? supervisorOutcome('up', `state = ${state}`)
+    : supervisorOutcome(
+        'stopped',
+        [
+          `state = ${state}`,
+          ...(exitCode === undefined ? [] : [`last exit code = ${exitCode}`]),
+          ...(signal === undefined ? [] : [`last terminating signal = ${signal}`]),
+        ].join(', '),
+      );
+  if (runs === undefined) {
+    return outcome;
   }
-  return supervisorOutcome(
-    'stopped',
-    [
-      `state = ${state}`,
-      ...(exitCode === undefined ? [] : [`last exit code = ${exitCode}`]),
-      ...(signal === undefined ? [] : [`last terminating signal = ${signal}`]),
-    ].join(', '),
-  );
+  const stopFacts: CountedStopFacts = {
+    ...lastExit(exitCode, signal),
+    pid: running ? (pid ?? null) : null,
+    running,
+    runs,
+  };
+  return { ...outcome, stopFacts };
 };
 
 // Asks launchctl about one service target such as `gui/501/<label>`. Only what
@@ -82,5 +123,5 @@ export const launchdOutcome = async (
       return answer.outcome;
     }
   }
-  return supervisorOutcome('stopped', 'not loaded');
+  return { ...supervisorOutcome('stopped', 'not loaded'), stopFacts: NOT_LOADED_FACTS };
 };

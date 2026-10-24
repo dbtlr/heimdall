@@ -68,6 +68,7 @@ describe('a printed service', () => {
       exitCode: '143',
       pid: 59_099,
       running: true,
+      runs: 4,
       signal: undefined,
       state: 'running',
     });
@@ -78,6 +79,7 @@ describe('a printed service', () => {
       exitCode: '0',
       pid: undefined,
       running: false,
+      runs: 4,
       signal: undefined,
       state: 'not running',
     });
@@ -89,6 +91,11 @@ describe('a printed service', () => {
       pid: 165,
       running: true,
     });
+  });
+
+  test('has no run count when launchctl printed none, or one not made of digits', () => {
+    expect(readPrintedService(printed(['\tstate = running'])).runs).toBeUndefined();
+    expect(readPrintedService(printed(['\tstate = running', '\truns = 4x'])).runs).toBeUndefined();
   });
 
   test('is running when its own state says running, with the pid when printed', () => {
@@ -141,6 +148,7 @@ describe('a printed service', () => {
       exitCode: '78',
       pid: undefined,
       running: false,
+      runs: 4,
       signal: 'Killed: 9',
       state: 'not running',
     });
