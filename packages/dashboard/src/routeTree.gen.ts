@@ -18,6 +18,7 @@ import { Route as SystemsNameRouteImport } from './routes/systems.$name'
 import { Route as ApiV1RecordsRouteImport } from './routes/api.v1.records'
 import { Route as ApiV1ServiceStopsRouteImport } from './routes/api.v1.service-stops'
 import { Route as SystemsNameConditionsIdRouteImport } from './routes/systems.$name_.conditions.$id'
+import { Route as SystemsNameServicesServiceRouteImport } from './routes/systems.$name_.services.$service'
 import { Route as SystemsNameSessionsHarnessSourceSessionIdRouteImport } from './routes/systems.$name_.sessions.$harness.$source.$sessionId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -65,6 +66,12 @@ const SystemsNameConditionsIdRoute = SystemsNameConditionsIdRouteImport.update({
   path: '/systems/$name/conditions/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SystemsNameServicesServiceRoute =
+  SystemsNameServicesServiceRouteImport.update({
+    id: '/systems/$name_/services/$service',
+    path: '/systems/$name/services/$service',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SystemsNameSessionsHarnessSourceSessionIdRoute =
   SystemsNameSessionsHarnessSourceSessionIdRouteImport.update({
     id: '/systems/$name_/sessions/$harness/$source/$sessionId',
@@ -82,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name/conditions/$id': typeof SystemsNameConditionsIdRoute
+  '/systems/$name/services/$service': typeof SystemsNameServicesServiceRoute
   '/systems/$name/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRoutesByTo {
@@ -94,6 +102,7 @@ export interface FileRoutesByTo {
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name/conditions/$id': typeof SystemsNameConditionsIdRoute
+  '/systems/$name/services/$service': typeof SystemsNameServicesServiceRoute
   '/systems/$name/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRoutesById {
@@ -107,6 +116,7 @@ export interface FileRoutesById {
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name_/conditions/$id': typeof SystemsNameConditionsIdRoute
+  '/systems/$name_/services/$service': typeof SystemsNameServicesServiceRoute
   '/systems/$name_/sessions/$harness/$source/$sessionId': typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 export interface FileRouteTypes {
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name/conditions/$id'
+    | '/systems/$name/services/$service'
     | '/systems/$name/sessions/$harness/$source/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -133,6 +144,7 @@ export interface FileRouteTypes {
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name/conditions/$id'
+    | '/systems/$name/services/$service'
     | '/systems/$name/sessions/$harness/$source/$sessionId'
   id:
     | '__root__'
@@ -145,6 +157,7 @@ export interface FileRouteTypes {
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name_/conditions/$id'
+    | '/systems/$name_/services/$service'
     | '/systems/$name_/sessions/$harness/$source/$sessionId'
   fileRoutesById: FileRoutesById
 }
@@ -158,6 +171,7 @@ export interface RootRouteChildren {
   ApiV1RecordsRoute: typeof ApiV1RecordsRoute
   ApiV1ServiceStopsRoute: typeof ApiV1ServiceStopsRoute
   SystemsNameConditionsIdRoute: typeof SystemsNameConditionsIdRoute
+  SystemsNameServicesServiceRoute: typeof SystemsNameServicesServiceRoute
   SystemsNameSessionsHarnessSourceSessionIdRoute: typeof SystemsNameSessionsHarnessSourceSessionIdRoute
 }
 
@@ -226,6 +240,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SystemsNameConditionsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/systems/$name_/services/$service': {
+      id: '/systems/$name_/services/$service'
+      path: '/systems/$name/services/$service'
+      fullPath: '/systems/$name/services/$service'
+      preLoaderRoute: typeof SystemsNameServicesServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/systems/$name_/sessions/$harness/$source/$sessionId': {
       id: '/systems/$name_/sessions/$harness/$source/$sessionId'
       path: '/systems/$name/sessions/$harness/$source/$sessionId'
@@ -246,6 +267,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiV1RecordsRoute: ApiV1RecordsRoute,
   ApiV1ServiceStopsRoute: ApiV1ServiceStopsRoute,
   SystemsNameConditionsIdRoute: SystemsNameConditionsIdRoute,
+  SystemsNameServicesServiceRoute: SystemsNameServicesServiceRoute,
   SystemsNameSessionsHarnessSourceSessionIdRoute:
     SystemsNameSessionsHarnessSourceSessionIdRoute,
 }

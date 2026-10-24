@@ -538,6 +538,20 @@ export const readSample = async (
   };
 };
 
+// A recorded Service with the checks on it, the supervisor's first.
+export const recordedService = (
+  name: string,
+  record: Record<string, unknown>,
+  checks: NonNullable<ChecksRow['services']>,
+): RecordedService => ({
+  checks: checks
+    .filter((check) => check.service === name)
+    .map(({ check, detail, since, state }) => ({ check, detail, since, state }))
+    .toSorted(byCheck),
+  name,
+  supervisor: text(record.supervisor) ?? 'none',
+});
+
 const isJobCondition = (kind: string): kind is RecordedJob['open'][number] =>
   kind === 'job_failing' || kind === 'job_overdue';
 
@@ -611,14 +625,9 @@ const readSystemRecordsSnapshot = async (
           .filter(isJobCondition),
         schedule: scheduleOf(record.schedule),
       })),
-      services: of('service').map(({ name: service, record }): RecordedService => ({
-        checks: serviceChecks
-          .filter((check) => check.service === service)
-          .map(({ check, detail, since, state }) => ({ check, detail, since, state }))
-          .toSorted(byCheck),
-        name: service,
-        supervisor: text(record.supervisor) ?? 'none',
-      })),
+      services: of('service').map(({ name: service, record }) =>
+        recordedService(service, record, serviceChecks),
+      ),
     },
     timeline,
   };
