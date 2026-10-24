@@ -56,6 +56,19 @@ test('one Service stop raises a note naming the stop and its clean result', asyn
   ]);
 });
 
+test('a System that sent stops but never checks still raises the note', async () => {
+  await using h = await startHub();
+  h.clock.now = NOW;
+  const response = await push(
+    h.hub,
+    { ...report('laptop-1', [NOW]), sentAt: NOW, serviceStops: { stops: [STOP] } },
+    { token: 'laptop-token' },
+  );
+  expect(response.status).toBe(200);
+
+  expect(await evaluate(h)).toMatchObject([{ kind: 'service_restarted', subject: 'web' }]);
+});
+
 test('a second stop updates the count and times without another Timeline transition', async () => {
   await using h = await startHub();
   await send(h, [STOP]);

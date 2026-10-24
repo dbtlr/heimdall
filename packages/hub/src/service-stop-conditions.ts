@@ -98,13 +98,19 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     }
   });
 
-// As with Service down, every System that has sent checks is evaluated, paired
-// or not. A failing System does not prevent the others from being judged.
+// Every System that holds a stop or an open note is evaluated, paired or not,
+// since a Report can carry stops without checks. A failing System does not
+// prevent the others from being judged.
 export const evaluateServiceStopConditions = async (
   sql: SQL,
   clock: () => number,
 ): Promise<void> => {
-  const systems: { system: string }[] = await sql`SELECT system FROM check_sets ORDER BY system`;
+  const systems: { system: string }[] = await sql`
+    SELECT system FROM service_stops
+    UNION
+    SELECT system FROM conditions WHERE kind = 'service_restarted' AND cleared_at IS NULL
+    ORDER BY system
+  `;
   await evaluateEach(
     systems.map((row) => row.system),
     (system) => evaluateSystem(sql, system, clock),
