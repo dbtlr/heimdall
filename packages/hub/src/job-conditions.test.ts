@@ -3,7 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import { MAX_SAMPLES_PER_REPORT } from '@heimdall/schema';
 import type { JobRecord, RunRecord } from '@heimdall/schema';
 
-import { evaluateJobConditions } from './job-conditions.ts';
+import { evaluateJobConditions, judgeJobConditions } from './job-conditions.ts';
+import type { JobConditionFacts } from './job-conditions.ts';
 import { migrate, MIGRATIONS } from './migrations.ts';
 import { listSystems, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
@@ -104,26 +105,145 @@ const recordedAndAwake = async (h: Hub, until: string) => {
   await send(h, until, { samples: awake('06:00:15', until) });
 };
 
-describe('job failing', () => {
-  test('is raised for a job whose latest run exited nonzero', async () => {
-    await using h = await startHub();
-    const failed = run('07:30:00', 3);
-    await send(h, '07:40:00', { records: set(BACKUP), runs: runsOf('backup', failed, null) });
+const facts = (overrides: Partial<JobConditionFacts> = {}): JobConditionFacts => ({
+  awakeCutoff: () => at('07:30:00'),
+  open: ['backup'],
+  records: [{ mirroredSince: at('06:00:00'), name: 'backup', record: BACKUP }],
+  recordsOverBudget: false,
+  runs: new Map(),
+  timeZone: 'America/New_York',
+  unreadable: new Set(),
+  ...overrides,
+});
 
-    const { open } = await evaluate(h, '07:41:00');
+const judge = (overrides: Partial<JobConditionFacts> = {}) =>
+  judgeJobConditions(facts(overrides), at('08:30:00')).get('backup');
 
-    expect(open).toEqual([
-      {
-        kind: 'job_failing',
-        raisedAt: at('07:41:00'),
-        reason: 'The run started 2026-10-06T07:30:00Z exited with status 3.',
-        subject: 'backup',
-      },
-    ]);
+const overdue = {
+  raise: 'Scheduled for 2026-10-06 03:30 America/New_York; no successful run since.',
+};
+
+describe('judgeJobConditions', () => {
+  test('a nonzero latest run raises failing with its start and exit status, updating the reason on the next failure', () => {
+    expect(
+      judge({ runs: new Map([['backup', { latestRun: run('07:30:00', 3), latestSuccess: null }]]) })
+        ?.job_failing,
+    ).toEqual({
+      raise: 'The run started 2026-10-06T07:30:00Z exited with status 3.',
+    });
+    expect(
+      judge({ runs: new Map([['backup', { latestRun: run('08:00:00', 2), latestSuccess: null }]]) })
+        ?.job_failing,
+    ).toEqual({
+      raise: 'The run started 2026-10-06T08:00:00Z exited with status 2.',
+    });
+  });
+
+  test('a successful latest run or no runs clears failing', () => {
+    expect(judge()?.job_failing).toBe('clear');
+    const success = run('08:00:00');
+    expect(
+      judge({ runs: new Map([['backup', { latestRun: success, latestSuccess: success }]]) })
+        ?.job_failing,
+    ).toBe('clear');
+  });
+
+  test('overdue is raised exactly when the awake cutoff reaches a scheduled time, including with no runs', () => {
+    expect(judge()).toEqual({ job_failing: 'clear', job_overdue: overdue });
+    expect(judge({ awakeCutoff: () => at('07:29:59') })?.job_overdue).toBe('clear');
+    expect(judge({ awakeCutoff: () => undefined })?.job_overdue).toBe('unknown');
+  });
+
+  test('a successful run started at or after the schedule prevents overdue, even if a later run failed', () => {
+    for (const started of ['07:30:00', '07:31:00']) {
+      expect(
+        judge({
+          runs: new Map([
+            ['backup', { latestRun: run('08:00:00', 2), latestSuccess: run(started) }],
+          ]),
+        })?.job_overdue,
+      ).toBe('clear');
+    }
+    expect(
+      judge({
+        runs: new Map([['backup', { latestRun: run('07:29:00'), latestSuccess: run('07:29:00') }]]),
+      })?.job_overdue,
+    ).toEqual(overdue);
+  });
+
+  test('scheduled times before first mirroring are ignored and a missing first time counts from now', () => {
+    expect(
+      judge({ records: [{ mirroredSince: at('08:00:00'), name: 'backup', record: BACKUP }] })
+        ?.job_overdue,
+    ).toBe('clear');
+    expect(
+      judge({ records: [{ mirroredSince: null, name: 'backup', record: BACKUP }] })?.job_overdue,
+    ).toBe('clear');
+  });
+
+  test('each job asks for its own grace period, with an hour as the default', () => {
+    const input = facts({
+      awakeCutoff: (graceMs) => (graceMs <= 60 * 60_000 ? at('07:30:00') : undefined),
+      records: [
+        { mirroredSince: at('06:00:00'), name: 'backup', record: BACKUP },
+        {
+          mirroredSince: at('06:00:00'),
+          name: 'archive',
+          record: { ...BACKUP, graceMinutes: 180, name: 'archive' },
+        },
+      ],
+    });
+    expect(judgeJobConditions(input, at('08:30:00'))).toEqual(
+      new Map([
+        ['backup', { job_failing: 'clear', job_overdue: overdue }],
+        ['archive', { job_failing: 'clear', job_overdue: 'unknown' }],
+      ]),
+    );
+  });
+
+  test('a missing or unrecognized time zone leaves overdue unknown while failing is still judged', () => {
+    for (const timeZone of [null, 'Mars/Olympus_Mons']) {
+      expect(
+        judge({
+          runs: new Map([['backup', { latestRun: run('05:00:00', 1), latestSuccess: null }]]),
+          timeZone,
+        }),
+      ).toEqual({
+        job_failing: { raise: 'The run started 2026-10-06T05:00:00Z exited with status 1.' },
+        job_overdue: 'unknown',
+      });
+    }
+  });
+
+  test('unknown runs or a record the Hub cannot read leave both Conditions alone', () => {
+    expect(judge({ runs: new Map([['backup', 'unknown']]) })).toEqual({
+      job_failing: 'unknown',
+      job_overdue: 'unknown',
+    });
+    expect(
+      judge({ records: [{ mirroredSince: at('06:00:00'), name: 'backup', record: undefined }] }),
+    ).toEqual({ job_failing: 'unknown', job_overdue: 'unknown' });
+  });
+
+  test('records over budget judge neither recorded nor forgotten jobs', () => {
+    expect(
+      judgeJobConditions(facts({ open: ['forgotten'], recordsOverBudget: true }), at('08:30:00')),
+    ).toEqual(new Map());
+  });
+
+  test('a forgotten job clears both Conditions unless its own record is unreadable', () => {
+    expect(judge({ records: [], unreadable: new Set(['other']) })).toEqual({
+      job_failing: 'clear',
+      job_overdue: 'clear',
+    });
+    expect(judge({ records: [], unreadable: new Set(['backup']) })).toEqual({
+      job_failing: 'unknown',
+      job_overdue: 'unknown',
+    });
   });
 });
 
-describe('job failing, continued', () => {
+describe('job Condition wiring', () => {
   test('clears when the latest run succeeds, and the Timeline keeps both', async () => {
     await using h = await startHub();
     const failed = run('07:30:00', 1);
@@ -145,62 +265,6 @@ describe('job failing, continued', () => {
         subject: 'backup',
       },
     ]);
-  });
-
-  test('stays one Condition while the job keeps failing, with the latest reason', async () => {
-    await using h = await startHub();
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-    });
-    await evaluate(h, '07:41:00');
-    await evaluate(h, '07:42:00');
-    await send(h, '08:10:00', { runs: runsOf('backup', run('08:00:00', 2), null) });
-
-    const { open } = await evaluate(h, '08:11:00');
-
-    expect(open).toEqual([
-      {
-        kind: 'job_failing',
-        raisedAt: at('07:41:00'),
-        reason: 'The run started 2026-10-06T08:00:00Z exited with status 2.',
-        subject: 'backup',
-      },
-    ]);
-  });
-});
-
-describe('job overdue', () => {
-  test('is raised once the System was awake for an hour after a scheduled time with no run', async () => {
-    await using h = await startHub();
-    await recordedAndAwake(h, '08:45:00');
-
-    const { open } = await evaluate(h, '08:45:00');
-
-    expect(open).toEqual([
-      {
-        kind: 'job_overdue',
-        raisedAt: at('08:45:00'),
-        reason: 'Scheduled for 2026-10-06 03:30 America/New_York; no successful run since.',
-        subject: 'backup',
-      },
-    ]);
-  });
-
-  test('is not raised before the hour of awake time is up', async () => {
-    await using h = await startHub();
-    await recordedAndAwake(h, '08:20:00');
-
-    expect((await evaluate(h, '08:20:00')).open).toEqual([]);
-  });
-
-  test('is not raised when a run started at or after the scheduled time succeeded', async () => {
-    await using h = await startHub();
-    await recordedAndAwake(h, '08:45:00');
-    const succeeded = run('07:30:00');
-    await send(h, '08:45:00', { runs: runsOf('backup', succeeded, succeeded) });
-
-    expect((await evaluate(h, '08:45:00')).open).toEqual([]);
   });
 
   test('counts only awake time: a System asleep through the scheduled time gets an hour after waking', async () => {
@@ -225,7 +289,14 @@ describe('job overdue', () => {
   test('clears once a successful run is reported', async () => {
     await using h = await startHub();
     await recordedAndAwake(h, '08:45:00');
-    await evaluate(h, '08:45:00');
+    expect((await evaluate(h, '08:45:00')).open).toEqual([
+      {
+        kind: 'job_overdue',
+        raisedAt: at('08:45:00'),
+        reason: 'Scheduled for 2026-10-06 03:30 America/New_York; no successful run since.',
+        subject: 'backup',
+      },
+    ]);
     const succeeded = run('08:50:00');
     await send(h, '08:55:00', { runs: runsOf('backup', succeeded, succeeded) });
 
@@ -238,16 +309,6 @@ describe('job overdue', () => {
       kind: 'cleared',
       subject: 'backup',
     });
-  });
-
-  test('ignores scheduled times before the Hub first mirrored the job', async () => {
-    await using h = await startHub();
-    // Awake from 02:00, but the backup is first recorded at 04:00, after 03:30.
-    await send(h, '06:00:00', { runs: { jobs: [], unreadable: [] } });
-    await send(h, '08:00:00', { records: set(BACKUP), samples: awake('06:00:15', '08:00:00') });
-    await send(h, '10:00:00', { samples: awake('08:00:00', '10:00:00') });
-
-    expect((await evaluate(h, '10:00:00')).open).toEqual([]);
   });
 
   test('a job recorded again keeps the time it was first mirrored', async () => {
@@ -344,23 +405,6 @@ describe('job overdue', () => {
     ]);
   });
 
-  test('is not raised in a zone the Hub does not know, while job failing still is', async () => {
-    await using h = await startHub();
-    await send(h, '06:00:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('05:00:00', 1), null),
-      timeZone: 'Mars/Olympus_Mons',
-    });
-    await send(h, '08:45:00', {
-      samples: awake('06:00:15', '08:45:00'),
-      timeZone: 'Mars/Olympus_Mons',
-    });
-
-    expect((await evaluate(h, '08:45:00')).open).toEqual([
-      expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
-    ]);
-  });
-
   test('judges each job on one System by its own grace period', async () => {
     await using h = await startHub();
     const patient = { ...BACKUP, graceMinutes: 180, name: 'archive' };
@@ -385,20 +429,6 @@ describe('job overdue', () => {
     ]);
   });
 
-  test('is left unknown, and not raised, while the System has reported no time zone', async () => {
-    await using h = await startHub();
-    await send(h, '06:00:00', {
-      records: set(BACKUP),
-      runs: { jobs: [], unreadable: [] },
-      timeZone: null,
-    });
-    await send(h, '08:45:00', { samples: awake('06:00:15', '08:45:00'), timeZone: null });
-
-    expect((await evaluate(h, '08:45:00')).open).toEqual([]);
-  });
-});
-
-describe('unknown runs or records', () => {
   test('a System that never sent runs raises nothing', async () => {
     await using h = await startHub();
     await send(h, '06:00:00', { records: set(BACKUP) });
@@ -421,36 +451,6 @@ describe('unknown runs or records', () => {
     ]);
   });
 
-  test('a record set over budget leaves open Conditions as they are', async () => {
-    await using h = await startHub();
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-    });
-    await evaluate(h, '07:41:00');
-    await send(h, '08:00:00', { records: { overBudget: { bytes: 9_000_000 } } });
-
-    expect((await evaluate(h, '08:01:00')).open).toEqual([
-      expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
-    ]);
-  });
-
-  test('a job whose record the Collector could not read keeps its Conditions', async () => {
-    await using h = await startHub();
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-    });
-    await evaluate(h, '07:41:00');
-    await send(h, '08:00:00', {
-      records: { records: [], unreadable: [{ kind: 'job', name: 'backup' }] },
-    });
-
-    expect((await evaluate(h, '08:01:00')).open).toEqual([
-      expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
-    ]);
-  });
-
   test('a job whose runs the Collector could not read keeps its Conditions', async () => {
     await using h = await startHub();
     await send(h, '07:40:00', {
@@ -463,30 +463,6 @@ describe('unknown runs or records', () => {
     expect((await evaluate(h, '08:01:00')).open).toEqual([
       expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
     ]);
-  });
-
-  test('a recorded job that no longer has runs is not failing', async () => {
-    await using h = await startHub();
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-    });
-    await evaluate(h, '07:41:00');
-    await send(h, '08:00:00', { runs: NO_RUNS });
-
-    expect((await evaluate(h, '08:01:00')).open).toEqual([]);
-  });
-
-  test('a forgotten job clears its Conditions', async () => {
-    await using h = await startHub();
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-    });
-    await evaluate(h, '07:41:00');
-    await send(h, '08:00:00', { records: set(), runs: { jobs: [], unreadable: [] } });
-
-    expect((await evaluate(h, '08:01:00')).open).toEqual([]);
   });
 });
 

@@ -136,13 +136,46 @@ const readRecords = async (recordSet: RecordSetRow, mirrored: readonly MirroredR
   return { records, unreadable };
 };
 
+// What one System's Drift is judged on, as read under its row lock.
+export type DriftFacts = {
+  files: readonly FileCheck[];
+  judged: ReadonlyMap<string, string>;
+  records: readonly ReadableRecord[];
+  open: readonly string[];
+  recordsOverBudget: boolean;
+  unreadable: boolean;
+};
+
+// Judges one System's Drift, one Condition per path. A path is left as it is
+// when the checks did not judge its record as the Hub mirrors it. A files part
+// over budget judges no record, so only a path no record names is cleared.
+// Records over budget judge nothing. An unreadable files record may name any
+// path, so nothing is cleared while one exists; a path can still be raised.
+export const judgeDrift = (facts: DriftFacts): Map<string, Exclude<Verdict, 'unknown'>> => {
+  const judged = new Map<string, Exclude<Verdict, 'unknown'>>();
+  if (facts.recordsOverBudget) {
+    return judged;
+  }
+  const verdicts = verdictsOf(facts);
+  // Drift for a path no files record names any more is cleared, which is how
+  // a forgotten record clears its Drift.
+  for (const subject of facts.open) {
+    if (!verdicts.has(subject)) {
+      verdicts.set(subject, 'clear');
+    }
+  }
+  for (const [subject, verdict] of verdicts) {
+    if (verdict !== 'unknown' && !(verdict === 'clear' && facts.unreadable)) {
+      judged.set(subject, verdict);
+    }
+  }
+  return judged;
+};
+
 // Raises and clears one System's Drift under the System's row lock, so it
 // orders with its Reports (ADR-0005), at the time `clock` reads once the lock
-// is held. Drift is one Condition per path. It is left as it is while the
-// System's checks are absent or their files part is over budget, or its records are, since neither
-// says what the files are now, for the paths of a record the checks did not
-// judge as the Hub mirrors it, and while any files record is unreadable. A
-// files part over budget judges no record, so only a path no record names is cleared.
+// is held. Nothing is judged while the System has no checks or records stored,
+// or the Hub cannot read the stored checks.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -155,12 +188,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     const [recordSet]: RecordSetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
     `;
-    if (
-      held === undefined ||
-      checkSet === undefined ||
-      recordSet === undefined ||
-      recordSet.over_budget_bytes !== null
-    ) {
+    if (held === undefined || checkSet === undefined || recordSet === undefined) {
       return;
     }
     // A section with no files part, or a files part over budget, stores none,
@@ -180,30 +208,21 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       WHERE system = ${system} AND kind = ${DRIFT} AND cleared_at IS NULL
     `;
     const { records, unreadable } = await readRecords(recordSet, mirrored);
-    const verdicts = verdictsOf({
+    const verdicts = judgeDrift({
       files: files.data,
       judged: new Map(judgedBy.map((entry) => [entry.record, entry.digest])),
+      open: open.map((row) => row.subject),
       records,
+      recordsOverBudget: recordSet.over_budget_bytes !== null,
+      unreadable,
     });
-    // Drift for a path no files record names any more is cleared, which is how
-    // a forgotten record clears its Drift.
-    for (const { subject } of open) {
-      if (!verdicts.has(subject)) {
-        verdicts.set(subject, 'clear');
-      }
-    }
 
     const at = new Date(now);
     for (const [subject, verdict] of verdicts) {
-      // An unreadable record may name any path, so nothing is cleared while one
-      // exists; a path can still be raised.
-      if (verdict === 'clear' && unreadable) {
-        continue;
-      }
       if (verdict === 'clear') {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await clear(tx, { kind: DRIFT, now: at, subject, system });
-      } else if (verdict !== 'unknown') {
+      } else {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await raise(tx, { kind: DRIFT, now: at, reason: verdict.raise, subject, system });
       }

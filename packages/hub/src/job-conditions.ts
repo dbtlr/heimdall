@@ -139,9 +139,64 @@ const latestRunsOf = async (tx: SQL, system: string): Promise<(job: string) => L
   return (job) => (unreadable.has(job) ? 'unknown' : (runs.get(job) ?? null));
 };
 
+// What one System's job Conditions are judged on, as read under its row lock.
+export type JobConditionFacts = {
+  records: readonly { name: string; record: JobRecord | undefined; mirroredSince: number | null }[];
+  runs: ReadonlyMap<string, LatestRuns>;
+  open: readonly string[];
+  unreadable: ReadonlySet<string>;
+  recordsOverBudget: boolean;
+  awakeCutoff: AwakeCutoff;
+  timeZone: string | null;
+};
+
+// Judges one System's job failing and job overdue. The latest run decides
+// failing; a scheduled time since the job was first mirrored followed by its
+// grace period of awake time without a successful run decides overdue. Unknown
+// records or runs leave their Conditions as they are. Records over budget
+// judge nothing. A forgotten job clears both Conditions unless its record is
+// unreadable. A missing or unknown time zone leaves only overdue unknown.
+export const judgeJobConditions = (facts: JobConditionFacts, now: number) => {
+  if (facts.recordsOverBudget) {
+    return new Map<string, Record<'job_failing' | 'job_overdue', Verdict>>();
+  }
+  const verdicts = new Map<string, Record<'job_failing' | 'job_overdue', Verdict>>();
+  for (const { record, name, mirroredSince } of facts.records) {
+    const runs = facts.runs.get(name) ?? null;
+    verdicts.set(
+      name,
+      record !== undefined
+        ? {
+            job_failing: failingVerdict(runs),
+            job_overdue: overdueVerdict({
+              awakeCutoff: facts.awakeCutoff,
+              // A record with no first time, which only a damaged table
+              // holds, counts from now.
+              mirroredSince: mirroredSince ?? now,
+              record,
+              runs,
+              timeZone: facts.timeZone,
+            }),
+          }
+        : { job_failing: 'unknown', job_overdue: 'unknown' },
+    );
+  }
+  // A job no longer recorded clears its Conditions; one whose record the
+  // Collector or the Hub cannot read is unknown.
+  for (const subject of facts.open) {
+    if (!verdicts.has(subject)) {
+      const verdict = facts.unreadable.has(subject) ? 'unknown' : 'clear';
+      verdicts.set(subject, { job_failing: verdict, job_overdue: verdict });
+    }
+  }
+
+  return verdicts;
+};
+
 // Raises and clears one System's job Conditions under the System's row lock,
 // so they order with its Reports (ADR-0005), at the time `clock` reads once
-// the lock is held.
+// the lock is held. Nothing is judged while the System or its record set is
+// missing.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { time_zone: string | null }[] = await tx`
@@ -151,8 +206,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     const [recordSet]: SetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
     `;
-    // Records over budget leave every job, and so every job Condition, unknown.
-    if (held === undefined || recordSet === undefined || recordSet.over_budget_bytes !== null) {
+    if (held === undefined || recordSet === undefined) {
       return;
     }
     const jobs: JobRow[] = await tx`
@@ -183,35 +237,22 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       through: now,
     });
 
-    const verdicts = new Map<string, Record<'job_failing' | 'job_overdue', Verdict>>();
-    for (const { parsed: record, row } of records) {
-      const runs = runsOf(row.name);
-      verdicts.set(
-        row.name,
-        record.success
-          ? {
-              job_failing: failingVerdict(runs),
-              job_overdue: overdueVerdict({
-                awakeCutoff,
-                // A record with no first time, which only a damaged table
-                // holds, counts from now.
-                mirroredSince: row.first_mirrored_at?.getTime() ?? now,
-                record: record.data,
-                runs,
-                timeZone: held.time_zone,
-              }),
-            }
-          : { job_failing: 'unknown', job_overdue: 'unknown' },
-      );
-    }
-    // A job no longer recorded clears its Conditions; one whose record the
-    // Collector or the Hub cannot read is unknown.
-    for (const { subject } of open) {
-      if (!verdicts.has(subject)) {
-        const verdict = unreadable.has(subject) ? 'unknown' : 'clear';
-        verdicts.set(subject, { job_failing: verdict, job_overdue: verdict });
-      }
-    }
+    const verdicts = judgeJobConditions(
+      {
+        awakeCutoff,
+        open: open.map((row) => row.subject),
+        records: records.map(({ parsed, row }) => ({
+          mirroredSince: row.first_mirrored_at?.getTime() ?? null,
+          name: row.name,
+          record: parsed.success ? parsed.data : undefined,
+        })),
+        recordsOverBudget: recordSet.over_budget_bytes !== null,
+        runs: new Map(jobs.map((row) => [row.name, runsOf(row.name)])),
+        timeZone: held.time_zone,
+        unreadable,
+      },
+      now,
+    );
 
     const at = new Date(now);
     for (const [subject, byKind] of verdicts) {
