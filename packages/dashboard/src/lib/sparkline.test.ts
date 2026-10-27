@@ -38,3 +38,27 @@ test('a lone point still draws a mark', () => {
 test('no points give an empty path', () => {
   expect(sparklinePath([], [], size)).toBe('');
 });
+
+test('the x axis spans the given window, so a series that stops early leaves the right end empty', () => {
+  const path = sparklinePath(
+    [
+      { t: 0, value: 100 },
+      { t: 50, value: 100 },
+    ],
+    [],
+    { ...size, ceiling: 100, from: 0, to: 100 },
+  );
+  expect(path).toBe('M0,1 L50,1');
+});
+
+test('points that start after the window start leave the left end empty', () => {
+  const path = sparklinePath(
+    [
+      { t: 50, value: 100 },
+      { t: 100, value: 100 },
+    ],
+    [],
+    { ...size, ceiling: 100, from: 0, to: 100 },
+  );
+  expect(path).toBe('M50,1 L100,1');
+});

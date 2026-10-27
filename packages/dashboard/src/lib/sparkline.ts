@@ -5,7 +5,10 @@ export type SparkPoint = { t: number; value: number };
 type SparkBox = {
   // The value drawn at the top; defaults to the largest value, at least 1.
   ceiling?: number;
+  // The time window the x axis spans; defaults to the first to the last point.
+  from?: number;
   height: number;
+  to?: number;
   width: number;
 };
 
@@ -13,13 +16,15 @@ const PAD = 1;
 
 const num = (value: number): string => String(Math.round(value * 100) / 100);
 
-// An SVG path of the points over their time span, values from 0 to the ceiling
+// An SVG path of the points over the window from `from` to `to` (the points'
+// own span when not given), so a series that stops early leaves the right end
+// empty. Values from 0 to the ceiling
 // bottom to top. A gap between two points breaks the line into segments. Empty
 // for no points.
 export const sparklinePath = (
   points: readonly SparkPoint[],
   gaps: readonly Gap[],
-  { ceiling, height, width }: SparkBox,
+  { ceiling, from, height, to, width }: SparkBox,
 ): string => {
   const first = points[0];
   const last = points.at(-1);
@@ -27,8 +32,9 @@ export const sparklinePath = (
     return '';
   }
   const top = ceiling ?? Math.max(1, ...points.map(({ value }) => value));
-  const span = last.t - first.t;
-  const x = (t: number) => (span === 0 ? width / 2 : ((t - first.t) / span) * width);
+  const start = from ?? first.t;
+  const span = (to ?? last.t) - start;
+  const x = (t: number) => (span <= 0 ? width / 2 : ((t - start) / span) * width);
   const y = (value: number) =>
     height - PAD - (Math.min(Math.max(value, 0), top) / top) * (height - 2 * PAD);
   const parts: string[] = [];
@@ -36,7 +42,7 @@ export const sparklinePath = (
   for (const point of points) {
     const before = previous;
     const broken =
-      before === undefined || gaps.some(({ from, to }) => from < point.t && to > before.t);
+      before === undefined || gaps.some((gap) => gap.from < point.t && gap.to > before.t);
     parts.push(`${broken ? 'M' : 'L'}${num(x(point.t))},${num(y(point.value))}`);
     previous = point;
   }

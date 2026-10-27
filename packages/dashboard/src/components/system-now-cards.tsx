@@ -21,7 +21,7 @@ function Sparkline({
   detail,
   points,
 }: {
-  detail: Pick<SystemDetail, 'gaps'>;
+  detail: Pick<SystemDetail, 'from' | 'gaps' | 'to'>;
   points: readonly SparkPoint[];
 }) {
   return (
@@ -34,7 +34,9 @@ function Sparkline({
       <path
         d={sparklinePath(points, detail.gaps, {
           ceiling: 100,
+          from: detail.from,
           height: SPARK_HEIGHT,
+          to: detail.to,
           width: SPARK_WIDTH,
         })}
         fill="none"
@@ -52,24 +54,18 @@ function Sparkline({
 function Card({
   caption,
   children,
-  label,
   muted,
   value,
   valueClass,
 }: {
   caption: ReactNode;
   children?: ReactNode;
-  label: string;
   muted: boolean;
   value: ReactNode;
   valueClass?: string | undefined;
 }) {
   return (
-    <div
-      aria-label={label}
-      className={cn('rounded-[10px] border bg-card px-3.5 py-3', muted && 'opacity-50')}
-      role="group"
-    >
+    <div className={cn('rounded-[10px] border bg-card px-3.5 py-3', muted && 'opacity-50')}>
       <div className={cn('text-2xl leading-tight font-semibold', valueClass)}>{value}</div>
       <div className="text-sm text-muted-foreground">{caption}</div>
       {children}
@@ -89,7 +85,10 @@ export function SystemNowCards({
   detail,
   items,
 }: {
-  detail: Pick<SystemDetail, 'cpu' | 'gaps' | 'latest' | 'memory' | 'now' | 'range'>;
+  detail: Pick<
+    SystemDetail,
+    'cpu' | 'from' | 'gaps' | 'latest' | 'memory' | 'now' | 'range' | 'to'
+  >;
   items: readonly Attention[];
 }) {
   const { latest, now } = detail;
@@ -103,7 +102,10 @@ export function SystemNowCards({
   const stale = now - latest.t > QUIET_AFTER_MS;
   const disk = diskReading(latest.disks, items);
   const diskLevel = meterLevels(items).disk;
-  const high = Math.max(0, ...detail.cpu.map(({ high: bucketHigh }) => bucketHigh));
+  const high = Math.max(
+    latest.cpuBusyPercent,
+    ...detail.cpu.map(({ high: bucketHigh }) => bucketHigh),
+  );
   const cpuPoints = detail.cpu.map(({ average, t }) => ({ t, value: average }));
   const memoryPoints = detail.memory
     .filter(({ totalBytes }) => totalBytes > 0)
@@ -112,7 +114,13 @@ export function SystemNowCards({
   const used = formatGiB(latest.memoryUsedBytes);
   const total = formatGiB(latest.memoryTotalBytes);
   return (
-    <section aria-label="Current Vitals" className="mb-4 hidden lg:grid lg:grid-cols-4 lg:gap-3">
+    <section
+      aria-labelledby="now-cards-heading"
+      className="mb-4 hidden lg:grid lg:grid-cols-4 lg:gap-3"
+    >
+      <h2 className="sr-only" id="now-cards-heading">
+        Last reported
+      </h2>
       {stale && <span className="sr-only">Vitals as of {formatSpanShort(now - latest.t)} ago</span>}
       <Card
         caption={
@@ -120,7 +128,6 @@ export function SystemNowCards({
             ? 'CPU busy'
             : `CPU busy · ${RANGE_LABELS[detail.range]} high ${percent(high)}`
         }
-        label={`CPU busy ${percent(latest.cpuBusyPercent)}`}
         muted={stale}
         value={percent(latest.cpuBusyPercent)}
       >
@@ -128,7 +135,6 @@ export function SystemNowCards({
       </Card>
       <Card
         caption="memory"
-        label={`Memory ${used} of ${total} GiB`}
         muted={stale}
         value={
           <>
@@ -141,14 +147,12 @@ export function SystemNowCards({
       </Card>
       <Card
         caption={disk === undefined ? 'No disk sample' : `disk ${disk.mount}`}
-        label={disk === undefined ? 'Disk unknown' : `Disk ${disk.mount} ${percent(disk.percent)}`}
         muted={stale}
         value={disk === undefined ? '—' : percent(disk.percent)}
         valueClass={diskLevel === undefined ? undefined : MARK_COLOR[diskLevel]}
       />
       <Card
         caption={`load · 5-min ${loadText(load5)} · 15-min ${loadText(load15)}`}
-        label={Number.isFinite(load1) ? `Load ${formatLoad(load1)}` : 'Load unknown'}
         muted={stale}
         value={loadText(load1)}
       />

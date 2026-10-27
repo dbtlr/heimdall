@@ -51,7 +51,7 @@ test('the table layout makes each compact row one grid line from lg, with an sr-
     <AttentionList compact items={[disk]} layout="table" now={1000} />,
   );
   expect(html).toContain('lg:grid');
-  expect(html).toContain('lg:grid-cols-[16px_minmax(9rem,auto)');
+  expect(html).toContain('lg:grid-cols-[16px_11rem_15rem_minmax(0,1fr)_5.5rem_7rem_auto]');
   expect(html).toContain('<span class="lg:sr-only">Warning</span>');
   expect(html).toContain('open 1 s');
 });

@@ -42,6 +42,7 @@ const detail = (overrides: Partial<Detail> = {}): Detail => ({
     { average: 10, high: 20, low: 5, t: 0 },
     { average: 20, high: 31, low: 10, t: 300_000 },
   ],
+  from: 0,
   gaps: [],
   latest: baseLatest,
   memory: [
@@ -50,6 +51,7 @@ const detail = (overrides: Partial<Detail> = {}): Detail => ({
   ],
   now: NOW,
   range: '12h',
+  to: NOW,
   ...overrides,
 });
 
@@ -60,7 +62,9 @@ test('the four cards show CPU with its range high, memory, the disk, and load', 
   expect(html).toContain('12 h high 31%');
   expect(html).toContain('8.0');
   expect(html).toContain('of 16.0 GiB');
-  expect(html).toContain('aria-label="Disk /data 91%"');
+  expect(html).toContain('disk /data');
+  expect(html).not.toContain('aria-label="Disk');
+  expect(html).toContain('<h2 class="sr-only" id="now-cards-heading">Last reported</h2>');
   expect(html).toContain('1.50');
   expect(html).toContain('5-min 1.25 · 15-min 0.50');
   expect((html.match(/<path /gu) ?? []).length).toBe(2);
@@ -92,7 +96,6 @@ test('an unknown load reads as a dash', () => {
       items={[]}
     />,
   );
-  expect(html).toContain('aria-label="Load unknown"');
   expect(html).toContain('>—<');
 });
 
@@ -102,4 +105,14 @@ test('a System without Vitals says so instead of drawing cards', () => {
   );
   expect(html).toContain('No Vitals sample has arrived.');
   expect(html).not.toContain('<svg');
+});
+
+test('the CPU high is never below the newest sample', () => {
+  const html = renderToStaticMarkup(
+    <SystemNowCards
+      detail={detail({ latest: { ...baseLatest, cpuBusyPercent: 55.2 } })}
+      items={[]}
+    />,
+  );
+  expect(html).toContain('12 h high 55%');
 });

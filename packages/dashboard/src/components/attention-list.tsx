@@ -9,6 +9,7 @@ import {
   evidenceWords,
   nextSteps,
   rankAttention,
+  subjectText,
 } from '../lib/attention.ts';
 import { whenAt } from '../lib/phrase.ts';
 import type { Phrase } from '../lib/phrase.ts';
@@ -37,7 +38,7 @@ const HEADINGS = [
 // A compact row as one line on a wide screen: glyph, Condition, subject, what was
 // observed, how long it has been open, the latest check, and the way to open it.
 const TABLE_ROW =
-  'lg:grid lg:min-h-0 lg:grid-cols-[16px_minmax(9rem,auto)_minmax(10rem,auto)_minmax(0,1fr)_auto_auto_auto] lg:items-baseline lg:gap-x-4 lg:py-2';
+  'lg:grid lg:min-h-0 lg:grid-cols-[16px_11rem_15rem_minmax(0,1fr)_5.5rem_7rem_auto] lg:items-baseline lg:gap-x-4 lg:py-2';
 
 const COMMAND =
   'mt-1 block rounded bg-background px-2 py-1 font-mono text-[12.5px] break-all whitespace-pre-wrap';
@@ -107,12 +108,18 @@ function Summary({
           ) : (
             ATTENTION_NAMES[item.kind]
           )}{' '}
-          <AttentionSubject item={item} />
+          {table ? (
+            <span className="lg:block lg:min-w-0 lg:truncate" title={subjectText(item)}>
+              <AttentionSubject item={item} />
+            </span>
+          ) : (
+            <AttentionSubject item={item} />
+          )}
         </span>
         <span
           className={cn(
             'mt-1 block text-base text-muted-foreground',
-            table && 'lg:mt-0 lg:min-w-0 lg:text-[13px] lg:wrap-anywhere',
+            table && 'lg:mt-0 lg:min-w-0 lg:truncate lg:text-[13px]',
           )}
         >
           <PhraseText phrase={words.observedShort} />
