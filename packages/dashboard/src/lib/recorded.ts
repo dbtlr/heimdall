@@ -80,6 +80,8 @@ export const serviceLine = (
   };
 };
 
+const CHECK_LABELS: Record<string, string> = { health: 'Health', supervisor: 'Supervisor' };
+
 // Each of a Service's checks on its own row, for the wide Service page's panel,
 // which names the supervisor separately: the supervisor's check, then its health.
 export const serviceChecks = (
@@ -95,7 +97,7 @@ export const serviceChecks = (
     const words =
       health && check.state === 'unhealthy' ? 'Failing' : (STATE_WORDS[check.state] ?? check.state);
     return {
-      label: health ? 'Health' : 'Supervisor',
+      label: CHECK_LABELS[check.check] ?? check.check,
       state,
       text: [
         `${words} since `,

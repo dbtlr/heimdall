@@ -137,6 +137,13 @@ describe('serviceChecks', () => {
     ]);
   });
 
+  test('names a check of a kind it does not know by its kind', () => {
+    const port = { check: 'port', detail: '', since: NOW - HOUR, state: 'up' };
+    expect(checks({ checks: [port], name: 'web', supervisor: 'systemd' })).toEqual([
+      { label: 'port', state: 'good', text: 'Up since 15:00' },
+    ]);
+  });
+
   test('has no rows before the first check', () => {
     expect(checks({ checks: [], name: 'web', supervisor: 'systemd' })).toEqual([]);
   });

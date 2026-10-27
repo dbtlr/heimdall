@@ -37,8 +37,9 @@ export function ServicePanel({ detail }: { detail: ServiceDetail }) {
             <p className="mt-1 text-muted-foreground">Not checked yet</p>
           ) : (
             <dl className="mt-1 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1">
-              {checks.map((check) => (
-                <Fact key={check.label} label={check.label}>
+              {checks.map((check, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- checks keep the Hub's order and have no id.
+                <Fact key={index} label={check.label}>
                   <span
                     className={cn(
                       'mr-2 inline-block size-2 rounded-full align-middle',

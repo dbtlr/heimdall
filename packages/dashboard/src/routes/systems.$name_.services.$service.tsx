@@ -36,7 +36,7 @@ function ServicePage() {
     <>
       <AppHeader />
       <main
-        className={`${contentFrame('narrow')} pb-8 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-x-7`}
+        className={`${contentFrame('narrow')} pb-8 lg:grid lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-x-7`}
       >
         <div className="min-w-0">
           <Link className="flex min-h-11 items-center text-base text-primary" to="/services">
