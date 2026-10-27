@@ -57,5 +57,6 @@ test.skipIf(browser === null)(
       await server.stop(true);
     }
   },
-  30_000,
+  // Room for a first Chromium launch from a cold disk (HMD-192). A warm launch takes about a second.
+  60_000,
 );
