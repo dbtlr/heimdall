@@ -22,3 +22,8 @@ export const WIDE_MEDIA = '(min-width: 1024px)';
 // cannot tell a phone from a desktop.
 export const isNarrowBrowser = (): boolean =>
   typeof globalThis.matchMedia === 'function' && !globalThis.matchMedia(WIDE_MEDIA).matches;
+
+// Whether this runs in a browser at `lg` or wider, where the lanes show. False
+// on the server, which cannot tell, so a first load never reads the lanes.
+export const isWideBrowser = (): boolean =>
+  typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(WIDE_MEDIA).matches;
