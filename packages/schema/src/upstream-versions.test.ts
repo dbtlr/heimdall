@@ -44,6 +44,9 @@ test.each([
   '1\n',
   '1-rc..1',
   '9007199254740993',
+  // A date, a build number, or a commit hash made only of digits.
+  '20261027',
+  '12345',
 ])('an unreadable version cannot be parsed: %j', (version) => {
   expect(parseVersion(version)).toBeUndefined();
 });
@@ -119,6 +122,9 @@ test.each([
   ['1', ['1.0.0']],
   ['16-alpine', ['16-alpine', '16']],
   ['1.0.0-rc.01', ['1-rc.1', '1']],
+  ['1.7.2', ['1.7.2', '1.8.0-alpha.1']],
+  ['1.4.2', ['1.4.2', '20261027']],
+  ['9999', ['9999', '20261027']],
 ])('a matching newest release establishes that %s is current', (installed, releases) => {
   expect(availableUpdate(installed, newestPerChannel(releases))).toEqual({ kind: 'current' });
 });

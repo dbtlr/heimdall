@@ -19,8 +19,10 @@ export const parseVersion = (text: string): ParsedVersion | undefined => {
     return undefined;
   }
   const core = match[1].split('.').map(Number);
-  // A number too large to compare exactly is no version number.
-  if (!core.every(Number.isSafeInteger)) {
+  // A number too large to compare exactly is no version number, and nor is
+  // a lone number of more than four digits: a date, a build number, or a
+  // commit hash made only of digits.
+  if (!core.every(Number.isSafeInteger) || (core.length === 1 && match[1].length > 4)) {
     return undefined;
   }
   const [label, ...rest] = match[2]?.split('.') ?? [];
