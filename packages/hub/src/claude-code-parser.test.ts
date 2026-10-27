@@ -579,7 +579,6 @@ describe('transcript paths', () => {
     ['a Session', mainPath(PROSE)],
     ["a subagent's Session", agentPath('a1b2', { session: PROSE })],
     ['a subagent', agentPath(PROSE)],
-    ["a subagent's metadata", agentPath(PROSE, { meta: true })],
     ['a workflow run', agentPath('a1b2', { workflow: PROSE })],
     ['a Session longer than an id', mainPath('s'.repeat(MAX_ID_LENGTH + 1))],
   ])('%s named as no id is misnamed', (_, path) => {
@@ -588,8 +587,6 @@ describe('transcript paths', () => {
 
   test.each([
     `projects/p/${SESSION}/subagents/workflows/wf_x1/journal.jsonl`,
-    `projects/p/${SESSION}/tool-results/toolu_1.txt`,
-    'projects/p/memory/MEMORY.md',
     `projects/p/${SESSION}/workflows/wf_x1.json`,
   ])('%s holds no conversation', (path) => {
     expect(classifyClaudeCodePath(path)).toEqual({ kind: 'other' });

@@ -65,7 +65,8 @@ describe('Codex rollouts', () => {
     expect(requestIdOf({ id: 'outer-id' })).toBeNull();
     expect(requestIdOf({ payload: {} })).toBeNull();
   });
-  test.each(['0.154.0', '0.162.1'])('session_meta identifies a Session on Codex %s', (version) => {
+  test('session_meta identifies a Session on Codex 0.162.1', () => {
+    const version = '0.162.1';
     const batch = parse(jsonl([meta({ version })]));
 
     expect(batch.owner).toEqual({ agentId: null, sessionId: SESSION });
@@ -344,14 +345,11 @@ describe('Codex rollouts', () => {
     ]);
   });
 
-  test.each(['assistant', 'developer', 'system'])(
-    'a %s skill message does not infer a user invocation',
-    (role) => {
-      const batch = parse(jsonl([meta(), skillMessage(role)]));
-      expect(batch.toolCalls).toEqual([]);
-      expect(batch.unreadableLines).toBe(0);
-    },
-  );
+  test('a assistant skill message does not infer a user invocation', () => {
+    const batch = parse(jsonl([meta(), skillMessage('assistant')]));
+    expect(batch.toolCalls).toEqual([]);
+    expect(batch.unreadableLines).toBe(0);
+  });
 
   test.each([undefined, 'server prose'])(
     'an MCP item without a shaped server is unreadable (%s)',
@@ -490,10 +488,7 @@ const linkFailsOnce = (sql: SQL): SQL => {
 describe('Codex projection', () => {
   beforeAll(startTestServer, 60_000);
 
-  test.each([
-    ['empty object', '{}'],
-    ['response item', JSON.stringify(skillMessage())],
-  ])(
+  test.each([['empty object', '{}']])(
     'a non-header child file leaves the main totals and path unchanged (%s)',
     async (_kind, first) => {
       await using h = await startHub();

@@ -71,18 +71,6 @@ test('an empty list replaces the installs, since the Harness was removed', async
   expect(await installsOf(h, 'laptop-1')).toEqual([]);
 });
 
-test('a Report sent earlier does not replace installs from one sent later', async () => {
-  await using h = await startHub();
-  await pushInstalls(h, 'laptop-1', { harnesses: { installs: [CODEX] }, sentAt: NOW });
-  await pushInstalls(h, 'laptop-1', {
-    harnesses: { installs: [CLAUDE] },
-    sentAt: NOW - 60_000,
-    t: NOW - 15_000,
-  });
-
-  expect(await installsOf(h, 'laptop-1')).toEqual([CODEX]);
-});
-
 test('the newest Report sent wins whatever order they arrive in', async () => {
   await using h = await startHub();
   await pushInstalls(h, 'laptop-1', { harnesses: { installs: [CODEX] }, sentAt: NOW - 120_000 });

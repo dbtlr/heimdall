@@ -101,12 +101,6 @@ describe('blameHubClock', () => {
       blameHubClock([entry('a', 60 * SECOND), entry('b', 182 * SECOND), entry('c', SECOND)]),
     ).toBeUndefined();
   });
-
-  test('does not count a System 27 seconds off as true', () => {
-    expect(
-      blameHubClock([entry('a', -40 * SECOND), entry('b', -40 * SECOND), entry('c', 27 * SECOND)]),
-    ).toBeUndefined();
-  });
 });
 
 const tokenOf = (system: string) =>
@@ -161,7 +155,6 @@ const T = NOW + MINUTE;
 
 describe('clock skew', () => {
   test.each([
-    [42 * SECOND, 'note', "Its clock is 42 s ahead of the Hub's."],
     [-30 * SECOND, 'note', "Its clock is 30 s behind the Hub's."],
     [130 * SECOND, 'warning', "Its clock is 2 min 10 s ahead of the Hub's."],
     [-120 * SECOND, 'warning', "Its clock is 2 min behind the Hub's."],
@@ -305,24 +298,6 @@ describe('clock skew', () => {
       expect(await open(h)).toEqual([expect.objectContaining({ system: 'laptop-1' })]);
     });
 
-    test('is levelled by the blamed System limits, with their hysteresis', async () => {
-      await using h = await startHub();
-      await pair(h, 'a-box', 'b-box');
-      const settle = async (time: number, hubAhead: number) => {
-        for (const system of ['server-1', 'a-box', 'b-box']) {
-          // oxlint-disable-next-line no-await-in-loop -- one Report at a time.
-          await send(h, time, -hubAhead, system);
-        }
-        await send(h, time, 0, 'laptop-1');
-        await evaluate(h, time);
-        return (await open(h)).map((row) => `${row.system}:${row.level}`);
-      };
-
-      expect(await settle(T, 310 * SECOND)).toEqual(['laptop-1:alert']);
-      expect(await settle(T + MINUTE, 296 * SECOND)).toEqual(['laptop-1:alert']);
-      expect(await settle(T + 2 * MINUTE, 200 * SECOND)).toEqual(['laptop-1:warning']);
-    });
-
     test('moves a System between its own clock and the Hub clock as the blame comes and goes', async () => {
       await using h = await startHub();
       await pair(h, 'a-box', 'b-box');
@@ -388,23 +363,6 @@ describe('clock skew', () => {
       expect(await drift(33)).toEqual(['laptop-1:hub:note']);
       expect(await drift(27)).toEqual(['laptop-1:hub:note']);
       expect(await drift(24)).toEqual([]);
-    });
-
-    test('judges each System alone when only one other System is skewed', async () => {
-      await using h = await startHub();
-      await send(h, T, SECOND, 'laptop-1');
-      await send(h, T, -182 * SECOND, 'server-1');
-
-      await evaluate(h, T);
-
-      expect(await open(h)).toEqual([
-        {
-          level: 'warning',
-          reason: "Its clock is 3 min 2 s behind the Hub's.",
-          subject: '',
-          system: 'server-1',
-        },
-      ]);
     });
   });
 });

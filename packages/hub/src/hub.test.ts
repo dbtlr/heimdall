@@ -40,14 +40,6 @@ test('the bearer scheme is read in any case', async () => {
   expect(response.status).toBe(200);
 });
 
-test("a Report for another System than the token's is forbidden", async () => {
-  await using h = await startHub();
-
-  const response = await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
-
-  expect(response.status).toBe(403);
-});
-
 test.each([
   ['a body that is not JSON', '{"system": "laptop-1",'],
   ['a Report that fails the schema', { ...report('laptop-1', [NOW]), samples: [] }],

@@ -58,6 +58,8 @@ type Pending = {
 };
 
 type Options = {
+  // How many facts one batch holds at most, before the line that reaches it ends.
+  batchFacts?: number;
   budgetBytes?: number;
   // How many rows of an earlier version one run deletes from each table at most.
   cleanupRows?: number;
@@ -76,7 +78,12 @@ type Options = {
 // current version leaves that Harness alone.
 export const projectTranscripts = async (
   sql: SQL,
-  { budgetBytes = PARSE_BUDGET_BYTES, cleanupRows = CLEANUP_ROWS, parsers = PARSERS }: Options = {},
+  {
+    batchFacts = BATCH_FACTS,
+    budgetBytes = PARSE_BUDGET_BYTES,
+    cleanupRows = CLEANUP_ROWS,
+    parsers = PARSERS,
+  }: Options = {},
 ): Promise<Projected> => {
   const projected: Projected = { failed: [], outdated: [], pending: 0, switched: [] };
   const budget: Budget = { left: budgetBytes };
@@ -88,7 +95,12 @@ export const projectTranscripts = async (
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-    const worked = await parsePending(sql, { budget, failed: projected.failed, parser });
+    const worked = await parsePending(sql, {
+      batchFacts,
+      budget,
+      failed: projected.failed,
+      parser,
+    });
     // oxlint-disable-next-line no-await-in-loop -- retries links for this Harness before switching it.
     if (parser.harness === 'codex' && (worked || (await needsCodexLinks(sql, parser.version)))) {
       // oxlint-disable-next-line no-await-in-loop -- links only the version just parsed.
@@ -240,10 +252,11 @@ type Budget = { left: number };
 const parsePending = async (
   sql: SQL,
   {
+    batchFacts,
     budget,
     failed,
     parser,
-  }: { budget: Budget; failed: Projected['failed']; parser: HarnessParser },
+  }: { batchFacts: number; budget: Budget; failed: Projected['failed']; parser: HarnessParser },
 ): Promise<boolean> => {
   const work = await pendingGenerations(sql, parser);
   for (const row of work) {
@@ -260,7 +273,7 @@ const parsePending = async (
       let step: Step;
       try {
         // oxlint-disable-next-line no-await-in-loop -- the budget is shared, so in turn.
-        step = await parseBatch(sql, { budget, generation, parser, progress });
+        step = await parseBatch(sql, { batchFacts, budget, generation, parser, progress });
       } catch (error) {
         if (isTransient(error)) {
           throw error;
@@ -454,11 +467,18 @@ type Step = { kind: 'busy' } | { kind: 'done' } | { kind: 'more'; next: Progress
 const parseBatch = async (
   sql: SQL,
   {
+    batchFacts,
     budget,
     generation,
     parser,
     progress,
-  }: { budget: Budget; generation: Generation; parser: HarnessParser; progress: Progress },
+  }: {
+    batchFacts: number;
+    budget: Budget;
+    generation: Generation;
+    parser: HarnessParser;
+    progress: Progress;
+  },
 ): Promise<Step> => {
   const from = progress.parsedThrough ?? 0;
   const { held, path } = generation;
@@ -519,7 +539,7 @@ const parseBatch = async (
             parser.parse({
               complete,
               content: content.subarray(newline + 1),
-              factLimit: BATCH_FACTS,
+              factLimit: batchFacts,
               offset: from + newline + 1,
               path,
               state: progress.state,
@@ -530,7 +550,7 @@ const parseBatch = async (
     const batch = parser.parse({
       complete,
       content,
-      factLimit: BATCH_FACTS,
+      factLimit: batchFacts,
       offset: from,
       path,
       state: progress.state,

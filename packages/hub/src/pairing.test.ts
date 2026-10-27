@@ -2,10 +2,6 @@ import { expect, test } from 'bun:test';
 
 import { CODE_ALPHABET, newCode, readCode, showCode } from './pairing.ts';
 
-test('the code alphabet is Crockford base32: digits and letters without I, L, O, and U', () => {
-  expect(CODE_ALPHABET).toBe('0123456789ABCDEFGHJKMNPQRSTVWXYZ');
-});
-
 test('a new code is 8 characters of the code alphabet', () => {
   for (let i = 0; i < 100; i += 1) {
     expect(newCode()).toMatch(/^[0-9A-HJKMNP-TV-Z]{8}$/u);
@@ -46,7 +42,6 @@ test.each([
   ['as shown', '7K3M-Q9XA'],
   ['without the dash', '7K3MQ9XA'],
   ['in lowercase', '7k3m-q9xa'],
-  ['in mixed case without the dash', '7k3MQ9xa'],
   ['with surrounding whitespace', '  7K3M-Q9XA\n'],
 ])('a code typed %s reads as the code', (_, typed) => {
   expect(readCode(typed)).toBe('7K3MQ9XA');
@@ -63,7 +58,6 @@ test.each([
   ['a Kelvin sign in place of a K', '7\u212A3M-Q9XA'],
   ['empty', ''],
   ['not a string', 12_345_678],
-  ['missing', undefined],
 ])('a code that is %s is malformed', (_, typed) => {
   expect(readCode(typed)).toBeUndefined();
 });

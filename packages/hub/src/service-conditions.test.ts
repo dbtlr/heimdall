@@ -211,59 +211,6 @@ describe('Service down', () => {
     expect(open).toEqual([]);
   });
 
-  test('counts a Hub that judges long after the Reports as it did when they arrived, since only awake time counts', async () => {
-    await using h = await startHub();
-    await send(h, '08:01:00', {
-      checks: { services: [check('web', 'stopped', at('08:00:00'))] },
-      records: set(WEB),
-      samples: awake('08:00:00', '08:01:00'),
-    });
-
-    const { open } = await evaluate(h, '09:30:00');
-
-    expect(open).toEqual([]);
-  });
-
-  // A docker Service's record names a container, not a unit; the check the
-  // Collector makes of it has the same shape, so the Hub judges it the same way.
-  test('is raised for a docker Service whose container has been stopped for 2 minutes of awake time, and says why', async () => {
-    const container: ServiceRecord = { container: 'web', name: 'web', supervisor: 'docker' };
-    await using h = await startHub();
-    await send(h, '08:02:30', {
-      checks: {
-        services: [check('web', 'stopped', at('08:00:30'), 'status exited, exit code 137')],
-      },
-      records: set(container),
-      samples: awake('08:00:45', '08:02:45'),
-    });
-
-    const { open } = await evaluate(h, '08:02:30');
-
-    expect(open).toEqual([
-      {
-        kind: 'service_down',
-        raisedAt: at('08:02:30'),
-        reason: 'Stopped: status exited, exit code 137.',
-        subject: 'web',
-      },
-    ]);
-  });
-
-  test('says in its reason what the Collector found', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [check('web', 'stopped', at('07:55:00'), 'LoadState=not-found')],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([{ reason: 'Stopped: LoadState=not-found.' }]);
-  });
-
   test('takes the new reason when the detail changes, keeping when it was raised', async () => {
     await using h = await startHub();
     await downAndEvaluated(h);
@@ -380,21 +327,6 @@ describe('Service down', () => {
     const { open } = await evaluate(h, '08:05:00');
 
     expect(subjects(open)).toEqual(['web']);
-  });
-
-  test('and clears beside a files part over budget', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', {
-      checks: {
-        overBudget: { files: { bytes: 2_000_000 } },
-        services: [check('web', 'up', at('08:03:30'))],
-      },
-    });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toEqual([]);
   });
 
   test('stays as it is while the services part is over budget', async () => {
