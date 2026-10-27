@@ -61,7 +61,8 @@ export type UpdateConditionFacts = {
 type UpdateVerdict = 'clear' | 'hold' | { level: ConditionLevel; raise: string };
 
 // One Condition per package source counts its remaining packages. Observation
-// time belongs to the Collector; age starts with the Hub's positive confirmation.
+// time belongs to the Collector. Age thresholds start only when the Hub
+// confirms positive evidence, so backlogs cannot invent pending age.
 // Unknown security and lost coverage cannot lower a held warning. Only fresh
 // recovery clears packages or reboot markers and starts a later age anew.
 export const judgeUpdateConditions = (

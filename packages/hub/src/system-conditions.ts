@@ -210,7 +210,9 @@ export const judgeSystemConditions = (
   thresholds: SystemConditionThresholds,
 ): { stale: Verdict; disks: Map<string, DiskVerdict> } => {
   const stale = staleVerdict({
-    // The always-on grace outlasts the Collector's longest retry wait.
+    // The always-on limit, so that a sleeping System that died is not held
+    // for days after every outage. It outlasts the Collector's longest wait
+    // between retries (MAX_BACKOFF_MS, 5 minutes).
     graceMs: thresholds.staleAfterMs,
     lastSeenAt: facts.lastSeenAt,
     limitMs: facts.sleeps === true ? thresholds.sleepingStaleAfterMs : thresholds.staleAfterMs,
@@ -255,8 +257,7 @@ export const judgeSystemConditions = (
 // the System's row lock, so they order with its Reports (ADR-0005), at the
 // time `clock` reads once the lock is held. A System that is not paired, such
 // as one unpaired since it was listed, has its Conditions cleared instead.
-// No row before the stale limit judges nothing; missing readable Vitals
-// leave disk Conditions alone. Exported for tests of the unpaired path.
+// Exported for tests of that path.
 export const evaluateSystem = (
   sql: SQL,
   system: string,
