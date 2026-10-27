@@ -41,7 +41,7 @@ A Service's installed version is the version of the software it runs: its Docker
 _Avoid_: current version, deployed version
 
 **upstream**:
-Where newer releases of a Service's software are published, named by kind: a GitHub repository, an npm package, a container image repository, or an APT or Homebrew package. An Application records its upstream in its `source`, and a Docker Service's image names its own.
+Where newer releases of a Service's software are published, named by kind: a GitHub repository, an npm package, a container image repository, or an APT or Homebrew package. An Application records its upstream in its `source`, and a Docker Service's image names its own unless the Service names an Application.
 _Avoid_: source (a transcript source), origin, registry (one kind of upstream)
 
 **available update**:

@@ -56,7 +56,7 @@ Where that System's coverage is unavailable, as for a Homebrew installation the 
 Versions compare as semver read loosely: a leading `v` is ignored, a missing minor or patch reads as 0, and build metadata after `+` is ignored.
 A version's label is the first dot-separated identifier after `-`, so `0.26.0-next.32` and `0.26.0-next.35` share the label `next`, and `16-alpine` has the label `alpine`.
 A version without a label compares only with releases without one.
-A version with a label compares with releases without one and with releases of its own label, so `16-alpine` counts both `16.1-alpine` and `17` as newer.
+A version with a label compares with releases of its own label, and with releases without one whose numbers are greater, so `16-alpine` counts both `16.1-alpine` and `17` as newer but not `16`.
 A version that does not read this way, such as `latest`, is never compared, and the Service shows that its version cannot be compared.
 A Service shows no update, and is not called up to date, while its upstream has never been checked successfully or its installed version is newer than every release found.
 
