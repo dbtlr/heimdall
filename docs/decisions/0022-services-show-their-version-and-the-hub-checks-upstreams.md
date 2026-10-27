@@ -44,6 +44,7 @@ It queries each distinct upstream at most every few hours, without credentials: 
 It keeps the newest release it found per channel and when it last checked.
 A failed check keeps the last answer and records the failure, and a rate-limited answer defers the next check to the reset time it gives.
 The Collector contacts no upstream.
+The Hub uses HTTPS only and contacts the registry host an `oci:` upstream names, which a paired System's provisioner recorded; under the single-person trust model a paired System is trusted, and limiting which hosts the Hub contacts waits for Hardening, as authentication does.
 
 **The Hub joins APT and Homebrew upstreams with the Collector's package observations.**
 The Collector's observations under ADR-0018 are unchanged and still compare nothing with Application records.
@@ -65,6 +66,7 @@ The pending-update Condition that an APT or Homebrew package raises under ADR-00
 
 **The Hub keeps each version a Service runs.**
 Each change of a Service's installed version is stored with when the Hub first saw it, from the release that adds this, so a Service's history shows when it changed.
+The Hub also keeps when it first found each newer release of an upstream, so a Service's history shows when an update became available; a release found once stays found, whether or not later checks succeed.
 
 **Service restarted notes are shown on the Services page.**
 The dashboard lists them with their Services, and leaves them out of a System's open Conditions and the Fleet page's Can wait.

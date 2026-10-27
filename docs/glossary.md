@@ -37,7 +37,7 @@ A long-running program a provisioner recorded, with its supervisor, its unit, la
 _Avoid_: daemon, process
 
 **installed version**:
-A Service's installed version is the version of the software it runs: its Docker image's tag, which the Collector observes, or otherwise the version of the Application the Service names. A Service with neither has an unknown installed version.
+A Service's installed version is the version of the software it runs: its Docker image's tag, which the Collector observes, or otherwise the version of the Application the Service names, unless its System's package manager reports the installed package's version, which wins. A Service with neither has an unknown installed version.
 _Avoid_: current version, deployed version
 
 **upstream**:
