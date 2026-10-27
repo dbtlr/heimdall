@@ -67,6 +67,46 @@ const inspected = (state: Record<string, unknown>, name = 'web') => ({
 });
 
 describe('a container the Engine reports', () => {
+  test.each([true, false])('carries Config.Image while running is %s', async (running) => {
+    const { requested, socket } = await fakeEngine({
+      '/containers/web/json': {
+        body: {
+          ...inspected({ Running: running, Status: running ? 'running' : 'exited' }),
+          Config: { Image: 'ghcr.io/example/web:1.2.3' },
+          Image: 'sha256:resolved-image-id',
+        },
+      },
+    });
+
+    expect(await checkContainer('web', engineAt(socket))).toMatchObject({
+      image: 'ghcr.io/example/web:1.2.3',
+      state: running ? 'up' : 'stopped',
+    });
+    expect(requested).toEqual(['GET /containers/web/json']);
+  });
+
+  test.each([
+    undefined,
+    null,
+    {},
+    { Image: '' },
+    { Image: 42 },
+    { Image: 'x'.repeat(513) },
+    { Image: 'web:1\n' },
+    { Image: '\ud800' },
+  ])('omits an unusable Config.Image in %j without losing the check', async (config) => {
+    const { socket } = await fakeEngine({
+      '/containers/web/json': {
+        body: { ...inspected({ Running: true, Status: 'running' }), Config: config },
+      },
+    });
+
+    expect(await checkContainer('web', engineAt(socket))).toEqual({
+      detail: 'status running',
+      state: 'up',
+    });
+  });
+
   test('running is up', async () => {
     const { socket } = await fakeEngine({
       '/containers/web/json': {

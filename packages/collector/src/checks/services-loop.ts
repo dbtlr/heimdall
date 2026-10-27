@@ -82,7 +82,7 @@ const stopKeyOf = (record: ServiceRecord) =>
 // long the file checks take. Each tick checks every `service` record and
 // builds the services part of the checks section; the part is replaced only
 // when something in it changed, so the same object is answered until then and a
-// Service whose state holds causes no resend.
+// Service whose checks are unchanged causes no resend.
 //
 // A check's `since` is when this Collector's clock first saw it in its current
 // state, kept while the Collector runs. A supervisor check that reads the
@@ -172,7 +172,7 @@ export const createServiceChecks = ({
       logStops(stops, { boot, checkedAt }, outcomes);
     }
     const found = outcomes.flatMap(({ outcomes: checked, record }) =>
-      checked.map(({ check, detail, state }) => {
+      checked.map(({ check, detail, image, state }) => {
         const key = keyOf(record, check);
         const before = previous.get(key);
         return {
@@ -180,6 +180,7 @@ export const createServiceChecks = ({
           sent: {
             check,
             detail,
+            ...(image === undefined ? {} : { image }),
             service: record.name,
             since: before?.state === state ? before.since : checkedAt,
             state,

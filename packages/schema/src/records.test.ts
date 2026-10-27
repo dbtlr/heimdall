@@ -28,6 +28,25 @@ const withOutput = (file: string) => ({ ...run, output: { file, sizeBytes: 10 } 
 
 describe('a Service record', () => {
   test.each([
+    { supervisor: 'systemd', unit: 'api.service' },
+    { supervisor: 'systemd-user', unit: 'api.service' },
+    { label: 'com.example.api', supervisor: 'launchd' },
+    { container: 'api', supervisor: 'docker' },
+    { supervisor: 'none' },
+  ])('can name its Application with $supervisor', (target) => {
+    const record = { ...target, application: 'api-software', name: 'api' };
+
+    expect(ServiceRecordSchema.parse(record)).toEqual(record);
+  });
+
+  test.each(['', '../api', 'two words', 'x'.repeat(129)])(
+    'refuses the invalid Application name %s',
+    (application) => {
+      expect(serviceNamed({ application, supervisor: 'none' }).success).toBe(false);
+    },
+  );
+
+  test.each([
     'http://127.0.0.1:8080',
     'http://127.0.0.1:8080/healthz?full=1',
     'http://[::1]:65535/health',

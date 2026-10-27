@@ -12,3 +12,14 @@ const LAST_DATE_MS = 8_640_000_000_000_000;
 
 // A moment as epoch milliseconds.
 export const epochMs = z.int().nonnegative().max(LAST_DATE_MS);
+
+// Free text for a person to read: no control characters, so it cannot rewrite a
+// terminal or break a line, and well-formed Unicode, so PostgreSQL can store it
+// in a Report.
+export const text = (maxLength = 256) =>
+  z
+    .string()
+    .min(1)
+    .max(maxLength)
+    .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' })
+    .refine((value) => value.isWellFormed(), { message: 'must be well-formed Unicode' });

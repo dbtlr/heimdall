@@ -97,6 +97,63 @@ test('no services part exists until the first pass has run', async () => {
   expect(c.checks.latest()).toEqual({ services: [] });
 });
 
+test('an image change replaces the services part while its state keeps since', async () => {
+  await using dir = await tempStateDir();
+  let image: string | undefined = 'web:1';
+  let now = START;
+  const checks = createServiceChecks({
+    docker: { endpoint: { kind: 'unix', path: join(dir.path, 'docker.sock') } },
+    findSystemctl: () => Promise.resolve(undefined),
+    httpGet: () =>
+      Promise.resolve({
+        body: JSON.stringify({
+          Config: { Image: image },
+          Name: '/web',
+          State: { Running: true, Status: 'running' },
+        }),
+        kind: 'response',
+        status: 200,
+        truncated: false,
+      }),
+    log: { info: () => 0, warn: () => 0 },
+    now: () => now,
+    open: () => openRecords({ stateDir: dir.path }),
+  });
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('service', {
+    container: 'web',
+    health: 'http://127.0.0.1:8080',
+    name: 'web',
+    supervisor: 'docker',
+  });
+  store.close();
+  try {
+    await checks.tick();
+    const first = checks.latest();
+    expect(first?.services).toEqual([
+      { ...sent('web', 'up', 'status running', START), image: 'web:1' },
+      { check: 'health', detail: 'HTTP 200', service: 'web', since: START, state: 'up' },
+    ]);
+    await checks.tick();
+    expect(checks.latest()).toBe(first);
+
+    image = 'web:2';
+    now += 60_000;
+    await checks.tick();
+    expect(checks.latest()).not.toBe(first);
+    expect(checks.latest()?.services?.[0]).toEqual({
+      ...sent('web', 'up', 'status running', START),
+      image: 'web:2',
+    });
+
+    image = undefined;
+    await checks.tick();
+    expect(checks.latest()?.services?.[0]).toEqual(sent('web', 'up', 'status running', START));
+  } finally {
+    checks.close();
+  }
+});
+
 test('checks the supervisor of every service record, and nothing else', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
