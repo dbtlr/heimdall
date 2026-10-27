@@ -1,3 +1,5 @@
+import { stringList } from './filter-search.ts';
+
 export const SERVICE_STATUSES = ['down', 'restarted', 'up', 'unknown'] as const;
 export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
 export const SERVICE_STATUS_FILTERS = ['down', 'restarted', 'updates', 'up', 'unknown'] as const;
@@ -35,24 +37,11 @@ export const serviceStatus = ({
 
 export type ServiceFilters = { status: ServiceStatusFilter[]; system: string[] };
 
-const strings = (value: unknown): string[] => {
-  if (typeof value === 'string') {
-    return [value];
-  }
-  return Array.isArray(value)
-    ? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
-    : [];
-};
-
 export const servicesSearch = (search: { status?: unknown; system?: unknown }) => {
-  const status = strings(search.status).filter((value): value is ServiceStatusFilter =>
+  const status = stringList(search.status).filter((value): value is ServiceStatusFilter =>
     SERVICE_STATUS_FILTERS.some((known) => known === value),
   );
-  const system = strings(
-    typeof search.system === 'number' && Number.isFinite(search.system)
-      ? String(search.system)
-      : search.system,
-  );
+  const system = stringList(search.system);
   return {
     status: status.length > 0 ? status : undefined,
     system: system.length > 0 ? system : undefined,
