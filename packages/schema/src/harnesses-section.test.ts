@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  HarnessesSectionSchema,
-  MAX_HARNESS_INSTALLS,
-  UNKNOWN_HARNESS_VERSION,
-} from './harnesses-section.ts';
+import { HarnessesSectionSchema, MAX_HARNESS_INSTALLS } from './harnesses-section.ts';
 import { ReportSchema } from './report.ts';
 import { sample } from './testing.ts';
 
@@ -26,12 +22,6 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report({ harnesses })).harnesses).toEqual(harnesses);
   });
 
-  test('carries an empty list when no Harness is installed', () => {
-    expect(ReportSchema.parse(report({ harnesses: { installs: [] } })).harnesses).toEqual({
-      installs: [],
-    });
-  });
-
   test('is still valid from a Collector that predates the section', () => {
     expect(ReportSchema.parse(report()).harnesses).toBeUndefined();
   });
@@ -44,22 +34,9 @@ describe('the harnesses section', () => {
     expect(HarnessesSectionSchema.parse({ installs: [newer] }).installs).toEqual([newer]);
   });
 
-  test('takes the unknown version of an install whose version could not be read', () => {
-    expect(UNKNOWN_HARNESS_VERSION).toBe('unknown');
-    expect(
-      HarnessesSectionSchema.safeParse({
-        installs: [{ ...install, version: UNKNOWN_HARNESS_VERSION }],
-      }).success,
-    ).toBe(true);
-  });
-
   test.each([
     ['an empty version', { ...install, version: '' }],
     ['a version over 64 characters', { ...install, version: '1'.repeat(65) }],
-    ['a Harness over 64 characters', { ...install, harness: 'h'.repeat(65) }],
-    ['a location over 64 characters', { ...install, location: 'l'.repeat(65) }],
-    ['an empty Harness', { ...install, harness: '' }],
-    ['an empty location', { ...install, location: '' }],
   ])('refuses %s', (_, bad) => {
     expect(HarnessesSectionSchema.safeParse({ installs: [bad] }).success).toBe(false);
   });

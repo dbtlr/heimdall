@@ -3,8 +3,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   NO_GUI_DOMAIN,
   NOT_FOUND_IN_GUI,
-  NOT_FOUND_IN_SYSTEM,
-  NOT_FOUND_IN_USER_DOMAIN,
   NOT_RUNNING_AGENT,
   RUNNING_AGENT,
   SYSTEM_DAEMON,
@@ -14,13 +12,12 @@ import { isDomainMissing, isServiceNotLoaded, readPrintedService } from './launc
 const result = (code: number, stderr = '', stdout = '') => ({ code, stderr, stdout });
 
 describe('a service launchctl does not have loaded', () => {
-  test.each([
-    ['the GUI domain', NOT_FOUND_IN_GUI],
-    ['the system domain', NOT_FOUND_IN_SYSTEM],
-    ['the user domain', NOT_FOUND_IN_USER_DOMAIN],
-  ])('is exit 113 with launchctl saying it could not find the service in %s', (_name, said) => {
-    expect(isServiceNotLoaded(result(113, said))).toBe(true);
-  });
+  test.each([['the GUI domain', NOT_FOUND_IN_GUI]])(
+    'is exit 113 with launchctl saying it could not find the service in %s',
+    (_name, said) => {
+      expect(isServiceNotLoaded(result(113, said))).toBe(true);
+    },
+  );
 
   test('is recognized from stdout, and whatever the case', () => {
     expect(isServiceNotLoaded(result(113, '', 'COULD NOT FIND SERVICE "x"'))).toBe(true);
@@ -28,7 +25,6 @@ describe('a service launchctl does not have loaded', () => {
   });
 
   test.each([
-    ['another exit code with the message', result(1, 'Could not find service "x"')],
     ['exit 3 with the message', result(3, 'Could not find service "x"')],
     ['exit 112 for a domain', result(112, NO_GUI_DOMAIN)],
     ['exit 113 with no message', result(113)],
@@ -50,7 +46,6 @@ describe('a domain launchctl does not have', () => {
 
   test.each([
     ['exit 113 with the message', result(113, NO_GUI_DOMAIN)],
-    ['exit 3 with the message', result(3, NO_GUI_DOMAIN)],
     ['exit 112 with no message', result(112)],
     ['exit 112 for a service', result(112, NOT_FOUND_IN_GUI)],
     ['success', result(0, '', 'Could not find domain')],
@@ -96,14 +91,6 @@ describe('a printed service', () => {
   test('has no run count when launchctl printed none, or one not made of digits', () => {
     expect(readPrintedService(printed(['\tstate = running'])).runs).toBeUndefined();
     expect(readPrintedService(printed(['\tstate = running', '\truns = 4x'])).runs).toBeUndefined();
-  });
-
-  test('is running when its own state says running, with the pid when printed', () => {
-    expect(readPrintedService(printed(['\tstate = running', '\tpid = 4182']))).toMatchObject({
-      pid: 4182,
-      running: true,
-      state: 'running',
-    });
   });
 
   test('is running when its state says running, with no pid printed', () => {

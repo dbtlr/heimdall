@@ -29,6 +29,7 @@ test('the Hub unit runs plain serve from home and appends its output to the log'
     serviceDefinition({ binary: 'hub', executable: '/opt/heimdall/bin/heimdall-hub', home: HOME }),
   );
 
+  // Loom exits 143 after SIGTERM and 130 after SIGINT; a stop must read stopped, not failed.
   expect(unit).toBe(`[Unit]
 Description=Heimdall Hub (com.dbtlr.heimdall.hub)
 StartLimitIntervalSec=0
@@ -94,13 +95,4 @@ test('a path with a NUL byte is refused rather than written into the unit', () =
   expect(() =>
     renderSystemdUnit(serviceDefinition({ binary: 'hub', executable: '/opt/x\0y', home: HOME })),
   ).toThrow('NUL');
-});
-
-test('a binary stopped by SIGTERM or SIGINT exits cleanly in the unit', () => {
-  const unit = renderSystemdUnit(
-    serviceDefinition({ binary: 'collector', executable: '/opt/heimdall-collector', home: HOME }),
-  );
-
-  // Loom exits 143 after SIGTERM and 130 after SIGINT; a stop must read stopped, not failed.
-  expect(unit).toContain('\nSuccessExitStatus=130 143\n');
 });

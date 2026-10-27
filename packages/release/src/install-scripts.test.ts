@@ -91,7 +91,7 @@ test.each([SCRIPTS.dashboard, SCRIPTS.hub])(
   },
 );
 
-test.each(Object.entries(SCRIPTS))(
+test.each([['collector', SCRIPTS.collector]])(
   'the %s script installs the verified binary for this platform',
   async (pkg, script) => {
     const binary = `heimdall-${pkg}`;

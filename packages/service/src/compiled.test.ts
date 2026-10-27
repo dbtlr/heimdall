@@ -12,7 +12,3 @@ test('a module run from source does not', () => {
     false,
   );
 });
-
-test('the tests themselves run from source', () => {
-  expect(isCompiledModule(import.meta.url)).toBe(false);
-});

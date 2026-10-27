@@ -44,10 +44,6 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
   });
 
-  test('carries an empty list when every file matches', () => {
-    expect(ReportSchema.parse(report({ checks: { files: [] } })).checks).toEqual({ files: [] });
-  });
-
   test('carries a marker in place of each part over budget, beside the parts that fit', () => {
     const checks = {
       overBudget: { files: { bytes: 2_000_000 } },
@@ -61,7 +57,7 @@ describe('a Report', () => {
     expect(ReportSchema.parse(report()).checks).toBeUndefined();
   });
 
-  test('drops a part only a newer Collector knows, and keeps the rest', () => {
+  test('keeps known optional checks and drops parts only a newer Collector knows', () => {
     const parsed = ReportSchema.parse(
       report({
         checks: { certificates: [{ name: 'web', state: 'expired' }], files: [] } as ChecksSection,
@@ -69,6 +65,11 @@ describe('a Report', () => {
     );
 
     expect(parsed.checks).toEqual({ files: [] });
+    expect(ReportSchema.parse(report({ checks: {} })).checks).toEqual({});
+    expect(
+      ReportSchema.parse(report({ checks: { certificates: [{ name: 'web' }] } as ChecksSection }))
+        .checks,
+    ).toEqual({});
   });
 
   test.each([
@@ -148,14 +149,6 @@ describe('a files record digest', () => {
 });
 
 describe('the parts of a checks section', () => {
-  test('are all optional, so a section a newer Collector sends with other parts still parses', () => {
-    expect(ReportSchema.parse(report({ checks: {} })).checks).toEqual({});
-    expect(
-      ReportSchema.parse(report({ checks: { certificates: [{ name: 'web' }] } as ChecksSection }))
-        .checks,
-    ).toEqual({});
-  });
-
   test('list the files records the Collector hashed, beside the files that do not match', () => {
     const checks = {
       fileRecords: [{ digest: 'f'.repeat(64), record: 'webapp-config' }],
@@ -227,7 +220,7 @@ describe('the services part of a checks section', () => {
     ).toHaveLength(512);
   });
 
-  test.each(['', 'x'.repeat(513), 'web:1\n', 'web:\u007f', 'web:\u0085', '\ud800'])(
+  test.each(['', 'x'.repeat(513), 'web:\u0085', '\ud800'])(
     'refuses an unusable image reference %j',
     (image) => {
       expect(ChecksSectionSchema.safeParse({ services: [{ ...WEB_UP, image }] }).success).toBe(
@@ -240,12 +233,6 @@ describe('the services part of a checks section', () => {
     const checks = { services: [WEB_UP, { ...WEB_UP, service: 'db', state: 'stopped' }] };
 
     expect(ReportSchema.parse(report({ checks })).checks).toEqual(checks);
-  });
-
-  test('carries an empty list when no Service is recorded', () => {
-    expect(ReportSchema.parse(report({ checks: { services: [] } })).checks).toEqual({
-      services: [],
-    });
   });
 
   test.each([

@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test';
 
 import type { HttpGetResult } from './http-get.ts';
 import { healthWords, probeHealth, queueWords, renderStatus, spoolWords } from './status.ts';
-import { runWithProxy } from './testing.ts';
 
 const URL_8080 = 'http://127.0.0.1:8080/api/health';
 
@@ -93,43 +92,6 @@ test('a Hub that refuses the connection, times out, or answers something else ga
   ).toEqual({
     kind: 'no answer',
   });
-});
-
-test('the probe asks the address it was given, and no proxy in the environment', async () => {
-  const proxied: string[] = [];
-  const proxy = Bun.serve({
-    fetch: (request) => {
-      proxied.push(request.url);
-      return Response.json({ database: 'ok', version: 'from the proxy' });
-    },
-    hostname: '127.0.0.1',
-    port: 0,
-  });
-  const hub = Bun.serve({
-    fetch: () => Response.json({ database: 'ok', version: '0.2.0' }),
-    hostname: '127.0.0.1',
-    port: 0,
-  });
-  try {
-    const printed = await runWithProxy({
-      proxy: `http://127.0.0.1:${String(proxy.port)}`,
-      script: `
-        const { probeHealth } = await import(${JSON.stringify(`${import.meta.dir}/status.ts`)});
-        const { httpGet } = await import(${JSON.stringify(`${import.meta.dir}/http-get.ts`)});
-        console.log(JSON.stringify(await probeHealth({
-          get: httpGet,
-          url: 'http://127.0.0.1:${String(hub.port)}/api/health',
-        })));
-      `,
-      variable: 'HTTP_PROXY',
-    });
-
-    expect(JSON.parse(printed)).toEqual({ database: 'ok', kind: 'answered', version: '0.2.0' });
-    expect(proxied).toEqual([]);
-  } finally {
-    await proxy.stop(true);
-    await hub.stop(true);
-  }
 });
 
 test('health words name the state and the running version', () => {

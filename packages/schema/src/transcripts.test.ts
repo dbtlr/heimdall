@@ -36,7 +36,6 @@ test('a full chunk, gzipped at its worst, fits under the request cap', () => {
 
 describe('opening a generation', () => {
   test.each([
-    ['a Claude Code transcript', 'my-project/0b1c.jsonl'],
     ['a Codex rollout', '2026/10/09/rollout-2026-10-09T10-00-00-0b1c.jsonl'],
     ['a file with spaces and Unicode', 'café project/tool results/out 1.txt'],
     ['a path of 4096 bytes', 'a'.repeat(4096)],

@@ -5,23 +5,49 @@ import { every } from './every.ts';
 
 test('every runs the task at once, then again after each interval', async () => {
   let runs = 0;
-  const stop = every({ intervalMs: 20, onError: () => {}, task: () => void (runs += 1) });
+  const thirdRun = Promise.withResolvers<void>();
+  const stop = every({
+    intervalMs: 20,
+    onError: () => {},
+    task: () => {
+      runs += 1;
+      if (runs === 3) {
+        thirdRun.resolve();
+      }
+    },
+  });
 
-  expect(runs).toBe(1);
-  await wait(110);
-  await stop();
-
-  expect(runs).toBeGreaterThanOrEqual(3);
+  try {
+    expect(runs).toBe(1);
+    await thirdRun.promise;
+    expect(runs).toBe(3);
+  } finally {
+    await stop();
+  }
 });
 
 test('every stops running the task once stopped', async () => {
   let runs = 0;
-  const stop = every({ intervalMs: 10, onError: () => {}, task: () => void (runs += 1) });
-  await wait(35);
-  await stop();
+  const scheduledRun = Promise.withResolvers<void>();
+  const stop = every({
+    intervalMs: 10,
+    onError: () => {},
+    task: () => {
+      runs += 1;
+      if (runs === 2) {
+        scheduledRun.resolve();
+      }
+    },
+  });
+
+  try {
+    await scheduledRun.promise;
+  } finally {
+    await stop();
+  }
   const stoppedAt = runs;
 
-  await wait(50);
+  await wait(10);
 
   expect(runs).toBe(stoppedAt);
 });

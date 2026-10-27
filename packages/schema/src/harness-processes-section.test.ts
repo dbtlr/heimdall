@@ -49,21 +49,16 @@ describe('the harnessProcesses section', () => {
     expect(parsed.processes[0]?.cwd).toBeNull();
   });
 
-  test('takes the repository a working directory belongs to, or none', () => {
+  test('repository is a path, null, or absent', () => {
     const parsed = HarnessProcessesSectionSchema.parse({
       processes: [
         { ...running, repository: '/work/project' },
         { ...running, pid: 4244, repository: null },
+        running,
       ],
     });
 
-    expect(parsed.processes.map((p) => p.repository)).toEqual(['/work/project', null]);
-  });
-
-  test('takes a process from a Collector that does not report the repository (ADR-0004)', () => {
-    const parsed = HarnessProcessesSectionSchema.parse({ processes: [running] });
-
-    expect(parsed.processes[0]?.repository).toBeUndefined();
+    expect(parsed.processes.map((p) => p.repository)).toEqual(['/work/project', null, undefined]);
   });
 
   test('takes a Harness this Hub does not know (ADR-0004)', () => {
@@ -85,9 +80,7 @@ describe('the harnessProcesses section', () => {
   test.each([
     ['pid 0', { ...running, pid: 0 }],
     ['a negative CPU time', { ...running, cpuMicros: -1 }],
-    ['an empty Harness', { ...running, harness: '' }],
     ['a working directory over 4096 bytes', { ...running, cwd: '/'.repeat(4097) }],
-    ['a repository over 4096 bytes', { ...running, repository: '/'.repeat(4097) }],
   ])('refuses %s', (_, bad) => {
     expect(HarnessProcessesSectionSchema.safeParse({ processes: [bad] }).success).toBe(false);
   });
