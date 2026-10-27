@@ -54,10 +54,11 @@ Where that System's coverage is unavailable, as for a Homebrew installation the 
 
 **An update is a newer release on the installed version's channel.**
 Versions compare as semver read loosely: a leading `v` is ignored, a missing minor or patch reads as 0, and build metadata after `+` is ignored.
-A version's label is the first dot-separated identifier after `-`, so `0.26.0-next.32` and `0.26.0-next.35` share the label `next`, and `16-alpine` has the label `alpine`.
-A version without a label compares only with releases without one.
-A version with a label compares with releases of its own label, and with releases without one whose numbers are greater, so `16-alpine` counts both `16.1-alpine` and `17` as newer but not `16`.
-When a release with its own label and one without have the same numbers, the update is the one with its own label, so `16-alpine` updates to `17-alpine` rather than `17`.
+A version's channel is the part after its first `-`, with each run of digits standing for any number: `0.26.0-next.32` and `0.26.0-next.35` share a channel, and so do `1.27-alpine3.20` and `1.27-alpine3.21`, while `1.27-alpine3.20-perl` is on another.
+On one channel, the numbers in that part count as steps after the version's own numbers, so `next.35` is newer than `next.32` and `alpine3.21` than `alpine3.20`.
+An update keeps the installed version's kind: a version without a `-` compares only with releases without one, so `1.7.2` never counts `1.8.0-alpha.1`.
+A version with a `-` compares with releases on its own channel, and with releases without a `-` whose numbers are greater, so `16-alpine` counts both `16.1-alpine` and `17` as newer but not `16`.
+When a release on its own channel and one without a `-` have the same numbers, the update is the one on its own channel, so `16-alpine` updates to `17-alpine` rather than `17`.
 A version that does not read this way, such as `latest`, is never compared, and the Service shows that its version cannot be compared.
 A lone number of more than four digits, such as `20261027`, does not read as a version, since such a tag is usually a date, a build number, or a commit hash.
 A Service shows no update, and is not called up to date, while its upstream has never been checked successfully or its installed version is newer than every release found.

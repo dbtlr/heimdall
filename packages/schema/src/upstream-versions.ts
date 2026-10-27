@@ -1,11 +1,15 @@
 import type { UpdateManager } from './updates-section.ts';
 import { freshUpdateTime, UPDATE_METADATA_MAX_AGE_MS } from './updates-section.ts';
 
-// The numeric core and channel identifiers used by loose semver comparisons.
+// A version read loosely (ADR-0022): its numeric core, its channel, and the
+// numbers inside the part after its first `-`. The channel is that part with
+// each run of digits standing for any number, so `alpine3.20` and
+// `alpine3.21` share the channel `alpine#.#` while `alpine3.20-perl` has its
+// own; null without a `-`.
 export type ParsedVersion = {
+  channel: string | null;
   core: readonly number[];
-  label: string | null;
-  rest: readonly string[];
+  numbers: readonly number[];
 };
 
 // Reads a release without treating moving tags or malformed versions as numbers.
@@ -19,14 +23,18 @@ export const parseVersion = (text: string): ParsedVersion | undefined => {
     return undefined;
   }
   const core = match[1].split('.').map(Number);
+  const suffix = match[2];
+  const numbers = suffix?.match(/\d+/gu)?.map(Number) ?? [];
   // A number too large to compare exactly is no version number, and nor is
   // a lone number of more than four digits: a date, a build number, or a
   // commit hash made only of digits.
-  if (!core.every(Number.isSafeInteger) || (core.length === 1 && match[1].length > 4)) {
+  if (
+    ![...core, ...numbers].every(Number.isSafeInteger) ||
+    (core.length === 1 && match[1].length > 4)
+  ) {
     return undefined;
   }
-  const [label, ...rest] = match[2]?.split('.') ?? [];
-  return { core, label: label ?? null, rest };
+  return { channel: suffix?.replaceAll(/\d+/gu, '#') ?? null, core, numbers };
 };
 
 const compareCores = (left: ParsedVersion, right: ParsedVersion) => {
@@ -39,29 +47,17 @@ const compareCores = (left: ParsedVersion, right: ParsedVersion) => {
   return 0;
 };
 
+// Orders two versions on one channel: by core, then by the numbers in their
+// suffix, which line up since the channel fixes where each falls.
 const compareVersions = (left: ParsedVersion, right: ParsedVersion) => {
   const core = compareCores(left, right);
   if (core !== 0) {
     return core;
   }
-  for (let index = 0; index < Math.max(left.rest.length, right.rest.length); index += 1) {
-    const a = left.rest[index];
-    const b = right.rest[index];
-    if (a === undefined || b === undefined) {
-      return a === undefined ? -1 : 1;
-    }
-    const numericA = /^\d+$/u.test(a);
-    const numericB = /^\d+$/u.test(b);
-    if (numericA && numericB) {
-      const numberA = BigInt(a);
-      const numberB = BigInt(b);
-      if (numberA !== numberB) {
-        return numberA < numberB ? -1 : 1;
-      }
-    } else if (numericA !== numericB) {
-      return numericA ? -1 : 1;
-    } else if (a !== b) {
-      return a < b ? -1 : 1;
+  for (let index = 0; index < left.numbers.length; index += 1) {
+    const difference = (left.numbers[index] ?? 0) - (right.numbers[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
     }
   }
   return 0;
@@ -75,7 +71,7 @@ export const newestPerChannel = (releases: Iterable<string>): Record<string, str
     if (parsed === undefined) {
       continue;
     }
-    const channel = parsed.label ?? '';
+    const channel = parsed.channel ?? '';
     const previous = newest.get(channel);
     if (previous === undefined || compareVersions(parsed, previous.parsed) > 0) {
       newest.set(channel, { parsed, text });
@@ -91,7 +87,8 @@ export type UpdateStatus =
   | { kind: 'current' }
   | { kind: 'unknown' };
 
-// Finds a newer own-channel release or a strictly newer unlabelled numeric core.
+// Finds a newer release on the installed version's channel, or, for a
+// version with a suffix, a release without one whose core is greater.
 export const availableUpdate = (
   installed: string | null,
   newest: Readonly<Record<string, string>>,
@@ -100,14 +97,14 @@ export const availableUpdate = (
   if (parsed === undefined) {
     return { kind: 'unreadable' };
   }
-  const channel = parsed.label ?? '';
+  const channel = parsed.channel ?? '';
   const ownText = Object.hasOwn(newest, channel) ? newest[channel] : undefined;
   const own = ownText === undefined ? undefined : parseVersion(ownText);
   let candidate =
     own !== undefined && ownText !== undefined && compareVersions(own, parsed) > 0
       ? { parsed: own, text: ownText }
       : undefined;
-  if (parsed.label !== null) {
+  if (parsed.channel !== null) {
     const plainText = Object.hasOwn(newest, '') ? newest[''] : undefined;
     const plain = plainText === undefined ? undefined : parseVersion(plainText);
     if (

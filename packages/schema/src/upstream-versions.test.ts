@@ -11,23 +11,28 @@ import {
   parseVersion,
 } from './upstream-versions.ts';
 
-test('loose versions retain their numeric core, channel and remaining identifiers', () => {
+test('loose versions retain their numeric core, channel, and suffix numbers', () => {
   expect(parseVersion('0.26.0-next.32')).toEqual({
+    channel: 'next.#',
     core: [0, 26, 0],
-    label: 'next',
-    rest: ['32'],
+    numbers: [32],
   });
-  expect(parseVersion('16-alpine')).toEqual({ core: [16], label: 'alpine', rest: [] });
+  expect(parseVersion('16-alpine')).toEqual({ channel: 'alpine', core: [16], numbers: [] });
   expect(parseVersion('1.27-alpine3.20')).toEqual({
+    channel: 'alpine#.#',
     core: [1, 27],
-    label: 'alpine3',
-    rest: ['20'],
+    numbers: [3, 20],
   });
-  expect(parseVersion('v1.2+build.42')).toEqual({ core: [1, 2], label: null, rest: [] });
+  expect(parseVersion('1.27-alpine3.20-perl')).toEqual({
+    channel: 'alpine#.#-perl',
+    core: [1, 27],
+    numbers: [3, 20],
+  });
+  expect(parseVersion('v1.2+build.42')).toEqual({ channel: null, core: [1, 2], numbers: [] });
   expect(parseVersion('V1.2.3.4-rc.1+build')).toEqual({
+    channel: 'rc.#',
     core: [1, 2, 3, 4],
-    label: 'rc',
-    rest: ['1'],
+    numbers: [1],
   });
 });
 
@@ -44,6 +49,7 @@ test.each([
   '1\n',
   '1-rc..1',
   '9007199254740993',
+  '1-rc.9007199254740993',
   // A date, a build number, or a commit hash made only of digits.
   '20261027',
   '12345',
@@ -56,7 +62,7 @@ test('each channel keeps its newest readable release and skips moving tags', () 
     newestPerChannel(
       new Set(['latest', '0.26.0-next.32', '0.26.0-next.35', '16-alpine', '16.1-alpine', '17']),
     ),
-  ).toEqual({ '': '17', alpine: '16.1-alpine', next: '0.26.0-next.35' });
+  ).toEqual({ '': '17', alpine: '16.1-alpine', 'next.#': '0.26.0-next.35' });
   expect(newestPerChannel(['latest', 'stable'])).toEqual({});
 });
 
@@ -68,15 +74,30 @@ test('equal precedence preserves the first release string', () => {
 test.each([
   ['1.2.3', '1.2.3.4', '1.2.3.4'],
   ['1-rc.9', '1-rc.10', '1-rc.10'],
-  ['1-rc.9007199254740992', '1-rc.9007199254740993', '1-rc.9007199254740993'],
-  ['1-rc.123', '1-rc.a', '1-rc.a'],
-  ['1-rc.Z', '1-rc.a', '1-rc.a'],
-  ['1-rc', '1-rc.0', '1-rc.0'],
-  ['1-rc.2', '1-rc.2.a', '1-rc.2.a'],
   ['1-rc.01', '1-rc.1', '1-rc.01'],
-  ['2-rc.1', '1-rc.z', '2-rc.1'],
+  ['1-alpine3.9', '1-alpine3.10', '1-alpine3.10'],
+  ['1.27.2-alpine3.20', '1.27.1-alpine3.21', '1.27.2-alpine3.20'],
 ])('release precedence orders %s and %s', (first, second, expected) => {
   expect(Object.values(newestPerChannel([first, second]))).toEqual([expected]);
+});
+
+test('a suffix of another shape is another channel, never a step on this one', () => {
+  expect(
+    newestPerChannel([
+      '1.27.2-alpine3.20',
+      '1.27.3-alpine3.20-perl',
+      '1.27.3-alpine3.21',
+      '1-rc',
+      '1-rc.2',
+      '1-rc.a',
+    ]),
+  ).toEqual({
+    'alpine#.#': '1.27.3-alpine3.21',
+    'alpine#.#-perl': '1.27.3-alpine3.20-perl',
+    rc: '1-rc',
+    'rc.#': '1-rc.2',
+    'rc.a': '1-rc.a',
+  });
 });
 
 test('channel names that also name object properties remain ordinary channels', () => {
@@ -95,6 +116,7 @@ test.each([
   ['16-alpine', ['18-alpine', '17'], '18-alpine'],
   // On equal numbers the install's own label wins, so no update moves it off its variant.
   ['16-alpine', ['17-alpine', '17'], '17-alpine'],
+  ['1.27.2-alpine3.20', ['1.27.3-alpine3.20-perl', '1.27.3-alpine3.21'], '1.27.3-alpine3.21'],
 ])(
   'an available update for %s chooses the newest eligible candidate',
   (installed, releases, version) => {

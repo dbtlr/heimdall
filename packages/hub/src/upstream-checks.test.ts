@@ -98,7 +98,7 @@ test('a checked upstream keeps its newest release per channel and when each was 
       checked_at: new Date(NOW),
       failure: null,
       next_check_at: new Date(NOW + UPSTREAM_CHECK_INTERVAL_MS),
-      releases: { '': 'v2.8.4', beta: 'v2.9.0-beta.2' },
+      releases: { '': 'v2.8.4', 'beta.#': 'v2.9.0-beta.2' },
       succeeded_at: new Date(NOW),
       upstream: 'github:caddyserver/caddy',
     },
