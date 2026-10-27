@@ -53,10 +53,6 @@ export const localDayNumber = (t: number, timeZone: string): number => {
 export const formatDate = (t: number, timeZone: string): string =>
   formatter(timeZone, { day: 'numeric', month: 'short' }).format(t);
 
-// The weekday and date as "Sunday 19 Oct".
-export const formatDayHeading = (t: number, timeZone: string): string =>
-  `${formatter(timeZone, { weekday: 'long' }).format(t)} ${formatDate(t, timeZone)}`;
-
 // The local hour (0 to 23) and minute of `t`.
 export const localHourMinute = (t: number, timeZone: string): { hour: number; minute: number } => {
   const [hour = '0', minute = '0'] = formatClock(t, timeZone).split(':');
@@ -68,6 +64,10 @@ export const formatWhen = (t: number, now: number, timeZone: string): string =>
   localDayNumber(t, timeZone) === localDayNumber(now, timeZone)
     ? formatClock(t, timeZone)
     : `${formatWeekday(t, timeZone)} ${formatClock(t, timeZone)}`;
+
+// "Today 14:02" for a time on the same local day as `now`, else "19 Oct 14:02".
+export const formatDated = (t: number, now: number, timeZone: string): string =>
+  `${localDayNumber(t, timeZone) === localDayNumber(now, timeZone) ? 'Today' : formatDate(t, timeZone)} ${formatClock(t, timeZone)}`;
 
 // A time ahead of `now`: "HH:MM" on the same local day, "Mon 14:02" within the
 // coming week, else "Tue 20 Oct 14:02", so a far time never reads as this week.
@@ -83,10 +83,11 @@ export const formatAhead = (t: number, now: number, timeZone: string): string =>
 
 // How a time is written: a clock time, with or without seconds, a weekday, or
 // `when`, the clock time or the weekday and clock time relative to `now`, or
-// `ahead`, the same for a time after `now`, dated beyond the coming week.
+// `ahead`, the same for a time after `now`, dated beyond the coming week, or
+// `dated`, Today or the date before the clock time.
 export type TimeFormat =
   | { format: 'clock' | 'clockSeconds' | 'weekday' }
-  | { format: 'ahead' | 'when'; now: number };
+  | { format: 'ahead' | 'dated' | 'when'; now: number };
 
 // `t` written as `spec` says, in `timeZone`.
 export const formatTime = (t: number, timeZone: string, spec: TimeFormat): string => {
@@ -105,6 +106,9 @@ export const formatTime = (t: number, timeZone: string, spec: TimeFormat): strin
     }
     case 'ahead': {
       return formatAhead(t, spec.now, timeZone);
+    }
+    case 'dated': {
+      return formatDated(t, spec.now, timeZone);
     }
     default: {
       const _exhaustive: never = spec;

@@ -1,7 +1,7 @@
 // The data a Service page renders: one Service of one System, with what its
-// provisioner recorded, the checks on it, the open Service restarted note, and
-// its Service stops. Times are epoch milliseconds, except the stops', which are
-// the ISO times the Hub's read gives.
+// provisioner recorded, the checks on it, the open Service restarted note, its
+// Service stops, and its Service down raises and clears. Times are epoch
+// milliseconds, except the stops', which are the ISO times the Hub's read gives.
 
 import type { ServiceStopsRead } from '@heimdall/schema';
 
@@ -9,7 +9,19 @@ import type { RecordedService } from './system-detail-types.ts';
 
 export type ServiceStop = ServiceStopsRead['stops'][number];
 
+// A Service down Condition of the Service being raised or cleared.
+export type ServiceDownTransition = {
+  at: number;
+  // The Condition's id, for its page.
+  condition: string;
+  kind: 'cleared' | 'raised';
+  reason: string;
+};
+
 export type ServiceDetail = {
+  // The Service down raises and clears in the 90 days before `now`, and the
+  // raise of one still open however old, in the order the Hub recorded them.
+  downs: ServiceDownTransition[];
   now: number;
   // The open Service restarted note for this Service, if any.
   note: { id: string; raisedAt: number; reason: string } | undefined;

@@ -6,7 +6,7 @@ import {
   formatClockSeconds,
   formatCost,
   formatDate,
-  formatDayHeading,
+  formatDated,
   formatSpanShort,
   formatTime,
   formatWhen,
@@ -111,9 +111,18 @@ test('a short span keeps only its largest unit, rounded down', () => {
   expect(formatSpanShort(-5000)).toBe('0 s');
 });
 
-test('formatDate and formatDayHeading write the date in the zone asked', () => {
+test('formatDate writes the date in the zone asked', () => {
   const late = Date.UTC(2026, 9, 24, 3, 30);
   expect(formatDate(late, 'UTC')).toBe('24 Oct');
   expect(formatDate(late, 'America/New_York')).toBe('23 Oct');
-  expect(formatDayHeading(late, 'America/New_York')).toBe('Friday 23 Oct');
+});
+
+test('formatDated reads Today and the clock on the day of now, else the date and the clock', () => {
+  const now = Date.UTC(2026, 9, 24, 12, 0);
+  const early = Date.UTC(2026, 9, 24, 3, 30);
+  expect(formatDated(early, now, 'UTC')).toBe('Today 03:30');
+  expect(formatDated(early, now, 'America/New_York')).toBe('23 Oct 23:30');
+  expect(formatTime(Date.UTC(2026, 9, 19, 2, 10), 'UTC', { format: 'dated', now })).toBe(
+    '19 Oct 02:10',
+  );
 });

@@ -1,0 +1,82 @@
+import { expect, test } from 'bun:test';
+
+import type { ServiceDetail, ServiceStop } from '../server/service-detail-types.ts';
+import { renderRouted } from './render-routed.tsx';
+import { ServiceHistory } from './service-history.tsx';
+
+const NOW = Date.UTC(2026, 9, 24, 12, 0);
+const HOUR = 3_600_000;
+
+const stop = (hoursAgo: number): ServiceStop => ({
+  exitStatus: 0,
+  ongoing: false,
+  paired: true,
+  receivedAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
+  restarts: 0,
+  result: 'success',
+  sentAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
+  service: 'web',
+  startedAt: new Date(NOW - hoursAgo * HOUR + 2000).toISOString(),
+  stoppedAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
+  system: 'server-1',
+});
+
+const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
+  downs: [],
+  note: undefined,
+  now: NOW,
+  recorded: undefined,
+  service: 'web',
+  stops: [],
+  system: 'server-1',
+  unit: undefined,
+  ...over,
+});
+
+test('the newest 6 show, a Service down links its Condition, and the rest wait behind Show older', async () => {
+  const html = await renderRouted(
+    <ServiceHistory
+      detail={detail({
+        downs: [
+          {
+            at: NOW - HOUR / 2,
+            condition: '9',
+            kind: 'raised',
+            reason: 'Stopped: ActiveState=failed',
+          },
+        ],
+        stops: [1, 2, 3, 4, 5, 6, 7].map(stop),
+      })}
+    />,
+  );
+
+  expect(html).toContain('href="/systems/server-1/conditions/9"');
+  expect(html).toContain('Stopped: ActiveState=failed');
+  expect(html.indexOf('Service down')).toBeLessThan(html.indexOf('Stopped cleanly'));
+  expect(html.split('Stopped cleanly')).toHaveLength(6);
+  expect(html).toContain('Show 2 older');
+});
+
+test('a cleared Service down reads as cleared', async () => {
+  const html = await renderRouted(
+    <ServiceHistory
+      detail={detail({
+        downs: [
+          {
+            at: NOW - HOUR,
+            condition: '9',
+            kind: 'cleared',
+            reason: 'Stopped: ActiveState=failed',
+          },
+        ],
+      })}
+    />,
+  );
+
+  expect(html).toContain('Service down cleared');
+  expect(html).not.toContain('Show');
+});
+
+test('nothing renders with no stops or Service down', async () => {
+  expect(await renderRouted(<ServiceHistory detail={detail()} />)).toBe('');
+});

@@ -906,6 +906,15 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: 'ollama',
     system: SYSTEM,
   });
+  // The killed syncthing stop of 9 days ago, as its checks saw it.
+  conditions.push({
+    clearedAt: -(9 * DAY - 3 * MINUTE) / SECOND,
+    kind: 'service_down',
+    raisedAt: -(9 * DAY - MINUTE) / SECOND,
+    reason: 'Stopped: ActiveState=failed.',
+    subject: 'syncthing',
+    system: SYSTEM,
+  });
   conditions.push({
     backfilled: true,
     clearedAt: -(4.8 * DAY) / SECOND,

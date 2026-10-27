@@ -1,13 +1,13 @@
-// What a Service page says, as plain values the components only render: each
-// Service stop as a row, the rows grouped by day, the summary counts, and the
-// 90-day strip of ticks. The times that depend on the viewer's zone stay
-// phrases, or take the zone as an argument.
+// What a Service page says, as plain values the components only render: its
+// history of stops and Service down raises and clears, newest first, the
+// summary counts, and the 90-day strip of ticks. The times that depend on the
+// viewer's zone stay phrases, or take the zone as an argument.
 
-import type { ServiceStop } from '../server/service-detail-types.ts';
+import type { ServiceDownTransition, ServiceStop } from '../server/service-detail-types.ts';
 import { clockSecondsAt, whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { SUPERVISOR_NAMES } from './recorded.ts';
-import { formatDayHeading, formatSpan, formatSpanShort, localDayNumber, xPercent } from './time.ts';
+import { formatSpan, formatSpanShort, xPercent } from './time.ts';
 
 const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
@@ -16,8 +16,8 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 // The Hub keeps stops for this long, and the strip spans it.
 export const WINDOW_DAYS = 90;
 const WINDOW_MS = WINDOW_DAYS * DAY_MS;
-// The list shows this many stops until asked for all.
-export const LIST_LIMIT = 50;
+// The history shows this many rows until asked for the older ones.
+export const HISTORY_LIMIT = 6;
 // A stop received later than this after it was sent says so.
 const LATE_MS = 2 * MINUTE_MS;
 // A tick is this tall with no restarts, and grows to full height at CAP restarts.
@@ -39,8 +39,6 @@ export type StopRow = {
   // How long after it was sent it was received, when later than 2 minutes.
   late: string | undefined;
   restarts: string | undefined;
-  // A stop the supervisor still shows under way; the list puts it apart, first.
-  stillDown: boolean;
   stoppedAt: number;
   title: Phrase;
 };
@@ -97,7 +95,8 @@ const resultDetail = (stop: ServiceStop): string => {
     : `${stop.result}, exit status ${String(stop.exitStatus)}`;
 };
 
-const rowOf = (stop: ServiceStop, now: number): StopRow => {
+// One stop as a row of the history.
+export const stopRow = (stop: ServiceStop, now: number): StopRow => {
   const stoppedAt = Date.parse(stop.stoppedAt);
   const lateBy = Date.parse(stop.receivedAt) - Date.parse(stop.sentAt);
   return {
@@ -120,64 +119,69 @@ const rowOf = (stop: ServiceStop, now: number): StopRow => {
     failure: isFailure(stop),
     late: lateBy > LATE_MS ? formatSpanShort(lateBy) : undefined,
     restarts: stop.restarts > 0 ? plural(stop.restarts, 'restart', 'restarts') : undefined,
-    stillDown: stillDown(stop),
     stoppedAt,
     title: stillDown(stop) ? ['Still down since ', whenAt(stoppedAt, now)] : [resultWords(stop)],
   };
 };
 
-// The stops as rows: one still down first, then the newest stop first.
-export const stopRows = (stops: readonly ServiceStop[], now: number): StopRow[] =>
-  stops
-    .toSorted(
-      (a, b) =>
-        Number(stillDown(b)) - Number(stillDown(a)) ||
-        Date.parse(b.stoppedAt) - Date.parse(a.stoppedAt),
-    )
-    .map((stop) => rowOf(stop, now));
+// A row of the history: a stop, or a Service down Condition raised, with why
+// and how long the Service was down, or cleared.
+export type HistoryRow =
+  | { at: number; kind: 'stop'; stop: StopRow }
+  | { at: number; condition: string; duration: string; kind: 'downRaised'; reason: string }
+  | { at: number; condition: string; kind: 'downCleared' };
 
-export type DayGroup = { label: string; rows: StopRow[] };
-
-// The rows, in order: those still down under "Still down", then the rest
-// grouped by the calendar day of the viewer's zone they stopped on: Today,
-// Yesterday, then the weekday and date.
-export const dayGroups = (rows: readonly StopRow[], now: number, timeZone: string): DayGroup[] => {
-  const today = localDayNumber(now, timeZone);
-  const down = rows.filter((row) => row.stillDown);
-  const groups: (DayGroup & { day: number })[] = [];
-  for (const row of rows.filter((found) => !found.stillDown)) {
-    const day = localDayNumber(row.stoppedAt, timeZone);
-    const last = groups.at(-1);
-    if (last?.day === day) {
-      last.rows.push(row);
-      continue;
-    }
-    let label = formatDayHeading(row.stoppedAt, timeZone);
-    if (day === today) {
-      label = 'Today';
-    } else if (day === today - 1) {
-      label = 'Yesterday';
-    }
-    groups.push({ day, label, rows: [row] });
+const downRow = (
+  down: ServiceDownTransition,
+  downs: readonly ServiceDownTransition[],
+  now: number,
+): HistoryRow => {
+  if (down.kind === 'cleared') {
+    return { at: down.at, condition: down.condition, kind: 'downCleared' };
   }
-  return [
-    ...(down.length === 0 ? [] : [{ label: 'Still down', rows: down }]),
-    ...groups.map(({ label, rows: of }) => ({ label, rows: of })),
-  ];
+  const cleared = downs.find(
+    (found) => found.kind === 'cleared' && found.condition === down.condition,
+  );
+  return {
+    at: down.at,
+    condition: down.condition,
+    duration:
+      cleared === undefined
+        ? formatSpanShort(Math.max(0, now - down.at))
+        : formatSpan(Math.max(0, cleared.at - down.at)),
+    kind: 'downRaised',
+    reason: down.reason,
+  };
 };
 
-// The rows the list shows: the newest LIST_LIMIT until asked for all, and how
-// many more there are.
-export const listedRows = (
-  rows: readonly StopRow[],
+// The stops and the Service down raises and clears as one history, newest
+// first. Transitions at the same time keep the later recorded first, since the
+// Hub's clock can step back.
+export const historyRows = (
+  stops: readonly ServiceStop[],
+  downs: readonly ServiceDownTransition[],
+  now: number,
+): HistoryRow[] =>
+  [
+    ...downs.toReversed().map((down) => downRow(down, downs, now)),
+    ...stops.map((stop): HistoryRow => {
+      const row = stopRow(stop, now);
+      return { at: row.stoppedAt, kind: 'stop', stop: row };
+    }),
+  ].toSorted((a, b) => b.at - a.at);
+
+// The rows the history shows: the newest HISTORY_LIMIT until asked for all,
+// and how many more there are.
+export const listedRows = <Row>(
+  rows: readonly Row[],
   all: boolean,
-): { hidden: number; shown: readonly StopRow[] } =>
-  all || rows.length <= LIST_LIMIT
+): { hidden: number; shown: readonly Row[] } =>
+  all || rows.length <= HISTORY_LIMIT
     ? { hidden: 0, shown: rows }
-    : { hidden: rows.length - LIST_LIMIT, shown: rows.slice(0, LIST_LIMIT) };
+    : { hidden: rows.length - HISTORY_LIMIT, shown: rows.slice(0, HISTORY_LIMIT) };
 
 // The stops that began in the 90 days the summary counts and the strip draws.
-// A stop still under way from before them stays in the list but not here.
+// A stop still under way from before them stays in the history but not here.
 const inWindow = (stops: readonly ServiceStop[], now: number) =>
   stops.filter((stop) => Date.parse(stop.stoppedAt) >= now - WINDOW_MS);
 
