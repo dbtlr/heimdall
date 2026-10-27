@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { ServiceStop } from '../server/service-detail-types.ts';
+import type { ServiceDownTransition, ServiceStop } from '../server/service-detail-types.ts';
 import { phraseText } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import {
-  dayGroups,
-  LIST_LIMIT,
+  HISTORY_LIMIT,
+  historyRows,
   listedRows,
   newestReceived,
-  stopRows,
+  stopRow,
   stopSummary,
   stripTicks,
   supervisorLine,
@@ -40,13 +40,7 @@ const stop = (over: Partial<ServiceStop> = {}): ServiceStop => ({
 
 const at = (ms: number) => new Date(ms).toISOString();
 
-const row = (over: Partial<ServiceStop>) => {
-  const [only] = stopRows([stop(over)], NOW);
-  if (only === undefined) {
-    throw new Error('no row');
-  }
-  return only;
-};
+const row = (over: Partial<ServiceStop>) => stopRow(stop(over), NOW);
 
 describe('result words', () => {
   test('a clean stop is good', () => {
@@ -113,75 +107,85 @@ describe('late delivery', () => {
   });
 });
 
-describe('order and limit', () => {
-  test('newest first, an ongoing stop with an unknown start before all', () => {
-    const rows = stopRows(
-      [
-        stop({ stoppedAt: at(NOW - 5 * HOUR) }),
-        stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 30 * HOUR) }),
-        stop({ stoppedAt: at(NOW - HOUR) }),
-      ],
-      NOW,
-    );
-    expect(rows.map(({ stoppedAt }) => NOW - stoppedAt)).toEqual([30 * HOUR, HOUR, 5 * HOUR]);
-  });
-
-  test('the list shows the newest 50 stops until asked for all', () => {
-    const rows = stopRows(
-      Array.from({ length: 52 }, (_, index) => stop({ stoppedAt: at(NOW - (index + 1) * HOUR) })),
-      NOW,
-    );
-    const cut = listedRows(rows, false);
-    expect(LIST_LIMIT).toBe(50);
-    expect(cut.shown.map(({ stoppedAt }) => stoppedAt)).toEqual(
-      rows.slice(0, 50).map(({ stoppedAt }) => stoppedAt),
-    );
-    expect(cut.hidden).toBe(2);
-    expect(listedRows(rows, true)).toEqual({ hidden: 0, shown: rows });
-    expect(listedRows(rows.slice(0, 50), false)).toEqual({ hidden: 0, shown: rows.slice(0, 50) });
-  });
+const down = (over: Partial<ServiceDownTransition> = {}): ServiceDownTransition => ({
+  at: NOW - 3 * HOUR,
+  condition: '7',
+  kind: 'raised',
+  reason: 'Stopped: ActiveState=failed',
+  ...over,
 });
 
-describe('day groups', () => {
-  const NEW_YORK = 'America/New_York';
+const shape = (rows: ReturnType<typeof historyRows>) =>
+  rows.map((found) => [found.kind, (NOW - found.at) / HOUR]);
 
-  test('group by the viewer zone, across its midnight', () => {
-    // 03:30 UTC is 23:30 the day before in New York; 05:00 UTC is 01:00 today.
-    const rows = stopRows(
-      [
-        stop({ stoppedAt: at(Date.UTC(2026, 9, 24, 5, 0)) }),
-        stop({ stoppedAt: at(Date.UTC(2026, 9, 24, 3, 30)) }),
-        stop({ stoppedAt: at(Date.UTC(2026, 9, 19, 18, 0)) }),
-      ],
+describe('history', () => {
+  test('stops and Service down raises and clears in one list, newest first', () => {
+    const rows = historyRows(
+      [stop({ stoppedAt: at(NOW - 5 * HOUR) }), stop({ stoppedAt: at(NOW - HOUR) })],
+      [down(), down({ at: NOW - 2 * HOUR, kind: 'cleared' })],
       NOW,
     );
-    expect(dayGroups(rows, NOW, NEW_YORK).map(({ label, rows: of }) => [label, of.length])).toEqual(
-      [
-        ['Today', 1],
-        ['Yesterday', 1],
-        ['Monday 19 Oct', 1],
-      ],
-    );
-    expect(dayGroups(rows, NOW, 'UTC').map(({ label, rows: of }) => [label, of.length])).toEqual([
-      ['Today', 2],
-      ['Monday 19 Oct', 1],
+    expect(shape(rows)).toEqual([
+      ['stop', 1],
+      ['downCleared', 2],
+      ['downRaised', 3],
+      ['stop', 5],
     ]);
   });
 
-  test('a stop still down heads the list apart, and its day does not repeat', () => {
-    const rows = stopRows(
+  test('a raise says why, links its Condition, and how long the Service was down', () => {
+    const raised = historyRows(
+      [],
+      [
+        down({ condition: '9' }),
+        down({ at: NOW - 3 * HOUR + 4 * MINUTE, condition: '9', kind: 'cleared' }),
+      ],
+      NOW,
+    ).find((found) => found.kind === 'downRaised');
+    expect(raised).toEqual({
+      at: NOW - 3 * HOUR,
+      condition: '9',
+      duration: '4 min',
+      kind: 'downRaised',
+      reason: 'Stopped: ActiveState=failed',
+    });
+  });
+
+  test('a raise still open counts how long so far', () => {
+    const [raised] = historyRows([], [down({ at: NOW - 100 * DAY })], NOW);
+    expect(raised).toMatchObject({ duration: '100 d', kind: 'downRaised' });
+  });
+
+  test('a stop still down keeps its place in time', () => {
+    const rows = historyRows(
       [
         stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 30 * HOUR) }),
         stop({ stoppedAt: at(NOW - HOUR) }),
-        stop({ stoppedAt: at(NOW - 26 * HOUR) }),
       ],
+      [],
       NOW,
     );
-    expect(dayGroups(rows, NOW, 'UTC').map(({ label, rows: of }) => [label, of.length])).toEqual([
-      ['Still down', 1],
-      ['Today', 1],
-      ['Yesterday', 1],
+    expect(shape(rows)).toEqual([
+      ['stop', 1],
+      ['stop', 30],
     ]);
+  });
+
+  test('transitions at the same time list the later recorded first', () => {
+    const rows = historyRows([], [down(), down({ kind: 'cleared' })], NOW);
+    expect(rows.map(({ kind }) => kind)).toEqual(['downCleared', 'downRaised']);
+  });
+
+  test('the list shows the newest 6 until asked for all', () => {
+    const rows = historyRows(
+      Array.from({ length: 8 }, (_, index) => stop({ stoppedAt: at(NOW - (index + 1) * HOUR) })),
+      [],
+      NOW,
+    );
+    expect(HISTORY_LIMIT).toBe(6);
+    expect(listedRows(rows, false)).toEqual({ hidden: 2, shown: rows.slice(0, 6) });
+    expect(listedRows(rows, true)).toEqual({ hidden: 0, shown: rows });
+    expect(listedRows(rows.slice(0, 6), false)).toEqual({ hidden: 0, shown: rows.slice(0, 6) });
   });
 });
 
@@ -204,7 +208,7 @@ describe('summary and strip', () => {
     const old = stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 100 * DAY) });
     expect(stopSummary([old], NOW)).toEqual({ last24h: 0, total: 0 });
     expect(stripTicks([old], NOW)).toEqual([]);
-    expect(stopRows([old], NOW)).toHaveLength(1);
+    expect(historyRows([old], [], NOW)).toHaveLength(1);
   });
 
   test('a tick sits at its stop in the window, tall for restarts, serious for failure', () => {

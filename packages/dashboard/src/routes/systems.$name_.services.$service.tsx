@@ -2,7 +2,8 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
-import { StopList, StopsCard } from '../components/service-stops.tsx';
+import { ServiceHistory } from '../components/service-history.tsx';
+import { StopsCard } from '../components/service-stops.tsx';
 import { contentFrame } from '../lib/layout.ts';
 import { serviceLine } from '../lib/recorded.ts';
 import type { RecordState } from '../lib/recorded.ts';
@@ -61,7 +62,7 @@ function ServicePage() {
           </p>
         )}
         <StopsCard detail={detail} />
-        <StopList detail={detail} />
+        <ServiceHistory detail={detail} />
         <p className="mt-4 text-xs text-muted-foreground">
           Times come from the System&apos;s clock; received times from the Hub&apos;s.
         </p>
