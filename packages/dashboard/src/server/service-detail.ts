@@ -80,6 +80,7 @@ export const readServiceDetail = (
           AND t.action IN ('raised', 'cleared')
           AND (t.at >= ${new Date(now - HISTORY_MS)} OR (t.action = 'raised' AND c.cleared_at IS NULL))
         ORDER BY t.id
+      `,
       tx`
         SELECT version, upstream, first_seen_at FROM service_versions
         WHERE system = ${system} AND service = ${service}

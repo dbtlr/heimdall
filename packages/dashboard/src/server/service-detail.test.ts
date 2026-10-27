@@ -279,6 +279,7 @@ test('a forgotten Service opens while its history holds a cleared Service down, 
 
   expect((await read(h))?.downs.map(({ kind }) => kind)).toEqual(['raised', 'cleared']);
   expect(await read(h, 'server-1', 'gone')).toBeUndefined();
+});
 
 const withApplication = (version: string, application = 'web-software') => ({
   records: [
