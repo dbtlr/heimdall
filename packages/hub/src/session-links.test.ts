@@ -3,7 +3,7 @@ import { beforeAll, expect, test } from 'bun:test';
 import type { SQL } from 'bun';
 
 import { MIGRATIONS, migrate } from './migrations.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, startTestServer, testDatabase } from './testing/postgres.ts';
 import { CWD, timeline } from './testing/timeline.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -17,8 +17,7 @@ type Db = { sql: SQL } & AsyncDisposable;
 
 // A migrated database with two Systems.
 const database = async (): Promise<Db> => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await db.sql`
     INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now()), ('server-1', now())
   `;

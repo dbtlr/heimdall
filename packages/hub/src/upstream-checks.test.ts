@@ -2,9 +2,8 @@ import { expect, test } from 'bun:test';
 
 import type { SQL } from 'bun';
 
-import { migrate } from './migrations.ts';
 import { NOW } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 import { checkUpstreams, UPSTREAM_CHECK_INTERVAL_MS } from './upstream-checks.ts';
 import type { CheckAnswer } from './upstream-releases.ts';
 
@@ -43,8 +42,7 @@ const runs = async (
 };
 
 const database = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   return db;
 };
 

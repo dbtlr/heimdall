@@ -252,14 +252,15 @@ const migrateShared = async () => {
   );
   // Ends the connections an earlier test left open, as dropping a database with
   // FORCE would, then empties and refills the tables as migrating left them,
-  // firing none of the triggers a truncate or an insert would, such as the
-  // price table's staleness marks.
+  // firing none of the triggers a delete or an insert would, such as the price
+  // table's staleness marks, and so checking no foreign key on the way.
   const reset = [
     `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
      WHERE datname = current_database() AND pid <> pg_backend_pid()`,
     'BEGIN',
     'SET LOCAL session_replication_role = replica',
-    `TRUNCATE ${tables.map(({ name }) => name).join(', ')}`,
+    // DELETE, since TRUNCATE gives every table new files and costs 20 times as much here.
+    ...tables.map(({ name }) => `DELETE FROM ${name}`),
     ...sequences.map(({ name }) => `ALTER SEQUENCE ${name} RESTART`),
     ...seeds.flat(),
     'COMMIT',

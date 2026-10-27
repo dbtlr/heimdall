@@ -7,7 +7,7 @@ import { syncPrices } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { pruneVitals, RAW_RETENTION_MS } from './retention.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, startTestServer, testDatabase } from './testing/postgres.ts';
 import { CWD, timeline } from './testing/timeline.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -22,8 +22,7 @@ const { addProcess, addSession, at } = timeline(T0);
 type Db = { sql: SQL; url: URL } & AsyncDisposable;
 
 const database = async (): Promise<Db> => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await db.sql`
     INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now()), ('server-1', now())
   `;

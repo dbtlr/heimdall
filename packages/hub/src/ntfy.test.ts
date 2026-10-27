@@ -4,8 +4,8 @@ import { clear, raise } from './conditions.ts';
 import { parseDeliveryChannel } from './delivery-config.ts';
 import { deliverAlerts } from './delivery.ts';
 import { ntfySender } from './ntfy.ts';
-import { failure, migrate, NOW, storeToken } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { failure, NOW, storeToken } from './testing/hub.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 
 type Received = { authorization: string | null; body: unknown; path: string };
 
@@ -101,8 +101,7 @@ test('a redirect fails the send instead of publishing nothing', async () => {
 
 test('a Condition at alert reaches ntfy as one push, then one recovered message 10 minutes after it clears', async () => {
   using ntfy = stubNtfy();
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: NOW, system: 'server-1', token: 'server-token' });
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('server-1', now())`;
   const send = ntfySender(channel(ntfy.server));

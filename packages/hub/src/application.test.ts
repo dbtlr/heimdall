@@ -9,11 +9,10 @@ import type { SQL } from 'bun';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { raise } from './conditions.ts';
-import { migrate } from './migrations.ts';
 import { storeReport } from './store.ts';
 import { configArgs, configFile, hubConfig, invoke } from './testing/cli.ts';
 import { gzip } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
 
@@ -113,8 +112,7 @@ test('a System paired with pair redeems its code from serve, and its token inges
 });
 
 test('serve counts the paired Systems as it starts', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'server-1', token: 'server-token' });
   await using config = await hubConfig(db);
@@ -146,8 +144,7 @@ test('serve on a port already in use says which address it could not listen on, 
 });
 
 test('pair for a System that is paired says its token works until the new code is redeemed', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
   await using config = await hubConfig(db);
 
@@ -176,8 +173,7 @@ test('pair without a System is a usage error', async () => {
 });
 
 test('unpair revokes a paired System and says its history stays', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
   await using config = await hubConfig(db);
 
@@ -214,8 +210,7 @@ test('unpair of a System that is not paired says so and exits 1', async () => {
 // A database holding one generation of laptop-1's transcripts, last uploaded
 // at `now`, by default the start of 2026-10-01 in UTC.
 const withTranscript = async (now = Date.UTC(2026, 9, 1)) => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   const opened = await openGeneration(db.sql, {
     now,
     path: 'project/a.jsonl',
@@ -366,8 +361,7 @@ test('pair names the database as the problem when it cannot reach it', async () 
 // A database that already holds a 20-day-old sample for laptop-1, which a
 // prune deletes. The migrations are applied, so `serve` finds nothing to do.
 const databaseWithOldSample = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   const now = Date.now();
   await storeReport(db.sql, {
     receivedAt: now,
@@ -416,8 +410,7 @@ test('serve prunes old Vitals and ended Service stops as it starts, and says not
 // A database where server-1 was paired an hour ago and never heard from, and a
 // Hub last recorded listening `heardAgoMs` ago, having listened for two hours.
 const databaseWithSilentSystem = async (heardAgoMs: number) => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await storeToken(db.sql, {
     pairedAt: Date.now() - 3_600_000,
     system: 'server-1',
@@ -586,8 +579,7 @@ const timestampedFatal = (message: string) =>
   new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z [^\\n]*${message}`, 'u');
 
 test('serve stops with a timestamped fatal line, not a raw error, when the price table cannot load', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`
     CREATE FUNCTION refuse_insert() RETURNS trigger LANGUAGE plpgsql
     AS $$ BEGIN RAISE EXCEPTION 'insert refused'; END $$
@@ -745,8 +737,7 @@ test('serve with a [delivery] section pushes an open alert to ntfy, and logs nei
     port: 0,
   });
   try {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
     await storeToken(db.sql, { pairedAt: Date.now(), system: 'server-1', token: 'server-token' });
     await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('server-1', now())`;
     await db.sql.begin((tx) =>
@@ -879,8 +870,7 @@ test('delivery test sends one low-priority message that opens the dashboard, and
 
 test('a delivery test that gets through ends a stored run of failed sends', async () => {
   using ntfy = stubNtfy();
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`UPDATE delivery_status SET failing_since = ${FAILING_SINCE}`;
   await using config = await deliveryConfig(ntfy.server.url, db.url);
 
@@ -905,8 +895,7 @@ test('a delivery test that gets through says so even when the database cannot be
 
 test('delivery test fails with the status when ntfy refuses the message, and leaves a stored run alone', async () => {
   using ntfy = stubNtfy(403);
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`UPDATE delivery_status SET failing_since = ${FAILING_SINCE}`;
   await using config = await deliveryConfig(ntfy.server.url, db.url);
 
@@ -961,8 +950,7 @@ test('delivery test refuses an invalid [delivery] section, naming the setting', 
 });
 
 test('serve without a [delivery] section clears a delivery status left from before', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`UPDATE delivery_status SET failing_since = now()`;
   await using config = await hubConfig(db);
 
@@ -975,8 +963,7 @@ test('serve without a [delivery] section clears a delivery status left from befo
 });
 
 test('serve with a [delivery] section leaves the delivery status alone', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`UPDATE delivery_status SET failing_since = '2026-10-06T12:00:00Z'`;
   using ntfy = stubNtfy();
   await using config = await hubConfig(db, [

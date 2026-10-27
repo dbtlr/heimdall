@@ -3,11 +3,10 @@ import { expect, test } from 'bun:test';
 import { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
-import { migrate } from './migrations.ts';
 import { unpair } from './pairing.ts';
 import { setSilence } from './silences.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
 
 const ISO = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`;
@@ -15,8 +14,7 @@ const ISO = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`;
 // A migrated database with laptop-1 and server-1 paired, and the Hub's
 // configuration file for it.
 const setup = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'server-1', token: 'server-token' });
   const config = await hubConfig(db);
