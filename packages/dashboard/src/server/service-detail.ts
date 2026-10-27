@@ -1,6 +1,9 @@
+import { UpdateManagerSchema } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { installsOf } from '../lib/service-installs.ts';
+import { serviceUpdate, updatesOf } from '../lib/service-updates.ts';
+import type { UpstreamCheck } from '../lib/service-updates.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
 import type { ServiceDetail, ServiceDownTransition } from './service-detail-types.ts';
@@ -30,7 +33,8 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
 
 // One Service of System `system` as of `now`: its record and checks, the open
 // Service restarted note, the stops and Service down raises and clears of the
-// last 90 days, and the installed version and its changes, from one snapshot.
+// last 90 days, the installed version and its changes, and upstream updates,
+// from one snapshot.
 // A System that is no longer paired opens as it was left. Undefined for a
 // System that does not exist, and for a Service with no record, stop, Service
 // down in its history, or open Service Condition.
@@ -103,6 +107,37 @@ export const readServiceDetail = (
     const note = conditions.find(({ kind }) => kind === 'service_restarted');
     const latest = versions.at(-1);
     const application = text(record?.application);
+    const upstream = latest?.upstream ?? null;
+    const remote = upstream !== null && /^(github|npm|oci):/u.test(upstream);
+    const [upstreamChecks, releases, managers]: [
+      {
+        checked_at: Date;
+        failure: string | null;
+        releases: UpstreamCheck['releases'];
+        succeeded_at: Date | null;
+      }[],
+      { first_found_at: Date; version: string }[],
+      { observation: unknown }[],
+    ] = await Promise.all([
+      remote
+        ? tx`SELECT checked_at, failure, releases, succeeded_at FROM upstream_checks WHERE upstream = ${upstream}`
+        : [],
+      remote
+        ? tx`SELECT version, first_found_at FROM upstream_releases WHERE upstream = ${upstream} ORDER BY first_found_at, version`
+        : [],
+      upstream !== null && /^(apt|brew):/u.test(upstream)
+        ? tx`SELECT observation FROM update_managers WHERE system = ${system} AND NOT withdrawn ORDER BY manager, installation`
+        : [],
+    ]);
+    const check = upstreamChecks[0];
+    const releaseRows = releases.map(({ first_found_at, version }) => ({
+      at: first_found_at.getTime(),
+      version,
+    }));
+    const versionRows = versions.map(({ first_seen_at, version }) => ({
+      at: first_seen_at.getTime(),
+      version,
+    }));
     return {
       downs: downs.map((row) => ({
         at: row.at.getTime(),
@@ -118,10 +153,7 @@ export const readServiceDetail = (
         upstream: latest?.upstream ?? null,
         version: latest?.version ?? null,
       },
-      installs: installsOf(
-        versions.map(({ first_seen_at, version }) => ({ at: first_seen_at.getTime(), version })),
-        now,
-      ),
+      installs: installsOf(versionRows, now),
       note:
         note === undefined
           ? undefined
@@ -135,5 +167,25 @@ export const readServiceDetail = (
       stops,
       system,
       unit: record === undefined ? undefined : unitOf(record),
+      update: serviceUpdate({
+        check:
+          check === undefined
+            ? undefined
+            : {
+                checkedAt: check.checked_at.getTime(),
+                failure: check.failure,
+                releases: check.releases,
+                succeededAt: check.succeeded_at?.getTime() ?? null,
+              },
+        now,
+        observations: managers.flatMap(({ observation }) => {
+          const parsed = UpdateManagerSchema.safeParse(observation);
+          return parsed.success ? [parsed.data] : [];
+        }),
+        releases: releaseRows,
+        upstream,
+        version: latest?.version ?? null,
+      }),
+      updates: updatesOf({ now, releases: releaseRows, upstream, versions: versionRows }),
     };
   });

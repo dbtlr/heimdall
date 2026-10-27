@@ -47,6 +47,7 @@ const rows: ServiceSummary[] = [
     name: 'web',
     status: 'up',
     system: 'alpha',
+    update: undefined,
     version: null,
   },
   {
@@ -55,6 +56,7 @@ const rows: ServiceSummary[] = [
     name: 'web',
     status: 'down',
     system: 'beta',
+    update: undefined,
     version: null,
   },
   {
@@ -63,6 +65,7 @@ const rows: ServiceSummary[] = [
     name: 'cache',
     status: 'restarted',
     system: 'alpha',
+    update: undefined,
     version: null,
   },
   {
@@ -71,6 +74,7 @@ const rows: ServiceSummary[] = [
     name: 'worker',
     status: 'unknown',
     system: 'beta',
+    update: undefined,
     version: null,
   },
   {
@@ -79,6 +83,7 @@ const rows: ServiceSummary[] = [
     name: 'api',
     status: 'down',
     system: 'beta',
+    update: undefined,
     version: null,
   },
   {
@@ -87,6 +92,7 @@ const rows: ServiceSummary[] = [
     name: 'api',
     status: 'down',
     system: 'alpha',
+    update: undefined,
     version: null,
   },
 ];
@@ -118,13 +124,14 @@ test('filters OR within a section and AND between sections; empty means all', ()
 
 test('chip counts use only the other section, including zero and multi-select', () => {
   const counts = serviceFilterCounts(rows, { status: ['up', 'restarted'], system: ['beta'] });
-  expect(counts.status).toEqual({ down: 2, restarted: 0, unknown: 1, up: 0 });
+  expect(counts.status).toEqual({ down: 2, restarted: 0, unknown: 1, up: 0, updates: 0 });
   expect(counts.system).toEqual({ alpha: 2, beta: 0 });
   expect(serviceFilterCounts(rows, { status: [], system: ['alpha', 'beta'] }).status).toEqual({
     down: 3,
     restarted: 1,
     unknown: 1,
     up: 1,
+    updates: 0,
   });
 });
 
@@ -155,3 +162,38 @@ for (const [search, expected] of [
     expect(servicesSearch(search ?? {})).toEqual(expected);
   });
 }
+
+test('Updates matches independently of status and sections constrain each other’s counts', () => {
+  const services = rows.map((row) => ({
+    ...row,
+    update: row.name === 'cache' || row.name === 'worker' ? '2.0' : undefined,
+  }));
+  expect(
+    filterServices(services, { status: ['updates'], system: [] }).map(({ name }) => name),
+  ).toEqual(['cache', 'worker']);
+  expect(
+    filterServices(services, { status: ['restarted', 'updates'], system: ['alpha'] }).map(
+      ({ name }) => name,
+    ),
+  ).toEqual(['cache']);
+  expect(serviceFilterCounts(services, { status: ['updates'], system: ['alpha'] })).toEqual({
+    status: { down: 1, restarted: 1, unknown: 0, up: 1, updates: 1 },
+    system: { alpha: 1, beta: 1 },
+  });
+  expect(servicesSearch({ status: 'updates' })).toEqual({ status: ['updates'], system: undefined });
+});
+
+test('updates rank after down and restarted, ahead of up and unknown', () => {
+  const services = structuredClone(rows);
+  for (const row of services) {
+    row.update = ['worker', 'cache', 'api'].includes(row.name) ? '2.0' : undefined;
+  }
+  expect(sortServices(services).map(({ status }) => status)).toEqual([
+    'down',
+    'down',
+    'down',
+    'restarted',
+    'unknown',
+    'up',
+  ]);
+});

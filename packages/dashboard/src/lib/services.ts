@@ -1,5 +1,7 @@
 export const SERVICE_STATUSES = ['down', 'restarted', 'up', 'unknown'] as const;
 export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
+export const SERVICE_STATUS_FILTERS = ['down', 'restarted', 'updates', 'up', 'unknown'] as const;
+export type ServiceStatusFilter = (typeof SERVICE_STATUS_FILTERS)[number];
 
 export type ServiceSummary = {
   downSince: number | undefined;
@@ -9,6 +11,7 @@ export type ServiceSummary = {
   system: string;
   // The installed version the Hub derived, null while unknown.
   version: string | null;
+  update: string | undefined;
 };
 
 // Stored Conditions take precedence; checks alone establish up only when all pass.
@@ -30,7 +33,7 @@ export const serviceStatus = ({
   return checks.length > 0 && checks.every(({ state }) => state === 'up') ? 'up' : 'unknown';
 };
 
-export type ServiceFilters = { status: ServiceStatus[]; system: string[] };
+export type ServiceFilters = { status: ServiceStatusFilter[]; system: string[] };
 
 const strings = (value: unknown): string[] => {
   if (typeof value === 'string') {
@@ -42,8 +45,8 @@ const strings = (value: unknown): string[] => {
 };
 
 export const servicesSearch = (search: { status?: unknown; system?: unknown }) => {
-  const status = strings(search.status).filter((value): value is ServiceStatus =>
-    SERVICE_STATUSES.some((known) => known === value),
+  const status = strings(search.status).filter((value): value is ServiceStatusFilter =>
+    SERVICE_STATUS_FILTERS.some((known) => known === value),
   );
   const system = strings(
     typeof search.system === 'number' && Number.isFinite(search.system)
@@ -56,12 +59,29 @@ export const servicesSearch = (search: { status?: unknown; system?: unknown }) =
   };
 };
 
+const sortRank = (row: ServiceSummary) => {
+  if (row.status === 'down') {
+    return 0;
+  }
+  if (row.status === 'restarted') {
+    return 1;
+  }
+  if (row.update !== undefined) {
+    return 2;
+  }
+  return row.status === 'up' ? 3 : 4;
+};
+
+const matchesStatus = (row: ServiceSummary, statuses: readonly ServiceStatusFilter[]) =>
+  statuses.length === 0 ||
+  statuses.some((status) =>
+    status === 'updates' ? row.update !== undefined : row.status === status,
+  );
+
 export const sortServices = (rows: readonly ServiceSummary[]): ServiceSummary[] =>
   rows.toSorted(
     (a, b) =>
-      SERVICE_STATUSES.indexOf(a.status) - SERVICE_STATUSES.indexOf(b.status) ||
-      a.name.localeCompare(b.name) ||
-      a.system.localeCompare(b.system),
+      sortRank(a) - sortRank(b) || a.name.localeCompare(b.name) || a.system.localeCompare(b.system),
   );
 
 export const filterServices = (
@@ -69,20 +89,29 @@ export const filterServices = (
   filters: ServiceFilters,
 ): ServiceSummary[] =>
   rows.filter(
-    ({ status, system }) =>
-      (filters.status.length === 0 || filters.status.includes(status)) &&
-      (filters.system.length === 0 || filters.system.includes(system)),
+    (row) =>
+      matchesStatus(row, filters.status) &&
+      (filters.system.length === 0 || filters.system.includes(row.system)),
   );
 
 // Each section's counts describe a chip on its own, constrained only by the other section.
 export const serviceFilterCounts = (rows: readonly ServiceSummary[], filters: ServiceFilters) => {
-  const status: Record<ServiceStatus, number> = { down: 0, restarted: 0, unknown: 0, up: 0 };
+  const status: Record<ServiceStatusFilter, number> = {
+    down: 0,
+    restarted: 0,
+    unknown: 0,
+    up: 0,
+    updates: 0,
+  };
   const system = Object.fromEntries(rows.map((row) => [row.system, 0]));
   for (const row of rows) {
     if (filters.system.length === 0 || filters.system.includes(row.system)) {
       status[row.status] += 1;
+      if (row.update !== undefined) {
+        status.updates += 1;
+      }
     }
-    if (filters.status.length === 0 || filters.status.includes(row.status)) {
+    if (matchesStatus(row, filters.status)) {
       system[row.system] = (system[row.system] ?? 0) + 1;
     }
   }

@@ -32,6 +32,8 @@ const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   stops: [],
   system: 'server-1',
   unit: undefined,
+  update: { failure: undefined, status: undefined },
+  updates: [],
   ...over,
 });
 
@@ -96,4 +98,24 @@ test('a new installed version says what it replaced', async () => {
   );
   expect(html).toContain('Installed 1.28');
   expect(html).toContain('Was 1.27');
+});
+
+test('an available update is a neutral dated row beside an install at the same time', async () => {
+  const html = await renderRouted(
+    <ServiceHistory
+      detail={detail({
+        installs: [{ at: NOW - HOUR, version: '2.0', was: '1.0' }],
+        updates: [
+          { at: NOW - HOUR, version: '3.0' },
+          { at: NOW - HOUR, version: '3.0-alpine' },
+        ],
+      })}
+    />,
+  );
+  expect(html).toContain('Update available 3.0');
+  expect(html).toContain('Update available 3.0-alpine');
+  expect(html).toContain('Installed 2.0');
+  expect(html).toContain('bg-muted-foreground');
+  expect(html).toContain(`dateTime="${new Date(NOW - HOUR).toISOString()}"`);
+  expect(html).not.toContain('bg-status-good');
 });

@@ -1,6 +1,6 @@
 // What a Service page says, as plain values the components only render: its
 // history of stops, Service down raises and clears, and installed version
-// changes, newest first, the
+// changes and available updates, newest first, the
 // summary counts, and the 90-day strip of ticks. The times that depend on the
 // viewer's zone stay phrases, or take the zone as an argument.
 
@@ -9,6 +9,7 @@ import { clockSecondsAt, whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { SUPERVISOR_NAMES } from './recorded.ts';
 import type { Install } from './service-installs.ts';
+import type { UpstreamRelease } from './service-updates.ts';
 import { formatSpan, formatSpanShort, xPercent } from './time.ts';
 
 const SECOND_MS = 1000;
@@ -128,10 +129,11 @@ export const stopRow = (stop: ServiceStop, now: number): StopRow => {
 
 // A row of the history: a stop, a Service down Condition raised, with why and
 // how long the Service was down, or cleared, or a new installed version with
-// the one it replaced.
+// the one it replaced, or an available update.
 export type HistoryRow =
   | { at: number; kind: 'stop'; stop: StopRow }
   | { at: number; kind: 'installed'; version: string; was: string }
+  | { at: number; kind: 'update'; version: string }
   | { at: number; condition: string; duration: string; kind: 'downRaised'; reason: string }
   | { at: number; condition: string; kind: 'downCleared' };
 
@@ -158,12 +160,13 @@ const downRow = (
 };
 
 // The stops, the Service down raises and clears, and the installed version
-// changes as one history, newest first. Transitions at the same time keep the
+// changes and available updates as one history, newest first. Transitions at the same time keep the
 // later recorded first, since the Hub's clock can step back.
 export const historyRows = (
   stops: readonly ServiceStop[],
   downs: readonly ServiceDownTransition[],
   installs: readonly Install[],
+  updates: readonly UpstreamRelease[],
   now: number,
 ): HistoryRow[] => {
   const clearedAt = new Map(
@@ -172,6 +175,7 @@ export const historyRows = (
   return [
     ...downs.toReversed().map((down) => downRow(down, clearedAt, now)),
     ...installs.map((install): HistoryRow => ({ ...install, kind: 'installed' })),
+    ...updates.map((update): HistoryRow => ({ ...update, kind: 'update' })),
     ...stops.map((stop): HistoryRow => {
       const row = stopRow(stop, now);
       return { at: row.stoppedAt, kind: 'stop', stop: row };
