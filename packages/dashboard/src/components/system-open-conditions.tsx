@@ -10,7 +10,7 @@ export function SystemOpenConditions({ items, now }: { items: readonly Attention
       {attention.length === 0 ? (
         <p className="rounded-xl bg-card p-4 text-base">No open Condition or uncertain evidence.</p>
       ) : (
-        <AttentionList compact items={attention} now={now} />
+        <AttentionList compact items={attention} layout="table" now={now} />
       )}
     </>
   );

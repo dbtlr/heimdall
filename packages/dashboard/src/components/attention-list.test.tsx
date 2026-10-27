@@ -45,3 +45,28 @@ test('evidence the Hub holds no Condition for has no page to open', async () => 
   expect(html).not.toContain('/conditions/');
   expect(html).not.toContain('>Open<');
 });
+
+test('the table layout makes each compact row one grid line from lg, with an sr-only level word', async () => {
+  const html = await renderRouted(
+    <AttentionList compact items={[disk]} layout="table" now={1000} />,
+  );
+  expect(html).toContain('lg:grid');
+  expect(html).toContain('lg:grid-cols-[16px_11rem_15rem_minmax(0,1fr)_5.5rem_7rem_auto]');
+  expect(html).toContain('<span class="lg:sr-only">Warning</span>');
+  expect(html).toContain('open 1 s');
+});
+
+test('without the table layout a compact row carries no lg grid classes', async () => {
+  const html = await renderRouted(<AttentionList compact items={[disk]} now={1000} />);
+  expect(html).not.toMatch(/lg:grid(?!-cols)/u);
+  expect(html).not.toContain('lg:contents');
+  expect(html).not.toContain('lg:sr-only');
+});
+
+test('the table layout still holds the evidence and next step of each row', async () => {
+  const html = await renderRouted(
+    <AttentionList compact items={[disk]} layout="table" now={1000} />,
+  );
+  expect(html).toContain('Free space or grow the disk');
+  expect(html).toContain('href="/systems/gateway-1/conditions/c-disk"');
+});
