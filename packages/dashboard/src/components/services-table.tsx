@@ -18,11 +18,14 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
     <table className="w-full table-fixed border-collapse text-left">
       <thead>
         <tr className="border-b text-xs text-muted-foreground">
-          <th className="w-3/5 px-3 py-3 font-medium" scope="col">
+          <th className="w-1/2 px-3 py-3 font-medium" scope="col">
             Service
           </th>
-          <th className="px-3 py-3 font-medium" scope="col">
+          <th className="w-1/4 px-3 py-3 font-medium" scope="col">
             System
+          </th>
+          <th className="w-1/4 px-3 py-3 font-medium" scope="col">
+            Version
           </th>
         </tr>
       </thead>
@@ -60,6 +63,9 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
             </td>
             <td className="px-3 py-4 align-top text-muted-foreground wrap-anywhere">
               {row.system}
+            </td>
+            <td className="px-3 py-4 align-top wrap-anywhere">
+              {row.version ?? <span className="text-muted-foreground">unknown</span>}
             </td>
           </tr>
         ))}

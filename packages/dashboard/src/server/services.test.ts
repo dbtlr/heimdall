@@ -242,3 +242,50 @@ test('forgotten Services remain for either open Condition and disappear after bo
   expect(await readServices(h.db.sql, NOW)).toEqual([]);
   expect(await readServiceAttentionCount(h.db.sql)).toBe(0);
 });
+
+test("reads each Service's latest installed version, and null for one with none", async () => {
+  await using h = await startHub();
+  const send = (version: string) =>
+    push(
+      h.hub,
+      {
+        ...report('server-1', [NOW]),
+        records: {
+          records: [
+            {
+              kind: 'application',
+              name: 'web-software',
+              record: { name: 'web-software', version },
+            },
+            {
+              kind: 'service',
+              name: 'web',
+              record: {
+                application: 'web-software',
+                name: 'web',
+                supervisor: 'systemd',
+                unit: 'web.service',
+              },
+            },
+            {
+              kind: 'service',
+              name: 'api',
+              record: { name: 'api', supervisor: 'systemd', unit: 'api.service' },
+            },
+          ],
+          unreadable: [],
+        },
+      },
+      { token: 'server-token' },
+    );
+  expect((await send('1.0')).status).toBe(200);
+  h.clock.now = NOW + 1000;
+  expect((await send('1.1')).status).toBe(200);
+
+  const rows = await readServices(h.db.sql, NOW);
+
+  expect(rows.map(({ name, version }) => [name, version])).toEqual([
+    ['api', null],
+    ['web', '1.1'],
+  ]);
+});

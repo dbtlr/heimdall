@@ -279,4 +279,70 @@ test('a forgotten Service opens while its history holds a cleared Service down, 
 
   expect((await read(h))?.downs.map(({ kind }) => kind)).toEqual(['raised', 'cleared']);
   expect(await read(h, 'server-1', 'gone')).toBeUndefined();
+
+const withApplication = (version: string, application = 'web-software') => ({
+  records: [
+    {
+      kind: 'application',
+      name: application,
+      record: { name: application, source: 'apt:web', version },
+    },
+    { kind: 'service', name: 'web', record: { ...WEB, application } },
+  ],
+  unreadable: [],
+});
+
+test('reads the installed version and upstream, and the installs between known versions', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { records: withApplication('1.0') });
+  h.clock.now = NOW + HOUR;
+  const response = await push(
+    h.hub,
+    { ...report('server-1', [NOW + HOUR]), records: withApplication('1.1') },
+    { token: 'server-token' },
+  );
+  expect(response.status).toBe(200);
+
+  const found = await readServiceDetail(h.db.sql, {
+    now: NOW + 2 * HOUR,
+    service: 'web',
+    system: 'server-1',
+  });
+
+  expect(found?.installed).toEqual({
+    missingApplication: undefined,
+    upstream: 'apt:web',
+    version: '1.1',
+  });
+  expect(found?.installs.map(({ version, was }) => [version, was])).toEqual([['1.1', '1.0']]);
+});
+
+test('has no installed version, nor a missing Application, for a Service naming none', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { records });
+
+  const found = await read(h);
+
+  expect(found?.installed).toEqual({
+    missingApplication: undefined,
+    upstream: null,
+    version: null,
+  });
+  expect(found?.installs).toEqual([]);
+});
+
+test('names the Application a Service names when the System records none of that name', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', {
+    records: {
+      records: [{ kind: 'service', name: 'web', record: { ...WEB, application: 'web-software' } }],
+      unreadable: [],
+    },
+  });
+
+  expect((await read(h))?.installed).toEqual({
+    missingApplication: 'web-software',
+    upstream: null,
+    version: null,
+  });
 });

@@ -6,8 +6,22 @@ import type { ServiceSummary } from '../lib/services.ts';
 import { ActiveServiceFilters, ServiceFilterSheet } from './service-filters.tsx';
 
 const rows: ServiceSummary[] = [
-  { downSince: 0, latestStopAt: undefined, name: 'web', status: 'down', system: 'alpha' },
-  { downSince: undefined, latestStopAt: undefined, name: 'api', status: 'up', system: 'beta' },
+  {
+    downSince: 0,
+    latestStopAt: undefined,
+    name: 'web',
+    status: 'down',
+    system: 'alpha',
+    version: null,
+  },
+  {
+    downSince: undefined,
+    latestStopAt: undefined,
+    name: 'api',
+    status: 'up',
+    system: 'beta',
+    version: null,
+  },
 ];
 const ignore = () => {};
 

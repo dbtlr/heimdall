@@ -8,13 +8,21 @@ test('Service rows link to detail, expose status, and date down from the Conditi
     <ServicesTable
       now={120_000}
       rows={[
-        { downSince: 0, latestStopAt: undefined, name: 'web', status: 'down', system: 'alpha' },
+        {
+          downSince: 0,
+          latestStopAt: undefined,
+          name: 'web',
+          status: 'down',
+          system: 'alpha',
+          version: '0.26.0-next.32',
+        },
         {
           downSince: undefined,
           latestStopAt: 60_000,
           name: 'api',
           status: 'restarted',
           system: 'beta',
+          version: null,
         },
         {
           downSince: undefined,
@@ -22,6 +30,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
           name: 'worker',
           status: 'unknown',
           system: 'beta',
+          version: null,
         },
       ]}
     />,
@@ -36,5 +45,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html).toContain('border-muted-foreground');
   expect(html).toContain('Service</th>');
   expect(html).toContain('System</th>');
-  expect(html).not.toContain('Version');
+  expect(html).toContain('Version</th>');
+  expect(html).toContain('0.26.0-next.32');
+  expect(html).toContain('>unknown</span>');
 });

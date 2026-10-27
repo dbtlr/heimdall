@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
+import { InstalledLine } from '../components/service-installed.tsx';
 import { ServiceHistory } from '../components/service-history.tsx';
 import { StopsCard } from '../components/service-stops.tsx';
 import { contentFrame } from '../lib/layout.ts';
@@ -34,7 +35,7 @@ export const Route = createFileRoute('/systems/$name_/services/$service')({
 
 function ServicePage() {
   const detail = Route.useLoaderData();
-  const { now, recorded, service, system, unit } = detail;
+  const { installed, now, recorded, service, system, unit } = detail;
   const line = recorded === undefined ? undefined : serviceLine(recorded, now);
   const where = recorded === undefined ? undefined : supervisorLine(recorded.supervisor, unit);
   return (
@@ -61,6 +62,7 @@ function ServicePage() {
             </span>
           </p>
         )}
+        <InstalledLine installed={installed} />
         <StopsCard detail={detail} />
         <ServiceHistory detail={detail} />
         <p className="mt-4 text-xs text-muted-foreground">
