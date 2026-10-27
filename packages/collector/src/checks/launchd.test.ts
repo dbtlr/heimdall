@@ -307,7 +307,7 @@ describe('a launchd Service', () => {
     const noDomain = failed(112, NO_GUI_DOMAIN);
 
     const { outcomes, ran } = await check(
-      { 'gui/4242424/com.dbtlr.heimdall.collector': noDomain, [SYSTEM]: printed(DAEMON) },
+      { [SYSTEM]: printed(DAEMON), 'gui/4242424/com.dbtlr.heimdall.collector': noDomain },
       { uid: 4_242_424 },
     );
 

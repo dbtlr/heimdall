@@ -23,6 +23,8 @@ const stop = (hoursAgo: number): ServiceStop => ({
 
 const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   downs: [],
+  installed: { missingApplication: undefined, upstream: null, version: null },
+  installs: [],
   note: undefined,
   now: NOW,
   recorded: undefined,
@@ -84,4 +86,14 @@ test('a cleared Service down reads as cleared', async () => {
 
 test('nothing renders with no stops or Service down', async () => {
   expect(await renderRouted(<ServiceHistory detail={detail()} />)).toBe('');
+});
+
+test('a new installed version says what it replaced', async () => {
+  const html = await renderRouted(
+    <ServiceHistory
+      detail={detail({ installs: [{ at: NOW - 2 * HOUR, version: '1.28', was: '1.27' }] })}
+    />,
+  );
+  expect(html).toContain('Installed 1.28');
+  expect(html).toContain('Was 1.27');
 });

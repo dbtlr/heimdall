@@ -5,6 +5,7 @@
 
 import type { ServiceStopsRead } from '@heimdall/schema';
 
+import type { Install } from '../lib/service-installs.ts';
 import type { RecordedService } from './system-detail-types.ts';
 
 export type ServiceStop = ServiceStopsRead['stops'][number];
@@ -22,6 +23,16 @@ export type ServiceDetail = {
   // The Service down raises and clears in the 90 days before `now`, and the
   // raise of one still open however old, in the order the Hub recorded them.
   downs: ServiceDownTransition[];
+  // The installed version and upstream the Hub derived, null while unknown. An
+  // Application the Service record names that the System has not recorded is
+  // named by `missingApplication`.
+  installed: {
+    missingApplication: string | undefined;
+    upstream: string | null;
+    version: string | null;
+  };
+  // The changes between known installed versions in the 90 days before `now`, newest first.
+  installs: Install[];
   now: number;
   // The open Service restarted note for this Service, if any.
   note: { id: string; raisedAt: number; reason: string } | undefined;

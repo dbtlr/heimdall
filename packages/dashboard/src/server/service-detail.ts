@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { installsOf } from '../lib/service-installs.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
 import type { ServiceDetail, ServiceDownTransition } from './service-detail-types.ts';
@@ -28,8 +29,8 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
   text(record.unit) ?? text(record.container) ?? text(record.label);
 
 // One Service of System `system` as of `now`: its record and checks, the open
-// Service restarted note, and the stops and Service down raises and clears of
-// the last 90 days, from one snapshot.
+// Service restarted note, the stops and Service down raises and clears of the
+// last 90 days, and the installed version and its changes, from one snapshot.
 // A System that is no longer paired opens as it was left. Undefined for a
 // System that does not exist, and for a Service with no record, stop, Service
 // down in its history, or open Service Condition.
@@ -46,12 +47,14 @@ export const readServiceDetail = (
     if (known === undefined) {
       return undefined;
     }
-    const [records, checks, conditions, stops, downs]: [
+    const [records, checks, conditions, stops, downs, versions, applications]: [
       RecordRow[],
       Pick<ChecksRow, 'services'>[],
       { id: string; kind: string; latest_reason: string; raised_at: Date }[],
       Awaited<ReturnType<typeof readServiceStops>>,
       { action: ServiceDownTransition['kind']; at: Date; condition: string; reason: string }[],
+      { first_seen_at: Date; upstream: string | null; version: string | null }[],
+      { name: string }[],
     ] = await Promise.all([
       tx`
         SELECT kind, name, record FROM mirrored_records
@@ -78,6 +81,15 @@ export const readServiceDetail = (
           AND (t.at >= ${new Date(now - HISTORY_MS)} OR (t.action = 'raised' AND c.cleared_at IS NULL))
         ORDER BY t.id
       `,
+      tx`
+        SELECT version, upstream, first_seen_at FROM service_versions
+        WHERE system = ${system} AND service = ${service}
+        ORDER BY first_seen_at
+      `,
+      tx`
+        SELECT name FROM mirrored_records
+        WHERE system = ${system} AND kind = 'application'
+      `,
     ]);
     const record = records[0]?.record;
     if (
@@ -89,6 +101,8 @@ export const readServiceDetail = (
       return undefined;
     }
     const note = conditions.find(({ kind }) => kind === 'service_restarted');
+    const latest = versions.at(-1);
+    const application = text(record?.application);
     return {
       downs: downs.map((row) => ({
         at: row.at.getTime(),
@@ -96,6 +110,18 @@ export const readServiceDetail = (
         kind: row.action,
         reason: row.reason,
       })),
+      installed: {
+        missingApplication:
+          application !== undefined && !applications.some(({ name }) => name === application)
+            ? application
+            : undefined,
+        upstream: latest?.upstream ?? null,
+        version: latest?.version ?? null,
+      },
+      installs: installsOf(
+        versions.map(({ first_seen_at, version }) => ({ at: first_seen_at.getTime(), version })),
+        now,
+      ),
       note:
         note === undefined
           ? undefined

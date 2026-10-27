@@ -7,6 +7,8 @@ export type ServiceSummary = {
   name: string;
   status: ServiceStatus;
   system: string;
+  // The installed version the Hub derived, null while unknown.
+  version: string | null;
 };
 
 // Stored Conditions take precedence; checks alone establish up only when all pass.

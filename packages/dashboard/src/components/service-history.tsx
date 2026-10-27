@@ -8,9 +8,13 @@ import { cn } from '../lib/utils.ts';
 import type { ServiceDetail } from '../server/service-detail-types.ts';
 import { DateTime, PhraseText } from './date-time.tsx';
 
-const DOT: Record<StopDot, string> = {
+// An installed version change is neither good nor bad, so its dot is neutral.
+type Dot = StopDot | 'neutral';
+
+const DOT: Record<Dot, string> = {
   bad: 'bg-status-critical',
   good: 'bg-status-good',
+  neutral: 'bg-muted-foreground',
   unknown: 'border-[1.5px] border-muted-foreground',
 };
 
@@ -27,7 +31,7 @@ function Line({
 }: {
   at: number;
   children: ReactNode;
-  dot: StopDot;
+  dot: Dot;
   end: string | undefined;
   now: number;
 }) {
@@ -70,10 +74,21 @@ function StopItem({ now, row }: { now: number; row: StopRow }) {
   );
 }
 
-// One row of the history: a stop opens in place, a Service down opens its Condition's page.
+// One row of the history: a stop opens in place, a Service down opens its
+// Condition's page, and an installed version change only reads.
 function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; system: string }) {
   if (row.kind === 'stop') {
     return <StopItem now={now} row={row.stop} />;
+  }
+  if (row.kind === 'installed') {
+    return (
+      <div className={LINE}>
+        <Line at={row.at} dot="neutral" end={undefined} now={now}>
+          Installed {row.version}
+          <span className="block text-sm text-muted-foreground">Was {row.was}</span>
+        </Line>
+      </div>
+    );
   }
   const raised = row.kind === 'downRaised';
   return (
@@ -95,12 +110,15 @@ function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; syste
   );
 }
 
-// The Service's stops and Service down raises and clears, newest first; the
-// newest few show and the rest wait behind "Show older".
+// The Service's stops, Service down raises and clears, and installed version
+// changes, newest first; the newest few show and the rest wait behind "Show older".
 export function ServiceHistory({ detail }: { detail: ServiceDetail }) {
-  const { downs, now, stops, system } = detail;
+  const { downs, installs, now, stops, system } = detail;
   const [showAll, setShowAll] = useState(false);
-  const rows = useMemo(() => historyRows(stops, downs, now), [stops, downs, now]);
+  const rows = useMemo(
+    () => historyRows(stops, downs, installs, now),
+    [stops, downs, installs, now],
+  );
   const { hidden, shown } = listedRows(rows, showAll);
   if (rows.length === 0) {
     return null;
@@ -109,7 +127,11 @@ export function ServiceHistory({ detail }: { detail: ServiceDetail }) {
     <section className="mt-4">
       {shown.map((row) => (
         <HistoryItem
-          key={row.kind === 'stop' ? `stop-${String(row.at)}` : `${row.kind}-${row.condition}`}
+          key={
+            row.kind === 'stop' || row.kind === 'installed'
+              ? `${row.kind}-${String(row.at)}`
+              : `${row.kind}-${row.condition}`
+          }
           now={now}
           row={row}
           system={system}

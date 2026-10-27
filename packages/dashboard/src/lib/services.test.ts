@@ -41,18 +41,54 @@ describe('Service status', () => {
 });
 
 const rows: ServiceSummary[] = [
-  { downSince: undefined, latestStopAt: undefined, name: 'web', status: 'up', system: 'alpha' },
-  { downSince: 1, latestStopAt: undefined, name: 'web', status: 'down', system: 'beta' },
-  { downSince: undefined, latestStopAt: 2, name: 'cache', status: 'restarted', system: 'alpha' },
+  {
+    downSince: undefined,
+    latestStopAt: undefined,
+    name: 'web',
+    status: 'up',
+    system: 'alpha',
+    version: null,
+  },
+  {
+    downSince: 1,
+    latestStopAt: undefined,
+    name: 'web',
+    status: 'down',
+    system: 'beta',
+    version: null,
+  },
+  {
+    downSince: undefined,
+    latestStopAt: 2,
+    name: 'cache',
+    status: 'restarted',
+    system: 'alpha',
+    version: null,
+  },
   {
     downSince: undefined,
     latestStopAt: undefined,
     name: 'worker',
     status: 'unknown',
     system: 'beta',
+    version: null,
   },
-  { downSince: 1, latestStopAt: undefined, name: 'api', status: 'down', system: 'beta' },
-  { downSince: 1, latestStopAt: undefined, name: 'api', status: 'down', system: 'alpha' },
+  {
+    downSince: 1,
+    latestStopAt: undefined,
+    name: 'api',
+    status: 'down',
+    system: 'beta',
+    version: null,
+  },
+  {
+    downSince: 1,
+    latestStopAt: undefined,
+    name: 'api',
+    status: 'down',
+    system: 'alpha',
+    version: null,
+  },
 ];
 
 test('Services sort worst first, then by Service name and System name', () => {

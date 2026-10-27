@@ -66,7 +66,11 @@ test('the Collector unit runs plain run and carries no environment', () => {
 
 test('unit values escape specifiers, variables, quotes, and backslashes', () => {
   const unit = renderSystemdUnit(
-    serviceDefinition({ binary: 'hub', executable: '/opt/100%/$HOME/"q"\\b', home: '/home/50%' }),
+    serviceDefinition({
+      binary: 'hub',
+      executable: String.raw`/opt/100%/$HOME/"q"\b`,
+      home: '/home/50%',
+    }),
   );
 
   expect(unit).toContain(String.raw`ExecStart="/opt/100%%/$$HOME/\"q\"\\b" serve`);
