@@ -202,18 +202,22 @@ const systemdOutcome = async (
     : unreachable(result.stderr, result.exitCode);
 };
 
-// Asks the Docker Engine whether a container is running, and what it holds
-// about the container's stops.
+// Asks the Docker Engine whether a container is running, its image reference,
+// and what it holds about the container's stops.
 const dockerOutcome = async (
   container: string,
   { docker, httpGet }: ServiceTools,
 ): Promise<ServiceOutcome> => {
-  const { detail, state, stopFacts } = await checkContainer(container, {
+  const { detail, image, state, stopFacts } = await checkContainer(container, {
     ...(docker ?? { endpoint: dockerEndpoint() }),
     get: httpGet,
   });
   const outcome = supervisorOutcome(state, detail);
-  return stopFacts === undefined ? outcome : { ...outcome, stopFacts };
+  return {
+    ...outcome,
+    ...(image === undefined ? {} : { image }),
+    ...(stopFacts === undefined ? {} : { stopFacts }),
+  };
 };
 
 // The supervisor check of a Service, by the supervisor that runs it.

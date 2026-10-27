@@ -103,6 +103,7 @@ export {
   mirrorChecks,
   SERVICE_CHECK_KINDS,
   SERVICE_CHECK_STATES,
+  ServiceImageSchema,
 } from './checks-section.ts';
 export type {
   ChecksSection,

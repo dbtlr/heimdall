@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { RECORD_NAME } from './records.ts';
-import { bytes, epochMs } from './values.ts';
+import { bytes, epochMs, text } from './values.ts';
 
 // The most bytes of JSON one part of a Collector's checks section may take in a
 // Report. A file that does not match comes to about 200 bytes and a hashed
@@ -44,6 +44,9 @@ const SentFileCheckSchema = z.object({
   state: z.string().min(1).max(64),
 });
 
+// A Docker image reference is kept whole, never truncated into another reference.
+export const ServiceImageSchema = text(512);
+
 // One check of a Service, as the Collector sends it. The kind and state are any
 // short word, so one only a newer Collector knows does not reject a Report
 // (ADR-0004). `detail` says in a few words what the check found, such as
@@ -52,6 +55,7 @@ const SentFileCheckSchema = z.object({
 const SentServiceCheckSchema = z.object({
   check: z.string().min(1).max(64),
   detail: z.string().max(MAX_CHECK_DETAIL_LENGTH),
+  image: ServiceImageSchema.optional(),
   service: z.string().regex(RECORD_NAME),
   since: epochMs,
   state: z.string().min(1).max(64),
@@ -135,6 +139,7 @@ export type FileRecordCheck = SentFileRecord;
 export type ServiceCheck = {
   check: ServiceCheckKind;
   detail: string;
+  image?: string;
   service: string;
   since: number;
   state: ServiceCheckState;
@@ -181,11 +186,13 @@ const mirrorFiles = (section: ChecksSection, sent: readonly SentFileCheck[]) => 
 
 const mirrorServices = (sent: readonly SentServiceCheck[]) => {
   const checks = new Map<string, ServiceCheck>();
-  for (const { check, detail, service, since, state } of sent) {
+  for (const { check, detail, image, service, since, state } of sent) {
     if (isServiceCheckKind(check)) {
       checks.set(JSON.stringify([service, check]), {
         check,
         detail,
+        // Only a supervisor check reads the container, so only it names an image.
+        ...(image === undefined || check !== 'supervisor' ? {} : { image }),
         service,
         since,
         state: isServiceCheckState(state) ? state : 'unknown',
@@ -236,6 +243,7 @@ const FileRecordReadSchema = z.object({ digest: z.string(), record: z.string() }
 const ServiceCheckReadSchema = z.object({
   check: z.enum(SERVICE_CHECK_KINDS),
   detail: z.string(),
+  image: ServiceImageSchema.optional(),
   service: z.string(),
   since: z.string(),
   state: z.enum(SERVICE_CHECK_STATES),

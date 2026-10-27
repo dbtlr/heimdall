@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ChecksSectionSchema, filesRecordDigest, mirrorChecks } from './checks-section.ts';
+import {
+  ChecksReadSchema,
+  ChecksSectionSchema,
+  filesRecordDigest,
+  mirrorChecks,
+} from './checks-section.ts';
 import type { ChecksSection } from './checks-section.ts';
 import { ReportSchema } from './report.ts';
 import { sample } from './testing.ts';
@@ -195,6 +200,42 @@ describe('the parts of a checks section', () => {
 });
 
 describe('the services part of a checks section', () => {
+  test('keeps the image reference in the mirror and the records read', () => {
+    const check = { ...WEB_UP, image: 'nginx:1.27-alpine' };
+    expect(mirrored({ services: [check] }).services).toEqual([check]);
+
+    const read = {
+      receivedAt: '2026-10-27T08:00:01.000Z',
+      sentAt: '2026-10-27T08:00:00.000Z',
+      services: [{ ...check, since: '2026-10-27T07:00:00.000Z' }],
+    };
+    expect(ChecksReadSchema.parse(read)).toEqual(read);
+  });
+
+  test('mirrors an image reference only on a supervisor check', () => {
+    const health = { ...WEB_UP, check: 'health', image: 'nginx:1.27' };
+    expect(mirrored({ services: [health] }).services).toEqual([{ ...WEB_UP, check: 'health' }]);
+  });
+
+  test('carries the image reference observed by a Docker supervisor check', () => {
+    const check = { ...WEB_UP, detail: 'status running', image: 'ghcr.io/example/web:1.2.3' };
+
+    expect(ChecksSectionSchema.parse({ services: [check] }).services).toEqual([check]);
+    expect(
+      ChecksSectionSchema.parse({ services: [{ ...check, image: 'x'.repeat(512) }] }).services?.[0]
+        ?.image,
+    ).toHaveLength(512);
+  });
+
+  test.each(['', 'x'.repeat(513), 'web:1\n', 'web:\u007f', 'web:\u0085', '\ud800'])(
+    'refuses an unusable image reference %j',
+    (image) => {
+      expect(ChecksSectionSchema.safeParse({ services: [{ ...WEB_UP, image }] }).success).toBe(
+        false,
+      );
+    },
+  );
+
   test('lists each Service check with its state, detail, and since', () => {
     const checks = { services: [WEB_UP, { ...WEB_UP, service: 'db', state: 'stopped' }] };
 

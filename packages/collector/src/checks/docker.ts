@@ -1,12 +1,18 @@
+import { ServiceImageSchema } from '@heimdall/schema';
 import type { ServiceCheckState } from '@heimdall/schema';
 import type { HttpGet, HttpGetResult } from '@heimdall/service';
 
 import type { StopFacts } from './stop-log.ts';
 
 // What one container check found, before the supervisor check clamps the
-// detail, and the container's stop facts when the Engine answered for it with
-// times the Collector can read.
-export type ContainerOutcome = { detail: string; state: ServiceCheckState; stopFacts?: StopFacts };
+// detail, its image reference, and its stop facts when the Engine answered for
+// it with times the Collector can read.
+export type ContainerOutcome = {
+  detail: string;
+  image?: string;
+  state: ServiceCheckState;
+  stopFacts?: StopFacts;
+};
 
 // Where the Docker Engine listens: a unix socket, or an address this Collector
 // cannot talk to (`DOCKER_HOST` names another transport).
@@ -200,8 +206,12 @@ const containerOutcome = (body: unknown, container: string): ContainerOutcome =>
     state: body.State,
     ...(status === undefined ? {} : { status }),
   });
-  const withFacts = (outcome: ContainerOutcome): ContainerOutcome =>
-    stopFacts === undefined ? outcome : { ...outcome, stopFacts };
+  const image = ServiceImageSchema.safeParse(isRecord(body.Config) ? body.Config.Image : undefined);
+  const withFacts = (outcome: ContainerOutcome): ContainerOutcome => ({
+    ...outcome,
+    ...(image.success ? { image: image.data } : {}),
+    ...(stopFacts === undefined ? {} : { stopFacts }),
+  });
   if (running && status !== 'paused' && status !== 'restarting') {
     return withFacts({ detail: `status ${status ?? 'running'}`, state: 'up' });
   }

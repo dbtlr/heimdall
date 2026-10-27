@@ -63,6 +63,26 @@ const refuses = async (kind: string, body: unknown, message: string) => {
 };
 
 describe('record', () => {
+  test.each([true, false])(
+    'a Service can name its Application when recorded first is %s',
+    async (serviceFirst) => {
+      await using dir = await tempStateDir();
+      const linked = { ...service, application: application.name };
+      if (serviceFirst) {
+        expect((await pipe(['record', 'service'], linked, dir.path)).code).toBe(0);
+        expect((await pipe(['record', 'application'], application, dir.path)).code).toBe(0);
+      } else {
+        expect((await pipe(['record', 'application'], application, dir.path)).code).toBe(0);
+        expect((await pipe(['record', 'service'], linked, dir.path)).code).toBe(0);
+      }
+
+      expect((await pipe(['forget', 'application', application.name], '', dir.path)).code).toBe(0);
+      const expected: unknown[] = [{ kind: 'service', name: linked.name, record: linked }];
+      const actual: unknown[] = (await stored(dir.path)).records;
+      expect(actual).toEqual(expected);
+    },
+  );
+
   test.each(Object.entries(kinds))(
     '%s is validated, stored, and acknowledged',
     async (kind, body) => {

@@ -633,6 +633,24 @@ const sentService = (
 ) => ({ ...check, since });
 
 describe('the checks a Report carries', () => {
+  test('read a Docker image back through the Hub mirror and the published read schema', async () => {
+    await using h = await startHub();
+    const check = { ...WEB, detail: 'status running', image: 'registry.example/web:1.2.3' };
+    const record: ServiceRecord = {
+      application: 'web-software',
+      container: 'web',
+      name: 'web',
+      supervisor: 'docker',
+    };
+
+    await send(h, { checks: { services: [sentService(check)] }, records: set([service(record)]) });
+
+    expect(await entryOf(h)).toMatchObject({
+      checks: { services: [{ ...check, since: new Date(NOW - 60_000).toISOString() }] },
+      records: [service(record)],
+    });
+  });
+
   test('are read back with the time each file was first seen, sorted by record and path', async () => {
     await using h = await startHub();
     h.clock.now = NOW + 2500;

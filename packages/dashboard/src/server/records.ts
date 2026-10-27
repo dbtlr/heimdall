@@ -120,9 +120,10 @@ const checksOf = (row: SetRow): Checks => {
     ?.map(({ digest, record }) => ({ digest, record }))
     .toSorted((a, b) => compareCodeUnits(a.record, b.record));
   const services = (row.check_services ?? [])
-    .map(({ check, detail, service, since, state }) => ({
+    .map(({ check, detail, image, service, since, state }) => ({
       check,
       detail,
+      image,
       service,
       since: new Date(since).toISOString(),
       state,

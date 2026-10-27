@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { bytes } from './values.ts';
+import { bytes, text } from './values.ts';
 
 // What a provisioner tells a Collector it installed (ADR-0011). A provisioner
 // pipes one record to `heimdall-collector record <kind>`; the Collector checks
@@ -17,17 +17,6 @@ export type RecordKind = (typeof RECORD_KINDS)[number];
 export const RECORD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 const name = z.string().regex(RECORD_NAME);
-
-// Free text for a person to read: no control characters, so it cannot rewrite a
-// terminal or break a line, and well-formed Unicode, so PostgreSQL can store it
-// in a Report.
-const text = (maxLength = 256) =>
-  z
-    .string()
-    .min(1)
-    .max(maxLength)
-    .regex(/^\P{Cc}+$/u, { message: 'must not contain control characters' })
-    .refine((value) => value.isWellFormed(), { message: 'must be well-formed Unicode' });
 
 // The name of one systemd unit. systemctl reads a name with `*`, `?` or `[` as
 // a pattern that can match several units or none, and a name of only digits as
@@ -122,7 +111,13 @@ const recordSchemas = (
 
   const application = object({ name, provenance, source: text().optional(), version: text(128) });
 
-  const service = { health: loopbackUrl.optional(), name, port: port.optional(), provenance };
+  const service = {
+    application: name.optional(),
+    health: loopbackUrl.optional(),
+    name,
+    port: port.optional(),
+    provenance,
+  };
 
   // One calendar entry in the System's local time, with launchd
   // StartCalendarInterval meaning: a field left out matches every value.

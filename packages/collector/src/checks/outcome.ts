@@ -8,6 +8,7 @@ import type { StopFacts } from './stop-log.ts';
 export type ServiceOutcome = {
   check: ServiceCheckKind;
   detail: string;
+  image?: string;
   state: ServiceCheckState;
   stopFacts?: StopFacts;
 };
