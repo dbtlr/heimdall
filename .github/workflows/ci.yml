@@ -33,6 +33,13 @@ jobs:
     env:
       HEIMDALL_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
+      # A fresh runner reads Chromium from a cold disk, so its first launch takes
+      # 5 to 40 seconds before it loads a page (HMD-192). Launching it once in the
+      # background here moves that cost off the DOM tests' clock.
+      - name: Warm Chromium for the DOM tests
+        run: >-
+          chromium --headless --no-sandbox --disable-gpu --dump-dom
+          --user-data-dir="$RUNNER_TEMP/chromium-warm" about:blank > /dev/null 2>&1 &
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
