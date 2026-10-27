@@ -199,3 +199,22 @@ describe('diskReading', () => {
     expect(diskReading([], [condition()])).toBeUndefined();
   });
 });
+
+test('Can wait leaves Service restarted notes on the Services page', () => {
+  const note: Attention = {
+    checkedAt: 100,
+    conditionId: 'restart',
+    evidence: 'current',
+    firstDetected: 0,
+    kind: 'service_restarted',
+    level: 'note',
+    reason: 'Stopped once',
+    service: undefined,
+    subject: 'web',
+    system: 'server-1',
+    unpaired: false,
+  };
+  expect(canWaitRows(['server-1'], [note, reboot('note')])).toEqual([
+    { notes: ['Reboot required'], system: 'server-1' },
+  ]);
+});

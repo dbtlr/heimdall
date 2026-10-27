@@ -864,3 +864,7 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
     }
   }
 };
+
+// Paired Systems keep Service restarted notes on the Services page.
+export const withoutServiceRestartedNotes = (items: readonly Attention[]): Attention[] =>
+  items.filter((item) => !(item.kind === 'service_restarted' && !item.unpaired));

@@ -1,14 +1,18 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { Bot, History, Server } from 'lucide-react';
+import { Bot, Cog, History, Server } from 'lucide-react';
+import { createContext, useContext } from 'react';
 
 import { cn } from '../lib/utils.ts';
+
+export const ServiceAttentionCount = createContext(0);
 
 // Compare and System detail belong to Fleet in the phone navigation.
 // On a phone it is a raised tab bar with an icon over each label, and the
 // current tab takes the primary color; on wider screens it is the header's text links.
 export function AppNavigation() {
+  const count = useContext(ServiceAttentionCount);
   const path = useRouterState({ select: (state) => state.location.pathname });
-  const active = ['/agents', '/timeline'].includes(path) ? path : '/';
+  const active = ['/services', '/agents', '/timeline'].includes(path) ? path : '/';
   return (
     <nav
       aria-label="Main navigation"
@@ -17,6 +21,7 @@ export function AppNavigation() {
       {(
         [
           { icon: Server, label: 'Fleet', to: '/' },
+          { icon: Cog, label: 'Services', to: '/services' },
           { icon: Bot, label: 'Agents', to: '/agents' },
           { icon: History, label: 'Timeline', to: '/timeline' },
         ] as const
@@ -31,7 +36,20 @@ export function AppNavigation() {
           to={to}
         >
           <Icon aria-hidden="true" className="size-6 sm:hidden" />
-          {label}
+          <span className="inline-flex items-center gap-1">
+            {label}
+            {to === '/services' && count > 0 && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary"
+                >
+                  {count}
+                </span>
+                <span className="sr-only">{count} Services down or restarted</span>
+              </>
+            )}
+          </span>
         </Link>
       ))}
     </nav>

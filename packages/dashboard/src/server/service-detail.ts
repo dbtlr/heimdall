@@ -27,7 +27,7 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
 // One Service of System `system` as of `now`: its record and checks, the open
 // Service restarted note, and the stops of the last 90 days, from one snapshot.
 // A System that is no longer paired opens as it was left. Undefined for a
-// System that does not exist, and for a Service with neither a record nor a stop.
+// System that does not exist, and for a Service with no record, stop, or open Service Condition.
 export const readServiceDetail = (
   sql: SQL,
   { now, service, system }: { now: number; service: string; system: string },
@@ -41,10 +41,10 @@ export const readServiceDetail = (
     if (known === undefined) {
       return undefined;
     }
-    const [records, checks, notes, stops]: [
+    const [records, checks, conditions, stops]: [
       RecordRow[],
       Pick<ChecksRow, 'services'>[],
-      { id: string; latest_reason: string; raised_at: Date }[],
+      { id: string; kind: string; latest_reason: string; raised_at: Date }[],
       Awaited<ReturnType<typeof readServiceStops>>,
     ] = await Promise.all([
       tx`
@@ -53,20 +53,20 @@ export const readServiceDetail = (
       `,
       tx`SELECT services FROM check_sets WHERE system = ${system}`,
       tx`
-        SELECT id, raised_at, latest_reason FROM conditions
-        WHERE system = ${system} AND kind = 'service_restarted' AND subject = ${service}
+        SELECT id, kind, raised_at, latest_reason FROM conditions
+        WHERE system = ${system} AND kind IN ('service_down', 'service_restarted') AND subject = ${service}
           AND cleared_at IS NULL
-        ORDER BY id DESC LIMIT 1
+        ORDER BY id DESC
       `,
       // Every stop the Hub holds: those of its 90 days, and one still under way
       // however old, which the Hub keeps until it ends.
       readServiceStops(tx, { includeUnpaired: true, service, system }),
     ]);
     const record = records[0]?.record;
-    if (record === undefined && stops.length === 0) {
+    if (record === undefined && stops.length === 0 && conditions.length === 0) {
       return undefined;
     }
-    const note = notes[0];
+    const note = conditions.find(({ kind }) => kind === 'service_restarted');
     return {
       note:
         note === undefined

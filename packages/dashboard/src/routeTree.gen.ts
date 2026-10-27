@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as CompareRouteImport } from './routes/compare'
+import { Route as ServicesRouteImport } from './routes/services'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
@@ -34,6 +35,11 @@ const AgentsRoute = AgentsRouteImport.update({
 const CompareRoute = CompareRouteImport.update({
   id: '/compare',
   path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServicesRoute = ServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TimelineRoute = TimelineRouteImport.update({
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
@@ -110,6 +118,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
@@ -125,6 +134,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
@@ -165,6 +177,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentsRoute: typeof AgentsRoute
   CompareRoute: typeof CompareRoute
+  ServicesRoute: typeof ServicesRoute
   TimelineRoute: typeof TimelineRoute
   ApiHealthRoute: typeof ApiHealthRoute
   SystemsNameRoute: typeof SystemsNameRoute
@@ -196,6 +209,13 @@ declare module '@tanstack/react-router' {
       path: '/compare'
       fullPath: '/compare'
       preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/services': {
+      id: '/services'
+      path: '/services'
+      fullPath: '/services'
+      preLoaderRoute: typeof ServicesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/timeline': {
@@ -261,6 +281,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
   CompareRoute: CompareRoute,
+  ServicesRoute: ServicesRoute,
   TimelineRoute: TimelineRoute,
   ApiHealthRoute: ApiHealthRoute,
   SystemsNameRoute: SystemsNameRoute,

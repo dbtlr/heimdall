@@ -4,6 +4,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention, AttentionFacts } from '../server/attention-types.ts';
 import {
+  withoutServiceRestartedNotes,
   ATTENTION_NAMES,
   anchorOf,
   attentionMark,
@@ -1028,4 +1029,20 @@ test('Service restarted still offers plain log advice when its Service record is
     commands: [],
     text: "On valhalla, read web's log to see why it stopped.",
   });
+});
+
+test('System Open Conditions exclude Service restarted notes while keeping Service down and uncertain evidence', () => {
+  const note = attention(
+    { kind: 'service_restarted', reason: 'Stopped once', service: undefined },
+    { level: 'note' },
+  );
+  const down = attention(
+    { checks: [], kind: 'service_down', reason: 'Stopped', service: undefined },
+    { level: 'alert' },
+  );
+  const uncertain = attention({ kind: 'checks_missing', set: 'checks' });
+  expect(withoutServiceRestartedNotes([note, down, uncertain])).toEqual([down, uncertain]);
+  expect(withoutServiceRestartedNotes([note])).toEqual([]);
+  const unpaired = { ...note, unpaired: true };
+  expect(withoutServiceRestartedNotes([note, unpaired])).toEqual([unpaired]);
 });

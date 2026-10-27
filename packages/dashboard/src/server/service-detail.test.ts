@@ -179,3 +179,20 @@ describe('parseServiceDetailInput', () => {
     );
   });
 });
+
+for (const kind of ['service_down', 'service_restarted'] as const) {
+  test(`a forgotten Service with only an open ${kind} Condition still opens`, async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addCondition(h.db.sql, {
+      kind,
+      level: kind === 'service_down' ? 'alert' : 'note',
+      raisedAt: -60,
+      subject: 'web',
+      system: 'server-1',
+    });
+    expect(await read(h)).toMatchObject({ recorded: undefined, service: 'web', stops: [] });
+    await h.db.sql`UPDATE conditions SET cleared_at = ${new Date(NOW)} WHERE system = 'server-1'`;
+    expect(await read(h)).toBeUndefined();
+  });
+}

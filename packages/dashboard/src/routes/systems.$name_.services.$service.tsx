@@ -39,18 +39,17 @@ function ServicePage() {
     <>
       <AppHeader />
       <main className="mx-auto max-w-[720px] px-3.5 pb-8 sm:px-[22px]">
-        <Link
-          className="flex min-h-11 items-center text-base text-primary"
-          params={{ name: system }}
-          to="/systems/$name"
-        >
-          ‹ {system}
+        <Link className="flex min-h-11 items-center text-base text-primary" to="/services">
+          ‹ Services
         </Link>
         <header className="min-w-0">
           <h1 className="text-2xl leading-tight font-semibold wrap-anywhere">{service}</h1>
-          {where !== undefined && (
-            <p className="text-sm text-muted-foreground wrap-anywhere">{where}</p>
-          )}
+          <p className="text-sm text-muted-foreground wrap-anywhere">
+            <Link className="text-primary" params={{ name: system }} to="/systems/$name">
+              {system}
+            </Link>
+            {where !== undefined && <> · {where}</>}
+          </p>
         </header>
         {line !== undefined && (
           <p className="mt-3 flex items-baseline gap-2 text-sm text-muted-foreground">
