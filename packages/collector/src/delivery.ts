@@ -103,8 +103,9 @@ export type FlushResult =
   | { delivered: number; kind: 'failed'; reason: string; rejected: Rejection[] };
 
 // Sends the queued backlog oldest first, in Reports of at most `batchSize`
-// samples, until the queue is empty or a delivery fails. Every Report carries
-// the transcripts section as it stands when the Report is sent (ADR-0013), and
+// samples and `maxReportBytes` bytes, until the queue is empty or a delivery
+// fails. Every Report carries the transcripts section as it stands when the
+// Report is sent (ADR-0013), and
 // the System's time zone when it has one. The pending records, runs, and checks
 // sections are asked for once per flush and ride on the first Report that stays within
 // the Hub's cap. A Report that would exceed it goes without them, and they stay
@@ -116,6 +117,7 @@ export type FlushResult =
 export const flushQueue = async ({
   batchSize = MAX_SAMPLES_PER_REPORT,
   identity,
+  maxReportBytes = MAX_REPORT_BYTES,
   now,
   queue,
   sections,
@@ -125,6 +127,7 @@ export const flushQueue = async ({
 }: {
   batchSize?: number;
   identity: ReportIdentity;
+  maxReportBytes?: number;
   now: () => number;
   queue: SampleQueue;
   sections: SectionsSource;
@@ -153,7 +156,7 @@ export const flushQueue = async ({
     };
     // Censuses vary with the process count. Keep their queued history intact
     // by shrinking the oldest-first batch until its encoded body fits.
-    while (base.samples.length > 1 && Buffer.byteLength(JSON.stringify(base)) > MAX_REPORT_BYTES) {
+    while (base.samples.length > 1 && Buffer.byteLength(JSON.stringify(base)) > maxReportBytes) {
       base.samples = base.samples.slice(0, Math.ceil(base.samples.length / 2));
     }
     const reportWith = (
@@ -193,7 +196,7 @@ export const flushQueue = async ({
         records !== undefined ||
         runs !== undefined ||
         serviceStops !== undefined) &&
-      Buffer.byteLength(JSON.stringify(withSections)) <= MAX_REPORT_BYTES;
+      Buffer.byteLength(JSON.stringify(withSections)) <= maxReportBytes;
     // oxlint-disable-next-line no-await-in-loop -- batches go one at a time, oldest first.
     let outcome = await send(carrying ? withSections : reportWith({}));
     if (carrying && outcome.kind !== 'failed') {

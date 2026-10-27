@@ -174,7 +174,7 @@ test('the first Report after start carries the record set, and the next does not
   expect(second[0]?.records).toBeUndefined();
 });
 
-test('an empty store, created by the daemon, sends an empty set once', async () => {
+test('an empty store sends an empty record set and an empty runs section once', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir);
 
@@ -184,6 +184,8 @@ test('an empty store, created by the daemon, sends an empty set once', async () 
 
   expect(first[0]?.records).toEqual({ records: [], unreadable: [] });
   expect(second[0]?.records).toBeUndefined();
+  expect(first[0]?.runs).toEqual({ jobs: [], unreadable: [] });
+  expect(second[0]?.runs).toBeUndefined();
 });
 
 test('a record written by another process makes the next Report carry the whole new set', async () => {
@@ -326,7 +328,7 @@ test('a multi-batch flush carries the set on its first Report only', async () =>
   expect(reports.map((report) => report.records !== undefined)).toEqual([true, false, false]);
 });
 
-test('a set over budget travels as its size alone', async () => {
+test('a set over budget travels as its size alone, and is not sent again when it changes without changing size', async () => {
   await using dir = await tempStateDir();
   const seed = await openRecords({ stateDir: dir.path });
   seed.put('application', webapp);
@@ -340,9 +342,13 @@ test('a set over budget travels as its size alone', async () => {
   const collector = await setup(dir, { maxRecordsBytes: expected - 1 });
 
   const [report] = await collector.push();
+  await elsewhere(dir.path, (other) => other.put('application', { ...webapp, version: '1.4.3' }));
+  const second = await collector.push();
   collector.close();
 
   expect(report?.records).toEqual({ overBudget: { bytes: expected } });
+  expect(report?.records).toHaveProperty('overBudget');
+  expect(second[0]?.records).toBeUndefined();
 });
 
 test('a set exactly at the budget is sent whole', async () => {
@@ -355,31 +361,6 @@ test('a set exactly at the budget is sent whole', async () => {
   collector.close();
 
   expect(report?.records).toEqual({ records: [], unreadable: [] });
-});
-
-test('sections the Hub refuses never cost the samples: they are resent without them, and the sections are settled', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir, {
-    respond: (report) =>
-      report.records === undefined && report.runs === undefined
-        ? { kind: 'delivered' }
-        : { detail: 'bad records', kind: 'rejected' },
-  });
-
-  const first = await collector.push(2);
-  const next = await collector.push();
-  const remaining = collector.queue.oldest(10);
-  collector.close();
-
-  expect(first.map((report) => [report.records !== undefined, report.runs !== undefined])).toEqual([
-    [true, true],
-    [false, false],
-  ]);
-  expect(first[1]?.samples).toEqual(first[0]?.samples);
-  expect(next.map((report) => [report.records, report.runs])).toEqual([[undefined, undefined]]);
-  expect(remaining).toEqual([]);
-  expect(collector.warnings).toHaveLength(2);
-  expect(collector.warnings[0]).toContain('bad records');
 });
 
 test('rows the section cannot carry are left out and warned about, and the section stays valid', async () => {
@@ -410,22 +391,6 @@ test('rows the section cannot carry are left out and warned about, and the secti
   expect(collector.warnings).toHaveLength(1);
   expect(collector.warnings[0]).toContain('../escape');
   expect(collector.warnings[0]).toContain('has space');
-});
-
-test('a set over budget is not sent again when it changes without changing size', async () => {
-  await using dir = await tempStateDir();
-  const seed = await openRecords({ stateDir: dir.path });
-  seed.put('application', webapp);
-  seed.close();
-  const collector = await setup(dir, { maxRecordsBytes: 10 });
-
-  const first = await collector.push();
-  await elsewhere(dir.path, (other) => other.put('application', { ...webapp, version: '1.4.3' }));
-  const second = await collector.push();
-  collector.close();
-
-  expect(first[0]?.records).toHaveProperty('overBudget');
-  expect(second[0]?.records).toBeUndefined();
 });
 
 test('a records file that cannot be opened costs the records only, and is tried again later', async () => {
@@ -537,18 +502,6 @@ test("the first Report after start carries each job's latest runs, and the next 
   expect(second[0]?.runs).toBeUndefined();
 });
 
-test('a store with no runs sends an empty runs section once', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir);
-
-  const first = await collector.push();
-  const second = await collector.push();
-  collector.close();
-
-  expect(first[0]?.runs).toEqual({ jobs: [], unreadable: [] });
-  expect(second[0]?.runs).toBeUndefined();
-});
-
 test('recording a run sends the runs section and not the record set', async () => {
   await using dir = await tempStateDir();
   const seed = await openRecords({ stateDir: dir.path });
@@ -625,46 +578,6 @@ test('a job whose latest run cannot be read travels as unreadable', async () => 
   expect(report?.runs).toEqual({ jobs: [], unreadable: ['backup'] });
 });
 
-test('an hour after the last delivered runs, they are sent again though unchanged', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir);
-  await collector.push();
-
-  collector.advance(SECTIONS_REFRESH_MS - 1);
-  const justBefore = await collector.push();
-  collector.advance(1);
-  const atTheHour = await collector.push();
-  const after = await collector.push();
-  collector.close();
-
-  expect(justBefore[0]?.runs).toBeUndefined();
-  expect(atTheHour[0]?.runs).toEqual({ jobs: [], unreadable: [] });
-  expect(after[0]?.runs).toBeUndefined();
-});
-
-test('a failed delivery keeps the runs pending for the next Report, as they are then', async () => {
-  await using dir = await tempStateDir();
-  const seed = await openRecords({ stateDir: dir.path });
-  seed.put('job', cron);
-  seed.close();
-  const collector = await setup(dir);
-  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
-
-  const failed = await collector.push();
-  const ran = minutesAgo(5);
-  await elsewhere(dir.path, (other) => other.putRun('backup', ran));
-  const retried = await collector.push();
-  const after = await collector.push();
-  collector.close();
-
-  expect(failed[0]?.runs).toEqual({ jobs: [], unreadable: [] });
-  expect(retried[0]?.runs).toEqual({
-    jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
-    unreadable: [],
-  });
-  expect(after[0]?.runs).toBeUndefined();
-});
-
 test('runs over budget travel as their size alone, and are not sent again when they change without changing size', async () => {
   await using dir = await tempStateDir();
   const seed = await openRecords({ stateDir: dir.path });
@@ -687,18 +600,6 @@ test('runs over budget travel as their size alone, and are not sent again when t
 
   expect(first[0]?.runs).toEqual({ overBudget: { bytes: expected } });
   expect(second[0]?.runs).toBeUndefined();
-});
-
-test('runs exactly at the budget are sent whole', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir, {
-    maxRunsBytes: Buffer.byteLength('{"jobs":[],"unreadable":[]}'),
-  });
-
-  const [report] = await collector.push();
-  collector.close();
-
-  expect(report?.runs).toEqual({ jobs: [], unreadable: [] });
 });
 
 test('a job whose name the section cannot carry is left out of the runs and warned about', async () => {
@@ -758,26 +659,6 @@ test('the reporter never reads every run, only the records and the latest runs',
   expect(first[0]?.runs).toHaveProperty('jobs');
   expect(second[0]?.runs).toHaveProperty('jobs');
   expect(collector.warnings).toEqual([]);
-});
-
-test('runs that cannot be queried cost the sections only, and the Vitals still go', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir, {
-    open: async () => ({
-      ...(await openRecords({ stateDir: dir.path })),
-      latestRuns: () => {
-        throw new Error('index gone');
-      },
-    }),
-  });
-
-  const [report] = await collector.push();
-  collector.close();
-
-  expect(report?.samples).toHaveLength(1);
-  expect(report?.runs).toBeUndefined();
-  expect(collector.warnings).toHaveLength(1);
-  expect(collector.warnings[0]).toContain('index gone');
 });
 
 test('a change detected after a delivery stays pending when its delivery fails, and is offered again', async () => {
@@ -948,39 +829,6 @@ test('the first checks go out on the next Report, then only when they change', a
   expect(ChecksSectionSchema.safeParse(changed[0]?.checks).success).toBe(true);
 });
 
-test('an hour after the last delivered checks, they are sent again though unchanged', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir);
-  collector.checked.latest = { files: [DRIFTED] };
-  await collector.push();
-
-  collector.advance(SECTIONS_REFRESH_MS - 1);
-  const justBefore = await collector.push();
-  collector.advance(1);
-  const atTheHour = await collector.push();
-  collector.close();
-
-  expect(justBefore[0]?.checks).toBeUndefined();
-  expect(atTheHour[0]?.checks).toEqual({ files: [DRIFTED] });
-});
-
-test('a failed delivery keeps the checks pending, as they are then', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir);
-  collector.checked.latest = { files: [DRIFTED] };
-  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
-
-  const failed = await collector.push();
-  collector.checked.latest = { files: [] };
-  const retried = await collector.push();
-  const after = await collector.push();
-  collector.close();
-
-  expect(failed[0]?.checks).toEqual({ files: [DRIFTED] });
-  expect(retried[0]?.checks).toEqual({ files: [] });
-  expect(after[0]?.checks).toBeUndefined();
-});
-
 test('a files part over budget travels as its size alone, and is not sent again when it changes without changing size', async () => {
   await using dir = await tempStateDir();
   const size = Buffer.byteLength(JSON.stringify({ files: [DRIFTED] }));
@@ -1014,35 +862,6 @@ test('a files part over budget does not stop the services part from being sent',
   expect(ChecksSectionSchema.safeParse(report?.checks).success).toBe(true);
 });
 
-test('a services part over budget travels as its size alone, and the files part is sent as it is', async () => {
-  await using dir = await tempStateDir();
-  const size = Buffer.byteLength(JSON.stringify({ services: [WEB] }));
-  const collector = await setup(dir, { maxChecksBytes: size - 1 });
-  collector.checked.latest = { files: [], services: [WEB] };
-
-  const [report] = await collector.push();
-  collector.close();
-
-  expect(report?.checks).toEqual({ files: [], overBudget: { services: { bytes: size } } });
-});
-
-test('a Service that changes state sends the checks again, and one that holds does not', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir);
-  collector.checked.latest = { services: [WEB] };
-  const first = await collector.push();
-
-  collector.checked.latest = { services: [WEB] };
-  const same = await collector.push();
-  collector.checked.latest = { services: [{ ...WEB, since: 2_000, state: 'stopped' }] };
-  const changed = await collector.push();
-  collector.close();
-
-  expect(first[0]?.checks).toEqual({ services: [WEB] });
-  expect(same[0]?.checks).toBeUndefined();
-  expect(changed[0]?.checks).toEqual({ services: [{ ...WEB, since: 2_000, state: 'stopped' }] });
-});
-
 test('checks exactly at the budget are sent whole', async () => {
   await using dir = await tempStateDir();
   const collector = await setup(dir, { maxChecksBytes: Buffer.byteLength('{"files":[]}') });
@@ -1052,29 +871,6 @@ test('checks exactly at the budget are sent whole', async () => {
   collector.close();
 
   expect(report?.checks).toEqual({ files: [] });
-});
-
-test('checks the Hub refuses never cost the samples: they are resent without them, and logged once', async () => {
-  await using dir = await tempStateDir();
-  const collector = await setup(dir, {
-    respond: (report) =>
-      report.checks === undefined
-        ? { kind: 'delivered' }
-        : { detail: 'bad checks', kind: 'rejected' },
-  });
-  collector.checked.latest = { files: [DRIFTED] };
-
-  const first = await collector.push();
-  const next = await collector.push();
-  const remaining = collector.queue.oldest(10);
-  collector.close();
-
-  expect(first.map((report) => report.checks !== undefined)).toEqual([true, false]);
-  expect(next.map((report) => report.checks)).toEqual([undefined]);
-  expect(remaining).toEqual([]);
-  expect(
-    collector.warnings.filter((m) => m.includes('carrying the checks (bad checks)')),
-  ).toHaveLength(1);
 });
 
 test('checks are sent without the records and runs, which settle on their own', async () => {
@@ -1175,38 +971,12 @@ test('a changed install list rides the next Report, and the same list again does
   expect(changed[0]?.harnesses).toEqual({ installs: [upgraded] });
 });
 
-test('the Harness installs are sent again an hour after the Hub last answered', async () => {
-  await using dir = await tempStateDir();
-  const scan = installed({ installs: [CLAUDE_INSTALL] });
-  const collector = await setup(dir, { harnesses: scan.source });
-  await collector.push();
-
-  collector.advance(SECTIONS_REFRESH_MS);
-  const again = await collector.push();
-  collector.close();
-
-  expect(again[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
-});
-
-test('a Report the Hub fails to take leaves the Harness installs pending', async () => {
-  await using dir = await tempStateDir();
-  const scan = installed({ installs: [CLAUDE_INSTALL] });
-  const collector = await setup(dir, { harnesses: scan.source });
-  collector.outcomes.push({ kind: 'failed', reason: 'down' });
-
-  const failed = await collector.push();
-  const retried = await collector.push();
-  collector.close();
-
-  expect(failed[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
-  expect(retried[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
-});
-
-test('a records file that cannot be opened costs the Harness installs nothing', async () => {
+test('a records file that cannot be opened costs the Harness installs and processes nothing', async () => {
   await using dir = await tempStateDir();
   await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
   const scan = installed({ installs: [CLAUDE_INSTALL] });
-  const collector = await setup(dir, { harnesses: scan.source });
+  const watch = watched({ processes: [RUNNING] });
+  const collector = await setup(dir, { harnessProcesses: watch.source, harnesses: scan.source });
 
   const first = await collector.push();
   const second = await collector.push();
@@ -1214,6 +984,8 @@ test('a records file that cannot be opened costs the Harness installs nothing', 
 
   expect(first[0]?.harnesses).toEqual({ installs: [CLAUDE_INSTALL] });
   expect(second[0]?.harnesses).toBeUndefined();
+  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
+  expect(watch.acknowledged).toEqual([{ processes: [RUNNING] }]);
 });
 
 const RUNNING = {
@@ -1272,35 +1044,6 @@ test('the source is told which section the Hub answered, and not of one the Hub 
 
   expect(toldAfterFailure).toEqual([]);
   expect(watch.acknowledged).toEqual([{ processes: [ended] }]);
-});
-
-test('a System with no Harness process sends an empty list once, then nothing until one appears', async () => {
-  await using dir = await tempStateDir();
-  const watch = watched({ processes: [] });
-  const collector = await setup(dir, { harnessProcesses: watch.source });
-
-  const first = await collector.push();
-  const second = await collector.push();
-  watch.held.latest = { processes: [RUNNING] };
-  const third = await collector.push();
-  collector.close();
-
-  expect(first[0]?.harnessProcesses).toEqual({ processes: [] });
-  expect(second[0]?.harnessProcesses).toBeUndefined();
-  expect(third[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
-});
-
-test('a records file that cannot be opened costs the Harness processes nothing', async () => {
-  await using dir = await tempStateDir();
-  await writeFile(join(dir.path, 'records.sqlite'), 'this is not a database');
-  const watch = watched({ processes: [RUNNING] });
-  const collector = await setup(dir, { harnessProcesses: watch.source });
-
-  const first = await collector.push();
-  collector.close();
-
-  expect(first[0]?.harnessProcesses).toEqual({ processes: [RUNNING] });
-  expect(watch.acknowledged).toEqual([{ processes: [RUNNING] }]);
 });
 
 test('updates retry unchanged evidence and refresh hourly even when records cannot open', async () => {

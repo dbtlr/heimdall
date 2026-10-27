@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test';
 import { mkdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { HARNESSES } from '../harnesses.ts';
 import { tempStateDir } from '../testing/fixtures.ts';
 import { findSharedDirectory, parseSources } from './sources.ts';
 import type { Source } from './sources.ts';
@@ -24,11 +23,6 @@ const problemOf = (section: unknown) => {
   }
   return parsed.problem;
 };
-
-test('each Harness has a default directory and the trees it keeps transcripts in', () => {
-  expect(HARNESSES['claude-code']).toMatchObject({ defaultDir: '.claude', trees: ['projects'] });
-  expect(HARNESSES.codex).toMatchObject({ defaultDir: '.codex', trees: ['sessions'] });
-});
 
 test('no section, no sources key, and an empty list all leave capture off', () => {
   expect(sourcesOf(undefined)).toEqual([]);

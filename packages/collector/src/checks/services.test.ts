@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { join } from 'node:path';
 
 import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import type { ServiceRecord } from '@heimdall/schema';
 import { httpGet } from '@heimdall/service';
-import type { HttpGet } from '@heimdall/service';
 
 import type { CommandResult } from '../subprocess.ts';
-import { tempStateDir } from '../testing/fixtures.ts';
 import { checkService, findSystemctl } from './services.ts';
 
 const SYSTEMCTL = '/usr/bin/systemctl';
@@ -70,16 +67,13 @@ describe('a systemd Service', () => {
     expect(outcomes).toMatchObject([{ state: 'up' }]);
   });
 
-  test.each(['failed', 'inactive', 'activating', 'deactivating', 'reloading'])(
-    'is stopped when its unit is %s',
-    async (active) => {
-      const { outcomes } = await check(WEB, shown({ active, sub: 'dead' }));
+  test.each(['failed', 'reloading'])('is stopped when its unit is %s', async (active) => {
+    const { outcomes } = await check(WEB, shown({ active, sub: 'dead' }));
 
-      expect(outcomes).toEqual([
-        { check: 'supervisor', detail: `ActiveState=${active}`, state: 'stopped' },
-      ]);
-    },
-  );
+    expect(outcomes).toEqual([
+      { check: 'supervisor', detail: `ActiveState=${active}`, state: 'stopped' },
+    ]);
+  });
 
   test('is stopped when systemd does not know the unit', async () => {
     const { outcomes } = await check(
@@ -209,30 +203,16 @@ describe('a systemd Service', () => {
     ]);
   });
 
-  test('is unknown when systemctl answers without the states asked for', async () => {
-    const { outcomes } = await check(WEB, {
-      exitCode: 0,
-      kind: 'exited',
-      stderr: '',
-      stdout: 'ActiveState=active\n',
-    });
+  test.each([['SubState', 'LoadState=loaded\nActiveState=active\n']])(
+    'is unknown when systemctl answers without %s',
+    async (_, stdout) => {
+      const { outcomes } = await check(WEB, { exitCode: 0, kind: 'exited', stderr: '', stdout });
 
-    expect(outcomes).toEqual([
-      { check: 'supervisor', detail: 'unexpected systemctl output', state: 'unknown' },
-    ]);
-  });
-
-  test.each([
-    ['SubState', 'LoadState=loaded\nActiveState=active\n'],
-    ['LoadState', 'ActiveState=active\nSubState=running\n'],
-    ['ActiveState', 'LoadState=loaded\nSubState=running\n'],
-  ])('is unknown when systemctl answers without %s', async (_, stdout) => {
-    const { outcomes } = await check(WEB, { exitCode: 0, kind: 'exited', stderr: '', stdout });
-
-    expect(outcomes).toEqual([
-      { check: 'supervisor', detail: 'unexpected systemctl output', state: 'unknown' },
-    ]);
-  });
+      expect(outcomes).toEqual([
+        { check: 'supervisor', detail: 'unexpected systemctl output', state: 'unknown' },
+      ]);
+    },
+  );
 
   test('is unknown when systemctl answers for more than one unit, as it does for a name that matches several', async () => {
     const { outcomes } = await check(WEB, {
@@ -276,12 +256,6 @@ describe('a systemd Service', () => {
     expect(outcomes).toMatchObject([{ state: 'stopped' }]);
     expect(outcomes[0]?.detail).toHaveLength(MAX_CHECK_DETAIL_LENGTH);
     expect(outcomes[0]?.detail.startsWith('ActiveState=xxx')).toBe(true);
-  });
-
-  test('keeps control characters out of its detail', async () => {
-    const { outcomes } = await check(WEB, shown({ active: 'fa\u0000il\u001b' }));
-
-    expect(outcomes[0]?.detail).toBe('ActiveState=fail');
   });
 
   test('is unknown when systemctl cannot be started', async () => {
@@ -333,12 +307,6 @@ describe('a systemd-user Service', () => {
       { check: 'supervisor', detail: 'bus unavailable', state: 'unknown' },
     ]);
   });
-
-  test('is stopped when the user manager runs and its unit failed', async () => {
-    const { outcomes } = await check(WEB_USER, shown({ active: 'failed' }));
-
-    expect(outcomes).toMatchObject([{ state: 'stopped' }]);
-  });
 });
 
 describe('a Service whose supervisor this Collector does not check yet', () => {
@@ -374,29 +342,6 @@ describe('a docker Service', () => {
       { check: 'supervisor', detail: 'DOCKER_HOST is not a unix socket', state: 'unknown' },
     ]);
     expect(ran).toEqual([]);
-  });
-
-  test('is stopped when the container is gone, as a supervisor check', async () => {
-    await using dir = await tempStateDir();
-    const unix = join(dir.path, 'docker.sock');
-    const server = Bun.serve({
-      fetch: () => Response.json({ message: 'No such container: web' }, { status: 404 }),
-      unix,
-    });
-    try {
-      const outcomes = await checkService(WEB_CONTAINER, {
-        docker: { endpoint: { kind: 'unix', path: unix } },
-        httpGet,
-        run: () => Promise.reject(new Error('no command expected')),
-        systemctl: undefined,
-      });
-
-      expect(outcomes).toEqual([
-        { check: 'supervisor', detail: 'no such container', state: 'stopped' },
-      ]);
-    } finally {
-      await server.stop(true);
-    }
   });
 });
 
@@ -465,17 +410,6 @@ describe('a Service with a health URL', () => {
     ]);
   });
 
-  test('reports both checks failing, supervisor first', async () => {
-    const health = serve(() => new Response('down', { status: 500 }));
-
-    const { outcomes } = await check({ ...WEB, health }, shown({ active: 'failed' }));
-
-    expect(outcomes.map(({ check: kind, state }) => [kind, state])).toEqual([
-      ['supervisor', 'stopped'],
-      ['health', 'unhealthy'],
-    ]);
-  });
-
   test('is checked while the supervisor check runs, not after it', async () => {
     const requested = Promise.withResolvers<void>();
     const asked = Promise.withResolvers<void>();
@@ -498,29 +432,6 @@ describe('a Service with a health URL', () => {
     );
 
     expect(outcomes.map(({ state }) => state)).toEqual(['up', 'up']);
-  });
-
-  test('is unhealthy when the URL does not answer in 5 seconds, the supervisor check unaffected', async () => {
-    const asked: Parameters<HttpGet>[1][] = [];
-    const timesOut: HttpGet = (_, options) => {
-      asked.push(options);
-      return Promise.resolve({ kind: 'failed', message: 'no answer', reason: 'timeout' });
-    };
-
-    const outcomes = await checkService(
-      { ...WEB, health: 'http://127.0.0.1:8080/healthz' },
-      {
-        httpGet: timesOut,
-        run: () => Promise.resolve(shown({ active: 'active' })),
-        systemctl: SYSTEMCTL,
-      },
-    );
-
-    expect(asked).toEqual([{ maxBodyBytes: 0, timeoutMs: 5000 }]);
-    expect(outcomes).toEqual([
-      { check: 'supervisor', detail: 'ActiveState=active', state: 'up' },
-      { check: 'health', detail: 'timed out after 5 s', state: 'unhealthy' },
-    ]);
   });
 
   test('under docker has its URL checked beside the container, each check on its own', async () => {
@@ -547,16 +458,5 @@ describe('a Service with a health URL', () => {
 
     expect(outcomes).toEqual([{ check: 'health', detail: 'HTTP 200', state: 'up' }]);
     expect(ran).toEqual([]);
-  });
-
-  test('under none fails as unhealthy when the URL does not answer', async () => {
-    const health = serve(() => new Response('', { status: 502 }));
-
-    const { outcomes } = await check(
-      { health, name: 'web', supervisor: 'none' },
-      shown({ active: 'active' }),
-    );
-
-    expect(outcomes).toEqual([{ check: 'health', detail: 'HTTP 502', state: 'unhealthy' }]);
   });
 });

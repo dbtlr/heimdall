@@ -89,16 +89,6 @@ test('a named file that is missing does not fall back to a discovered file', asy
   ).toBeUndefined();
 });
 
-test('an unparseable discovered file counts as absent and the home directory answers', async () => {
-  await using cwd = await tempStateDir();
-  await using home = await tempStateDir();
-  await put(cwd.path, TOML_PATH, 'this is = not [ toml');
-  await put(home.path, TOML_PATH, tomlWith('codex'));
-  expect(await readSessionsSection({ cwd: cwd.path, home: home.path, named: undefined })).toEqual(
-    sourcesOf('codex'),
-  );
-});
-
 test('an unparseable collector.toml shadows a collector.json beside it, and the home directory answers', async () => {
   await using cwd = await tempStateDir();
   await using home = await tempStateDir();

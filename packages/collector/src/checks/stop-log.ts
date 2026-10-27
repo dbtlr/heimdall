@@ -88,18 +88,21 @@ type StopRow = SentServiceStop & { id: number; ongoing: number; revision: number
 
 // Opens the log in `stateDir`, apart from the records, since a stop is what
 // the Collector observed and not what a provisioner recorded (ADR-0011). `now`
-// is the clock for pruning, in epoch milliseconds.
+// is the clock for pruning, in epoch milliseconds, and `maxStopsPerService` how
+// many ended stops it keeps for each Service.
 export const openStopLog = async ({
+  maxStopsPerService = MAX_STOPS_PER_SERVICE,
   now = Date.now,
   stateDir,
 }: {
+  maxStopsPerService?: number;
   now?: () => number;
   stateDir: string;
 }): Promise<StopLog> => {
   await mkdir(stateDir, { mode: 0o700, recursive: true });
   const db = new Database(join(stateDir, 'stops.sqlite'), { create: true, strict: true });
   try {
-    return logOver(db, now);
+    return logOver(db, now, maxStopsPerService);
   } catch (error) {
     db.close();
     throw error;
@@ -110,7 +113,7 @@ export const openStopLog = async ({
 // Hub last took, so a stop that changes after a Report carried it is sent again.
 // `changed_at` is when it last changed, on the Collector's clock, which ages it,
 // so a long stop that just ended is kept until the Hub learns of its end.
-const logOver = (db: Database, now: () => number): StopLog => {
+const logOver = (db: Database, now: () => number, maxStopsPerService: number): StopLog => {
   db.run('PRAGMA busy_timeout = 5000');
   db.run('PRAGMA journal_mode = WAL');
   db.run(
@@ -164,7 +167,7 @@ const logOver = (db: Database, now: () => number): StopLog => {
   );
   const pruneService = db.query(
     `DELETE FROM stops WHERE key = $key AND ongoing = 0 AND id NOT IN
-      (SELECT id FROM stops WHERE key = $key ORDER BY id DESC LIMIT ${String(MAX_STOPS_PER_SERVICE)})`,
+      (SELECT id FROM stops WHERE key = $key ORDER BY id DESC LIMIT ${String(maxStopsPerService)})`,
   );
   const pruneOld = db.query('DELETE FROM stops WHERE ongoing = 0 AND changed_at < $cutoff');
   const selectPending = db.query<StopRow, []>(

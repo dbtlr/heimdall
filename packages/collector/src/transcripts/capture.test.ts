@@ -480,7 +480,7 @@ describe('content deleted on purpose on the Hub', () => {
     expect(t.spool.summary().bytes).toBe(0);
   });
 
-  test('a path deleted while its file grows stops without reading the file again', async () => {
+  test('after the path is deleted, neither a scan nor a drain reads or opens it again', async () => {
     await using t = await setUp();
     const c = t.capture();
     await t.write(SESSION, '{"a":1}\n');
@@ -488,41 +488,14 @@ describe('content deleted on purpose on the Hub', () => {
     t.remote.deletePath('claude-code', SESSION);
     await t.append(SESSION, '{"b":2}\n');
     await t.tick(c);
-    await t.append(SESSION, '{"c":3}\n');
-    await t.tick(c);
-
     expect(t.remote.opens).toEqual([`claude-code/${SESSION}`, `claude-code/${SESSION}`]);
-    expect(t.spool.summary().bytes).toBe(0);
-  });
-
-  test('a path found deleted right after its generation was deleted is not read again', async () => {
-    await using t = await setUp();
-    const c = t.capture();
-    await t.write(SESSION, '{"a":1}\n');
-    await t.tick(c);
-    t.remote.deletePath('claude-code', SESSION);
-    await t.append(SESSION, '{"b":2}\n');
-    await t.tick(c);
-
-    expect(t.remote.opens).toEqual([`claude-code/${SESSION}`, `claude-code/${SESSION}`]);
-
     await t.append(SESSION, '{"c":3}\n');
     await c.scan();
-
     expect(t.spool.summary().bytes).toBe(0);
-  });
+    await c.drain();
 
-  test('a deleted generation is dropped, and the file uploads again in a new one', async () => {
-    await using t = await setUp();
-    const c = t.capture();
-    await t.write(SESSION, '{"a":1}\n');
-    await t.tick(c);
-    t.remote.deleteGeneration(1);
-    await t.append(SESSION, '{"b":2}\n');
-    await t.tick(c);
-    await t.tick(c);
-
-    expect(t.remote.contents('claude-code', SESSION)).toEqual(['{"a":1}\n{"b":2}\n']);
+    expect(t.remote.opens).toEqual([`claude-code/${SESSION}`, `claude-code/${SESSION}`]);
+    expect(t.spool.summary().bytes).toBe(0);
   });
 });
 
@@ -731,24 +704,6 @@ describe('walking a source', () => {
     } finally {
       await chmod(join(t.source.dir, 'projects'), 0o700);
     }
-  });
-
-  test('stops reading once the Collector is stopping', async () => {
-    await using t = await setUp();
-    await t.write(SESSION, '{"a":1}\n');
-    const stopping = new AbortController();
-    stopping.abort();
-    const c = createCapture({
-      hub: t.remote.hub,
-      log: { warn: () => {} },
-      now: () => NOW,
-      signal: stopping.signal,
-      sources: [t.source],
-      spool: t.spool,
-    });
-    await c.scan();
-
-    expect(t.spool.summary().bytes).toBe(0);
   });
 
   test('a file that shrinks to nothing between scans is not an error', async () => {

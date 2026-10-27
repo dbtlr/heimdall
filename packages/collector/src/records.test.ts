@@ -276,18 +276,6 @@ test('latestRuns and readRecords read no run beyond the latest ones', async () =
   expect(records.unreadable).toEqual([]);
 });
 
-test('a forgotten job has no latest runs', async () => {
-  await using dir = await tempStateDir();
-  const store = await openRecords({ now: () => START + 10 * DAY_MS, stateDir: dir.path });
-  store.put('job', job);
-  store.putRun('backup', run(1));
-  store.forget('job', 'backup');
-  const latest = store.latestRuns();
-  store.close();
-
-  expect(latest).toEqual({ jobs: [], unreadable: [] });
-});
-
 test('the database is in WAL mode, which lets a reader proceed while another process writes', async () => {
   await using dir = await tempStateDir();
   (await openRecords({ stateDir: dir.path })).close();

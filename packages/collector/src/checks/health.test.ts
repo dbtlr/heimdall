@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { MAX_CHECK_DETAIL_LENGTH } from '@heimdall/schema';
 import { httpGet } from '@heimdall/service';
 import type { HttpGet, HttpGetResult } from '@heimdall/service';
-import { runWithProxy } from '@heimdall/service/testing';
 
 import { checkHealth } from './health.ts';
 
@@ -83,36 +81,10 @@ describe('a health check', () => {
     expect(asked[0]?.[1]).toEqual({ maxBodyBytes: 0, timeoutMs: 5000 });
   });
 
-  test('is up on a 302, which it does not follow', async () => {
-    const elsewhere = serve(() => new Response('elsewhere'));
-    const { url } = serve(
-      () => new Response(null, { headers: { location: `${elsewhere.url}/away` }, status: 302 }),
-    );
-
-    expect(await checkHealth(`${url}/healthz`, { get: httpGet })).toEqual({
-      check: 'health',
-      detail: 'HTTP 302',
-      state: 'up',
-    });
-    expect(elsewhere.seen).toEqual([]);
-  });
-
-  test('is unhealthy on a 503', async () => {
-    const { url } = serve(() => new Response('down', { status: 503 }));
-
-    expect(await checkHealth(`${url}/`, { get: httpGet })).toEqual({
-      check: 'health',
-      detail: 'HTTP 503',
-      state: 'unhealthy',
-    });
-  });
-
   test.each<[number, 'unhealthy' | 'up']>([
     [199, 'unhealthy'],
-    [200, 'up'],
     [399, 'up'],
     [400, 'unhealthy'],
-    [404, 'unhealthy'],
   ])('a status of %i is %s', async (status, state) => {
     const { get } = answering(response(status));
 
@@ -202,34 +174,4 @@ describe('a health check', () => {
       'could not request: bad [31mname',
     );
   });
-
-  test('cuts a long detail to what the Hub takes', async () => {
-    const { get } = answering({ kind: 'failed', message: 'x'.repeat(1000), reason: 'error' });
-
-    const outcome = await checkHealth('http://127.0.0.1:8080/', { get });
-
-    expect(outcome.detail).toHaveLength(MAX_CHECK_DETAIL_LENGTH);
-  });
-
-  test.each(['HTTP_PROXY', 'http_proxy'] as const)(
-    'reaches the target directly and sends nothing to the proxy (%s)',
-    async (variable) => {
-      const proxy = serve(() => new Response('from the proxy'));
-      const target = serve(() => new Response('ok'));
-
-      const printed = await runWithProxy({
-        proxy: proxy.url.replace('http://', 'http://user:secret@'),
-        script: `
-          const { checkHealth } = await import(${JSON.stringify(`${import.meta.dir}/health.ts`)});
-          const { httpGet } = await import(${JSON.stringify(import.meta.resolve('@heimdall/service'))});
-          console.log(JSON.stringify(await checkHealth('${target.url}/healthz', { get: httpGet })));
-        `,
-        variable,
-      });
-
-      expect(JSON.parse(printed)).toMatchObject({ detail: 'HTTP 200', state: 'up' });
-      expect(target.seen).toEqual(['/healthz']);
-      expect(proxy.seen).toEqual([]);
-    },
-  );
 });

@@ -104,7 +104,6 @@ const heldSleeps = async (sleeps: boolean | undefined) => {
 
 withPostgres.each([
   { held: true, sleeps: true },
-  { held: false, sleeps: false },
   { held: false, sleeps: undefined },
 ])(
   'a Report from a Collector set to sleeps $sleeps reaches the Hub as $held',

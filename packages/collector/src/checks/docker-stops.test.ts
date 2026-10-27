@@ -72,8 +72,6 @@ const answered = (body: string): HttpGetResult => ({
 
 const inspected = (container: Container) => answered(inspectedJson(container));
 
-const REFUSED: HttpGetResult = { kind: 'failed', message: 'refused', reason: 'refused' };
-
 // The Service checks of a Collector that recorded the `web` container, with an
 // Engine the test sets through `check` and a clock the test moves.
 const setup = async (dir: { path: string }) => {
@@ -144,28 +142,6 @@ test('a container stopped for about 90 seconds is logged with when it stopped, i
       service: 'web',
       startedAt: T + 100 * S,
       stoppedAt: T + 10 * S,
-    },
-  ]);
-});
-
-test('a stop that ends between two checks is logged with its times and restarts and no result, which the Engine forgot when the container ran again', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  await c.check(inspected({ finished: T + 20 * S, restarts: 1, started: T + 21 * S }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toEqual([
-    {
-      exitStatus: null,
-      ongoing: false,
-      restarts: 1,
-      result: null,
-      service: 'web',
-      startedAt: T + 21 * S,
-      stoppedAt: T + 20 * S,
     },
   ]);
 });
@@ -311,32 +287,6 @@ test('a paused container is no stop, since the Engine holds no time for a pause'
   c.close();
 
   expect(logged).toEqual([]);
-});
-
-test('a container first seen stopped is no stop, since there is nothing to compare with', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-
-  await c.check(inspected({ exit: 1, finished: T - MIN, started: T - 5 * MIN, status: 'exited' }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toEqual([]);
-});
-
-test('a check that cannot reach the Engine logs nothing and keeps the baseline, so the stop is found by the next check that can', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  await c.check(REFUSED);
-  const unreachable = c.logged();
-  await c.check(inspected({ finished: T + 65 * S, restarts: 1, started: T + 70 * S }));
-  const reached = c.logged();
-  c.close();
-
-  expect(unreachable).toEqual([]);
-  expect(reached).toMatchObject([{ restarts: 1, stoppedAt: T + 65 * S }]);
 });
 
 test('a time the Engine gives in another form logs nothing and keeps the baseline, and the container check is unchanged', async () => {

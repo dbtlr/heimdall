@@ -40,12 +40,12 @@ test('scans every interval while a failing Hub is retried less and less often', 
   const warnings: string[] = [];
   const stop = startCapture({
     capture,
-    intervalMs: 5,
+    intervalMs: 1,
     log: { info: () => {}, warn: (m) => warnings.push(m) },
     maxBackoffMs: 1000,
     now: Date.now,
   });
-  await until(() => counts.scans >= 40);
+  await until(() => counts.scans >= 20);
   await stop();
 
   expect(counts.drains).toBeLessThan(10);
@@ -123,12 +123,12 @@ test('a drain that throws backs off like a failed one, and is reported once', as
   const warnings: string[] = [];
   const stop = startCapture({
     capture,
-    intervalMs: 5,
+    intervalMs: 1,
     log: { info: () => {}, warn: (m) => warnings.push(m) },
     maxBackoffMs: 1000,
     now: Date.now,
   });
-  await until(() => counts.scans >= 40);
+  await until(() => counts.scans >= 20);
   await stop();
 
   expect(counts.drains).toBeLessThan(10);

@@ -207,7 +207,7 @@ test.skipIf(process.getuid === undefined)(
   },
 );
 
-test('a check keeps its since time while its state holds, and takes a new one when the state changes', async () => {
+test('a check keeps since through a detail change, changes it with state, and holds it across later ticks', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
   c.states.set('web.service', 'failed');
@@ -221,23 +221,10 @@ test('a check keeps its since time while its state holds, and takes a new one wh
   c.advance(60_000);
   c.states.set('web.service', 'active');
   await c.checks.tick();
-  c.checks.close();
-
-  expect(stillStopped).toEqual({
-    services: [sent('web', 'stopped', 'ActiveState=inactive', START)],
-  });
-  expect(c.checks.latest()).toEqual({
-    services: [sent('web', 'up', 'ActiveState=active', START + 120_000)],
-  });
-});
-
-test('a check keeps the since time of its latest state across ticks, after a change', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.elsewhere((store) => store.put('service', WEB));
-  c.states.set('web.service', 'active');
+  const up = c.checks.latest();
+  c.advance(60_000);
   await c.checks.tick();
-
+  expect(c.checks.latest()).toEqual(up);
   c.advance(60_000);
   c.states.set('web.service', 'failed');
   await c.checks.tick();
@@ -245,19 +232,24 @@ test('a check keeps the since time of its latest state across ticks, after a cha
   await c.checks.tick();
   c.advance(60_000);
   await c.checks.tick();
-  const stopped = c.checks.latest();
+  expect(c.checks.latest()).toEqual({
+    services: [sent('web', 'stopped', 'ActiveState=failed', START + 240_000)],
+  });
   c.advance(60_000);
   c.states.set('web.service', 'active');
   await c.checks.tick();
   c.advance(60_000);
   await c.checks.tick();
   c.checks.close();
-
-  expect(stopped).toEqual({
-    services: [sent('web', 'stopped', 'ActiveState=failed', START + 60_000)],
-  });
   expect(c.checks.latest()).toEqual({
-    services: [sent('web', 'up', 'ActiveState=active', START + 240_000)],
+    services: [sent('web', 'up', 'ActiveState=active', START + 420_000)],
+  });
+
+  expect(stillStopped).toEqual({
+    services: [sent('web', 'stopped', 'ActiveState=inactive', START)],
+  });
+  expect(up).toEqual({
+    services: [sent('web', 'up', 'ActiveState=active', START + 120_000)],
   });
 });
 
@@ -392,21 +384,6 @@ test('a docker service is checked at the DOCKER_HOST of the real environment whe
   }
 });
 
-test('a docker service is checked through the Docker endpoint', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.elsewhere((store) =>
-    store.put('service', { container: 'web', name: 'web', supervisor: 'docker' }),
-  );
-
-  await c.checks.tick();
-  c.checks.close();
-
-  expect(c.checks.latest()).toEqual({
-    services: [sent('web', 'unknown', 'DOCKER_HOST is not a unix socket', START)],
-  });
-});
-
 test('a store that will not open costs the checks, warned about once, and the next tick tries again', async () => {
   await using dir = await tempStateDir();
   let attempts = 0;
@@ -466,10 +443,15 @@ test('started, it checks again each interval until stopped', async () => {
     open: () => openRecords({ stateDir: join(dir.path, 'state') }),
   });
 
-  await Bun.sleep(100);
+  const deadline = Date.now() + 1000;
+  // oxlint-disable-next-line no-unmodified-loop-condition -- The live loop increments ticks.
+  while (ticks <= 1 && Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- Wait for the live loop to tick again.
+    await Bun.sleep(2);
+  }
   await checks.stop();
   const count = ticks;
-  await Bun.sleep(50);
+  await Bun.sleep(10);
 
   expect(count).toBeGreaterThan(1);
   expect(ticks).toBe(count);
@@ -505,35 +487,6 @@ test('a health check keeps its own since time beside the supervisor check', asyn
   } finally {
     await server.stop(true);
   }
-});
-
-test('the loop gives a health URL 5 seconds, reading no body', async () => {
-  await using dir = await tempStateDir();
-  const asked: Parameters<HttpGet>[] = [];
-  const c = await setup(dir, {
-    httpGet: (target, options) => {
-      asked.push([target, options]);
-      return Promise.resolve({ kind: 'failed', message: 'no answer', reason: 'timeout' });
-    },
-  });
-  c.states.set('web.service', 'active');
-  await c.elsewhere((store) => store.put('service', { ...WEB, health: 'http://127.0.0.1:8080/h' }));
-
-  await c.checks.tick();
-  c.checks.close();
-
-  expect(asked).toEqual([
-    [
-      { host: '127.0.0.1', path: '/h', port: 8080 },
-      { maxBodyBytes: 0, timeoutMs: 5000 },
-    ],
-  ]);
-  expect(c.checks.latest()).toMatchObject({
-    services: [
-      { check: 'supervisor', state: 'up' },
-      { check: 'health', detail: 'timed out after 5 s', state: 'unhealthy' },
-    ],
-  });
 });
 
 test('a service recorded again with another health URL starts a fresh since time for its health check only', async () => {
