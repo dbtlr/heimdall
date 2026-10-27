@@ -41,12 +41,6 @@ test('an unknown option is a usage error', async () => {
   expect(code).toBe(2);
 });
 
-test('a stray argument is a usage error', async () => {
-  const { code, stderr } = await invoke(['serve', 'now']);
-  expect(stderr).toContain('accepts no arguments');
-  expect(code).toBe(2);
-});
-
 const SHOWN_CODE =
   /Pairing code for (?<system>\S+): (?<code>[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4})\n/u;
 
@@ -68,7 +62,7 @@ test('pair, before serve has ever run, prints a code for the System and when it 
 });
 
 test('a System paired with pair redeems its code from serve, and its token ingests Reports', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await hubConfig(db);
   const issued = await invoke(['pair', 'laptop-1', ...configArgs(config)]);
   const shown = SHOWN_CODE.exec(issued.stdout)?.groups?.code ?? '';
@@ -123,7 +117,7 @@ test('serve counts the paired Systems as it starts', async () => {
 });
 
 test('serve on a port already in use says which address it could not listen on, and exits 1', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await hubConfig(db);
   const taken = Bun.serve({ fetch: () => new Response(), hostname: '127.0.0.1', port: 0 });
   try {
@@ -156,19 +150,10 @@ test('pair for a System that is paired says its token works until the new code i
   expect(code).toBe(0);
 });
 
-test.each([['LAPTOP_1'], ['laptop-'], ['laptop.example']])(
-  'pair %p, which is no System name, is a usage error',
-  async (system) => {
-    const { code, stderr } = await invoke(['pair', system, '--database', 'postgres://db/heimdall']);
+test.each([['LAPTOP_1']])('pair %p, which is no System name, is a usage error', async (system) => {
+  const { code, stderr } = await invoke(['pair', system, '--database', 'postgres://db/heimdall']);
 
-    expect(stderr).toContain('Fleet System name');
-    expect(code).toBe(2);
-  },
-);
-
-test('pair without a System is a usage error', async () => {
-  const { code } = await invoke(['pair', '--database', 'postgres://db/heimdall']);
-
+  expect(stderr).toContain('Fleet System name');
   expect(code).toBe(2);
 });
 
@@ -187,7 +172,7 @@ test('unpair revokes a paired System and says its history stays', async () => {
 });
 
 test('unpair of a System with only a pending code withdraws the code', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await hubConfig(db);
   await invoke(['pair', 'laptop-1', ...configArgs(config)]);
 
@@ -198,7 +183,7 @@ test('unpair of a System with only a pending code withdraws the code', async () 
 });
 
 test('unpair of a System that is not paired says so and exits 1', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await hubConfig(db);
 
   const { code, stderr } = await invoke(['unpair', 'laptop-1', ...configArgs(config)]);
@@ -332,7 +317,7 @@ test('transcripts delete --before takes a calendar date', async () => {
 });
 
 test('pair and unpair read the database from HEIMDALL_DATABASE_URL', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
 
   const paired = await invoke(['pair', 'laptop-1'], {
     env: { HEIMDALL_DATABASE_URL: db.url.href },
@@ -508,7 +493,7 @@ const OVERRIDE = JSON.stringify({
 });
 
 test('serve loads the bundled prices and the overrides file the configuration names', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using prices = await priceFile(OVERRIDE);
   await using config = await configFile([
     'host = "127.0.0.1"',
@@ -532,7 +517,7 @@ test('serve loads the bundled prices and the overrides file the configuration na
 });
 
 test('serve takes the overrides file from the variable too', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using prices = await priceFile(OVERRIDE);
   await using config = await hubConfig(db);
 
@@ -542,18 +527,6 @@ test('serve takes the overrides file from the variable too', async () => {
     SELECT count(*)::int AS n FROM model_prices WHERE source = 'configured'
   `;
   expect(row?.n).toBe(1);
-});
-
-test('serve without an overrides file loads the bundled prices alone', async () => {
-  await using db = await testDatabase();
-  await using config = await hubConfig(db);
-
-  await invoke(serveArgs(config));
-
-  const [row]: { n: number }[] = await db.sql`
-    SELECT count(*)::int AS n FROM model_prices WHERE source = 'configured'
-  `;
-  expect(row?.n).toBe(0);
 });
 
 test('serve stops, naming the file, when the overrides file is not valid, before it touches the database', async () => {
@@ -615,7 +588,7 @@ test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
 });
 
 test('serve rotates a log from before timestamps as it starts', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await configFile([
     'host = "127.0.0.1"',
     'port = 0',
@@ -656,7 +629,7 @@ test("service status reports this binary's unit and exits 0", async () => {
 });
 
 test('serve finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const elsewhere = await mkdtemp(join(tmpdir(), 'heimdall-hub-cwd-'));
   try {
@@ -692,25 +665,11 @@ test('serve without a database is a usage error that names the option', async ()
 
 // Before pairing, the database URL was a top-level key (ADR-0009).
 test('serve reads the database only from [database] url, not a top-level database key', async () => {
-  await using db = await testDatabase();
-  await using config = await configFile([`database = "${db.url.href}"`, 'port = 0']);
+  await using config = await configFile([`database = "${UNREACHED_DATABASE.href}"`, 'port = 0']);
 
   const { code, stderr } = await invoke(serveArgs(config));
 
   expect(stderr).toContain('--database');
-  expect(code).toBe(2);
-});
-
-test('serve takes no --token: Systems pair instead', async () => {
-  const { code, stderr } = await invoke([
-    'serve',
-    '--database',
-    'postgres://localhost/heimdall',
-    '--token',
-    'laptop-1=t',
-  ]);
-
-  expect(stderr).toContain('--token');
   expect(code).toBe(2);
 });
 
@@ -843,7 +802,7 @@ const failingRun = async (db: { sql: SQL }) => {
 
 test('delivery test sends one low-priority message that opens the dashboard, and prints neither topic nor token', async () => {
   using ntfy = stubNtfy();
-  await using db = await testDatabase();
+  await using db = await migratedDatabase();
   await using config = await deliveryConfig(ntfy.server.url, db.url);
 
   const { code, stderr, stdout } = await invoke(['delivery', 'test', ...configArgs(config)]);

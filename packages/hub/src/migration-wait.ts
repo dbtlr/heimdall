@@ -108,6 +108,14 @@ export const describeLockWait = (holders: readonly LockHolder[]): string =>
     ? 'Waiting for a database lock. Could not tell which session holds it. Retrying.'
     : `Waiting for a database lock. Held by ${holders.map(describeHolder).join('; ')}. Retrying.`;
 
+// The lock timeout the host asks for in `HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS`,
+// for tests that cannot wait out the default; none when it names no positive
+// whole number of milliseconds.
+export const lockTimeoutOption = (env: Record<string, string | undefined>) => {
+  const lockTimeoutMs = Number(env.HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS);
+  return Number.isInteger(lockTimeoutMs) && lockTimeoutMs > 0 ? { lockTimeoutMs } : {};
+};
+
 // Runs `migrate`, and when another session's lock stalls it, rolls back, reports
 // the holders to `onBlocked` at most once a minute, waits with backoff, and tries
 // again until the migrations apply. Any other error rejects at once. A `signal`

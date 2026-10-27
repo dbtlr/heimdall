@@ -10,7 +10,8 @@ import { migrate } from './migrations.ts';
 import { testDatabase } from './testing/postgres.ts';
 
 const WAITING = 'Waiting for a database lock';
-// A wait begins once the first migration attempt has timed out on the 5-second lock timeout.
+// The lock timeout the host sets, so the first migration attempt times out quickly.
+const LOCK_TIMEOUT_MS = '50';
 const SLOW_TEST_MS = 30_000;
 
 // Runs the Hub command line in-process and aborts the run as soon as `abortWhen`
@@ -36,7 +37,12 @@ const runUntil = async (argv: string[], { abortWhen = WAITING } = {}) => {
   let code: number;
   try {
     code = await app.run({
-      host: { argv, env: { HOME: home }, stderr, stdout },
+      host: {
+        argv,
+        env: { HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS: LOCK_TIMEOUT_MS, HOME: home },
+        stderr,
+        stdout,
+      },
       signal: controller.signal,
     });
   } finally {

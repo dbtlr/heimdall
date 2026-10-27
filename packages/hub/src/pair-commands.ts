@@ -2,20 +2,24 @@ import type { ActionHandler } from '@loomcli/core';
 
 import type { pair, unpair } from './application.ts';
 import { withDatabase } from './commands.ts';
+import { lockTimeoutOption } from './migration-wait.ts';
 import { issueCode, showCode, unpair as unpairSystem } from './pairing.ts';
 
 // `heimdall-hub pair <system>`: issues a Pairing code for the System, replacing
 // any code it held, and says how to redeem it (ADR-0009).
 export const pairAction: ActionHandler<typeof pair> = async ({
   args,
+  host,
   options,
   out,
   signal,
   style,
 }) => {
   const { system } = args;
-  const issued = await withDatabase(options.database, { out, signal, style }, (sql) =>
-    issueCode(sql, { now: Date.now(), system }),
+  const issued = await withDatabase(
+    options.database,
+    { ...lockTimeoutOption(host.env), out, signal, style },
+    (sql) => issueCode(sql, { now: Date.now(), system }),
   );
   const shown = showCode(issued.code);
   await out.print(`Pairing code for ${system}: ${shown}`);

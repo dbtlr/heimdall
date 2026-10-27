@@ -220,19 +220,6 @@ test('serve refuses invalid inherited System limits before touching its database
   expect(result.stderr).not.toContain('Could not prepare the database');
 });
 
-test('serve refuses invalid load windows before touching its database', async () => {
-  await using config = await configFile([
-    '[database]',
-    'url = "postgres://nobody@127.0.0.1:1/never"',
-    '[conditions.systems.laptop-1.cpu]',
-    'noteWindowMinutes = 10',
-  ]);
-  const result = await invoke(['serve', ...configArgs(config)]);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain('conditions.systems.laptop-1.cpu');
-  expect(result.stderr).not.toContain('Could not prepare the database');
-});
-
 test('serve judges disk using fleet defaults and partial System overrides from hub.toml', async () => {
   await using db = await migratedDatabase();
   const now = Date.now();

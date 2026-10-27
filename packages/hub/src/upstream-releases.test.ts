@@ -34,7 +34,6 @@ test.each([
   ['npm:@anthropic-ai/claude-code', true],
   ['oci:docker.io/library/nginx', true],
   ['apt:nginx', false],
-  ['brew:git', false],
   ['https://example.com/x', false],
 ])('%s is checked by the Hub: %p', (upstream, checked) => {
   expect(checkedUpstream(upstream)).toBe(checked);

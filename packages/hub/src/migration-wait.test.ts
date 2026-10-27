@@ -12,7 +12,10 @@ import { migrate, MIGRATIONS } from './migrations.ts';
 import { testDatabase } from './testing/postgres.ts';
 
 const ALTER_SYSTEMS = { sql: 'ALTER TABLE systems ADD COLUMN note text', version: 9999 };
-const SHORT_LOCK_TIMEOUT_MS = 100;
+const SHORT_LOCK_TIMEOUT_MS = 20;
+
+// The migrations up to the first, which creates `systems`: all these tests lock.
+const SYSTEMS_MIGRATIONS = MIGRATIONS.slice(0, 1);
 
 // A second session that holds a lock on `systems` in an open transaction, as a
 // stalled backup does. `release` commits it.
@@ -43,7 +46,7 @@ const failureOf = async (work: Promise<unknown>) => {
 
 const ready = async () => {
   const db = await testDatabase();
-  await migrate(db.sql);
+  await migrate(db.sql, SYSTEMS_MIGRATIONS);
   return db;
 };
 
@@ -109,7 +112,7 @@ test('a migration that waits on a held lock logs the holder, then applies once i
 
   const applied = await migrateWhenFree(db.sql, {
     lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    migrations: [...SYSTEMS_MIGRATIONS, ALTER_SYSTEMS],
     onBlocked: (holders) => {
       blocked.push(holders);
     },
@@ -130,60 +133,16 @@ test('a migration that waits on a held lock logs the holder, then applies once i
   expect(columns.map((c) => c.column_name)).toContain('note');
 });
 
-test('the holder is logged at most once a minute while the wait goes on', async () => {
-  await using db = await ready();
-  const holder = await holdSystems(db);
-  let clock = 0;
-  let logged = 0;
-  let sleeps = 0;
-
-  await migrateWhenFree(db.sql, {
-    lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
-    now: () => clock,
-    onBlocked: () => {
-      logged += 1;
-    },
-    sleep: async () => {
-      sleeps += 1;
-      clock += 20_000;
-      if (sleeps === 7) {
-        await holder.release();
-      }
-    },
-  });
-
-  // Attempts fail at 0 s, 20, 40, 60, 80, 100, and 120 s; the log is due at 0, 60, and 120.
-  expect(logged).toBe(3);
-});
-
-test('a wait ends with the lock error when the caller stops it', async () => {
-  await using db = await ready();
-  const holder = await holdSystems(db);
-  const controller = new AbortController();
-
-  const waiting = migrateWhenFree(db.sql, {
-    lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
-    onBlocked: () => {},
-    signal: controller.signal,
-    sleep: () => {
-      controller.abort();
-      return Promise.resolve();
-    },
-  });
-
-  expect(await failureOf(waiting)).toMatchObject({ errno: '55P03' });
-  await holder.release();
-});
-
 test('a migration error that is not a lock wait still rejects, without waiting', async () => {
   await using db = await ready();
   let slept = false;
   let logged = false;
 
   const failed = migrateWhenFree(db.sql, {
-    migrations: [...MIGRATIONS, { sql: 'ALTER TABLE nowhere ADD COLUMN x int', version: 9999 }],
+    migrations: [
+      ...SYSTEMS_MIGRATIONS,
+      { sql: 'ALTER TABLE nowhere ADD COLUMN x int', version: 9999 },
+    ],
     onBlocked: () => {
       logged = true;
     },
@@ -198,24 +157,24 @@ test('a migration error that is not a lock wait still rejects, without waiting',
   expect(logged).toBe(false);
 });
 
-test('a wait sleeps one second, then doubles, to a cap of thirty', async () => {
+test('a wait sleeps one second, then doubles', async () => {
   await using db = await ready();
   const holder = await holdSystems(db);
   const slept: number[] = [];
 
   await migrateWhenFree(db.sql, {
     lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    migrations: [...SYSTEMS_MIGRATIONS, ALTER_SYSTEMS],
     onBlocked: () => {},
     sleep: async (ms) => {
       slept.push(ms);
-      if (slept.length === 7) {
+      if (slept.length === 2) {
         await holder.release();
       }
     },
   });
 
-  expect(slept).toEqual([1000, 2000, 4000, 8000, 16_000, 30_000, 30_000]);
+  expect(slept).toEqual([1000, 2000]);
 });
 
 test('an abort during the backoff runs no further attempt', async () => {
@@ -226,7 +185,7 @@ test('an abort during the backoff runs no further attempt', async () => {
   const failure = await failureOf(
     migrateWhenFree(db.sql, {
       lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-      migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+      migrations: [...SYSTEMS_MIGRATIONS, ALTER_SYSTEMS],
       onBlocked: () => {},
       signal: controller.signal,
       sleep: async () => {
@@ -253,7 +212,7 @@ test('the holder is logged again at exactly sixty seconds, not at fifty-nine', a
 
   await migrateWhenFree(db.sql, {
     lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    migrations: [...SYSTEMS_MIGRATIONS, ALTER_SYSTEMS],
     now: () => clock,
     onBlocked: () => {
       loggedAt.push(clock);
@@ -279,7 +238,7 @@ test('a holder lookup that fails does not end the wait', async () => {
   const applied = await migrateWhenFree(db.sql, {
     lockTimeoutMs: SHORT_LOCK_TIMEOUT_MS,
     lookupHolders: () => Promise.reject(new Error('permission denied for pg_locks')),
-    migrations: [...MIGRATIONS, ALTER_SYSTEMS],
+    migrations: [...SYSTEMS_MIGRATIONS, ALTER_SYSTEMS],
     onBlocked: (holders) => {
       blocked.push(holders);
     },

@@ -6,6 +6,7 @@ import { DELIVERY_LOCK } from './delivery.ts';
 import { issueCode } from './pairing.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
+import { waitersOnLocks } from './testing/lock-waiters.ts';
 import { migratedDatabase } from './testing/postgres.ts';
 import { timeline } from './testing/timeline.ts';
 import { storeToken } from './tokens.ts';
@@ -294,18 +295,12 @@ const setup = async () => {
   };
 };
 
-test('the seed fills every table that holds a System', async () => {
-  await using s = await setup();
-
-  const counts = await countRows(s.db.sql, 'old-1');
-
-  const empty = [...counts].filter(([, { all, named }]) => all === 0 || named === 0);
-  expect(empty).toEqual([]);
-});
-
 test('purge system --transcripts leaves no row of the System, and every other System its own', async () => {
   await using s = await setup();
   const before = await countRows(s.db.sql, 'laptop-1');
+  const seeded = await countRows(s.db.sql, 'old-1');
+  const empty = [...seeded].filter(([, { all, named }]) => all === 0 || named === 0);
+  expect(empty).toEqual([]);
 
   const { code, stdout } = await invoke(['purge', 'system', 'old-1', '--transcripts', ...s.args]);
 
@@ -348,9 +343,16 @@ test('purge system keeps the transcripts and their Session insight, and deletes 
   }
 });
 
-test('purge system --transcripts after a purge that kept them deletes them', async () => {
+test('purge system --transcripts deletes what a purge that kept them left, which a purge without it refuses', async () => {
   await using s = await setup();
   await invoke(['purge', 'system', 'old-1', ...s.args]);
+
+  const refused = await invoke(['purge', 'system', 'old-1', ...s.args]);
+
+  expect(refused.stderr).toContain(
+    'The Hub holds only transcripts for old-1. Add --transcripts to delete them.',
+  );
+  expect(refused.code).toBe(1);
 
   const { code, stdout } = await invoke(['purge', 'system', 'old-1', '--transcripts', ...s.args]);
 
@@ -358,18 +360,6 @@ test('purge system --transcripts after a purge that kept them deletes them', asy
   expect(code).toBe(0);
   const after = await countRows(s.db.sql, 'old-1');
   expect([...after].filter(([, { named }]) => named !== null && named > 0)).toEqual([]);
-});
-
-test('purge system without --transcripts, when only transcripts are left, says to add it and exits 1', async () => {
-  await using s = await setup();
-  await invoke(['purge', 'system', 'old-1', ...s.args]);
-
-  const { code, stderr } = await invoke(['purge', 'system', 'old-1', ...s.args]);
-
-  expect(stderr).toContain(
-    'The Hub holds only transcripts for old-1. Add --transcripts to delete them.',
-  );
-  expect(code).toBe(1);
 });
 
 test('purge system refuses a paired System, deletes nothing, and exits 1', async () => {
@@ -670,7 +660,7 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
   await pass`SELECT pg_advisory_lock(hashtext(${DELIVERY_LOCK}))`;
 
   const purged = invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
-  await Bun.sleep(500);
+  await waitersOnLocks(s.db.sql, 1);
   const duringPass = await conditionRows(s.db.sql);
   await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
   pass.release();
@@ -682,53 +672,40 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
   expect(code).toBe(0);
 });
 
-test('purge service succeeds when only Service stops are held', async () => {
+test('purge service succeeds when only Service stops, a restarted note, or version history is held', async () => {
   await using s = await setupServices();
   await s.db.sql`
     INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
     VALUES ('laptop-1', 'db', ${AT}, true, 0, ${AT}, ${AT})
   `;
+  await seedServiceDown(s.db.sql, {
+    cleared: null,
+    kind: 'service_restarted',
+    subject: 'cache',
+    system: 'laptop-1',
+  });
+  await s.db.sql`
+    INSERT INTO service_versions (system, service, version, first_seen_at)
+    VALUES ('laptop-1', 'cron', '1', ${AT})
+  `;
 
-  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
+  for (const service of ['db', 'cache', 'cron']) {
+    // oxlint-disable-next-line no-await-in-loop -- one purge after the other.
+    const { code } = await invoke(['purge', 'service', 'laptop-1', service, ...s.args]);
+    expect(code).toBe(0);
+  }
 
-  expect(code).toBe(0);
   expect(
     await s.db.sql<
       Record<string, unknown>[]
     >`SELECT service FROM service_stops WHERE service = 'db'`,
   ).toEqual([]);
-});
-
-test('purge service succeeds when only a Service restarted note is held', async () => {
-  await using s = await setupServices();
-  await seedServiceDown(s.db.sql, {
-    cleared: null,
-    kind: 'service_restarted',
-    subject: 'db',
-    system: 'laptop-1',
-  });
-
-  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
-
-  expect(code).toBe(0);
   expect(
-    await s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'db'`,
+    await s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'cache'`,
   ).toEqual([]);
-});
-
-test('purge service succeeds when only installed version history is held', async () => {
-  await using s = await setupServices();
-  await s.db.sql`
-    INSERT INTO service_versions (system, service, version, first_seen_at)
-    VALUES ('laptop-1', 'db', '1', ${AT})
-  `;
-
-  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
-
-  expect(code).toBe(0);
   expect(
     await s.db.sql<
       Record<string, unknown>[]
-    >`SELECT service FROM service_versions WHERE service = 'db'`,
+    >`SELECT service FROM service_versions WHERE service = 'cron'`,
   ).toEqual([]);
 });

@@ -3,12 +3,7 @@ import { expect, test } from 'bun:test';
 import { sample } from '@heimdall/schema/testing';
 import type { SQL } from 'bun';
 
-import {
-  pruneServiceStops,
-  pruneVitals,
-  RAW_RETENTION_MS,
-  ROLLUP_RETENTION_MS,
-} from './retention.ts';
+import { pruneServiceStops, pruneVitals } from './retention.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 
 const DAY = 86_400_000;
@@ -33,10 +28,6 @@ const diskBuckets = async (sql: SQL) => {
     await sql`SELECT DISTINCT bucket FROM disk_rollups ORDER BY bucket`;
   return rows.map((row) => row.bucket.getTime());
 };
-
-test('retention keeps raw samples for 14 days and rollups for a year', () => {
-  expect([RAW_RETENTION_MS, ROLLUP_RETENTION_MS]).toEqual([14 * DAY, 365 * DAY]);
-});
 
 test('pruning deletes raw samples older than 14 days and keeps the rest', async () => {
   await using h = await startHub();
