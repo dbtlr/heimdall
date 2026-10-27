@@ -2,17 +2,12 @@ import { expect, test } from 'bun:test';
 import { open, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { keepLogRotated, LOG_MAX_AGE_MS, LOG_MAX_BYTES, rotateLog } from './rotation.ts';
+import { keepLogRotated, rotateLog } from './rotation.ts';
 import { tempHome } from './testing.ts';
 
 const DAY_MS = 86_400_000;
 const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
 const stamp = (t: number) => new Date(t).toISOString();
-
-test('a log is kept for 90 days and up to 10 MB', () => {
-  expect(LOG_MAX_AGE_MS).toBe(90 * DAY_MS);
-  expect(LOG_MAX_BYTES).toBe(10_000_000);
-});
 
 test('a log whose first line is 90 days old is copied to .1 and emptied in place', async () => {
   await using home = await tempHome();

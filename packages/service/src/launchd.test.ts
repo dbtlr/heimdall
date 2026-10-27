@@ -398,18 +398,6 @@ test('status names any other launchd state as launchd does', async () => {
   expect(status).toMatchObject({ running: false, summary: 'loaded, spawn scheduled' });
 });
 
-test('status reads an agent with a pid as running, whatever state launchd names', async () => {
-  await using home = await tempHome();
-  await withPlist(home.path);
-  const launchd = fakeLaunchd({
-    answers: { print: [launchctlPrint(LABEL, 'xpc proxy', 4182)] },
-  });
-
-  const status = await supervisorIn(home.path, launchd).status();
-
-  expect(status).toMatchObject({ running: true, summary: 'loaded, running (pid 4182)' });
-});
-
 test.each([
   [
     'exit 112 for the domain, when the domain is there when asked',

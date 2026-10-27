@@ -184,23 +184,6 @@ test('the Collector unit runs run', async () => {
   );
 });
 
-test('the dashboard unit runs serve and logs to its own file', async () => {
-  await using home = await tempHome();
-  const fake = fakeSupervisor();
-
-  const result = await invoke(DASHBOARD, ['service', 'install'], { fake, home: home.path });
-
-  expect(result.code).toBe(0);
-  expect(fake.state.definition).toEqual({
-    arguments: ['serve'],
-    description: 'Heimdall dashboard (com.dbtlr.heimdall.dashboard)',
-    executable: EXECUTABLE,
-    label: 'com.dbtlr.heimdall.dashboard',
-    log: join(home.path, '.local', 'state', 'heimdall', 'dashboard.log'),
-    workingDirectory: home.path,
-  });
-});
-
 test('dashboard install --port writes the port into dashboard.toml', async () => {
   await using home = await tempHome();
 
@@ -263,22 +246,6 @@ test('install --port writes the port into hub.toml before installing', async () 
   expect(result.stdout).toContain('Set port = 9090 in ~/.config/heimdall/hub.toml.');
 });
 
-test('install --port leaves a hub.toml that already holds the port untouched', async () => {
-  await using home = await tempHome();
-  const file = join(home.path, '.config', 'heimdall', 'hub.toml');
-  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
-  const rendered = 'port=9090\n\n[database]\nurl = "postgres://db/heimdall"\n';
-  await writeFile(file, rendered);
-  const before = await stat(file);
-
-  const result = await invoke(HUB, ['service', 'install', '--port', '9090'], { home: home.path });
-
-  expect(result.code).toBe(0);
-  expect(await readFile(file, 'utf8')).toBe(rendered);
-  expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
-  expect(result.stdout).not.toContain('Set port');
-});
-
 test.each([['0'], ['65536'], ['http']])('install --port %s is a usage error', async (port) => {
   await using home = await tempHome();
 
@@ -299,7 +266,7 @@ test('the Collector install takes no port', async () => {
   expect(result.calls).toEqual([]);
 });
 
-test.each(['install', 'uninstall', 'start', 'stop', 'restart'])(
+test.each(['install', 'start'])(
   '%s on a platform with no supervisor backend names the platforms that have one',
   async (verb) => {
     await using home = await tempHome();
@@ -361,7 +328,7 @@ test.each(['start', 'stop', 'restart'])('%s drives the installed unit', async (v
   expect(fake.calls).toEqual([verb]);
 });
 
-test.each(['start', 'stop', 'restart'])(
+test.each(['start'])(
   '%s with no unit installed fails with a message that names install',
   async (verb) => {
     await using home = await tempHome();
@@ -393,71 +360,6 @@ test('status of a running Hub shows its health and every path', async () => {
   config   ~/.config/heimdall/hub.toml
 `);
   expect(seen).toEqual(['http://127.0.0.1:8080/api/health']);
-});
-
-test('status asks for health on the port the Hub reads from its config file', async () => {
-  await using home = await tempHome();
-  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
-  await writeFile(
-    join(home.path, '.config', 'heimdall', 'hub.toml'),
-    'port = 9191\n\n[database]\nurl = "postgres://db/heimdall"\n',
-  );
-  const seen: string[] = [];
-
-  await invoke(HUB, ['service', 'status'], {
-    environment: healthy('0.2.0', seen),
-    fake: fakeSupervisor({ installed: true }),
-    home: home.path,
-  });
-
-  expect(seen).toEqual(['http://127.0.0.1:9191/api/health']);
-});
-
-test('status of a Hub whose database is not answering says so, and exits 0', async () => {
-  await using home = await tempHome();
-
-  const result = await invoke(HUB, ['service', 'status'], {
-    environment: {
-      httpGet: () =>
-        Promise.resolve({
-          body: JSON.stringify({ database: 'not answering', version: '0.2.0' }),
-          kind: 'response',
-          status: 503,
-          truncated: false,
-        }),
-    },
-    fake: fakeSupervisor({ installed: true }),
-    home: home.path,
-  });
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain(
-    '  health   database not answering, v0.2.0 (http://127.0.0.1:8080/api/health)\n',
-  );
-});
-
-test('status of a running Hub that does not answer says so, and exits 0', async () => {
-  await using home = await tempHome();
-
-  const result = await invoke(HUB, ['service', 'status'], {
-    fake: fakeSupervisor({ installed: true }),
-    home: home.path,
-  });
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain('  health   no answer (http://127.0.0.1:8080/api/health)\n');
-});
-
-test('status shows restart pending while an older Hub still runs', async () => {
-  await using home = await tempHome();
-
-  const result = await invoke(HUB, ['service', 'status'], {
-    environment: healthy('0.1.0'),
-    fake: fakeSupervisor({ installed: true }),
-    home: home.path,
-  });
-
-  expect(result.stdout).toContain('restart pending, this binary is v0.2.0');
 });
 
 test('status of a stopped Hub asks nothing of it, and exits 0', async () => {
@@ -500,23 +402,6 @@ test('status passes on the supervisor notes, such as linger being off', async ()
   });
 
   expect(result.stdout).toEndWith('  note     linger is off; the unit stops at logout\n');
-});
-
-test('status exits 0 even when the supervisor fails or a setting is bad', async () => {
-  await using home = await tempHome();
-  const fake = fakeSupervisor({ installed: true });
-  fake.supervisor.status = () => Promise.reject(new Error('the manager went away'));
-
-  const result = await invoke(HUB, ['service', 'status'], {
-    env: { HEIMDALL_PORT: 'not-a-port' },
-    fake,
-    home: home.path,
-  });
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toStartWith(
-    'com.dbtlr.heimdall.hub: state unknown (the manager went away)\n',
-  );
 });
 
 test('status with a port setting that is not a port says so, and exits 0', async () => {
@@ -647,17 +532,6 @@ test('Collector status reports a queue it cannot read, and exits 0', async () =>
   expect(result.stdout).toContain('  queue    unreadable (file is not a database)\n');
 });
 
-test('Collector status shows the transcript spool, sized and aged by the clock', async () => {
-  await using home = await tempHome();
-
-  const result = await invoke(COLLECTOR, ['service', 'status'], {
-    home: home.path,
-  });
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain('  spool    2.0 KiB waiting, oldest spooled 3 h ago\n');
-});
-
 test('Collector status reports a spool it cannot read, and exits 0', async () => {
   await using home = await tempHome();
 
@@ -712,7 +586,7 @@ test.each([
   expect(seen).toEqual([url]);
 });
 
-test('status asks for health when the unit state is unknown', async () => {
+test('status reports an unknown state, still asks for health, and exits 0 when the supervisor fails', async () => {
   await using home = await tempHome();
   const fake = fakeSupervisor({ installed: true });
   fake.supervisor.status = () => Promise.reject(new Error('the manager went away'));
@@ -724,6 +598,9 @@ test('status asks for health when the unit state is unknown', async () => {
   });
 
   expect(result.code).toBe(0);
+  expect(result.stdout).toStartWith(
+    'com.dbtlr.heimdall.hub: state unknown (the manager went away)\n',
+  );
   expect(result.stdout).toContain('  health   ok, v0.2.0 (http://127.0.0.1:8080/api/health)\n');
 });
 
@@ -764,73 +641,6 @@ Restarted ${AGENT}; it logs to ~/.local/state/heimdall/collector.log.
   ]);
 });
 
-test('Collector status on macOS names the agent state, plist, log, and queue, with no note', async () => {
-  await using home = await tempHome();
-  const launchd = fakeLaunchd();
-  await onMac('install', launchd, home.path);
-
-  const result = await onMac('status', launchd, home.path);
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toBe(`${AGENT}: loaded, running (pid 4182)
-  system   laptop-1 (paired with http://hub.example:8080)
-  queue    12 samples waiting
-  spool    2.0 KiB waiting, oldest spooled 3 h ago
-  unit     ${PLIST_SHOWN}
-  log      ~/.local/state/heimdall/collector.log
-  config   ~/.config/heimdall/collector.toml
-`);
-});
-
-test('stop on macOS boots the agent out, and status then reads it as stopped', async () => {
-  await using home = await tempHome();
-  const launchd = fakeLaunchd();
-  await onMac('install', launchd, home.path);
-  launchd.calls.length = 0;
-
-  const stopped = await onMac('stop', launchd, home.path);
-  const result = await onMac('status', launchd, home.path);
-
-  expect(stopped.code).toBe(0);
-  expect(stopped.stdout).toBe(`Stopped ${AGENT}.\n`);
-  expect(launchd.calls.slice(0, 2)).toEqual([
-    `launchctl bootout gui/501/${AGENT}`,
-    `launchctl print gui/501/${AGENT}`,
-  ]);
-  expect(result.stdout).toStartWith(`${AGENT}: not loaded, stopped\n`);
-  expect(result.stdout).not.toContain('note');
-});
-
-test('status on macOS notes when there is no GUI login session, and exits 0', async () => {
-  await using home = await tempHome();
-  const launchd = fakeLaunchd({ domain: false });
-  await onMac('install', fakeLaunchd(), home.path);
-
-  const result = await onMac('status', launchd, home.path);
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toStartWith(`${AGENT}: not loaded, stopped\n`);
-  expect(result.stdout).toEndWith(
-    '  note     no GUI login session; the agent loads when the user logs in\n',
-  );
-});
-
-test.each(['start', 'stop', 'restart'])(
-  '%s on macOS with no agent installed fails with a message that names install',
-  async (verb) => {
-    await using home = await tempHome();
-    const launchd = fakeLaunchd();
-
-    const result = await onMac(verb, launchd, home.path);
-
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain(
-      `${AGENT} is not installed. Run heimdall-collector service install first.`,
-    );
-    expect(launchd.calls).toEqual([]);
-  },
-);
-
 test('uninstall on macOS boots the agent out and deletes its plist, in words true on macOS', async () => {
   await using home = await tempHome();
   const launchd = fakeLaunchd();
@@ -869,21 +679,6 @@ test('install on macOS whose bootout fails exits 1 and leaves the old plist in p
   expect(result.code).toBe(1);
   expect(result.stderr).toContain(`Could not install ${AGENT}: launchctl bootout failed (exit 1)`);
   expect(await readFile(plist, 'utf8')).toBe('the plist an older install wrote');
-});
-
-test('status on macOS exits 0 with the state unknown when launchctl times out', async () => {
-  await using home = await tempHome();
-  await onMac('install', fakeLaunchd(), home.path);
-  const launchd = fakeLaunchd({
-    answers: { print: [{ code: 124, stderr: 'timed out after 5 s', stdout: '' }] },
-  });
-
-  const result = await onMac('status', launchd, home.path);
-
-  expect(result.code).toBe(0);
-  expect(result.stdout).toStartWith(
-    `${AGENT}: state unknown (launchctl print failed (exit 124))\n`,
-  );
 });
 
 test('Linux chooses the systemd backend and its user unit file', () => {

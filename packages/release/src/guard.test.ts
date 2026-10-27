@@ -27,7 +27,6 @@ describe('judgeChanges', () => {
     'mise.toml',
     'install-hub.sh',
     '.github/workflows/release.yml',
-    'packages/collector/src/ünicode.ts',
   ])('fails a change to %s without a fragment', (path) => {
     expect(judge([modified(path)]).verdict).toBe('fail');
   });

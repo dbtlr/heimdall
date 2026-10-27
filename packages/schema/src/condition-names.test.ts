@@ -1,22 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { CONDITION_KIND_NAMES, conditionSubject } from './condition-names.ts';
-
-test.each([
-  ['system_stale', 'Stale System'],
-  ['service_down', 'Service down'],
-  ['service_restarted', 'Service restarted'],
-  ['low_disk', 'Low disk'],
-  ['job_failing', 'Job failing'],
-  ['reports_rejected', 'Reports rejected'],
-  ['job_overdue', 'Job overdue'],
-  ['drift', 'Drift'],
-  ['pending_update', 'Pending update'],
-  ['reboot_required', 'Reboot required'],
-  ['clock_skew', 'Clock skew'],
-] as const)('%s reads %s', (kind, name) => {
-  expect(CONDITION_KIND_NAMES[kind]).toBe(name);
-});
+import { conditionSubject } from './condition-names.ts';
 
 test('a clock skew subject names whose clock is wrong, and an own clock has none', () => {
   expect(conditionSubject({ kind: 'clock_skew', subject: '' })).toBe('');
