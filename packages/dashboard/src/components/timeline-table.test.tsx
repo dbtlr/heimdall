@@ -99,13 +99,28 @@ test('an open occurrence shows how long it has been open, a cleared one how long
 
 test('transitions list in recording order with a backfilled label and the last reason', async () => {
   const html = await render();
-  expect(html).toContain('Raised at note');
-  expect(html).toContain('(Backfilled level)');
-  expect(html.indexOf('Raised at note')).toBeLessThan(html.indexOf('warning'));
-  expect(html.indexOf('warning')).toBeLessThan(html.lastIndexOf('alert'));
-  expect(html).toContain('Cleared at note');
+  expect(html).toMatch(/Raised at note · <time[^>]*>[^<]*09:00<\/time>/);
+  expect(html).toContain(' · Backfilled level');
+  expect(html.indexOf('Raised at note')).toBeLessThan(html.indexOf('note → warning'));
+  expect(html.indexOf('note → warning')).toBeLessThan(html.indexOf('warning → alert'));
+  expect(html).toMatch(/Cleared at note · <time/);
   expect(html).toContain('back to 60%');
   expect(html).not.toContain('70% used');
+});
+
+test('the Level cell names the level in words for screen readers', async () => {
+  const html = await render();
+  expect(html).toContain('<span class="sr-only">Alert</span>');
+  expect(html).toContain('<span class="sr-only">Cleared</span>');
+});
+
+test('the same day can head two groups when entries arrive out of order', async () => {
+  const [today, yesterday] = [entries[0]!, entries[1]!];
+  const html = await render([yesterday, today, { ...yesterday, id: 'again' }]);
+  expect(html.match(/scope="rowgroup"/g)).toHaveLength(3);
+  expect(html.match(/Yesterday/g)).toHaveLength(2);
+  expect(html.indexOf('Yesterday')).toBeLessThan(html.indexOf('Today'));
+  expect(html.indexOf('Today')).toBeLessThan(html.lastIndexOf('Yesterday'));
 });
 
 test('before the zone is known the table renders nothing', async () => {

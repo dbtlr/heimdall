@@ -12,9 +12,7 @@ import { ConditionLink } from './timeline-rail.tsx';
 type Entry = FleetTimeline['entries'][number];
 type Transition = Entry['transitions'][number];
 
-// One step of an occurrence: a level change names only the level it reached.
-const stepLabel = (transition: Transition): string =>
-  transition.kind === 'level_changed' ? transition.level : transitionLabel(transition);
+const LEVEL_WORD = { alert: 'Alert', note: 'Note', warning: 'Warning' } as const;
 
 function Step({
   now,
@@ -27,11 +25,12 @@ function Step({
 }) {
   return (
     <span>
-      {stepLabel(transition)}{' '}
+      {transitionLabel(transition)}
+      {' · '}
       <time dateTime={new Date(transition.at).toISOString()}>
         {formatWhen(transition.at, now, timeZone)}
       </time>
-      {transition.backfilled && <span className="text-muted-foreground"> (Backfilled level)</span>}
+      {transition.backfilled && <span className="text-muted-foreground"> · Backfilled level</span>}
     </span>
   );
 }
@@ -66,6 +65,9 @@ function Row({ entry, now, timeZone }: { entry: Entry; now: number; timeZone: st
       </td>
       <td className={`${CELL} pt-3`}>
         <ConditionGlyph kind={entry.clearedAt === undefined ? entry.level : 'cleared'} />
+        <span className="sr-only">
+          {entry.clearedAt === undefined ? LEVEL_WORD[entry.level] : 'Cleared'}
+        </span>
       </td>
       <td className={CELL}>
         <Link
@@ -119,13 +121,15 @@ export function TimelineTableBody({
           ))}
         </tr>
       </thead>
-      {groupByRaisedDay(entries, now, timeZone).map((group) => (
-        <tbody key={group.key}>
+      {groupByRaisedDay(entries, now, timeZone).map((group, index) => (
+        // The same day can head two groups when entries arrive out of order.
+        // oxlint-disable-next-line react/no-array-index-key
+        <tbody key={`${String(index)}-${String(group.key)}`}>
           <tr>
             <th
               className="px-2 pt-5 pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase"
               colSpan={6}
-              scope="colgroup"
+              scope="rowgroup"
             >
               {group.heading}
             </th>
