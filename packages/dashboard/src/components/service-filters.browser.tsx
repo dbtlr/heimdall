@@ -20,6 +20,7 @@ const rows: ServiceSummary[] = [
     name: 'web',
     status: 'down',
     system: 'alpha',
+    update: undefined,
     version: null,
   },
   {
@@ -28,6 +29,7 @@ const rows: ServiceSummary[] = [
     name: 'api',
     status: 'up',
     system: 'beta',
+    update: undefined,
     version: null,
   },
 ];

@@ -6,6 +6,7 @@
 import type { ServiceStopsRead } from '@heimdall/schema';
 
 import type { Install } from '../lib/service-installs.ts';
+import type { ServiceUpdate, UpstreamRelease } from '../lib/service-updates.ts';
 import type { RecordedService } from './system-detail-types.ts';
 
 export type ServiceStop = ServiceStopsRead['stops'][number];
@@ -33,6 +34,8 @@ export type ServiceDetail = {
   };
   // The changes between known installed versions in the 90 days before `now`, newest first.
   installs: Install[];
+  update: ServiceUpdate;
+  updates: UpstreamRelease[];
   now: number;
   // The open Service restarted note for this Service, if any.
   note: { id: string; raisedAt: number; reason: string } | undefined;

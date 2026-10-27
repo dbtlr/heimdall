@@ -8,7 +8,7 @@ import { cn } from '../lib/utils.ts';
 import type { ServiceDetail } from '../server/service-detail-types.ts';
 import { DateTime, PhraseText } from './date-time.tsx';
 
-// An installed version change is neither good nor bad, so its dot is neutral.
+// Installed version changes and available updates have neutral dots.
 type Dot = StopDot | 'neutral';
 
 const DOT: Record<Dot, string> = {
@@ -75,10 +75,19 @@ function StopItem({ now, row }: { now: number; row: StopRow }) {
 }
 
 // One row of the history: a stop opens in place, a Service down opens its
-// Condition's page, and an installed version change only reads.
+// Condition's page, and an installed version change or update only reads.
 function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; system: string }) {
   if (row.kind === 'stop') {
     return <StopItem now={now} row={row.stop} />;
+  }
+  if (row.kind === 'update') {
+    return (
+      <div className={LINE}>
+        <Line at={row.at} dot="neutral" end={undefined} now={now}>
+          Update available {row.version}
+        </Line>
+      </div>
+    );
   }
   if (row.kind === 'installed') {
     return (
@@ -110,14 +119,23 @@ function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; syste
   );
 }
 
+export const historyKey = (row: HistoryRow): string => {
+  if (row.kind === 'update') {
+    return `${row.kind}-${String(row.at)}-${row.version}`;
+  }
+  return row.kind === 'stop' || row.kind === 'installed'
+    ? `${row.kind}-${String(row.at)}`
+    : `${row.kind}-${row.condition}`;
+};
+
 // The Service's stops, Service down raises and clears, and installed version
-// changes, newest first; the newest few show and the rest wait behind "Show older".
+// changes and available updates, newest first; the newest few show and the rest wait behind "Show older".
 export function ServiceHistory({ detail }: { detail: ServiceDetail }) {
-  const { downs, installs, now, stops, system } = detail;
+  const { downs, installs, now, stops, system, updates } = detail;
   const [showAll, setShowAll] = useState(false);
   const rows = useMemo(
-    () => historyRows(stops, downs, installs, now),
-    [stops, downs, installs, now],
+    () => historyRows(stops, downs, installs, updates, now),
+    [stops, downs, installs, updates, now],
   );
   const { hidden, shown } = listedRows(rows, showAll);
   if (rows.length === 0) {
@@ -126,16 +144,7 @@ export function ServiceHistory({ detail }: { detail: ServiceDetail }) {
   return (
     <section className="mt-4">
       {shown.map((row) => (
-        <HistoryItem
-          key={
-            row.kind === 'stop' || row.kind === 'installed'
-              ? `${row.kind}-${String(row.at)}`
-              : `${row.kind}-${row.condition}`
-          }
-          now={now}
-          row={row}
-          system={system}
-        />
+        <HistoryItem key={historyKey(row)} now={now} row={row} system={system} />
       ))}
       {hidden > 0 && (
         <button

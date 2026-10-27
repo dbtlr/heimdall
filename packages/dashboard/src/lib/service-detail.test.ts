@@ -124,6 +124,7 @@ describe('history', () => {
       [stop({ stoppedAt: at(NOW - 5 * HOUR) }), stop({ stoppedAt: at(NOW - HOUR) })],
       [down(), down({ at: NOW - 2 * HOUR, kind: 'cleared' })],
       [],
+      [],
       NOW,
     );
     expect(shape(rows)).toEqual([
@@ -142,6 +143,7 @@ describe('history', () => {
         down({ at: NOW - 3 * HOUR + 4 * MINUTE, condition: '9', kind: 'cleared' }),
       ],
       [],
+      [],
       NOW,
     ).find((found) => found.kind === 'downRaised');
     expect(raised).toEqual({
@@ -154,7 +156,7 @@ describe('history', () => {
   });
 
   test('a raise still open counts how long so far', () => {
-    const [raised] = historyRows([], [down({ at: NOW - 100 * DAY })], [], NOW);
+    const [raised] = historyRows([], [down({ at: NOW - 100 * DAY })], [], [], NOW);
     expect(raised).toMatchObject({ duration: '100 d', kind: 'downRaised' });
   });
 
@@ -166,6 +168,7 @@ describe('history', () => {
       ],
       [],
       [],
+      [],
       NOW,
     );
     expect(shape(rows)).toEqual([
@@ -175,7 +178,7 @@ describe('history', () => {
   });
 
   test('transitions at the same time list the later recorded first', () => {
-    const rows = historyRows([], [down(), down({ kind: 'cleared' })], [], NOW);
+    const rows = historyRows([], [down(), down({ kind: 'cleared' })], [], [], NOW);
     expect(rows.map(({ kind }) => kind)).toEqual(['downCleared', 'downRaised']);
   });
 
@@ -184,6 +187,7 @@ describe('history', () => {
       [stop({ stoppedAt: at(NOW - HOUR) })],
       [],
       [{ at: NOW - 2 * HOUR, version: '1.28', was: '1.27' }],
+      [],
       NOW,
     );
     expect(shape(rows)).toEqual([
@@ -201,6 +205,7 @@ describe('history', () => {
   test('the list shows the newest 6 until asked for all', () => {
     const rows = historyRows(
       Array.from({ length: 8 }, (_, index) => stop({ stoppedAt: at(NOW - (index + 1) * HOUR) })),
+      [],
       [],
       [],
       NOW,
@@ -231,7 +236,7 @@ describe('summary and strip', () => {
     const old = stop({ ongoing: true, startedAt: null, stoppedAt: at(NOW - 100 * DAY) });
     expect(stopSummary([old], NOW)).toEqual({ last24h: 0, total: 0 });
     expect(stripTicks([old], NOW)).toEqual([]);
-    expect(historyRows([old], [], [], NOW)).toHaveLength(1);
+    expect(historyRows([old], [], [], [], NOW)).toHaveLength(1);
   });
 
   test('a tick sits at its stop in the window, tall for restarts, serious for failure', () => {

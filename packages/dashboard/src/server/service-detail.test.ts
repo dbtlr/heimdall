@@ -347,3 +347,106 @@ test('names the Application a Service names when the System records none of that
     version: null,
   });
 });
+
+test('reads the latest upstream check, its retained releases, and the versions installed when found', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { records });
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      ('server-1', 'web', '1.0', 'npm:old', ${new Date(NOW - 120 * DAY)}),
+      ('server-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW - 100 * DAY)}),
+      ('server-1', 'web', '2.0', 'github:owner/web', ${new Date(NOW - DAY)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, failure, next_check_at) VALUES
+      ('github:owner/web', '{"":"3.0"}', ${new Date(NOW)}, ${new Date(NOW - HOUR)}, 'Rate limited', ${new Date(NOW)}),
+      ('npm:old', '{"":"9.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_releases (upstream, version, first_found_at) VALUES
+      ('github:owner/web', '1.1', ${new Date(NOW - 95 * DAY)}),
+      ('github:owner/web', '2.0', ${new Date(NOW - 2 * DAY)}),
+      ('github:owner/web', '3.0', ${new Date(NOW - HOUR)}),
+      ('npm:old', '9.0', ${new Date(NOW - HOUR)})
+  `;
+  const found = await read(h);
+  expect(found?.update).toEqual({
+    failure: {
+      at: NOW,
+      reason: 'Rate limited',
+      succeededAt: NOW - HOUR,
+    },
+    status: { kind: 'update', since: NOW - HOUR, source: 'upstream', version: '3.0' },
+  });
+  expect(found?.updates).toEqual([
+    { at: NOW - HOUR, version: '3.0' },
+    { at: NOW - 2 * DAY, version: '2.0' },
+  ]);
+});
+
+for (const [upstream, manager, name, source] of [
+  ['apt:web', 'apt', 'web:amd64', 'APT'],
+  ['brew:web', 'homebrew', 'cask:web', 'Homebrew'],
+] as const) {
+  test(`reads ${upstream} observations on the same System, skipping withdrawn and malformed rows`, async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records });
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`
+      UPDATE service_versions SET version = '1.0', upstream = ${upstream} WHERE service = 'web'
+    `;
+    const observation = JSON.stringify({
+      installation: '/',
+      manager,
+      observedAt: NOW,
+      result: {
+        kind: 'available',
+        metadataAt: NOW,
+        updates: [{ available: '2.0', installed: '1.0', name, security: null }],
+      },
+    });
+    await h.db.sql`
+      INSERT INTO update_managers (system, manager, installation, observed_at, observation, withdrawn) VALUES
+        ('server-1', ${manager}, '/', ${new Date(NOW)}, ${observation}::text::jsonb, true),
+        ('server-1', ${manager}, '/invalid', ${new Date(NOW)}, '{"bad":"observation"}', false)
+    `;
+    expect((await read(h))?.update.status).toBeUndefined();
+    await h.db.sql`UPDATE update_managers SET withdrawn = false WHERE installation = '/'`;
+    const found = await read(h);
+    expect(found?.update).toEqual({
+      failure: undefined,
+      status: { kind: 'update', source, version: '2.0' },
+    });
+    expect(found?.updates).toEqual([]);
+    expect((await read(h, 'laptop-1'))?.update.status).toBeUndefined();
+  });
+}
+
+test('valkey releases found while the Service ran redis make no history, and its update dates from the switch', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { records });
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      ('server-1', 'web', '7.2', 'oci:docker.io/library/redis', ${new Date(NOW - 80 * DAY)}),
+      ('server-1', 'web', '7.2', 'oci:docker.io/valkey/valkey', ${new Date(NOW - DAY)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
+      ('oci:docker.io/valkey/valkey', '{"":"8.0"}', ${new Date(NOW)}, ${new Date(NOW)}, ${new Date(NOW)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_releases (upstream, version, first_found_at) VALUES
+      ('oci:docker.io/valkey/valkey', '7.2.5', ${new Date(NOW - 60 * DAY)}),
+      ('oci:docker.io/valkey/valkey', '8.0', ${new Date(NOW - 30 * DAY)})
+  `;
+  const found = await read(h);
+  expect(found?.updates).toEqual([]);
+  expect(found?.update.status).toEqual({
+    kind: 'update',
+    since: NOW - DAY,
+    source: 'upstream',
+    version: '8.0',
+  });
+});

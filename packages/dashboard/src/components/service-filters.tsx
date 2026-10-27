@@ -1,15 +1,16 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import { filterServices, SERVICE_STATUSES, serviceFilterCounts } from '../lib/services.ts';
-import type { ServiceFilters, ServiceStatus, ServiceSummary } from '../lib/services.ts';
+import { filterServices, SERVICE_STATUS_FILTERS, serviceFilterCounts } from '../lib/services.ts';
+import type { ServiceFilters, ServiceStatusFilter, ServiceSummary } from '../lib/services.ts';
 import { cn } from '../lib/utils.ts';
 
-const STATUS_NAMES: Record<ServiceStatus, string> = {
+const STATUS_NAMES: Record<ServiceStatusFilter, string> = {
   down: 'Down',
   restarted: 'Restarted',
   unknown: 'Unknown',
   up: 'Up',
+  updates: 'Updates',
 };
 const emptyFilters = (): ServiceFilters => ({ status: [], system: [] });
 const toggle = <T,>(values: T[], value: T): T[] =>
@@ -153,7 +154,7 @@ export function ServiceFilterSheet({
         <fieldset>
           <legend className="mb-3 text-sm font-semibold text-muted-foreground">Status</legend>
           <div className="flex flex-wrap gap-2">
-            {SERVICE_STATUSES.map((status) => (
+            {SERVICE_STATUS_FILTERS.map((status) => (
               <FilterChip
                 count={counts.status[status]}
                 key={status}

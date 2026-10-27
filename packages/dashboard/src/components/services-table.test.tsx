@@ -14,6 +14,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
           name: 'web',
           status: 'down',
           system: 'alpha',
+          update: '0.26.0-next.35',
           version: '0.26.0-next.32',
         },
         {
@@ -22,6 +23,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
           name: 'api',
           status: 'restarted',
           system: 'beta',
+          update: undefined,
           version: null,
         },
         {
@@ -30,6 +32,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
           name: 'worker',
           status: 'unknown',
           system: 'beta',
+          update: undefined,
           version: null,
         },
       ]}
@@ -47,5 +50,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html).toContain('System</th>');
   expect(html).toContain('Version</th>');
   expect(html).toContain('0.26.0-next.32');
+  expect(html).toContain('→ 0.26.0-next.35');
+  expect(html.match(/→/gu)).toHaveLength(1);
   expect(html).toContain('>unknown</span>');
 });

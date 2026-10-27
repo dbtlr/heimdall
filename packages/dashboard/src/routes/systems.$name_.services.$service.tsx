@@ -3,7 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { ServiceHistory } from '../components/service-history.tsx';
-import { InstalledLine } from '../components/service-installed.tsx';
+import { InstalledLine, UpdateLines } from '../components/service-installed.tsx';
 import { StopsCard } from '../components/service-stops.tsx';
 import { contentFrame } from '../lib/layout.ts';
 import { serviceLine } from '../lib/recorded.ts';
@@ -63,10 +63,12 @@ function ServicePage() {
           </p>
         )}
         <InstalledLine installed={installed} />
+        <UpdateLines now={now} update={detail.update} />
         <StopsCard detail={detail} />
         <ServiceHistory detail={detail} />
         <p className="mt-4 text-xs text-muted-foreground">
-          Times come from the System&apos;s clock; received times from the Hub&apos;s.
+          Stop times use the System&apos;s clock. Received times, version changes, and upstream
+          checks use the Hub&apos;s.
         </p>
       </main>
     </>

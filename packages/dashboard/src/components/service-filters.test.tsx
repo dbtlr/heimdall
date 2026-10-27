@@ -12,6 +12,7 @@ const rows: ServiceSummary[] = [
     name: 'web',
     status: 'down',
     system: 'alpha',
+    update: undefined,
     version: null,
   },
   {
@@ -20,6 +21,7 @@ const rows: ServiceSummary[] = [
     name: 'api',
     status: 'up',
     system: 'beta',
+    update: undefined,
     version: null,
   },
 ];
@@ -72,4 +74,29 @@ test('active filters form an accessible group', () => {
     <ActiveServiceFilters filters={{ status: ['down'], system: [] }} onChange={ignore} />,
   );
   expect(html).toMatch(/<div(?=[^>]*role="group")(?=[^>]*aria-label="Active filters")/u);
+});
+
+test('Updates has its own count, follows Restarted, and labels its active pill', () => {
+  const services = structuredClone(rows);
+  for (const row of services) {
+    row.update = '2.0';
+  }
+  const html = renderToStaticMarkup(
+    <ServiceFilterSheet
+      filters={{ status: ['updates'], system: [] }}
+      onApply={ignore}
+      onChange={ignore}
+      onClose={ignore}
+      open
+      rows={services}
+    />,
+  );
+  expect(html).toContain('aria-label="Updates, 2 Services" aria-pressed="true"');
+  expect(html.indexOf('aria-label="Restarted')).toBeLessThan(html.indexOf('aria-label="Updates'));
+  expect(html.indexOf('aria-label="Updates')).toBeLessThan(html.indexOf('aria-label="Up,'));
+  expect(
+    renderToStaticMarkup(
+      <ActiveServiceFilters filters={{ status: ['updates'], system: [] }} onChange={ignore} />,
+    ),
+  ).toContain('Remove Updates filter');
 });

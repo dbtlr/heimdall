@@ -289,3 +289,68 @@ test("reads each Service's latest installed version, and null for one with none"
     ['web', '1.1'],
   ]);
 });
+
+const packageObservation = (manager: string, name: string) =>
+  JSON.stringify({
+    installation: '/',
+    manager,
+    observedAt: NOW,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: [{ available: '3.0', installed: '1.0', name, security: null }],
+    },
+  });
+
+test('joins the latest upstream and fresh package observations from the Service’s own System', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', ['web', 'package', 'withdrawn', 'invalid']);
+  await hear(h, 'laptop-1', ['package']);
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      ('server-1', 'web', '1.0', 'npm:old', ${new Date(NOW - 1000)}),
+      ('server-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW)}),
+      ('server-1', 'package', '1.0', 'apt:web', ${new Date(NOW)}),
+      ('server-1', 'withdrawn', '1.0', 'brew:web', ${new Date(NOW)}),
+      ('server-1', 'invalid', '1.0', 'brew:invalid', ${new Date(NOW)}),
+      ('laptop-1', 'package', '1.0', 'apt:web', ${new Date(NOW)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, failure, next_check_at) VALUES
+      ('github:owner/web', '{"":"2.0"}', ${new Date(NOW)}, ${new Date(NOW - 1000)}, 'Rate limited', ${new Date(NOW)}),
+      ('npm:old', '{"":"9.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)})
+  `;
+
+  await h.db.sql`
+    INSERT INTO update_managers (system, manager, installation, observed_at, observation, withdrawn) VALUES
+      ('server-1', 'apt', '/', ${new Date(NOW)}, ${packageObservation('apt', 'web:amd64')}::text::jsonb, false),
+      ('server-1', 'homebrew', '/', ${new Date(NOW)}, ${packageObservation('homebrew', 'formula:web')}::text::jsonb, true),
+      ('server-1', 'homebrew', '/invalid', ${new Date(NOW)}, '{"bad":"observation"}', false)
+  `;
+  expect(
+    (await readServices(h.db.sql, NOW)).map(({ name, system, update }) => [system, name, update]),
+  ).toEqual([
+    ['server-1', 'package', '3.0'],
+    ['server-1', 'web', '2.0'],
+    ['server-1', 'invalid', undefined],
+    ['laptop-1', 'package', undefined],
+    ['server-1', 'withdrawn', undefined],
+  ]);
+});
+
+test('an unreadable installed version has no update despite a successful upstream check', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', ['web']);
+  await h.db.sql`
+    UPDATE service_versions SET version = 'latest', upstream = 'oci:docker.io/library/redis'
+    WHERE system = 'server-1' AND service = 'web'
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
+      ('oci:docker.io/library/redis', '{"":"8.0"}', ${new Date(NOW)}, ${new Date(NOW)}, ${new Date(NOW)})
+  `;
+  expect(await readServices(h.db.sql, NOW)).toMatchObject([
+    { update: undefined, version: 'latest' },
+  ]);
+});

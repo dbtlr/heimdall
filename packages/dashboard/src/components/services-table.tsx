@@ -66,6 +66,9 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
             </td>
             <td className="px-3 py-4 align-top wrap-anywhere">
               {row.version ?? <span className="text-muted-foreground">unknown</span>}
+              {row.update !== undefined && (
+                <span className="block text-sm text-muted-foreground">→ {row.update}</span>
+              )}
             </td>
           </tr>
         ))}

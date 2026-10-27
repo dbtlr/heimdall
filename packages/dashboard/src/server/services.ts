@@ -1,10 +1,13 @@
 import type { SQL } from 'bun';
 
+import { serviceUpdate } from '../lib/service-updates.ts';
 import { serviceStatus, sortServices } from '../lib/services.ts';
 import type { ServiceSummary } from '../lib/services.ts';
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
 import { QUIET_AFTER_MS } from './fleet-overview-types.ts';
 import type { ChecksRow } from './hub-rows.ts';
+import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
+import type { UpstreamCheckRow } from './update-observations.ts';
 
 const serviceSubjects = (sql: SQL) => sql`
   SELECT r.system, r.name FROM mirrored_records r
@@ -16,7 +19,7 @@ const serviceSubjects = (sql: SQL) => sql`
   WHERE c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
 `;
 
-type ServiceRow = {
+type ServiceRow = UpstreamCheckRow & {
   checks_received_at: Date | null;
   down_since: Date | null;
   last_seen_at: Date | null;
@@ -26,6 +29,8 @@ type ServiceRow = {
   services: ChecksRow['services'];
   system: string;
   version: string | null;
+  upstream: string | null;
+  observations: unknown[] | null;
 };
 
 // Held checks say a Service is up only while its System is heard from and the
@@ -37,7 +42,7 @@ const currentChecks = (row: ServiceRow, now: number): boolean =>
   row.last_seen_at.getTime() - row.checks_received_at.getTime() <= OLD_EVIDENCE_MS;
 
 // Recorded Services and open Service Conditions on paired Systems, with checks and latest
-// stop and installed version read in one statement so each row describes the same snapshot.
+// stop, installed version, and available update read in one statement from one snapshot.
 export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
   const rows: ServiceRow[] = await sql`
     SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, down.raised_at AS down_since,
@@ -46,7 +51,9 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
              WHERE n.system = r.system AND n.subject = r.name
                AND n.kind = 'service_restarted' AND n.cleared_at IS NULL
            ) AS restarted,
-           stop.stopped_at AS latest_stop_at, installed.version
+           stop.stopped_at AS latest_stop_at, installed.version, installed.upstream,
+           upstream.releases, upstream.checked_at, upstream.succeeded_at, upstream.failure,
+           managers.observations
     FROM (${serviceSubjects(sql)}) r
     LEFT JOIN systems s ON s.name = r.system
     LEFT JOIN check_sets c ON c.system = r.system
@@ -62,14 +69,31 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
       ORDER BY stopped_at DESC LIMIT 1
     ) stop ON true
     LEFT JOIN LATERAL (
-      SELECT version FROM service_versions
+      SELECT version, upstream FROM service_versions
       WHERE system = r.system AND service = r.name
       ORDER BY first_seen_at DESC LIMIT 1
     ) installed ON true
+    LEFT JOIN upstream_checks upstream ON upstream.upstream = installed.upstream
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(observation ORDER BY manager, installation) AS observations
+      FROM update_managers
+      WHERE system = r.system AND NOT withdrawn
+        AND manager = CASE
+          WHEN installed.upstream LIKE 'apt:%' THEN 'apt'
+          WHEN installed.upstream LIKE 'brew:%' THEN 'homebrew'
+        END
+    ) managers ON true
   `;
   return sortServices(
     rows.map((row) => {
       const downSince = row.down_since?.getTime();
+      const { status: update } = serviceUpdate({
+        check: upstreamCheckOf(row),
+        now,
+        observations: parseUpdateObservations(row.observations ?? []),
+        upstream: row.upstream,
+        version: row.version,
+      });
       return {
         downSince,
         latestStopAt: row.latest_stop_at?.getTime(),
@@ -82,6 +106,7 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
           restarted: row.restarted,
         }),
         system: row.system,
+        update: update?.kind === 'update' ? update.version : undefined,
         version: row.version,
       };
     }),
