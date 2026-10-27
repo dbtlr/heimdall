@@ -78,7 +78,10 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
       SELECT jsonb_agg(observation ORDER BY manager, installation) AS observations
       FROM update_managers
       WHERE system = r.system AND NOT withdrawn
-        AND (installed.upstream LIKE 'apt:%' OR installed.upstream LIKE 'brew:%')
+        AND manager = CASE
+          WHEN installed.upstream LIKE 'apt:%' THEN 'apt'
+          WHEN installed.upstream LIKE 'brew:%' THEN 'homebrew'
+        END
     ) managers ON true
   `;
   return sortServices(
