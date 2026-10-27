@@ -93,18 +93,16 @@ test('draws the chart with its captions', () => {
   expect(page).toContain('aria-label="Disk used over the last 7 days"');
   expect(page).toContain('Disk used, last 7 days');
   expect(page).toContain('88 to 91%, lines at 70, 80, 90');
-});
-
-test('shows the rule beside a load chart', () => {
   const chart = diskView.chart;
   if (chart === undefined) {
     throw new Error('fixture has a chart');
   }
-  const page = html({
-    ...diskView,
-    chart: { ...chart, captions: { ...chart.captions, rule: '90% for 30 of 60 min is a note' } },
-  });
-  expect(page).toContain('90% for 30 of 60 min is a note');
+  expect(
+    html({
+      ...diskView,
+      chart: { ...chart, captions: { ...chart.captions, rule: '90% for 30 of 60 min is a note' } },
+    }),
+  ).toContain('90% for 30 of 60 min is a note');
 });
 
 test('lists how it got here in order, with backfilled levels marked', () => {

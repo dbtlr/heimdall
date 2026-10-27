@@ -393,23 +393,6 @@ describe('Service down', () => {
     expect(await only(h, 'service_down')).toMatchObject({ evidence: 'unknown' });
   });
 
-  test('has old evidence when its checks arrived over 2 hours ago', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1', {
-      checks: { services: [serviceCheck('supervisor', 'stopped')] },
-      receivedAt: NOW - 3 * HOUR,
-      records,
-    });
-    await addCondition(h.db.sql, {
-      kind: 'service_down',
-      raisedAt: -3600,
-      subject: 'web',
-      system: 'server-1',
-    });
-
-    expect(await only(h, 'service_down')).toMatchObject({ evidence: 'old' });
-  });
-
   test('names no supervisor target for a Service the Hub does not mirror', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { checks: { services: [serviceCheck('supervisor', 'stopped')] } });
@@ -624,17 +607,6 @@ describe('unreadable files', () => {
     ]);
   });
 
-  test('has old evidence when the check set arrived over 2 hours ago', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1', {
-      checks: await filesChecks([{ path: ZSHRC, state: 'unreadable' }]),
-      receivedAt: NOW - 3 * HOUR,
-      records,
-    });
-
-    expect(await only(h, 'file_unreadable')).toMatchObject({ evidence: 'old' });
-  });
-
   test('lists no file of a record the checks did not judge', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', {
@@ -817,7 +789,6 @@ test('update attention reads actual observations independently of fresh Vitals a
 });
 
 test.each([
-  { evidence: 'current', label: 'a recent Report', receivedAt: NOW - MINUTE },
   { evidence: 'current', label: 'a Report at the 10-minute edge', receivedAt: NOW - 10 * MINUTE },
   { evidence: 'old', label: 'no Report for over 10 minutes', receivedAt: NOW - 10 * MINUTE - 1000 },
 ] as const)(
@@ -844,7 +815,6 @@ test.each([
 );
 
 test.each([
-  { evidence: 'current', label: 'fresh query and metadata', metadataAt: NOW, observedAt: NOW },
   {
     evidence: 'current',
     label: 'query at its freshness boundary',

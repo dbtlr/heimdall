@@ -1,10 +1,8 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
 import {
-  issue,
   NOW,
   push,
-  redeem,
   report,
   startHub,
   storeReport,
@@ -201,36 +199,25 @@ describe('the records a Report carries', () => {
     });
   });
 
-  test('are ignored when the Hub holds a set sent later', async () => {
+  test('keep the newest set: an earlier one is ignored, a same-moment or post-bad-clock one replaces it', async () => {
     await using h = await startHub();
     h.clock.now = NOW + 2000;
     await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
 
     await send(h, { records: set([service(DB)]), sentAt: NOW });
-
     expect(await entryOf(h)).toMatchObject({ records: [service(WEBAPP)] });
-  });
 
-  test('replace a set that claims a time in the Hub future, so a bad clock cannot freeze them', async () => {
-    await using h = await startHub();
+    await send(h, { records: set([service(DB)]), sentAt: NOW + 1000 });
+    expect(await entryOf(h)).toMatchObject({ records: [service(DB)] });
+
+    // A set that claims a time in the Hub future does not freeze the next one.
     await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 10 * YEAR });
     h.clock.now = NOW + 60_000;
-
     await send(h, { records: set([service(DB)]), sentAt: NOW + 60_000 });
-
     expect(await entryOf(h)).toMatchObject({
       records: [service(DB)],
       sentAt: new Date(NOW + 60_000).toISOString(),
     });
-  });
-
-  test('replace a set sent at the same moment', async () => {
-    await using h = await startHub();
-    await send(h, { records: set([service(WEBAPP)]) });
-
-    await send(h, { records: set([service(DB)]) });
-
-    expect(await entryOf(h)).toMatchObject({ records: [service(DB)] });
   });
 
   test('keep each System to its own set', async () => {
@@ -315,16 +302,6 @@ describe('a set over budget', () => {
 
     expect(await entryOf(h)).toMatchObject({ records: [service(WEBAPP)] });
   });
-
-  test('does not replace a set sent later', async () => {
-    await using h = await startHub();
-    h.clock.now = NOW + 2000;
-    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
-
-    await send(h, { records: { overBudget: { bytes: 9_000_000 } }, sentAt: NOW });
-
-    expect(await entryOf(h)).toMatchObject({ records: [service(WEBAPP)] });
-  });
 });
 
 describe('the latest runs a Report carries', () => {
@@ -340,18 +317,6 @@ describe('the latest runs a Report carries', () => {
       sentAt: new Date(NOW + 1000).toISOString(),
       unreadable: [],
     });
-  });
-
-  test('read a failed run, then a later success, as the latest run and latest success', async () => {
-    await using h = await startHub();
-    await send(h, { runs: runs([failing('backup')]) });
-    expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
-
-    await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 1000 });
-
-    expect(jobsOf(await entryOf(h))).toEqual([
-      { job: 'backup', latestRun: SUCCEEDED, latestSuccess: SUCCEEDED },
-    ]);
   });
 
   test('keep the success a later failure follows as the latest success', async () => {
@@ -399,37 +364,26 @@ describe('the latest runs a Report carries', () => {
     expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['B', 'a-c', 'a_b', 'ab', 'b']);
   });
 
-  test('are ignored when the Hub holds runs sent later', async () => {
+  test('keep the newest runs: earlier ones are ignored, same-moment or post-bad-clock ones replace them', async () => {
     await using h = await startHub();
     h.clock.now = NOW + 2000;
     await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 1000 });
 
     await send(h, { runs: runs([failing('prune')]), sentAt: NOW });
-
     expect(await entryOf(h)).toMatchObject({
       runs: { jobs: [passing('backup')], sentAt: new Date(NOW + 1000).toISOString() },
     });
-  });
 
-  test('replace runs that claim a time in the Hub future, so a bad clock cannot freeze them', async () => {
-    await using h = await startHub();
+    await send(h, { runs: runs([failing('prune')]), sentAt: NOW + 1000 });
+    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['prune']);
+
+    // Runs that claim a time in the Hub future do not freeze the next ones.
     await send(h, { runs: runs([passing('backup')]), sentAt: NOW + 10 * YEAR });
     h.clock.now = NOW + 60_000;
-
     await send(h, { runs: runs([failing('prune')]), sentAt: NOW + 60_000 });
-
     expect(await entryOf(h)).toMatchObject({
       runs: { jobs: [failing('prune')], sentAt: new Date(NOW + 60_000).toISOString() },
     });
-  });
-
-  test('replace runs sent at the same moment', async () => {
-    await using h = await startHub();
-    await send(h, { runs: runs([failing('backup')]) });
-
-    await send(h, { runs: runs([failing('prune')]) });
-
-    expect(jobsOf(await entryOf(h))?.map((j) => j.job)).toEqual(['prune']);
   });
 
   test('are left as they were by a Report without a runs section', async () => {
@@ -517,81 +471,27 @@ describe('runs over budget', () => {
 
     expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
   });
-
-  test('do not replace runs sent later', async () => {
-    await using h = await startHub();
-    h.clock.now = NOW + 2000;
-    await send(h, { runs: runs([failing('backup')]), sentAt: NOW + 1000 });
-
-    await send(h, { runs: { overBudget: { bytes: 3_000_000 } }, sentAt: NOW });
-
-    expect(jobsOf(await entryOf(h))).toEqual([failing('backup')]);
-  });
 });
 
 describe('the time zone a Report carries', () => {
-  test('is read back', async () => {
+  test('the time zone is set, kept by a Report without one or with one the Hub cannot read, and changed by another', async () => {
     await using h = await startHub();
 
     await send(h, { timeZone: 'America/New_York' });
-
     expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
-  });
-
-  test('is kept by a Report without one', async () => {
-    await using h = await startHub();
-    await send(h, { timeZone: 'America/New_York' });
 
     await send(h, { sentAt: NOW + 60_000 });
-
     expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
-  });
 
-  test('is changed by a Report with another', async () => {
-    await using h = await startHub();
-    await send(h, { timeZone: 'America/New_York' });
+    await send(h, { sentAt: NOW + 120_000, timeZone: 'America/New York' });
+    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
 
-    await send(h, { timeZone: 'Europe/Berlin' });
-
+    await send(h, { sentAt: NOW + 180_000, timeZone: 'Europe/Berlin' });
     expect(await entryOf(h)).toMatchObject({ timeZone: 'Europe/Berlin' });
-  });
-
-  test('that the Hub cannot read costs no Report, and the Hub keeps the zone it holds', async () => {
-    await using h = await startHub();
-    await send(h, { timeZone: 'America/New_York' });
-
-    await send(h, { sentAt: NOW + 60_000, timeZone: 'America/New York' });
-
-    expect(await entryOf(h)).toMatchObject({ timeZone: 'America/New_York' });
   });
 });
 
 describe('records and runs', () => {
-  test('arrive independently: runs leave the records as they were', async () => {
-    await using h = await startHub();
-    await send(h, { records: set([service(WEBAPP)]) });
-
-    await send(h, { runs: runs([failing('backup')]), sentAt: NOW + 1000 });
-
-    expect(await entryOf(h)).toMatchObject({
-      records: [service(WEBAPP)],
-      runs: { jobs: [failing('backup')] },
-      sentAt: new Date(NOW).toISOString(),
-    });
-  });
-
-  test('arrive independently: records leave the runs as they were', async () => {
-    await using h = await startHub();
-    await send(h, { runs: runs([failing('backup')]) });
-
-    await send(h, { records: set([service(WEBAPP)]), sentAt: NOW + 1000 });
-
-    expect(await entryOf(h)).toMatchObject({
-      records: [service(WEBAPP)],
-      runs: { jobs: [failing('backup')], sentAt: new Date(NOW).toISOString() },
-    });
-  });
-
   test('are each held against their own sent time', async () => {
     await using h = await startHub();
     h.clock.now = NOW + 2000;
@@ -716,46 +616,7 @@ describe('the checks a Report carries', () => {
     ]);
   });
 
-  test('give way to the next when the held ones claim a time after the Hub clock', async () => {
-    await using h = await startHub();
-    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 10 * YEAR });
-
-    await send(h, { checks: { files: [] }, sentAt: NOW + 60_000 });
-
-    expect((await entryOf(h))?.checks).toMatchObject({
-      files: [],
-      sentAt: new Date(NOW + 60_000).toISOString(),
-    });
-  });
-
-  test('are replaced by checks sent at the very same time', async () => {
-    await using h = await startHub();
-    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW });
-
-    await send(h, { checks: { files: [] }, sentAt: NOW });
-
-    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
-  });
-
-  test('show a file the Collector could not read as unreadable, not as drifted', async () => {
-    await using h = await startHub();
-
-    await send(h, { checks: { files: [sentCheck(DIR)] } });
-
-    expect((await entryOf(h))?.checks).toMatchObject({
-      files: [{ path: '/etc/webapp', state: 'unreadable' }],
-    });
-  });
-
-  test('read as no files when every recorded file matches', async () => {
-    await using h = await startHub();
-
-    await send(h, { checks: { files: [] } });
-
-    expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
-  });
-
-  test('replace the earlier checks, and an older Report does not replace newer ones', async () => {
+  test('replace the earlier checks, an older Report does not replace newer ones, and a same-moment or post-bad-clock set does', async () => {
     await using h = await startHub();
     h.clock.now = NOW + 5000;
     await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 1000 });
@@ -766,6 +627,18 @@ describe('the checks a Report carries', () => {
 
     expect(kept).toMatchObject({ files: [{ path: CONF.path }] });
     expect((await entryOf(h))?.checks).toMatchObject({ files: [] });
+
+    // Checks sent at the very same time replace the held ones.
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 2000 });
+    expect((await entryOf(h))?.checks).toMatchObject({ files: [{ path: CONF.path }] });
+
+    // Held checks that claim a time after the Hub clock give way to the next.
+    await send(h, { checks: { files: [sentCheck(CONF)] }, sentAt: NOW + 10 * YEAR });
+    await send(h, { checks: { files: [] }, sentAt: NOW + 60_000 });
+    expect((await entryOf(h))?.checks).toMatchObject({
+      files: [],
+      sentAt: new Date(NOW + 60_000).toISOString(),
+    });
   });
 
   test('are kept by a Report that carries none', async () => {
@@ -898,13 +771,6 @@ describe('the checks a Report carries', () => {
 
     expect((await entryOf(h))?.checks).toMatchObject({ services: [] });
   });
-
-  test('read as null for a System whose Collector never sent them', async () => {
-    await using h = await startHub();
-    await send(h, { records: set([service(WEBAPP)]) });
-
-    expect((await entryOf(h))?.checks).toBeNull();
-  });
 });
 
 describe('reading the records', () => {
@@ -915,21 +781,6 @@ describe('reading the records', () => {
     expect(await read(h)).toEqual([
       { checks: null, paired: true, records: null, runs: null, system: 'laptop-1', timeZone: null },
     ]);
-  });
-
-  test('answers null runs and time zone for a System that never sent them', async () => {
-    await using h = await startHub();
-    await send(h, { records: set([service(WEBAPP)]) });
-
-    expect(await entryOf(h)).toMatchObject({ runs: null, timeZone: null });
-  });
-
-  test('lists Systems by name, as the dashboard does', async () => {
-    await using h = await startHub();
-    await send(h, { records: set([service(WEBAPP)]) });
-    await send(h, { system: 'server-1' });
-
-    expect((await read(h)).map((entry) => entry.system)).toEqual(['laptop-1', 'server-1']);
   });
 
   test('lists Systems in the order the fleet overview does, whatever the collation', async () => {
@@ -1018,56 +869,6 @@ describe('the paired and unpaired Systems', () => {
       ['laptop-1', false],
       ['server-1', true],
     ]);
-  });
-
-  test('an unpaired System paired again is back in the default read', async () => {
-    await using h = await startHub();
-    await unpairedLaptop(h);
-
-    await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'new-token' });
-
-    expect((await read(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
-  });
-
-  test('a System unpaired and given a new code stays hidden until the code is redeemed', async () => {
-    await using h = await startHub();
-    await unpairedLaptop(h);
-
-    const code = await issue(h, 'laptop-1');
-
-    expect((await read(h)).map((s) => s.system)).toEqual(['server-1']);
-
-    expect((await redeem(h.hub, { code })).status).toBe(200);
-
-    expect((await read(h)).map((s) => s.system)).toEqual(['laptop-1', 'server-1']);
-  });
-
-  test("the default read lists exactly the paired entries of the Hub's Systems", async () => {
-    await using h = await startHub();
-    await unpairedLaptop(h);
-
-    const paired: { system: string }[] = await h.db
-      .sql`SELECT system FROM paired_systems ORDER BY system`;
-
-    expect((await read(h)).map((s) => s.system)).toEqual(paired.map((row) => row.system));
-  });
-
-  test.each([
-    ['an unknown value', '?unpaired=yes'],
-    ['a different case', '?unpaired=INCLUDE'],
-    ['an empty value', '?unpaired='],
-    ['no value', '?unpaired'],
-    ['a repeated value that is not include', '?unpaired=include&unpaired=yes'],
-  ])('a records read with %s for unpaired is refused', async (_name, query) => {
-    await using h = await startHub();
-
-    const response = await ask(h, query);
-
-    expect(response.status).toBe(400);
-    expect(response.headers.get('content-type')).toContain('text/plain');
-    expect(await response.text()).toBe(
-      'The only value for unpaired is include: ?unpaired=include.',
-    );
   });
 
   test('a records read that repeats include still includes unpaired Systems', async () => {

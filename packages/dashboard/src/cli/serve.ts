@@ -32,8 +32,9 @@ const answeringWith =
 // dashboard.toml. The database URL is not one of them: the app reads the Hub's
 // own, from hub.toml, on its first request. Its runtime lines start with their
 // time, and it rotates its supervised log before its first line, then about
-// once a day.
-export const serveCommand = (loadServer: () => Promise<BuiltServer>) =>
+// once a day. `idleTimeout` (seconds) is how long the server lets a connection
+// sit silent; tests shorten it.
+export const serveCommand = (loadServer: () => Promise<BuiltServer>, idleTimeout = 60) =>
   new Command('serve', { description: "Serve the dashboard from the Hub's database." })
     .option('host', {
       default: '127.0.0.1',
@@ -77,7 +78,7 @@ export const serveCommand = (loadServer: () => Promise<BuiltServer>) =>
           hostname: options.host,
           // Page queries allow 30 seconds before they time out, then rendering
           // still has to send the response instead of losing the connection.
-          idleTimeout: 60,
+          idleTimeout,
           port: options.port,
         });
         try {

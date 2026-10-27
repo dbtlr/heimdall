@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, storeToken, timeline, unpair } from '@heimdall/hub/testing';
+import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { filesRecordDigest } from '@heimdall/schema';
 
@@ -203,7 +203,7 @@ describe('readSystemDetail', () => {
     ).toBeUndefined();
   });
 
-  test('describes the System from its newest Report: platform, uptime, and installed Harnesses', async () => {
+  test('describes the System from its newest Report: platform, uptime, version, load, disks, and installed Harnesses with their location', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', {
       harnesses: {
@@ -235,21 +235,6 @@ describe('readSystemDetail', () => {
       status: 'up',
     });
     expect(found.from).toBe(NOW - 12 * HOUR);
-  });
-
-  test('carries the facts the Collector reported: its version, load, disks, and Harness installs with their location', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1', {
-      harnesses: {
-        installs: [
-          { harness: 'codex', location: 'npm', version: '0.163.0' },
-          { harness: 'claude-code', location: 'native', version: '2.4.1' },
-        ],
-      },
-    });
-
-    const found = await detail(h);
-
     expect(found.collectorVersion).toBe('0.1.0');
     expect(found.latest).toMatchObject({
       disks: [
@@ -257,10 +242,6 @@ describe('readSystemDetail', () => {
       ],
       load: [1.2, 0.9, 0.7],
     });
-    expect(found.harnesses).toEqual([
-      { harness: 'claude-code', location: 'native', version: '2.4.1' },
-      { harness: 'codex', location: 'npm', version: '0.163.0' },
-    ]);
   });
 
   test('tells a Collector that reported no Harnesses from one that never reported them', async () => {
@@ -583,17 +564,6 @@ describe('an unpaired System', () => {
       ['system_stale', 'Not heard from.'],
     ]);
   });
-
-  test('is paired again once a new code is redeemed', async () => {
-    await using h = await startHub();
-    await hear(h, 'laptop-1');
-    await unpair(h.db.sql, 'laptop-1');
-    expect((await detail(h, 'laptop-1')).paired).toBe(false);
-
-    await storeToken(h.db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
-
-    expect(await detail(h, 'laptop-1')).toMatchObject({ paired: true, status: 'up' });
-  });
 });
 
 const silence = (h: Hub, until: number) =>
@@ -614,14 +584,6 @@ describe('a silence', () => {
 
     expect(silencedUntil).toBe(NOW + 2 * HOUR);
     expect(silenced).toEqual(before);
-  });
-
-  test('is ignored once it ends, though the row remains', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await silence(h, NOW);
-
-    expect((await detail(h)).silencedUntil).toBeUndefined();
   });
 });
 

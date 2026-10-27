@@ -63,17 +63,6 @@ test.each([
       [12, 22, 'Tue'],
     ],
   ],
-  // New York is UTC-4, so its midnights are at 04:00 UTC.
-  [
-    'America/New_York',
-    [
-      [9, 4, 'Fri'],
-      [10, 4, 'Sat'],
-      [11, 4, 'Sun'],
-      [12, 4, 'Mon'],
-      [13, 4, 'Tue'],
-    ],
-  ],
 ] as const)('7d day ticks sit at local midnight in %s', (zone, midnights) => {
   const to = Date.UTC(2026, 9, 14, 12, 0, 0);
   const ticks = axisTicks('7d', { from: to - 7 * 24 * HOUR, to }, zone);

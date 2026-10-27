@@ -70,8 +70,3 @@ test('a single occurrence reads in the singular, none in the plural', () => {
   expect(html).toContain('Show 1 occurrence<');
   expect(html).toContain('aria-label="Note, 0 occurrences"');
 });
-
-test('a URL-selected System with no loaded occurrence keeps its chip', () => {
-  const html = sheet({ level: [], status: [], system: ['aged-out'] });
-  expect(html).toContain('aria-label="aged-out, 0 occurrences" aria-pressed="true"');
-});

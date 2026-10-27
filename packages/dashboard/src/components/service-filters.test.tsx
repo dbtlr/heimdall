@@ -27,7 +27,7 @@ const rows: ServiceSummary[] = [
 ];
 const ignore = () => {};
 
-test('active filters have individually labelled removal controls and Clear', () => {
+test('active filters form an accessible group with individually labelled removal controls and Clear', () => {
   const html = renderToStaticMarkup(
     <ActiveServiceFilters
       filters={{ status: ['down', 'up'], system: ['alpha'] }}
@@ -38,6 +38,7 @@ test('active filters have individually labelled removal controls and Clear', () 
   expect(html).toContain('aria-label="Remove Up filter"');
   expect(html).toContain('aria-label="Remove alpha filter"');
   expect(html).toContain('Clear</button>');
+  expect(html).toMatch(/<div(?=[^>]*role="group")(?=[^>]*aria-label="Active filters")/u);
   expect(
     renderToStaticMarkup(
       <ActiveServiceFilters filters={{ status: [], system: [] }} onChange={ignore} />,
@@ -82,13 +83,6 @@ test('a single Service reads in the singular', () => {
   );
   expect(html).toContain('Show 1 Service<');
   expect(html).toMatch(/aria-label="[^"]*, 1 Service"/u);
-});
-
-test('active filters form an accessible group', () => {
-  const html = renderToStaticMarkup(
-    <ActiveServiceFilters filters={{ status: ['down'], system: [] }} onChange={ignore} />,
-  );
-  expect(html).toMatch(/<div(?=[^>]*role="group")(?=[^>]*aria-label="Active filters")/u);
 });
 
 test('Updates has its own count, follows Restarted, and labels its active pill', () => {

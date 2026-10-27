@@ -14,8 +14,14 @@ export type { BuiltServer } from './cli/serve.ts';
 const signals = () => plugin('@heimdall/dashboard/signals', { signals: ['SIGINT', 'SIGTERM'] });
 
 // The `heimdall-dashboard` command line. `loadServer` loads the app Vite
-// built; tests give it their own.
-export const createApp = ({ loadServer }: { loadServer: () => Promise<BuiltServer> }) =>
+// built; tests give it their own, and a shorter `idleTimeout` in seconds.
+export const createApp = ({
+  idleTimeout,
+  loadServer,
+}: {
+  idleTimeout?: number | undefined;
+  loadServer: () => Promise<BuiltServer>;
+}) =>
   new Application('heimdall-dashboard', {
     description: "Serve the dashboard of every System, read from the Hub's database.",
     plugins: [
@@ -26,7 +32,7 @@ export const createApp = ({ loadServer }: { loadServer: () => Promise<BuiltServe
     ],
     version: DASHBOARD_VERSION,
   })
-    .command(serveCommand(loadServer))
+    .command(serveCommand(loadServer, idleTimeout))
     .command(serviceCommand({ binary: 'dashboard', version: DASHBOARD_VERSION }));
 
 // The command line `main.ts` runs, over the build in `.output/server/`, which a

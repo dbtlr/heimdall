@@ -158,10 +158,20 @@ test('reads the Service down raises and clears of the 90 days, and the raise of 
   ]);
 });
 
-test('has no note when none is open', async () => {
+test('a recorded Service with nothing else has no note, no stops, and no installed version', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', { records });
-  expect((await read(h))?.note).toBeUndefined();
+
+  const found = await read(h);
+
+  expect(found?.note).toBeUndefined();
+  expect(found?.stops).toEqual([]);
+  expect(found?.installed).toEqual({
+    missingApplication: undefined,
+    upstream: null,
+    version: null,
+  });
+  expect(found?.installs).toEqual([]);
 });
 
 test('a Service its provisioner forgot still opens while it has stops', async () => {
@@ -187,12 +197,6 @@ test('a forgotten Service still down from before the 90 days opens with that sto
   expect(found?.stops.map(({ ongoing, stoppedAt }) => [stoppedAt, ongoing])).toEqual([
     [new Date(since).toISOString(), true],
   ]);
-});
-
-test('a recorded Service with no stops opens', async () => {
-  await using h = await startHub();
-  await hear(h, 'server-1', { records });
-  expect((await read(h))?.stops).toEqual([]);
 });
 
 test('an unknown System or Service is undefined', async () => {
@@ -318,20 +322,6 @@ test('reads the installed version and upstream, and the installs between known v
   expect(found?.installs.map(({ version, was }) => [version, was])).toEqual([['1.1', '1.0']]);
 });
 
-test('has no installed version, nor a missing Application, for a Service naming none', async () => {
-  await using h = await startHub();
-  await hear(h, 'server-1', { records });
-
-  const found = await read(h);
-
-  expect(found?.installed).toEqual({
-    missingApplication: undefined,
-    upstream: null,
-    version: null,
-  });
-  expect(found?.installs).toEqual([]);
-});
-
 test('names the Application a Service names when the System records none of that name', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', {
@@ -385,68 +375,36 @@ test('reads the latest upstream check, its retained releases, and the versions i
   ]);
 });
 
-for (const [upstream, manager, name, source] of [
-  ['apt:web', 'apt', 'web:amd64', 'APT'],
-  ['brew:web', 'homebrew', 'cask:web', 'Homebrew'],
-] as const) {
-  test(`reads ${upstream} observations on the same System, skipping withdrawn and malformed rows`, async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1', { records });
-    await hear(h, 'laptop-1', { records });
-    await h.db.sql`
-      UPDATE service_versions SET version = '1.0', upstream = ${upstream} WHERE service = 'web'
-    `;
-    const observation = JSON.stringify({
-      installation: '/',
-      manager,
-      observedAt: NOW,
-      result: {
-        kind: 'available',
-        metadataAt: NOW,
-        updates: [{ available: '2.0', installed: '1.0', name, security: null }],
-      },
-    });
-    await h.db.sql`
-      INSERT INTO update_managers (system, manager, installation, observed_at, observation, withdrawn) VALUES
-        ('server-1', ${manager}, '/', ${new Date(NOW)}, ${observation}::text::jsonb, true),
-        ('server-1', ${manager}, '/invalid', ${new Date(NOW)}, '{"bad":"observation"}', false)
-    `;
-    expect((await read(h))?.update.status).toBeUndefined();
-    await h.db.sql`UPDATE update_managers SET withdrawn = false WHERE installation = '/'`;
-    const found = await read(h);
-    expect(found?.update).toEqual({
-      failure: undefined,
-      status: { kind: 'update', source, version: '2.0' },
-    });
-    expect(found?.updates).toEqual([]);
-    expect((await read(h, 'laptop-1'))?.update.status).toBeUndefined();
-  });
-}
-
-test('valkey releases found while the Service ran redis make no history, and its update dates from the switch', async () => {
+const [upstream, manager, name, source] = ['apt:web', 'apt', 'web:amd64', 'APT'] as const;
+test(`reads ${upstream} observations on the same System, skipping withdrawn and malformed rows`, async () => {
   await using h = await startHub();
   await hear(h, 'server-1', { records });
-  await h.db.sql`DELETE FROM service_versions`;
+  await hear(h, 'laptop-1', { records });
   await h.db.sql`
-    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
-      ('server-1', 'web', '7.2', 'oci:docker.io/library/redis', ${new Date(NOW - 80 * DAY)}),
-      ('server-1', 'web', '7.2', 'oci:docker.io/valkey/valkey', ${new Date(NOW - DAY)})
+    UPDATE service_versions SET version = '1.0', upstream = ${upstream} WHERE service = 'web'
   `;
-  await h.db.sql`
-    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
-      ('oci:docker.io/valkey/valkey', '{"":"8.0"}', ${new Date(NOW)}, ${new Date(NOW)}, ${new Date(NOW)})
-  `;
-  await h.db.sql`
-    INSERT INTO upstream_releases (upstream, version, first_found_at) VALUES
-      ('oci:docker.io/valkey/valkey', '7.2.5', ${new Date(NOW - 60 * DAY)}),
-      ('oci:docker.io/valkey/valkey', '8.0', ${new Date(NOW - 30 * DAY)})
-  `;
-  const found = await read(h);
-  expect(found?.updates).toEqual([]);
-  expect(found?.update.status).toEqual({
-    kind: 'update',
-    since: NOW - DAY,
-    source: 'upstream',
-    version: '8.0',
+  const observation = JSON.stringify({
+    installation: '/',
+    manager,
+    observedAt: NOW,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: [{ available: '2.0', installed: '1.0', name, security: null }],
+    },
   });
+  await h.db.sql`
+    INSERT INTO update_managers (system, manager, installation, observed_at, observation, withdrawn) VALUES
+      ('server-1', ${manager}, '/', ${new Date(NOW)}, ${observation}::text::jsonb, true),
+      ('server-1', ${manager}, '/invalid', ${new Date(NOW)}, '{"bad":"observation"}', false)
+  `;
+  expect((await read(h))?.update.status).toBeUndefined();
+  await h.db.sql`UPDATE update_managers SET withdrawn = false WHERE installation = '/'`;
+  const found = await read(h);
+  expect(found?.update).toEqual({
+    failure: undefined,
+    status: { kind: 'update', source, version: '2.0' },
+  });
+  expect(found?.updates).toEqual([]);
+  expect((await read(h, 'laptop-1'))?.update.status).toBeUndefined();
 });

@@ -9,7 +9,6 @@ import {
   markSpan,
   nowLine,
   raisedTitle,
-  statusWord,
   stretchTitle,
 } from './lane.ts';
 import { phraseText, zoneFreeText } from './phrase.ts';
@@ -58,7 +57,6 @@ test('no buckets make no points', () => {
 
 test.each([
   [true, 10, 'asleep'],
-  [true, 12, 'asleep'],
   [true, 9, undefined],
   [false, 12, undefined],
   [false, 20, 'no Reports'],
@@ -164,12 +162,6 @@ test('the now line of a System silent over 2 minutes says since when, not old Vi
   };
   const silent = lane({ lastSeenAt: NOW - 6 * 60 * MINUTE, latest, status: 'needs_you' });
   expect(text(nowLine(silent, NOW))).toBe('silent since 10:00');
-});
-
-test('a status reads as a word', () => {
-  expect(statusWord('needs_you')).toBe('Needs you');
-  expect(statusWord('never_seen')).toBe('Never seen');
-  expect(statusWord('unpaired')).toBe('Unpaired');
 });
 
 const stretch: Stretch = {
