@@ -68,6 +68,16 @@ test('search drops unknown values and leaves empty params undefined', () => {
   expect(timelineSearch({})).toEqual({ level: undefined, status: undefined, system: undefined });
   expect(
     timelineSearch({ level: ['alert', 'bogus', 'alert'], status: 'open', system: ['a', 3] }),
-  ).toEqual({ level: ['alert'], status: ['open'], system: ['a'] });
+  ).toEqual({ level: ['alert'], status: ['open'], system: ['a', '3'] });
   expect(timelineSearch({ level: 'bogus', status: ['nope'] }).level).toBeUndefined();
+});
+
+test('search keeps finite numbers inside a System array as strings', () => {
+  expect(timelineSearch({ system: ['a', 3, Number.NaN, 3] }).system).toEqual(['a', '3']);
+});
+
+test('a selected System with no loaded entries is listed at zero, after the loaded ones', () => {
+  const counts = timelineFilterCounts(entries, { ...emptyTimelineFilters(), system: ['aged-out'] });
+  expect(Object.keys(counts.system)).toEqual(['alpha', 'beta', 'aged-out']);
+  expect(counts.system['aged-out']).toBe(0);
 });

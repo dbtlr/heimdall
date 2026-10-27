@@ -8,6 +8,9 @@ export const toggle = <T,>(values: T[], value: T): T[] =>
 
 export type FilterChipSpec = { count: number; label: string; selected: boolean; value: string };
 export type FilterSection = { chips: FilterChipSpec[]; key: string; title: string };
+export type FilterNoun = { one: string; other: string };
+const nounFor = (noun: FilterNoun, count: number) => (count === 1 ? noun.one : noun.other);
+
 export type FilterPill = { key: string; label: string; remove: () => void };
 
 // Removable pills for the active filters, with Clear for all of them.
@@ -55,13 +58,13 @@ function FilterChip({
 }: {
   count: number;
   label: string;
-  noun: string;
+  noun: FilterNoun;
   onClick: () => void;
   selected: boolean;
 }) {
   return (
     <button
-      aria-label={`${label}, ${String(count)} ${noun}`}
+      aria-label={`${label}, ${String(count)} ${nounFor(noun, count)}`}
       aria-pressed={selected}
       className={cn(
         'min-h-11 max-w-full rounded-full border px-3 text-base wrap-anywhere',
@@ -89,7 +92,7 @@ export function FilterSheet({
   title,
   titleId,
 }: {
-  noun: string;
+  noun: FilterNoun;
   onApply: () => void;
   onClear: () => void;
   onClose: () => void;
@@ -171,7 +174,7 @@ export function FilterSheet({
           onClick={onApply}
           type="button"
         >
-          Show {shown} {noun}
+          Show {shown} {nounFor(noun, shown)}
         </button>
       </footer>
     </dialog>
@@ -193,7 +196,7 @@ export function FilterControl<F>({
   activeCount: number;
   empty: () => F;
   filters: F;
-  noun: string;
+  noun: FilterNoun;
   onChange: (filters: F) => void;
   sheetFor: (draft: F) => { sections: FilterSection[]; shown: number };
   title: string;

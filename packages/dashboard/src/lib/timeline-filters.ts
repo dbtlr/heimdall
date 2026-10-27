@@ -50,7 +50,10 @@ export const timelineFilterCounts = (entries: readonly Filterable[], filters: Ti
   const counts = {
     level: { alert: 0, note: 0, warning: 0 } as Record<TimelineLevel, number>,
     status: { cleared: 0, open: 0 } as Record<TimelineStatus, number>,
-    system: Object.fromEntries(entries.map((entry) => [entry.system, 0])),
+    system: Object.fromEntries([
+      ...entries.map((entry) => [entry.system, 0]),
+      ...filters.system.map((system) => [system, 0]),
+    ]),
   };
   for (const entry of entries) {
     if (matches(entry, filters, 'level')) {

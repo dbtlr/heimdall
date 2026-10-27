@@ -6,7 +6,7 @@ import {
   timelineFilterCounts,
 } from '../lib/timeline-filters.ts';
 import type { TimelineFilters, TimelineLevel, TimelineStatus } from '../lib/timeline-filters.ts';
-import { ActiveFilters, FilterControl, FilterSheet, toggle } from './filter-sheet.tsx';
+import { ActiveFilters, FilterControl, toggle } from './filter-sheet.tsx';
 
 type FilterableEntry = {
   clearedAt: number | undefined;
@@ -21,7 +21,7 @@ const LEVEL_NAMES: Record<TimelineLevel, string> = {
   warning: 'Warning',
 };
 const STATUS_NAMES: Record<TimelineStatus, string> = { cleared: 'Cleared', open: 'Open' };
-const NOUN = 'occurrences';
+const NOUN = { one: 'occurrence', other: 'occurrences' };
 const TITLE = 'Filter Timeline';
 const TITLE_ID = 'timeline-filter-title';
 
@@ -113,34 +113,6 @@ export function ActiveTimelineFilters({
           remove: () => onChange({ ...filters, status: toggle(filters.status, status) }),
         })),
       ]}
-    />
-  );
-}
-
-export function TimelineFilterSheet({
-  entries,
-  filters,
-  onApply,
-  onChange,
-  onClose,
-  open,
-}: FilterProps & {
-  entries: readonly FilterableEntry[];
-  onApply: () => void;
-  onClose: () => void;
-  open: boolean;
-}) {
-  return (
-    <FilterSheet
-      {...sheetFor(entries, filters)}
-      noun={NOUN}
-      onApply={onApply}
-      onClear={() => onChange(emptyTimelineFilters())}
-      onClose={onClose}
-      onToggle={(section, value) => onChange(toggleIn(filters, section, value))}
-      open={open}
-      title={TITLE}
-      titleId={TITLE_ID}
     />
   );
 }

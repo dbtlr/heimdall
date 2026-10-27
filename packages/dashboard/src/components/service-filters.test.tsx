@@ -69,6 +69,21 @@ test('sheet labels its sections, reflects selection and counts, and keeps zero-c
   expect(html).toContain('Close</button>');
 });
 
+test('a single Service reads in the singular', () => {
+  const html = renderToStaticMarkup(
+    <ServiceFilterSheet
+      filters={{ status: [], system: [] }}
+      onApply={ignore}
+      onChange={ignore}
+      onClose={ignore}
+      open
+      rows={rows.slice(0, 1)}
+    />,
+  );
+  expect(html).toContain('Show 1 Service<');
+  expect(html).toMatch(/aria-label="[^"]*, 1 Service"/u);
+});
+
 test('active filters form an accessible group', () => {
   const html = renderToStaticMarkup(
     <ActiveServiceFilters filters={{ status: ['down'], system: [] }} onChange={ignore} />,

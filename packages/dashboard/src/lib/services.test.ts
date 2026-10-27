@@ -135,10 +135,10 @@ test('chip counts use only the other section, including zero and multi-select', 
   });
 });
 
-test('search validation drops unknown statuses and non-string System values and deduplicates arrays', () => {
+test('search validation drops unknown statuses, stringifies numeric System values, and deduplicates arrays', () => {
   expect(
     servicesSearch({ status: ['down', 'bad', 'up', 'down'], system: ['alpha', 1, 'alpha'] }),
-  ).toEqual({ status: ['down', 'up'], system: ['alpha'] });
+  ).toEqual({ status: ['down', 'up'], system: ['alpha', '1'] });
   expect(servicesSearch({ status: 'down', system: null })).toEqual({
     status: ['down'],
     system: undefined,

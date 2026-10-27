@@ -73,6 +73,8 @@ export function ActiveServiceFilters({ filters, onChange }: FilterProps) {
   );
 }
 
+const NOUN = { one: 'Service', other: 'Services' };
+
 export function ServiceFilterSheet({
   filters,
   onApply,
@@ -89,7 +91,7 @@ export function ServiceFilterSheet({
   return (
     <FilterSheet
       {...sheetFor(rows, filters)}
-      noun="Services"
+      noun={NOUN}
       onApply={onApply}
       onClear={() => onChange(emptyFilters())}
       onClose={onClose}
@@ -111,7 +113,7 @@ export function ServicesFilters({
       activeCount={filters.status.length + filters.system.length}
       empty={emptyFilters}
       filters={filters}
-      noun="Services"
+      noun={NOUN}
       onChange={onChange}
       sheetFor={(draft) => sheetFor(rows, draft)}
       title="Filter Services"

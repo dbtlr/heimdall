@@ -28,6 +28,7 @@ function FleetTimeline() {
   };
   const navigate = Route.useNavigate();
   const entries = filterTimeline(all, filters);
+  const filtered = filters.level.length + filters.status.length + filters.system.length > 0;
   const change = (next: TimelineFilters) => {
     void navigate({
       resetScroll: false,
@@ -48,6 +49,11 @@ function FleetTimeline() {
             <p className="mt-1 mb-5 text-base text-muted-foreground">
               Across all Systems, last 7 days and still open. Newest occurrence first.
             </p>
+            {filtered && (
+              <p aria-live="polite" className="mb-5 text-sm text-muted-foreground">
+                {entries.length} of {all.length} {all.length === 1 ? 'occurrence' : 'occurrences'}
+              </p>
+            )}
           </div>
           {all.length > 0 && (
             <TimelineFilterControl entries={all} filters={filters} onChange={change} />

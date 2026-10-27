@@ -8,7 +8,13 @@ export const stringList = (value: unknown): string[] => {
     return [value];
   }
   return Array.isArray(value)
-    ? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
+    ? [
+        ...new Set(
+          value
+            .filter((item) => typeof item === 'string' || typeof item === 'number')
+            .flatMap(stringList),
+        ),
+      ]
     : [];
 };
 
