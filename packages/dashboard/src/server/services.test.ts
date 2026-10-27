@@ -3,6 +3,7 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
+import { OLD_EVIDENCE_MS } from './attention-types.ts';
 import { readServiceAttentionCount, readServices } from './services.ts';
 
 beforeAll(async () => {
@@ -153,7 +154,7 @@ test('up requires all held checks to pass; a System with no check set still list
   expect(await readServiceAttentionCount(h.db.sql)).toBe(0);
 });
 
-test('quiet or never-heard Systems cannot establish up, but open Service Conditions still win', async () => {
+test('quiet or never-heard Systems, or checks old beside Last seen, cannot establish up, but open Service Conditions still win', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', ['web', 'api', 'worker'], {
     services: ['web', 'api', 'worker'].map((service) => ({
@@ -188,6 +189,13 @@ test('quiet or never-heard Systems cannot establish up, but open Service Conditi
     ['worker', 'restarted'],
     ['web', 'unknown'],
   ]);
+  await h.db.sql`
+    UPDATE check_sets SET received_at = received_at - ${OLD_EVIDENCE_MS + 1} * interval '1 millisecond'
+    WHERE system = 'server-1'
+  `;
+  expect((await readServices(h.db.sql, NOW)).find(({ name }) => name === 'web')?.status).toBe(
+    'unknown',
+  );
   await h.db.sql`UPDATE systems SET last_seen_at = NULL WHERE name = 'server-1'`;
   expect((await readServices(h.db.sql, NOW)).find(({ name }) => name === 'web')?.status).toBe(
     'unknown',

@@ -2,6 +2,7 @@ import type { SQL } from 'bun';
 
 import { serviceStatus, sortServices } from '../lib/services.ts';
 import type { ServiceSummary } from '../lib/services.ts';
+import { OLD_EVIDENCE_MS } from './attention-types.ts';
 import { QUIET_AFTER_MS } from './fleet-overview-types.ts';
 import type { ChecksRow } from './hub-rows.ts';
 
@@ -16,6 +17,7 @@ const serviceSubjects = (sql: SQL) => sql`
 `;
 
 type ServiceRow = {
+  checks_received_at: Date | null;
   down_since: Date | null;
   last_seen_at: Date | null;
   latest_stop_at: Date | null;
@@ -25,11 +27,19 @@ type ServiceRow = {
   system: string;
 };
 
+// Held checks say a Service is up only while its System is heard from and the
+// checks are not old beside its Last seen, the rule that raises checks missing.
+const currentChecks = (row: ServiceRow, now: number): boolean =>
+  row.last_seen_at !== null &&
+  row.checks_received_at !== null &&
+  now - row.last_seen_at.getTime() <= QUIET_AFTER_MS &&
+  row.last_seen_at.getTime() - row.checks_received_at.getTime() <= OLD_EVIDENCE_MS;
+
 // Recorded Services and open Service Conditions on paired Systems, with checks and latest
 // stop read in one statement so each row describes the same snapshot.
 export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
   const rows: ServiceRow[] = await sql`
-    SELECT r.system, r.name, c.services, s.last_seen_at, down.raised_at AS down_since,
+    SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, down.raised_at AS down_since,
            EXISTS (
              SELECT 1 FROM conditions n
              WHERE n.system = r.system AND n.subject = r.name
@@ -59,10 +69,9 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
         latestStopAt: row.latest_stop_at?.getTime(),
         name: row.name,
         status: serviceStatus({
-          checks:
-            row.last_seen_at !== null && now - row.last_seen_at.getTime() <= QUIET_AFTER_MS
-              ? (row.services ?? []).filter(({ service }) => service === row.name)
-              : [],
+          checks: currentChecks(row, now)
+            ? (row.services ?? []).filter(({ service }) => service === row.name)
+            : [],
           downSince,
           restarted: row.restarted,
         }),
