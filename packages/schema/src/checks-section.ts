@@ -191,7 +191,8 @@ const mirrorServices = (sent: readonly SentServiceCheck[]) => {
       checks.set(JSON.stringify([service, check]), {
         check,
         detail,
-        ...(image === undefined ? {} : { image }),
+        // Only a supervisor check reads the container, so only it names an image.
+        ...(image === undefined || check !== 'supervisor' ? {} : { image }),
         service,
         since,
         state: isServiceCheckState(state) ? state : 'unknown',

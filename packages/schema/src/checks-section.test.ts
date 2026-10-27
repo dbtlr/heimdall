@@ -212,6 +212,11 @@ describe('the services part of a checks section', () => {
     expect(ChecksReadSchema.parse(read)).toEqual(read);
   });
 
+  test('mirrors an image reference only on a supervisor check', () => {
+    const health = { ...WEB_UP, check: 'health', image: 'nginx:1.27' };
+    expect(mirrored({ services: [health] }).services).toEqual([{ ...WEB_UP, check: 'health' }]);
+  });
+
   test('carries the image reference observed by a Docker supervisor check', () => {
     const check = { ...WEB_UP, detail: 'status running', image: 'ghcr.io/example/web:1.2.3' };
 
