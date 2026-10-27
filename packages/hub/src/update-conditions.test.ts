@@ -10,7 +10,8 @@ import { NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { startTestServer } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
-import { evaluateUpdateConditions } from './update-conditions.ts';
+import { evaluateUpdateConditions, judgeUpdateConditions } from './update-conditions.ts';
+import type { UpdateConditionFacts } from './update-conditions.ts';
 
 beforeAll(startTestServer, 60_000);
 const DAY = 86400000;
@@ -26,6 +27,30 @@ const manager = (at: number, updates = [pending]): UpdateManager => ({
   observedAt: at,
   result: { kind: 'available', metadataAt: at, updates },
 });
+// Hub-confirmed package age and Collector observations, without a database.
+const updateFacts = (
+  updates: PendingUpdate[] = [pending],
+  overrides: Partial<UpdateConditionFacts> = {},
+): UpdateConditionFacts => ({
+  limits: parseConditionLimits(undefined).updates,
+  managers: [{ installation: '/usr/bin/apt', manager: 'apt', observation: manager(NOW, updates) }],
+  open: [],
+  reboot: undefined,
+  subjects: updates.map((update) => ({
+    first_seen_at: new Date(NOW),
+    installation: '/usr/bin/apt',
+    manager: 'apt',
+    name: update.name,
+    observed_at: new Date(NOW),
+    pending_update: update,
+    security_since: update.security === true ? new Date(NOW) : null,
+    subject: JSON.stringify(['apt', '/usr/bin/apt', update.name]),
+  })),
+  ...overrides,
+});
+
+const judge = (facts = updateFacts(), now = NOW) => judgeUpdateConditions(facts, now);
+
 const send = async (
   h: Hub,
   managers: UpdateManager[],
@@ -70,26 +95,47 @@ test('a pending security update ages from Hub confirmation and candidate changes
   expect(warning).toMatchObject({ firstDetected: NOW, level: 'warning', subject: note?.subject });
 });
 
-test('stale and failed checks preserve a warning, while fresh known non-security evidence can lower it', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW)]);
-  await evaluate(h);
-  h.clock.now += 3 * DAY + 1;
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  const old = manager(h.clock.now, []);
-  if (old.result.kind === 'available') {
-    old.result.metadataAt = NOW - 8 * DAY;
+test('stale and failed checks preserve a warning, while fresh known non-security evidence can lower it', () => {
+  const now = NOW + 4 * DAY;
+  const base = updateFacts([{ ...pending, security: false }], {
+    open: [
+      {
+        kind: 'pending_update',
+        level: 'warning',
+        subject: JSON.stringify(['apt', '/usr/bin/apt']),
+      },
+    ],
+  });
+  for (const observation of [
+    manager(NOW),
+    { ...manager(now), result: { kind: 'available', metadataAt: NOW - 8 * DAY, updates: [] } },
+    { ...manager(now), result: { kind: 'unavailable', reason: 'permission denied' } },
+    { ...manager(now), result: { kind: 'available', metadataAt: null, updates: [] } },
+    undefined,
+  ]) {
+    const facts = {
+      ...base,
+      managers: [{ installation: '/usr/bin/apt', manager: 'apt', observation }],
+    };
+    expect(judge(facts, now).pending.get(JSON.stringify(['apt', '/usr/bin/apt']))?.level).toBe(
+      'warning',
+    );
   }
-  await send(h, [old]);
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  h.clock.now += 1;
-  await send(h, [
-    { ...manager(h.clock.now), result: { kind: 'unavailable', reason: 'permission denied' } },
-  ]);
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  h.clock.now += 1;
-  await send(h, [manager(h.clock.now, [{ ...pending, security: false }])]);
-  expect((await evaluate(h))[0]?.level).toBe('note');
+  expect(
+    judge(
+      {
+        ...base,
+        managers: [
+          {
+            installation: '/usr/bin/apt',
+            manager: 'apt',
+            observation: manager(now, [{ ...pending, security: false }]),
+          },
+        ],
+      },
+      now,
+    ).pending.get(JSON.stringify(['apt', '/usr/bin/apt']))?.level,
+  ).toBe('note');
 });
 
 test('reboot age survives missing evidence and only a fresh marker absence clears it', async () => {
@@ -270,97 +316,111 @@ test('a re-paired System can reconfirm cached positive evidence with a new occur
   );
 });
 
-test('fresh fully installed candidate evidence clears an update despite old repository metadata', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW)]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  const installed = {
-    names: [pending.name],
-    observedAt: h.clock.now,
-    versions: [{ name: pending.name, version: '1.1' }],
+test('fresh fully installed candidate evidence clears an update despite old repository metadata', () => {
+  const now = NOW + 4 * DAY;
+  const observation = {
+    ...manager(now, []),
+    installed: {
+      names: [pending.name],
+      observedAt: now,
+      versions: [{ name: pending.name, version: '1.1' }],
+    },
+    result: { kind: 'available', metadataAt: NOW - 365 * DAY, updates: [] },
   };
-  await send(h, [
-    {
-      ...manager(h.clock.now, []),
-      installed,
-      result: { kind: 'available', metadataAt: NOW - 365 * DAY, updates: [] },
-    },
+  const facts = updateFacts([pending], {
+    managers: [{ installation: '/usr/bin/apt', manager: 'apt', observation }],
+  });
+  expect(judge(facts, now).recoveredSubjects).toEqual([
+    JSON.stringify(['apt', '/usr/bin/apt', 'openssl:amd64']),
   ]);
-  expect(await evaluate(h)).toEqual([]);
+  expect(judge(facts, now).pending.size).toBe(0);
 });
 
-test.each([
-  ['stale census', -2 * DAY, '1.1', false],
-  ['census older than positive evidence', -1, '1.1', false],
-  ['unknown installed version', 0, null, false],
-  ['different installed version', 0, '1.0', false],
-  ['future census', DAY, '1.1', false],
-  ['newer update still pending', 0, '1.1', true],
-])(
-  'installed-version proof preserves a warning with %s',
-  async (_, censusOffset, version, stillPending) => {
-    await using h = await startHub();
-    await send(h, [manager(NOW)]);
-    await evaluate(h);
-    h.clock.now += 4 * DAY;
-    expect((await evaluate(h))[0]?.level).toBe('warning');
-    await send(h, [manager(h.clock.now)]);
-    h.clock.now += 1;
-    await send(h, [
+test('installed-version proof preserves a warning without fresh matching proof or while a newer update remains pending', () => {
+  const now = NOW + 4 * DAY + 1;
+  for (const [censusOffset, version, stillPending] of [
+    [-2 * DAY, '1.1', false],
+    [-1, '1.1', false],
+    [0, null, false],
+    [0, '1.0', false],
+    [DAY, '1.1', false],
+    [0, '1.1', true],
+  ] satisfies [number, string | null, boolean][]) {
+    const facts = updateFacts([pending]);
+    facts.subjects = facts.subjects.map((subject) => ({
+      ...subject,
+      observed_at: new Date(now - 1),
+    }));
+    facts.managers = [
       {
-        ...manager(h.clock.now, []),
-        installed: {
-          names: [pending.name],
-          observedAt: h.clock.now - 1 + censusOffset,
-          versions: version === null ? [] : [{ name: pending.name, version }],
+        installation: '/usr/bin/apt',
+        manager: 'apt',
+        observation: {
+          ...manager(now, []),
+          installed: {
+            names: [pending.name],
+            observedAt: now - 1 + censusOffset,
+            versions: version === null ? [] : [{ name: pending.name, version }],
+          },
+          result: stillPending
+            ? { kind: 'available', metadataAt: null, updates: [{ ...pending, available: '1.2' }] }
+            : { kind: 'unavailable', reason: 'metadata unavailable' },
         },
-        result: stillPending
-          ? { kind: 'available', metadataAt: null, updates: [{ ...pending, available: '1.2' }] }
-          : { kind: 'unavailable', reason: 'metadata unavailable' },
       },
-    ]);
-    expect((await evaluate(h))[0]).toMatchObject({ firstDetected: NOW, level: 'warning' });
-  },
-);
-
-test('fresh fully installed candidate evidence can recover independently of a failed metadata check', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW)]);
-  await evaluate(h);
-  h.clock.now += 1;
-  await send(h, [
-    {
-      ...manager(h.clock.now, []),
-      installed: {
-        names: [pending.name],
-        observedAt: h.clock.now,
-        versions: [{ name: pending.name, version: '1.1' }],
-      },
-      result: { kind: 'unavailable', reason: 'APT timed out' },
-    },
-  ]);
-  expect(await evaluate(h)).toEqual([]);
+    ];
+    expect(judge(facts, now).recoveredSubjects).toEqual([]);
+    expect(judge(facts, now).pending.get(JSON.stringify(['apt', '/usr/bin/apt']))?.level).toBe(
+      'warning',
+    );
+  }
 });
 
-test('an unknown candidate version cannot be established as applied by local installed-version evidence', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [{ ...pending, available: null }])]);
-  await evaluate(h);
-  h.clock.now += 1;
-  await send(h, [
-    {
-      ...manager(h.clock.now, []),
-      installed: {
-        names: [pending.name],
-        observedAt: h.clock.now,
-        versions: [{ name: pending.name, version: '1.1' }],
+test('fresh fully installed candidate evidence can recover independently of a failed metadata check', () => {
+  const now = NOW + 1;
+  const facts = updateFacts([pending], {
+    managers: [
+      {
+        installation: '/usr/bin/apt',
+        manager: 'apt',
+        observation: {
+          ...manager(now, []),
+          installed: {
+            names: [pending.name],
+            observedAt: now,
+            versions: [{ name: pending.name, version: '1.1' }],
+          },
+          result: { kind: 'unavailable', reason: 'APT timed out' },
+        },
       },
-      result: { kind: 'unavailable', reason: 'APT timed out' },
-    },
+    ],
+  });
+  expect(judge(facts, now).recoveredSubjects).toEqual([
+    JSON.stringify(['apt', '/usr/bin/apt', 'openssl:amd64']),
   ]);
-  expect(await evaluate(h)).toHaveLength(1);
+  expect(judge(facts, now).pending.size).toBe(0);
+});
+
+test('an unknown candidate version cannot be established as applied by local installed-version evidence', () => {
+  const now = NOW + 1;
+  const facts = updateFacts([{ ...pending, available: null }], {
+    managers: [
+      {
+        installation: '/usr/bin/apt',
+        manager: 'apt',
+        observation: {
+          ...manager(now, []),
+          installed: {
+            names: [pending.name],
+            observedAt: now,
+            versions: [{ name: pending.name, version: '1.1' }],
+          },
+          result: { kind: 'unavailable', reason: 'APT timed out' },
+        },
+      },
+    ],
+  });
+  expect(judge(facts, now).recoveredSubjects).toEqual([]);
+  expect(judge(facts, now).pending.size).toBe(1);
 });
 
 const wget: PendingUpdate = { available: '2.0', installed: '1.0', name: 'wget', security: false };
@@ -391,73 +451,82 @@ test('pending updates in one package source share one Condition that counts them
   expect(await rows(h, 'true')).toHaveLength(1);
 });
 
-test('one aged security package makes the whole source a warning', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [wget, curl])]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  expect((await evaluate(h))[0]?.level).toBe('note');
-  await send(h, [manager(h.clock.now, [wget, curl, pending])]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  await send(h, [manager(h.clock.now, [wget, curl, pending])]);
-  expect((await evaluate(h))[0]).toMatchObject({ level: 'warning', subject: sourceSubject });
+test('one aged security package makes the whole source a warning', () => {
+  const now = NOW + 8 * DAY;
+  expect(judge(updateFacts([wget, curl]), now).pending.get(sourceSubject)?.level).toBe('note');
+  const facts = updateFacts([wget, curl, pending]);
+  facts.subjects = facts.subjects.map((subject) =>
+    subject.name === pending.name
+      ? { ...subject, security_since: new Date(NOW + 4 * DAY) }
+      : subject,
+  );
+  expect(judge(facts, now).pending.get(sourceSubject)?.level).toBe('warning');
 });
 
-test('a warning source stays a warning until fresh evidence covers every package', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [pending, curl])]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  h.clock.now += 1;
-  await send(h, [manager(h.clock.now, [{ ...pending, security: false }, curl])]);
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  h.clock.now += 1;
-  await send(h, [
-    manager(h.clock.now, [
-      { ...pending, security: false },
-      { ...curl, security: false },
-    ]),
-  ]);
-  expect((await evaluate(h))[0]?.level).toBe('note');
-  const [source] = await rows(h, 'true');
-  expect(source?.actions).toEqual(['raised', 'level_changed', 'level_changed']);
+test('a warning source stays a warning until fresh evidence covers every package', () => {
+  const now = NOW + 4 * DAY;
+  const facts = updateFacts([{ ...pending, security: false }, curl], {
+    open: [{ kind: 'pending_update', level: 'warning', subject: sourceSubject }],
+  });
+  facts.managers = [
+    {
+      installation: '/usr/bin/apt',
+      manager: 'apt',
+      observation: manager(now, [{ ...pending, security: false }, curl]),
+    },
+  ];
+  expect(judge(facts, now).pending.get(sourceSubject)?.level).toBe('warning');
+  facts.managers = [
+    {
+      installation: '/usr/bin/apt',
+      manager: 'apt',
+      observation: manager(now, [
+        { ...pending, security: false },
+        { ...curl, security: false },
+      ]),
+    },
+  ];
+  expect(judge(facts, now).pending.get(sourceSubject)?.level).toBe('note');
 });
 
-test('a package recovering while others remain changes only the Condition reason', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [wget, curl])]);
-  await evaluate(h);
-  const [before] = await rows(h, 'true');
-  h.clock.now += 1;
-  await send(h, [manager(h.clock.now, [curl])]);
-  await evaluate(h);
-  const [after, ...others] = await rows(h, 'true');
-  expect(others).toEqual([]);
-  expect(after).toMatchObject({ actions: ['raised'], cleared_at: null, id: before?.id });
-  expect(after?.latest_reason).toBe('1 APT package is out of date.');
+test('a package recovering while others remain changes only the Condition reason', () => {
+  const facts = updateFacts([wget, curl], {
+    open: [{ kind: 'pending_update', level: 'note', subject: sourceSubject }],
+  });
+  expect(judge(facts).pending.get(sourceSubject)).toEqual({
+    level: 'note',
+    raise: '2 APT packages are out of date.',
+  });
+  facts.managers = [
+    { installation: '/usr/bin/apt', manager: 'apt', observation: manager(NOW + 1, [curl]) },
+  ];
+  expect(judge(facts, NOW + 1)).toMatchObject({
+    emptySources: [],
+    recoveredSubjects: [JSON.stringify(['apt', '/usr/bin/apt', 'wget'])],
+  });
+  expect(judge(facts, NOW + 1).pending.get(sourceSubject)).toEqual({
+    level: 'note',
+    raise: '1 APT package is out of date.',
+  });
 });
 
-test('stale, failed, or metadata-less checks never clear a source that still has packages', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [wget])]);
-  await evaluate(h);
-  const [before] = await rows(h, 'true');
-  h.clock.now += 9 * DAY;
-  await evaluate(h);
-  await send(h, [
-    { ...manager(h.clock.now), result: { kind: 'unavailable', reason: 'permission denied' } },
-  ]);
-  await evaluate(h);
-  h.clock.now += 1;
-  await send(h, [
-    { ...manager(h.clock.now), result: { kind: 'available', metadataAt: null, updates: [] } },
-  ]);
-  await evaluate(h);
-  const [after, ...others] = await rows(h, 'true');
-  expect(others).toEqual([]);
-  expect(after).toMatchObject({ actions: ['raised'], cleared_at: null, id: before?.id });
+test('stale, failed, or metadata-less checks never clear a source that still has packages', () => {
+  const now = NOW + 9 * DAY;
+  for (const observation of [
+    manager(NOW, [wget]),
+    { ...manager(now), result: { kind: 'unavailable', reason: 'permission denied' } },
+    { ...manager(now), result: { kind: 'available', metadataAt: null, updates: [] } },
+  ]) {
+    const facts = updateFacts([wget], {
+      managers: [{ installation: '/usr/bin/apt', manager: 'apt', observation }],
+      open: [{ kind: 'pending_update', level: 'note', subject: sourceSubject }],
+    });
+    expect(judge(facts, now).emptySources).toEqual([]);
+    expect(judge(facts, now).pending.get(sourceSubject)).toEqual({
+      level: 'note',
+      raise: '1 APT package is out of date.',
+    });
+  }
 });
 
 test('the Condition clears when the last package recovers', async () => {
@@ -474,45 +543,47 @@ test('the Condition clears when the last package recovers', async () => {
   expect(await evaluate(h)).toEqual([]);
 });
 
-test('a package joining an open source adds no Timeline transition', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [wget])]);
-  await evaluate(h);
-  h.clock.now += 1;
-  await send(h, [manager(h.clock.now, [wget, curl])]);
-  await evaluate(h);
-  const [source, ...others] = await rows(h, 'true');
-  expect(others).toEqual([]);
-  expect(source).toMatchObject({
-    actions: ['raised'],
-    cleared_at: null,
-    latest_reason: '2 APT packages are out of date.',
+test('a package joining an open source retains its level and updates the count', () => {
+  const facts = updateFacts([wget, curl], {
+    open: [{ kind: 'pending_update', level: 'note', subject: sourceSubject }],
+  });
+  expect(judge(facts).pending).toEqual(
+    new Map([[sourceSubject, { level: 'note', raise: '2 APT packages are out of date.' }]]),
+  );
+});
+
+test('an aged security package keeps the source a warning when a newer one joins', () => {
+  const now = NOW + 4 * DAY;
+  const facts = updateFacts([pending, { ...pending, name: 'newer' }]);
+  facts.subjects = facts.subjects.map((subject) =>
+    subject.name === 'newer' ? { ...subject, security_since: new Date(now) } : subject,
+  );
+  expect(judge(facts, now).pending.get(sourceSubject)).toEqual({
+    level: 'warning',
+    raise: '2 APT packages are out of date, 2 of them are security updates.',
   });
 });
 
-test('an aged security package keeps the source a warning when a newer one joins', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [pending])]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  await send(h, [manager(h.clock.now, [pending, { ...pending, name: 'newer' }])]);
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-});
-
-test('a held warning stays while any package has unknown security, whatever its order', async () => {
-  await using h = await startHub();
-  await send(h, [manager(NOW, [{ ...curl, name: 'a-unknown' }, pending])]);
-  await evaluate(h);
-  h.clock.now += 4 * DAY;
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  h.clock.now += 1;
-  await send(h, [
-    manager(h.clock.now, [
+test('a held warning stays while any package has unknown security, whatever its order', () => {
+  const now = NOW + 4 * DAY + 1;
+  for (const updates of [
+    [
       { ...curl, name: 'a-unknown' },
       { ...pending, security: false },
-    ]),
-  ]);
-  expect((await evaluate(h))[0]?.level).toBe('warning');
+    ],
+    [
+      { ...pending, security: false },
+      { ...curl, name: 'z-unknown' },
+    ],
+  ]) {
+    const facts = updateFacts(updates, {
+      managers: [
+        { installation: '/usr/bin/apt', manager: 'apt', observation: manager(now, updates) },
+      ],
+      open: [{ kind: 'pending_update', level: 'warning', subject: sourceSubject }],
+    });
+    expect(judge(facts, now).pending.get(sourceSubject)?.level).toBe('warning');
+  }
 });
 
 test('local proof that the last package is gone ends the Condition in its Report', async () => {
@@ -534,4 +605,37 @@ test('local proof that the last package is gone ends the Condition in its Report
     ['raised', 'cleared'],
     ['raised'],
   ]);
+});
+
+test('security and reboot ages warn strictly past their limits', () => {
+  expect(judge(updateFacts(), NOW + 3 * DAY).pending.get(sourceSubject)?.level).toBe('note');
+  expect(judge(updateFacts(), NOW + 3 * DAY + 1).pending.get(sourceSubject)?.level).toBe('warning');
+  const facts = updateFacts([], {
+    reboot: {
+      first_required_at: new Date(NOW),
+      observation: { kind: 'available', observedAt: NOW, required: true },
+    },
+  });
+  expect(judge(facts, NOW + 7 * DAY).reboot).toMatchObject({ level: 'note' });
+  expect(judge(facts, NOW + 7 * DAY + 1).reboot).toEqual({
+    level: 'warning',
+    raise: 'A reboot is required; confirmed by the local reboot-required marker.',
+  });
+});
+
+test('missing reboot evidence holds, and fresh absence clears only that marker', () => {
+  expect(judge(updateFacts([])).reboot).toBe('hold');
+  const facts = updateFacts([], {
+    reboot: {
+      first_required_at: null,
+      observation: { kind: 'unavailable', observedAt: NOW, reason: 'unsupported' },
+    },
+  });
+  expect(judge(facts).reboot).toBe('hold');
+  facts.reboot = {
+    first_required_at: new Date(NOW),
+    observation: { kind: 'available', observedAt: NOW, required: false },
+  };
+  expect(judge(facts).reboot).toBe('clear');
+  expect(judge(facts, NOW + 2 * DAY).reboot).toMatchObject({ level: 'note' });
 });

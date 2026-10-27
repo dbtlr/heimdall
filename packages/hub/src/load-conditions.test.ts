@@ -8,7 +8,8 @@ import { nextSteps } from '../../dashboard/src/lib/attention.ts';
 import { readAttention } from '../../dashboard/src/server/attention.ts';
 import { parseConditionLimits } from './condition-limits.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
-import { evaluateLoadConditions } from './load-conditions.ts';
+import { evaluateLoadConditions, judgeLoadConditions } from './load-conditions.ts';
+import type { LoadConditionFacts } from './load-conditions.ts';
 import { unpair } from './pairing.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { NOW, push, report, startHub, storeToken } from './testing/hub.ts';
@@ -54,6 +55,30 @@ const evaluate = async (h: Hub, limits = parseConditionLimits(undefined)) => {
   );
 };
 
+// The same Collector readings as plain database facts, without storing them.
+const loadFacts = (
+  samples: VitalsSample[],
+  overrides: Partial<LoadConditionFacts> = {},
+): LoadConditionFacts => ({
+  backfilled: [],
+  held: [],
+  limits: parseConditionLimits(undefined),
+  rows: samples.map((row) => ({
+    collector_platform: 'linux',
+    cpu_busy_percent: row.cpu.busyPercent,
+    memory_pressure: row.memory.pressure ?? null,
+    memory_total_bytes: String(row.memory.totalBytes),
+    memory_used_bytes: String(row.memory.usedBytes),
+    t: new Date(row.t),
+    uptime_seconds: row.uptimeSeconds,
+  })),
+  through: undefined,
+  ...overrides,
+});
+
+const judgedLoad = (facts: LoadConditionFacts, now = facts.rows.at(-1)?.t.getTime() ?? NOW) =>
+  judgeLoadConditions(facts, now);
+
 // Flush this connection's table counters before reading them from a new snapshot.
 const vitalsReads = async (sql: SQL) => {
   await sql`SELECT pg_stat_force_next_flush()`;
@@ -96,80 +121,69 @@ test('idle load evaluations read at most the latest eligible sample across conne
   expect((await evaluate(h, limits))[0]?.level).toBe('warning');
 });
 
-test('recurring CPU bursts raise a note even when the newest reading is quiet', async () => {
-  await using h = await startHub();
-  const samples = readings(NOW, 60, (minute) =>
-    minute <= 20 || (minute > 25 && minute <= 45) ? 95 : 10,
+test('recurring CPU bursts raise a note even when the newest reading is quiet', () => {
+  const facts = loadFacts(
+    readings(NOW, 60, (minute) => (minute <= 20 || (minute > 25 && minute <= 45) ? 95 : 10)),
   );
-  await send(h, samples);
-  const items = await evaluate(h);
-  expect(items).toEqual([
-    expect.objectContaining({ evidence: 'current', kind: 'high_cpu', level: 'note', subject: '' }),
+  expect(judgedLoad(facts).transitions.at(-1)).toEqual({
+    at: new Date(NOW + 60 * MINUTE),
+    kind: 'high_cpu',
+    verdict: {
+      level: 'note',
+      raise: 'CPU above 90% for 40 minutes in the 60 minutes ending 2026-10-06T13:00:00.000Z.',
+    },
+  });
+});
+
+test('CPU boundaries escalate and short spikes or equality do not qualify', () => {
+  const equal = readings(NOW, 30, () => 90);
+  const short = readings(NOW + 30 * MINUTE, 29.75, () => 95);
+  expect(judgedLoad(loadFacts(equal)).transitions).toEqual([]);
+  expect(judgedLoad(loadFacts([...equal, ...short])).transitions).toEqual([]);
+  const busy = readings(NOW + 60 * MINUTE, 90, () => 95);
+  const facts = loadFacts([
+    ...equal,
+    ...short,
+    ...readings(NOW + 59.75 * MINUTE, 0.25, () => 95),
+    ...busy,
   ]);
-  const item = items[0];
-  if (item?.kind !== 'high_cpu') {
-    throw new Error('Expected high CPU.');
-  }
-  expect(item.reason).toContain('40 minutes');
+  const transitions = judgedLoad(facts).transitions;
+  expect(transitions[0]).toMatchObject({
+    at: new Date(NOW + 60 * MINUTE),
+    kind: 'high_cpu',
+    verdict: { level: 'note' },
+  });
+  expect(transitions.at(-1)).toMatchObject({
+    at: new Date(NOW + 150 * MINUTE),
+    kind: 'high_cpu',
+    verdict: { level: 'warning' },
+  });
 });
 
-test('CPU boundaries escalate the same occurrence and short spikes or equality do not qualify', async () => {
-  await using h = await startHub();
-  await send(
-    h,
-    readings(NOW, 30, () => 90),
-  );
-  expect(await evaluate(h)).toEqual([]);
-  await send(
-    h,
-    readings(NOW + 30 * MINUTE, 29.75, () => 95),
-  );
-  expect(await evaluate(h)).toEqual([]);
-  await send(
-    h,
-    readings(NOW + 59.75 * MINUTE, 0.25, () => 95),
-  );
-  const [note] = await evaluate(h);
-  expect(note?.level).toBe('note');
-  await send(
-    h,
-    readings(NOW + 60 * MINUTE, 90, () => 95),
-  );
-  const [warning] = await evaluate(h);
-  expect(warning?.level).toBe('warning');
-  expect(warning?.firstDetected).toBe(note?.firstDetected);
-  if (warning === undefined) {
-    throw new Error('Expected the warning.');
+test('memory warns only on supported high-memory evidence', () => {
+  for (const [platform, usedBytes, pressure, expected] of [
+    ['linux', 950, null, true],
+    ['linux', 750, null, false],
+    ['darwin', 950, 'normal', false],
+    ['darwin', 950, 'critical', true],
+    ['darwin', 950, null, false],
+  ] satisfies ['linux' | 'darwin', number, VitalsSample['memory']['pressure'] | null, boolean][]) {
+    const facts = loadFacts(readings(NOW, 30, () => 10));
+    facts.rows = facts.rows.map((row) => ({
+      ...row,
+      collector_platform: platform,
+      memory_pressure: pressure,
+      memory_total_bytes: '1000',
+      memory_used_bytes: String(usedBytes),
+    }));
+    expect(
+      judgedLoad(facts).transitions.map(({ kind, verdict }) => [
+        kind,
+        verdict === 'clear' ? verdict : verdict.level,
+      ]),
+    ).toEqual(expected ? [['high_memory', 'warning']] : []);
   }
-  expect(nextSteps(warning).short).toBe('Find what keeps using CPU');
 });
-
-test.each([
-  ['linux', 950, undefined, true],
-  ['linux', 750, undefined, false],
-  ['darwin', 950, 'normal', false],
-  ['darwin', 950, 'critical', true],
-  ['darwin', 950, undefined, false],
-] satisfies ['linux' | 'darwin', number, VitalsSample['memory']['pressure'], boolean][])(
-  '%s memory %d of 1000 used with pressure %s only warns on supported high-memory evidence',
-  async (platform, usedBytes, pressure, expected) => {
-    await using h = await startHub();
-    const samples = readings(NOW, 30, () => 10).map((row) =>
-      Object.assign(row, {
-        memory: {
-          totalBytes: 1000,
-          usedBytes,
-          ...(pressure === undefined ? {} : { pressure }),
-        },
-      }),
-    );
-    await send(h, samples, platform);
-    const items = await evaluate(h);
-    expect(items.map(({ kind, level }) => [kind, level])).toEqual(
-      expected ? [['high_memory', 'warning']] : [],
-    );
-  },
-);
 
 test('sleep, reboot, and future samples cannot invent enough measured busy time', async () => {
   await using h = await startHub();
@@ -253,6 +267,10 @@ test('silence holds warning; fresh recovery clears it and recurrence has a new o
   );
   const [warning] = await evaluate(h);
   expect(warning?.level).toBe('warning');
+  if (warning === undefined) {
+    throw new Error('Expected the warning.');
+  }
+  expect(nextSteps(warning).short).toBe('Find what keeps using CPU');
   h.clock.now += 6 * 60 * MINUTE;
   expect((await evaluate(h))[0]?.level).toBe('warning');
   await send(
@@ -431,23 +449,16 @@ test('historical replay preserves a later open occurrence and does not duplicate
   expect(rows).toEqual([{ n: 2, open: 1 }]);
 });
 
-test('recovery rules out each lower level before clearing when the last hour contains a gap', async () => {
-  await using h = await startHub();
-  await send(
-    h,
-    readings(NOW, 120, () => 95),
-  );
-  expect((await evaluate(h))[0]?.level).toBe('warning');
-  await send(
-    h,
-    readings(NOW + 120 * MINUTE, 95, () => 10),
-  );
-  await evaluate(h);
-  await send(
-    h,
-    readings(NOW + 255 * MINUTE, 25.25, () => 10),
-  );
-  expect((await evaluate(h))[0]?.level).toBe('note');
+test('recovery rules out each lower level before clearing when the last hour contains a gap', () => {
+  const facts = loadFacts([
+    ...readings(NOW, 120, () => 95),
+    ...readings(NOW + 120 * MINUTE, 95, () => 10),
+    ...readings(NOW + 255 * MINUTE, 25.25, () => 10),
+  ]);
+  expect(judgedLoad(facts).transitions.at(-1)).toMatchObject({
+    kind: 'high_cpu',
+    verdict: { level: 'note' },
+  });
 });
 
 test('an entirely old backlog records separate completed episodes without creating a current problem', async () => {
@@ -467,18 +478,25 @@ test('an entirely old backlog records separate completed episodes without creati
   expect(rows).toEqual([{ n: 2, open: 0 }]);
 });
 
-test('macOS memory pressure warns at any usage and names pressure in its reason', async () => {
-  await using h = await startHub();
-  const samples = readings(NOW, 30, () => 10);
-  for (const row of samples) {
-    row.memory = { pressure: 'warning', totalBytes: 1000, usedBytes: 500 };
-  }
-  await send(h, samples, 'darwin');
-  const [warning] = await evaluate(h);
-  expect(warning?.level).toBe('warning');
-  expect(warning?.kind === 'high_memory' ? warning.reason : undefined).toMatch(
-    /^Memory pressure for 30 minutes in the 60 minutes ending /u,
-  );
+test('macOS memory pressure warns at any usage and names pressure in its reason', () => {
+  const facts = loadFacts(readings(NOW, 30, () => 10));
+  facts.rows = facts.rows.map((row) => ({
+    ...row,
+    collector_platform: 'darwin',
+    memory_pressure: 'warning',
+    memory_total_bytes: '1000',
+    memory_used_bytes: '500',
+  }));
+  expect(judgedLoad(facts).transitions).toEqual([
+    {
+      at: new Date(NOW + 30 * MINUTE),
+      kind: 'high_memory',
+      verdict: {
+        level: 'warning',
+        raise: 'Memory pressure for 30 minutes in the 60 minutes ending 2026-10-06T12:30:00.000Z.',
+      },
+    },
+  ]);
 });
 
 test('a fresh sample after sleep holds CPU level while its latest interval is unknown', async () => {
@@ -650,3 +668,24 @@ test.each([
     expect(rows).toEqual([{ n: expected, open: 0 }]);
   },
 );
+
+test('a judge with no readings has no transitions or known intervals', () => {
+  expect(judgedLoad(loadFacts([]))).toEqual({
+    coverage: { cpuKnown: false, memoryKnown: false },
+    transitions: [],
+  });
+});
+
+test('sleep and reboot leave intervals unknown instead of inventing measured busy time', () => {
+  const facts = loadFacts([
+    ...readings(NOW, 10, () => 95),
+    ...readings(NOW + 40 * MINUTE, 10, () => 95),
+    ...readings(NOW + 50 * MINUTE + STEP, 0, () => 95).map((row) =>
+      Object.assign(row, { uptimeSeconds: 1 }),
+    ),
+  ]);
+  expect(judgedLoad(facts)).toEqual({
+    coverage: { cpuKnown: false, memoryKnown: false },
+    transitions: [],
+  });
+});
