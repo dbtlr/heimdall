@@ -13,6 +13,7 @@ import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
 import { SystemNavigationHeader } from '../components/system-navigation.tsx';
+import { SystemNowCards } from '../components/system-now-cards.tsx';
 import { SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
@@ -144,8 +145,11 @@ function SystemPage() {
         <SilenceBanner now={detail.now} until={detail.silencedUntil} />
         {search.tab === 'now' && (
           <>
+            <SystemNowCards detail={detail} items={attention} />
             <SystemOpenConditions items={attention} key={detail.name} now={detail.now} />
-            <SystemGlance detail={detail} />
+            <div className="lg:hidden">
+              <SystemGlance detail={detail} />
+            </div>
           </>
         )}
         {charts && (

@@ -12,6 +12,7 @@ import {
 } from '../lib/attention.ts';
 import { whenAt } from '../lib/phrase.ts';
 import type { Phrase } from '../lib/phrase.ts';
+import { formatSpanShort } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { Attention } from '../server/attention-types.ts';
 import { AttentionSubject, MARK_COLOR } from './attention-status.tsx';
@@ -33,6 +34,11 @@ const HEADINGS = [
   'Next step',
 ];
 
+// A compact row as one line on a wide screen: glyph, Condition, subject, what was
+// observed, how long it has been open, the latest check, and the way to open it.
+const TABLE_ROW =
+  'lg:grid lg:min-h-0 lg:grid-cols-[16px_minmax(9rem,auto)_minmax(10rem,auto)_minmax(0,1fr)_auto_auto_auto] lg:items-baseline lg:gap-x-4 lg:py-2';
+
 const COMMAND =
   'mt-1 block rounded bg-background px-2 py-1 font-mono text-[12.5px] break-all whitespace-pre-wrap';
 
@@ -50,25 +56,91 @@ const sentence = (phrase: Phrase): Phrase => {
 // An item's row, which opens to show it: the Condition, its subject, what was
 // expected and observed, when it was first detected and last checked, and the
 // first thing to do, in a seven-column row on a wide screen, stacked on a narrow one.
-function Summary({ compact, item, now }: { compact: boolean; item: Attention; now: number }) {
+function Summary({
+  compact,
+  item,
+  now,
+  table,
+}: {
+  compact: boolean;
+  item: Attention;
+  now: number;
+  table: boolean;
+}) {
   const mark = attentionMark(item);
   const words = evidenceWords(item, now);
   if (compact) {
+    const level =
+      item.level === undefined
+        ? 'Evidence old or unknown'
+        : item.level.charAt(0).toUpperCase() + item.level.slice(1);
     return (
-      <summary className="min-h-11 cursor-pointer list-none py-3 [&::-webkit-details-marker]:hidden">
-        <span className={cn('flex items-center gap-2 text-sm font-semibold', MARK_COLOR[mark])}>
+      <summary
+        className={cn(
+          'min-h-11 cursor-pointer list-none py-3 [&::-webkit-details-marker]:hidden',
+          table && TABLE_ROW,
+        )}
+      >
+        <span
+          className={cn(
+            'flex items-center gap-2 text-sm font-semibold',
+            table && 'lg:contents',
+            MARK_COLOR[mark],
+          )}
+        >
           <ConditionGlyph kind={mark} />
-          {item.level === undefined
-            ? 'Evidence old or unknown'
-            : item.level.charAt(0).toUpperCase() + item.level.slice(1)}
+          <span className={table ? 'lg:sr-only' : undefined}>{level}</span>
+          {table && (
+            <span className="hidden font-semibold whitespace-nowrap lg:inline">
+              {ATTENTION_NAMES[item.kind]}
+            </span>
+          )}
         </span>
-        <span className="mt-1 block text-xl font-semibold wrap-anywhere [&_code]:text-base">
-          {ATTENTION_NAMES[item.kind]} <AttentionSubject item={item} />
+        <span
+          className={cn(
+            'mt-1 block text-xl font-semibold wrap-anywhere [&_code]:text-base',
+            table && 'lg:contents lg:text-[13px] lg:font-normal lg:[&_code]:text-[12.5px]',
+          )}
+        >
+          {table ? (
+            <span className="lg:hidden">{ATTENTION_NAMES[item.kind]}</span>
+          ) : (
+            ATTENTION_NAMES[item.kind]
+          )}{' '}
+          <AttentionSubject item={item} />
         </span>
-        <span className="mt-1 block text-base text-muted-foreground">
+        <span
+          className={cn(
+            'mt-1 block text-base text-muted-foreground',
+            table && 'lg:mt-0 lg:min-w-0 lg:text-[13px] lg:wrap-anywhere',
+          )}
+        >
           <PhraseText phrase={words.observedShort} />
         </span>
-        <span className="mt-1 block text-sm text-primary">Evidence and next step</span>
+        {table && (
+          <>
+            <span className="hidden text-xs whitespace-nowrap text-muted-foreground lg:block">
+              open {formatSpanShort(Math.max(0, now - item.firstDetected))}
+            </span>
+            <span className="hidden text-xs whitespace-nowrap text-muted-foreground lg:block">
+              {item.checkedAt === undefined ? (
+                'no check'
+              ) : (
+                <>
+                  checked <DateTime at={item.checkedAt} format="when" now={now} />
+                </>
+              )}
+            </span>
+          </>
+        )}
+        <span
+          className={cn(
+            'mt-1 block text-sm text-primary',
+            table && 'lg:mt-0 lg:text-xs lg:whitespace-nowrap',
+          )}
+        >
+          Evidence and next step
+        </span>
       </summary>
     );
   }
@@ -208,12 +280,14 @@ function AttentionItem({
   now,
   onToggle,
   open,
+  table,
 }: {
   compact: boolean;
   item: Attention;
   now: number;
   onToggle: (open: boolean) => void;
   open: boolean;
+  table: boolean;
 }) {
   return (
     <details
@@ -227,7 +301,7 @@ function AttentionItem({
       }}
       open={open}
     >
-      <Summary compact={compact} item={item} now={now} />
+      <Summary compact={compact} item={item} now={now} table={table} />
       <div className="grid gap-2.5 pt-0.5 pb-3 pl-4 lg:grid-cols-2 lg:gap-[22px]">
         <Evidence item={item} now={now} />
         <NextStep item={item} />
@@ -247,10 +321,13 @@ const hashAnchor = (hash: string) => hash.replace(/^#/u, '');
 export function AttentionList({
   compact = false,
   items,
+  layout = 'list',
   now,
 }: {
   compact?: boolean;
   items: readonly Attention[];
+  // 'table' makes each compact row one line from `lg`; it changes nothing below it.
+  layout?: 'list' | 'table';
   now: number;
 }) {
   const ranked = (({ confirmed, unconfirmed }) => [...confirmed, ...unconfirmed])(
@@ -311,6 +388,7 @@ export function AttentionList({
               });
             }}
             open={opened.has(id)}
+            table={compact && layout === 'table'}
           />
         );
       })}
