@@ -112,8 +112,8 @@ export const transcriptHub = ({
       const answer = await post(`api/v1/transcripts/generations/${String(generation)}/chunks`, {
         body,
         headers: {
-          'content-type': 'application/gzip',
           [TRANSCRIPT_OFFSET_HEADER]: String(offset),
+          'content-type': 'application/gzip',
         },
       });
       if ('reason' in answer) {
