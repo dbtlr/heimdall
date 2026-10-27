@@ -132,6 +132,10 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   await sql`INSERT INTO hot_process_evaluations (system, through) VALUES (${system}, ${AT})`;
   await sql`INSERT INTO record_sets (system, sent_at, received_at) VALUES (${system}, ${AT}, ${AT})`;
   await sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+    VALUES (${system}, 'web', '1.0', 'npm:web', ${AT})
+  `;
+  await sql`
     INSERT INTO mirrored_records (system, kind, name, record)
     VALUES (${system}, 'service', 'web', '{}')
   `;
@@ -581,6 +585,13 @@ test("purge service deletes a forgotten Service's Conditions, Timeline, and deli
            ('laptop-1', 'web', ${AT}, true, 0, ${AT}, ${AT}),
            ('server-1', 'old-web', ${AT}, false, 0, ${AT}, ${AT})
   `;
+  await s.db.sql`
+    INSERT INTO service_versions (system, service, version, first_seen_at)
+    VALUES ('laptop-1', 'old-web', '1', ${AT}),
+           ('laptop-1', 'old-web', '2', ${new Date(AT.getTime() + 1000)}),
+           ('laptop-1', 'web', '1', ${AT}),
+           ('server-1', 'old-web', '1', ${AT})
+  `;
 
   const { code, stdout } = await invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
 
@@ -589,6 +600,14 @@ test("purge service deletes a forgotten Service's Conditions, Timeline, and deli
     await s.db.sql<
       Record<string, unknown>[]
     >`SELECT system, service FROM service_stops ORDER BY system, service`,
+  ).toEqual([
+    { service: 'web', system: 'laptop-1' },
+    { service: 'old-web', system: 'server-1' },
+  ]);
+  expect(
+    await s.db.sql<
+      Record<string, unknown>[]
+    >`SELECT system, service FROM service_versions ORDER BY system, service`,
   ).toEqual([
     { service: 'web', system: 'laptop-1' },
     { service: 'old-web', system: 'server-1' },
@@ -697,5 +716,22 @@ test('purge service succeeds when only a Service restarted note is held', async 
   expect(code).toBe(0);
   expect(
     await s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'db'`,
+  ).toEqual([]);
+});
+
+test('purge service succeeds when only installed version history is held', async () => {
+  await using s = await setupServices();
+  await s.db.sql`
+    INSERT INTO service_versions (system, service, version, first_seen_at)
+    VALUES ('laptop-1', 'db', '1', ${AT})
+  `;
+
+  const { code } = await invoke(['purge', 'service', 'laptop-1', 'db', ...s.args]);
+
+  expect(code).toBe(0);
+  expect(
+    await s.db.sql<
+      Record<string, unknown>[]
+    >`SELECT service FROM service_versions WHERE service = 'db'`,
   ).toEqual([]);
 });

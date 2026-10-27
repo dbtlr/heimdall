@@ -2287,6 +2287,22 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 39,
   },
+  {
+    // Each change of a Service's derived installed version and upstream, from
+    // when the Hub first saw it (ADR-0022). Null means unknown; the latest row
+    // is the current value.
+    sql: `
+      CREATE TABLE service_versions (
+        system text NOT NULL REFERENCES systems (name),
+        service text NOT NULL,
+        version text,
+        upstream text,
+        first_seen_at timestamptz NOT NULL,
+        PRIMARY KEY (system, service, first_seen_at)
+      );
+    `,
+    version: 40,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
