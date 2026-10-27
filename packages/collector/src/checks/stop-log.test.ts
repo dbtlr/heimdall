@@ -21,9 +21,9 @@ const facts = (stoppedAt: number | null, startedAt: number | null): StopFacts =>
 });
 
 // A stop log in `dir` over a clock the test moves, with the proxy seen running.
-const setup = async (dir: { path: string }) => {
+const setup = async (dir: { path: string }, maxStopsPerService = MAX_STOPS_PER_SERVICE) => {
   let now = T;
-  const stops = await openStopLog({ now: () => now, stateDir: dir.path });
+  const stops = await openStopLog({ maxStopsPerService, now: () => now, stateDir: dir.path });
   const observe = (seen: StopFacts) =>
     stops.observe({ boot: 'b', checkedAt: now, facts: seen, key: 'proxy', service: 'proxy' });
   observe(facts(null, T - DAY));
@@ -65,17 +65,17 @@ test('a stop the Hub never took is dropped 7 days after it last changed', async 
   expect(dropped).toEqual([]);
 });
 
-test('keeps the newest 1,000 stops of a Service the Hub has not taken', async () => {
+test('keeps the newest stops up to the per-Service cap while the Hub has not taken them', async () => {
   await using dir = await tempStateDir();
-  const { observe, stops } = await setup(dir);
-  for (let i = 0; i <= MAX_STOPS_PER_SERVICE; i += 1) {
+  const { observe, stops } = await setup(dir, 3);
+  for (let i = 0; i <= 3; i += 1) {
     observe(facts(T + i * 1000, T + i * 1000 + 500));
   }
 
   const first = stops.pending().stops;
   stops.close();
 
-  expect(first).toHaveLength(MAX_STOPS_PER_SERVICE);
+  expect(first).toHaveLength(3);
   expect(first[0]?.stoppedAt).toBe(T + 1000);
 });
 

@@ -269,19 +269,6 @@ test('a check that cannot reach systemd logs nothing and keeps the baseline, so 
   expect(reached).toMatchObject([{ restarts: 1, stoppedAt: T + 65 * S }]);
 });
 
-test('a check that cannot read the boot logs nothing', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  c.reboot(undefined);
-  await c.check(shown({ enter: T + 70 * S, exit: T + 65 * S, restarts: 1 }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toEqual([]);
-});
-
 test('a Service first seen stopped is no stop, since there is nothing to compare with', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);

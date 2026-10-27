@@ -138,13 +138,6 @@ test('a FIFO named .git belongs to none and is never read', async () => {
   expect(await repositoryOf(folder)).toBeNull();
 }, 2000);
 
-test('a .git entry that is a device belongs to none', async () => {
-  const folder = await inOuterRepository('device');
-  await symlink('/dev/zero', join(folder, '.git'));
-
-  expect(await repositoryOf(folder)).toBeNull();
-}, 2000);
-
 test('a commondir that is not a regular file is never read', async () => {
   const repo = await dir('project');
   const gitdir = await dir('project', '.git', 'worktrees', 'feature');

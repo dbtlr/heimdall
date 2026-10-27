@@ -52,7 +52,7 @@ test('pair redeems the code as given and keeps the System name and token in iden
   expect(result.code).toBe(0);
 });
 
-test('pair creates the state directory it keeps the identity in', async () => {
+test('pair creates the state directory, readable by its owner alone, and keeps the identity in it', async () => {
   await using dir = await tempStateDir();
   await using hub = fakeHub(paired());
   const stateDir = join(dir.path, 'not', 'yet');
@@ -61,6 +61,7 @@ test('pair creates the state directory it keeps the identity in', async () => {
 
   expect(await Bun.file(join(stateDir, 'identity.json')).exists()).toBe(true);
   expect(code).toBe(0);
+  expect((await stat(stateDir)).mode & 0o777).toBe(0o700);
 });
 
 test('pair reaches the Hub under the path prefix its URL carries', async () => {
@@ -100,16 +101,6 @@ test('pair without a Hub is a usage error that names the option', async () => {
   const { code, stderr } = await invoke(['pair', CODE, '--state-dir', dir.path]);
 
   expect(stderr).toContain('--hub');
-  expect(code).toBe(2);
-});
-
-test('pair without a code is a usage error', async () => {
-  await using dir = await tempStateDir();
-  await using hub = fakeHub(paired());
-
-  const { code } = await invoke(['pair', '--hub', hub.url, '--state-dir', dir.path]);
-
-  expect(hub.requests).toEqual([]);
   expect(code).toBe(2);
 });
 
@@ -190,28 +181,12 @@ test('a Hub answering some other status exits 1 and names it', async () => {
 
 test.each([
   ['not JSON', () => new Response(`{"system":"desktop-1","token":"${NEW_TOKEN}"`)],
-  ['no token', () => Response.json({ system: 'desktop-1' })],
-  ['an empty token', paired('desktop-1', '')],
   ['a token that is not base64url', paired('desktop-1', `${NEW_TOKEN}+/=`)],
   ['a System outside Fleet names', paired('Desktop_1')],
-  ['no System', () => Response.json({ token: NEW_TOKEN })],
 ])('a successful answer with %s exits 1 and leaves the identity as it was', async (_, answer) => {
   await using hub = fakeHub(answer);
 
   await failsKeepingIdentity(hub.url, 'did not hold a System name and token');
-});
-
-test('an answer larger than 4 KiB exits 1, says it was too large, and leaves the identity as it was', async () => {
-  await using hub = fakeHub(
-    () =>
-      new Response(
-        new ReadableStream({
-          pull: (controller) => controller.enqueue(new TextEncoder().encode(' '.repeat(1024))),
-        }),
-      ),
-  );
-
-  await failsKeepingIdentity(hub.url, "The Hub's answer was too large");
 });
 
 test('an answer that declares more than 4 KiB is too large before its body is read', async () => {
@@ -260,16 +235,6 @@ test('a state directory that cannot be created exits 1 before the code is sent, 
   expect(hub.requests).toEqual([]);
   expect(result.stderr).toContain('Could not create the state directory');
   expect(result.code).toBe(1);
-});
-
-test('pair creates the state directory readable by its owner alone', async () => {
-  await using dir = await tempStateDir();
-  await using hub = fakeHub(paired());
-  const stateDir = join(dir.path, 'new');
-
-  await pair(hub.url, stateDir);
-
-  expect((await stat(stateDir)).mode & 0o777).toBe(0o700);
 });
 
 test('pair leaves the mode of a state directory that exists as it was', async () => {

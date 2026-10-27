@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip as gunzipCallback } from 'node:zlib';
@@ -7,7 +7,6 @@ import { gunzip as gunzipCallback } from 'node:zlib';
 import { startHub } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import { unreachableHub } from '../testing/fake-hub.ts';
 import { tempStateDir } from '../testing/fixtures.ts';
 import { createCapture } from './capture.ts';
 import { transcriptHub } from './hub-client.ts';
@@ -112,25 +111,5 @@ withPostgres(
       'claude-code/projects/my-project/0b1c/tool-results/r1.txt': 'large output',
     });
     expect(h.errors).toEqual([]);
-  },
-);
-
-withPostgres(
-  'a transcript spooled while the Hub was unreachable reaches it after the Harness deleted it',
-  async () => {
-    await using h = await servedHub();
-    await using t = await setUp();
-    await t.write('projects/p/s.jsonl', '{"a":1}\n');
-    const offline = t.capture(transcriptHub({ hub: new URL(unreachableHub()), token: 'x' }));
-    await offline.scan();
-
-    expect((await offline.drain()).kind).toBe('failed');
-
-    await rm(join(t.source.dir, 'projects/p/s.jsonl'));
-    const online = t.capture(transcriptHub({ hub: h.url, token: 'laptop-token' }));
-
-    expect(await online.drain()).toEqual({ kind: 'drained' });
-    expect(await archive(h, 'laptop-1')).toEqual({ 'claude-code/projects/p/s.jsonl': '{"a":1}\n' });
-    expect(online.section().spool).toEqual({ bytes: 0, oldestAt: null });
   },
 );

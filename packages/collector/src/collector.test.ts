@@ -98,7 +98,7 @@ test('samples taken while the Hub is down arrive once it is back, each once', as
   expect(logs.filter((l) => l.startsWith('info Pushing to the Hub works again'))).toHaveLength(1);
 });
 
-test('every Report it sends carries the time zone its dependency gives', async () => {
+test('every Report it sends carries the time zone and sleeps it was given', async () => {
   await using dir = await tempStateDir();
   const queue = await openQueue({ capacity: 10, stateDir: dir.path });
   const controller = new AbortController();
@@ -106,7 +106,7 @@ test('every Report it sends carries the time zone its dependency gives', async (
   let taken = 0;
 
   const running = runCollector({
-    identity,
+    identity: { ...identity, sleeps: true },
     intervalMs: 5,
     log: { info: () => 0, warn: () => 0 },
     maxBackoffMs: 5,
@@ -135,46 +135,8 @@ test('every Report it sends carries the time zone its dependency gives', async (
     'Europe/Paris',
     'Europe/Paris',
   ]);
+  expect(reports.slice(0, 2).map((report) => report.sleeps)).toEqual([true, true]);
 });
-
-test.each([true, false])(
-  'every Report it sends carries sleeps: %p from its identity',
-  async (sleeps) => {
-    await using dir = await tempStateDir();
-    const queue = await openQueue({ capacity: 10, stateDir: dir.path });
-    const controller = new AbortController();
-    const reports: Report[] = [];
-    let taken = 0;
-
-    const running = runCollector({
-      identity: { ...identity, sleeps },
-      intervalMs: 5,
-      log: { info: () => 0, warn: () => 0 },
-      maxBackoffMs: 5,
-      queue,
-      sampler: {
-        sample: () => {
-          taken += 1;
-          return Promise.resolve(sample(taken));
-        },
-      },
-      sections: NO_SECTIONS,
-      send: (report) => {
-        reports.push(report);
-        return Promise.resolve({ kind: 'delivered' });
-      },
-      signal: controller.signal,
-      timeZone: NO_TIME_ZONE,
-      transcripts: () => NO_TRANSCRIPTS,
-    });
-    await until(() => reports.length >= 2);
-    controller.abort();
-    await running;
-    queue.close();
-
-    expect(reports.slice(0, 2).map((report) => report.sleeps)).toEqual([sleeps, sleeps]);
-  },
-);
 
 test('stops between samples when its signal aborts', async () => {
   await using dir = await tempStateDir();
@@ -256,7 +218,7 @@ test('a slow push does not crowd the next sample', async () => {
 
   const running = runCollector({
     identity,
-    intervalMs: 40,
+    intervalMs: 10,
     log: { info: () => 0, warn: () => 0 },
     queue,
     sampler: {
@@ -269,7 +231,7 @@ test('a slow push does not crowd the next sample', async () => {
     send: async () => {
       sends += 1;
       // The first push takes three intervals.
-      await Bun.sleep(sends === 1 ? 120 : 0);
+      await Bun.sleep(sends === 1 ? 30 : 0);
       return { kind: 'delivered' };
     },
     signal: controller.signal,
@@ -282,7 +244,7 @@ test('a slow push does not crowd the next sample', async () => {
   queue.close();
 
   const gaps = sampledAt.slice(1).map((at, i) => at - (sampledAt[i] ?? at));
-  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(35);
+  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(8);
 });
 
 test('a queue error warns and backs off instead of stopping the Collector', async () => {

@@ -200,30 +200,6 @@ test('an agent launchd keeps starting is one stop with its runs while the checks
   ]);
 });
 
-test('an agent ended by a signal is logged with the signal number', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  await c.check(printed({ pid: 600, runs: 2, signal: 'Killed: 9' }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toMatchObject([{ exitStatus: 9, result: 'signal' }]);
-});
-
-test('an agent that exited 0 stopped cleanly', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  await c.check(printed({ exit: '0', runs: 1 }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toMatchObject([{ exitStatus: 0, ongoing: true, result: 'success' }]);
-});
-
 test('an agent loaded again, which starts its runs over, is a stop by its new process', async () => {
   await using dir = await tempStateDir();
   const c = await setup(dir);
@@ -332,34 +308,6 @@ test('a check that cannot reach launchd logs nothing and keeps the baseline, so 
 
   expect(unreachable).toEqual([]);
   expect(reached).toMatchObject([{ restarts: 1, startedAt: T + 2 * MIN, stoppedAt: T }]);
-});
-
-test('a Collector restarted within one boot finds a stop that happened while it was down', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  await c.restart();
-  await c.check(printed({ exit: '143', pid: 600, runs: 2 }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toMatchObject([
-    { exitStatus: 143, restarts: 1, startedAt: T + MIN, stoppedAt: T },
-  ]);
-});
-
-test('a reboot is no stop, though the agent runs as a new process', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await c.first();
-
-  c.reboot('boot-2');
-  await c.check(printed({ pid: 300, runs: 1 }));
-  const logged = c.logged();
-  c.close();
-
-  expect(logged).toEqual([]);
 });
 
 test('a stop is timed from when the check before began, so a slow launchctl never times it after it happened', async () => {

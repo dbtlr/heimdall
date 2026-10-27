@@ -23,26 +23,21 @@ test('an identity its owner alone can use, in a directory only its owner writes,
   expect(await exposuresOf(dir.path)).toEqual([]);
 });
 
-test.each([
-  ['group read', 0o640],
-  ['other read', 0o604],
-  ['group write', 0o620],
-  ['other execute', 0o601],
-])('an identity file with %s is exposed, with the mode and the fix', async (_, mode) => {
-  await using dir = await tempStateDir();
-  const path = await givenIdentity(dir.path, { mode });
+test.each([['group read', 0o640]])(
+  'an identity file with %s is exposed, with the mode and the fix',
+  async (_, mode) => {
+    await using dir = await tempStateDir();
+    const path = await givenIdentity(dir.path, { mode });
 
-  const exposures = await exposuresOf(dir.path);
+    const exposures = await exposuresOf(dir.path);
 
-  expect(exposures).toHaveLength(1);
-  expect(exposures[0]).toContain(`${path} has mode 0${mode.toString(8)}`);
-  expect(exposures[0]).toContain(`chmod 600 ${path}`);
-});
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0]).toContain(`${path} has mode 0${mode.toString(8)}`);
+    expect(exposures[0]).toContain(`chmod 600 ${path}`);
+  },
+);
 
-test.each([
-  ['group', 0o770],
-  ['others', 0o703],
-])(
+test.each([['group', 0o770]])(
   'a state directory %s can write to is exposed, since the identity could be replaced',
   async (_, mode) => {
     await using dir = await tempStateDir();

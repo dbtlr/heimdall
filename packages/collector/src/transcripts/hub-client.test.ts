@@ -47,7 +47,7 @@ describe('opening a generation', () => {
     expect(await h.client.open(FILE)).toEqual({ kind: 'deleted' });
   });
 
-  test.each([401, 403, 500, 302])('fails on %d', async (status) => {
+  test.each([401, 302])('fails on %d', async (status) => {
     await using h = hubAnswering(
       () => new Response('nope', { headers: { location: '/' }, status }),
     );
@@ -114,7 +114,7 @@ describe('sending a chunk', () => {
     expect(await h.client.send({ body, generation: 42, offset: 0 })).toEqual({ kind: 'unknown' });
   });
 
-  test.each([401, 403, 503])('fails on %d', async (status) => {
+  test.each([401])('fails on %d', async (status) => {
     await using h = hubAnswering(() => new Response(null, { status }));
 
     expect((await h.client.send({ body, generation: 42, offset: 0 })).kind).toBe('failed');

@@ -11,7 +11,7 @@ test('an answer whose body stalls past the timeout is a dropped connection, not 
       }),
   );
 
-  const outcome = await redeemCode({ code: '7K3M-Q9XA', hub: new URL(hub.url), timeoutMs: 200 });
+  const outcome = await redeemCode({ code: '7K3M-Q9XA', hub: new URL(hub.url), timeoutMs: 20 });
 
   expect(outcome.kind).toBe('dropped');
 });

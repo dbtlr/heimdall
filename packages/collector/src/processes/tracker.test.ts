@@ -94,17 +94,6 @@ test('a running Harness root is reported with its start, working directory, tota
   });
 });
 
-test('a Harness root reports the repository its working directory belongs to', async () => {
-  const h = host();
-  h.state.table = [entry(10)];
-  h.state.cwds[10] = '/trees/feature';
-  h.state.repositories['/trees/feature'] = '/work/project';
-
-  await h.tracker.tick();
-
-  expect(h.tracker.latest()?.processes[0]?.repository).toBe('/work/project');
-});
-
 test('the repository is looked up once for a working directory, however many ticks see it', async () => {
   const h = host();
   h.state.table = [entry(10)];

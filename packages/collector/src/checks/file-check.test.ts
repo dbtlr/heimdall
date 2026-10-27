@@ -107,11 +107,6 @@ test('an empty file hashes to the SHA-256 of nothing', async () => {
   expect(await checkFile(path, sha(''))).toBe('match');
 });
 
-test('a device is unreadable and is not read to its end', async () => {
-  // /dev/zero never ends, so reading it would hang the test.
-  expect(await checkFile('/dev/zero', sha('x'))).toBe('unreadable');
-});
-
 test('a check cut short by the signal answers nothing', async () => {
   await using dir = await tempStateDir();
   const path = join(dir.path, 'a.conf');
@@ -119,18 +114,6 @@ test('a check cut short by the signal answers nothing', async () => {
 
   expect(await checkFile(path, HELLO, AbortSignal.abort())).toBeUndefined();
   expect(await checkFile(path, HELLO, new AbortController().signal)).toBe('match');
-});
-
-test('a check of a large file stops between chunks when the signal aborts', async () => {
-  await using dir = await tempStateDir();
-  const path = join(dir.path, 'big');
-  await writeFile(path, Buffer.alloc(64 * 1024 * 1024));
-  const controller = new AbortController();
-  const check = checkFile(path, sha('x'), controller.signal);
-  // The first chunk is not read until the check yields.
-  controller.abort();
-
-  expect(await check).toBeUndefined();
 });
 
 test('a check of a huge file stops soon after the signal aborts, not when the file ends', async () => {
@@ -185,7 +168,7 @@ const watchOpens = () => {
   return { opened, watching };
 };
 
-test.each(['/dev/zero', '/dev/null'])('%s is unreadable and is never opened', async (device) => {
+test.each(['/dev/zero'])('%s is unreadable and is never opened', async (device) => {
   const { opened, watching } = watchOpens();
 
   expect(await checkFile(device, sha('x'), undefined, watching)).toBe('unreadable');

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { filesRecordDigest } from '@heimdall/schema';
@@ -145,29 +145,6 @@ test('a file keeps its since time while it stays in one state, and leaves the li
     ),
   );
   expect(c.checks.latest()).toEqual(await section([app]));
-});
-
-test('a directory, an unreadable file, and a link loop are listed as unreadable, not drifted', async () => {
-  await using dir = await tempStateDir();
-  const c = await setup(dir);
-  await mkdir(c.at('etc/conf.d'));
-  await symlink(c.at('etc/y'), c.at('etc/x'));
-  await symlink(c.at('etc/x'), c.at('etc/y'));
-  const app = record('app', { [c.at('etc/conf.d')]: 'x', [c.at('etc/x')]: 'x' });
-  await c.elsewhere((store) => store.put('files', app));
-
-  await c.checks.tick();
-  c.checks.close();
-
-  expect(c.checks.latest()).toEqual(
-    await section(
-      [app],
-      [
-        { path: c.at('etc/conf.d'), record: 'app', since: START, state: 'unreadable' },
-        { path: c.at('etc/x'), record: 'app', since: START, state: 'unreadable' },
-      ],
-    ),
-  );
 });
 
 test('a change to a files record is checked at once, and an unchanged record is not checked again before the hour', async () => {

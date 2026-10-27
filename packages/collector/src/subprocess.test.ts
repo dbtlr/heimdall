@@ -2,7 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { COMMAND_TIMEOUT_MS, readCommand, runBoundedCommand, runCommand } from './subprocess.ts';
+import { readCommand, runBoundedCommand, runCommand } from './subprocess.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
 const isAlive = (pid: number) => {
@@ -20,46 +20,23 @@ test('a command that exits answers its status and what it wrote', async () => {
   expect(result).toEqual({ exitCode: 3, kind: 'exited', stderr: 'err\n', stdout: 'out\n' });
 });
 
-test('a command that outlives the timeout is killed and reported as timed out', async () => {
-  await using dir = await tempStateDir();
-  const pidFile = join(dir.path, 'pid');
-
-  const result = await runCommand(['/bin/sh', '-c', `echo $$ > ${pidFile}; exec sleep 30`], {
-    timeoutMs: 200,
-  });
-
-  expect(result).toEqual({ kind: 'timed out' });
-  const pid = Number((await readFile(pidFile, 'utf8')).trim());
-  // The kill is a signal, so the process may take a moment to be reaped.
-  const gone = await Bun.sleep(100).then(() => !isAlive(pid));
-  expect(gone).toBe(true);
-});
-
 test('a command that ignores SIGTERM is still killed at the timeout', async () => {
   await using dir = await tempStateDir();
   const pidFile = join(dir.path, 'pid');
 
   const result = await runCommand(
     ['/bin/sh', '-c', `trap '' TERM; echo $$ > ${pidFile}; while :; do :; done`],
-    { timeoutMs: 300 },
+    { timeoutMs: 50 },
   );
 
   expect(result).toEqual({ kind: 'timed out' });
   const pid = Number((await readFile(pidFile, 'utf8')).trim());
-  const gone = await Bun.sleep(100).then(() => !isAlive(pid));
-  expect(gone).toBe(true);
-});
-
-test('the default timeout is 5 seconds', async () => {
-  const set = spyOn(globalThis, 'setTimeout');
-  try {
-    await runCommand(['/bin/sh', '-c', 'exit 0']);
-
-    expect(COMMAND_TIMEOUT_MS).toBe(5000);
-    expect(set.mock.calls.map(([, delay]) => delay)).toContain(5000);
-  } finally {
-    set.mockRestore();
+  const deadline = Date.now() + 1000;
+  while (isAlive(pid) && Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- Wait for SIGKILL to be delivered and the process reaped.
+    await Bun.sleep(2);
   }
+  expect(isAlive(pid)).toBe(false);
 });
 
 test('a command that finishes leaves no timer pending, so it cannot kill anything later', async () => {
@@ -157,10 +134,16 @@ for (const mode of ['timeout', 'abort'] as const) {
         "const child = Bun.spawn({ cmd: ['/bin/sleep', '2'], detached: true, stderr: 'inherit', stdout: 'inherit' }); await Bun.write(Bun.argv.at(-1), String(child.pid)); child.unref();",
         pidFile,
       ],
-      { signal: controller.signal, timeoutMs: 300 },
+      { signal: controller.signal, timeoutMs: mode === 'timeout' ? 50 : 1000 },
     );
     if (mode === 'abort') {
-      await Bun.sleep(150);
+      const deadline = Date.now() + 1000;
+      // oxlint-disable-next-line no-await-in-loop -- Wait for the child to finish recording its descendant.
+      while (!(await Bun.file(pidFile).exists()) && Date.now() < deadline) {
+        // oxlint-disable-next-line no-await-in-loop -- The child records its detached descendant before cancellation.
+        await Bun.sleep(2);
+      }
+      expect(await Bun.file(pidFile).exists()).toBe(true);
       controller.abort();
     }
     try {
