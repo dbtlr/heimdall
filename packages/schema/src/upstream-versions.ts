@@ -19,7 +19,8 @@ export const parseVersion = (text: string): ParsedVersion | undefined => {
     return undefined;
   }
   const core = match[1].split('.').map(Number);
-  if (!core.every(Number.isFinite)) {
+  // A number too large to compare exactly is no version number.
+  if (!core.every(Number.isSafeInteger)) {
     return undefined;
   }
   const [label, ...rest] = match[2]?.split('.') ?? [];
@@ -111,7 +112,7 @@ export const availableUpdate = (
       plain !== undefined &&
       plainText !== undefined &&
       compareCores(plain, parsed) > 0 &&
-      (candidate === undefined || compareCores(plain, candidate.parsed) >= 0)
+      (candidate === undefined || compareCores(plain, candidate.parsed) > 0)
     ) {
       candidate = { parsed: plain, text: plainText };
     }

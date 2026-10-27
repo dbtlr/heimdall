@@ -43,6 +43,7 @@ test.each([
   '1 ',
   '1\n',
   '1-rc..1',
+  '9007199254740993',
 ])('an unreadable version cannot be parsed: %j', (version) => {
   expect(parseVersion(version)).toBeUndefined();
 });
@@ -89,7 +90,8 @@ test.each([
   ['v1.2', ['1.2.1+build'], '1.2.1+build'],
   ['16-alpine', ['16.1-alpine', '17'], '17'],
   ['16-alpine', ['18-alpine', '17'], '18-alpine'],
-  ['16-alpine', ['17-alpine', '17'], '17'],
+  // On equal numbers the install's own label wins, so no update moves it off its variant.
+  ['16-alpine', ['17-alpine', '17'], '17-alpine'],
 ])(
   'an available update for %s chooses the newest eligible candidate',
   (installed, releases, version) => {

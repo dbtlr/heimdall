@@ -273,7 +273,7 @@ const serveUntilStopped = async ({
         },
         task: () =>
           checkUpstreams(sql, {
-            list: (upstream) => listReleases(upstream, { fetch, now: Date.now(), signal }),
+            list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
             now: Date.now,
             signal,
           }),

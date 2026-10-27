@@ -8,6 +8,9 @@ import type { CheckAnswer } from './upstream-releases.ts';
 // How long the Hub waits after checking an upstream before it checks it again,
 // whether the check succeeded or failed (ADR-0022: at most every few hours).
 export const UPSTREAM_CHECK_INTERVAL_MS = 6 * 3_600_000;
+// The longest a rate limit's reset time defers a check, so a reset given
+// decades out cannot stop an upstream being checked.
+const MAX_RETRY_DEFERRAL_MS = 24 * 3_600_000;
 
 // The host that answers for an upstream, so a rate limit from one host spares
 // the others for the rest of a pass.
@@ -43,10 +46,10 @@ const storeAnswer = async (
   { answer, now, upstream }: { answer: CheckAnswer; now: number; upstream: string },
 ) => {
   const at = new Date(now);
-  if (answer.kind === 'failed') {
+  if (answer.kind !== 'listed') {
     const retryAt =
-      answer.retryAt !== null && answer.retryAt > now
-        ? answer.retryAt
+      answer.kind === 'limited' && answer.retryAt !== null && answer.retryAt > now
+        ? Math.min(answer.retryAt, now + MAX_RETRY_DEFERRAL_MS)
         : now + UPSTREAM_CHECK_INTERVAL_MS;
     await sql`
       INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, failure, next_check_at)
@@ -105,7 +108,7 @@ export const checkUpstreams = async (
     if (signal?.aborted === true) {
       return;
     }
-    if (answer.kind === 'failed' && answer.retryAt !== null) {
+    if (answer.kind === 'limited') {
       limited.add(host);
     }
     // oxlint-disable-next-line no-await-in-loop -- each answer is stored as it arrives.

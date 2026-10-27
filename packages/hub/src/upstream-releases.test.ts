@@ -27,7 +27,7 @@ const stubFetch = (routes: Record<string, (request: Request) => Response | Promi
   return { fetch, sent };
 };
 
-const list = (upstream: string, fetch: Fetch) => listReleases(upstream, { fetch, now: NOW });
+const list = (upstream: string, fetch: Fetch) => listReleases(upstream, { fetch, now: () => NOW });
 
 test.each([
   ['github:caddyserver/caddy', true],
@@ -71,7 +71,7 @@ test('GitHub out of requests defers to the reset time it gives', async () => {
   });
 
   expect(await list('github:o/r', fetch)).toEqual({
-    kind: 'failed',
+    kind: 'limited',
     reason: 'api.github.com is rate-limiting the Hub.',
     retryAt: reset * 1000,
   });
@@ -84,7 +84,7 @@ test('a 429 defers by its Retry-After seconds', async () => {
   });
 
   expect(await list('npm:left-pad', fetch)).toEqual({
-    kind: 'failed',
+    kind: 'limited',
     reason: 'registry.npmjs.org is rate-limiting the Hub.',
     retryAt: NOW + 120_000,
   });
@@ -99,7 +99,6 @@ test('an answer other than 2xx fails with its status alone', async () => {
   expect(await list('github:o/gone', fetch)).toEqual({
     kind: 'failed',
     reason: 'api.github.com answered 404.',
-    retryAt: null,
   });
 });
 
@@ -109,7 +108,6 @@ test('a request that cannot be made fails with why', async () => {
   expect(await list('npm:left-pad', unreachable)).toEqual({
     kind: 'failed',
     reason: 'Could not reach registry.npmjs.org: The operation timed out.',
-    retryAt: null,
   });
 });
 
@@ -121,7 +119,6 @@ test('an answer of the wrong shape fails', async () => {
   expect(await list('github:o/r', fetch)).toEqual({
     kind: 'failed',
     reason: 'api.github.com answered with something other than a release list.',
-    retryAt: null,
   });
 });
 
@@ -196,7 +193,6 @@ test('a token challenge whose realm is not HTTPS is refused before it is contact
   expect(await list('oci:ghcr.io/o/app', fetch)).toEqual({
     kind: 'failed',
     reason: 'ghcr.io asked for a token from somewhere other than an HTTPS address.',
-    retryAt: null,
   });
   expect(sent).toHaveLength(1);
 });
@@ -215,7 +211,6 @@ test('a redirect to plain HTTP is refused, and one to HTTPS is followed', async 
   expect(await list('github:o/insecure', fetch)).toEqual({
     kind: 'failed',
     reason: 'api.github.com redirected the Hub to an address that is not HTTPS.',
-    retryAt: null,
   });
   expect(sent.map(({ url }) => url)).not.toContain(
     'http://api.github.com/repositories/43/releases?per_page=100',
@@ -252,7 +247,6 @@ test('a tag list longer than the page limit fails rather than leaving tags out',
   expect(await list('oci:registry.example/o/app', fetch)).toEqual({
     kind: 'failed',
     reason: 'registry.example has more pages of tags than the Hub reads.',
-    retryAt: null,
   });
 });
 
@@ -267,7 +261,6 @@ test('an answer larger than the Hub reads fails', async () => {
   expect(await list('npm:huge', fetch)).toEqual({
     kind: 'failed',
     reason: 'registry.npmjs.org answered with more than the Hub reads.',
-    retryAt: null,
   });
 });
 
@@ -288,7 +281,148 @@ test.each([
   expect(await list(upstream, fetch)).toEqual({
     kind: 'failed',
     reason: `${upstream} is not a valid upstream.`,
-    retryAt: null,
   });
   expect(sent).toEqual([]);
+});
+
+test('a Retry-After date defers to that time, read from a 403 as from a 429', async () => {
+  const { fetch } = stubFetch({
+    'https://api.github.com/repos/o/r/releases?per_page=100': () =>
+      new Response('', {
+        headers: { 'retry-after': 'Tue, 27 Oct 2026 13:30:00 GMT' },
+        status: 403,
+      }),
+  });
+
+  expect(await list('github:o/r', fetch)).toEqual({
+    kind: 'limited',
+    reason: 'api.github.com is rate-limiting the Hub.',
+    retryAt: Date.UTC(2026, 9, 27, 13, 30, 0),
+  });
+});
+
+test('Retry-After seconds count from when the answer arrives', async () => {
+  let clock = NOW;
+  const fetch: Fetch = () => {
+    clock += 120_000;
+    return Promise.resolve(new Response('', { headers: { 'retry-after': '60' }, status: 429 }));
+  };
+
+  expect(await listReleases('npm:left-pad', { fetch, now: () => clock })).toEqual({
+    kind: 'limited',
+    reason: 'registry.npmjs.org is rate-limiting the Hub.',
+    retryAt: NOW + 180_000,
+  });
+});
+
+test('a redirect loop fails after a few hops', async () => {
+  const url = 'https://api.github.com/repos/o/loop/releases?per_page=100';
+  const { fetch, sent } = stubFetch({ [url]: () => Response.redirect(url, 302) });
+
+  expect(await list('github:o/loop', fetch)).toEqual({
+    kind: 'failed',
+    reason: 'api.github.com redirected the Hub too many times.',
+  });
+  expect(sent).toHaveLength(6);
+});
+
+test('a stop aborts the request in flight', async () => {
+  const stop = new AbortController();
+  const signals: AbortSignal[] = [];
+  const fetch: Fetch = (_, init) => {
+    if (init.signal !== null && init.signal !== undefined) {
+      signals.push(init.signal);
+    }
+    stop.abort();
+    return Promise.reject(new Error('This operation was aborted.'));
+  };
+
+  await listReleases('npm:left-pad', { fetch, now: () => NOW, signal: stop.signal });
+
+  expect(signals.map(({ aborted }) => aborted)).toEqual([true]);
+});
+
+test('an answer streamed in small pieces is capped by its total size', async () => {
+  const piece = new Uint8Array(1024 * 1024);
+  let sent = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    cancel: () => {
+      cancelled = true;
+    },
+    pull: (controller) => {
+      sent += 1;
+      controller.enqueue(piece);
+    },
+  });
+  const { fetch } = stubFetch({ 'https://registry.npmjs.org/huge': () => new Response(body) });
+
+  expect(await list('npm:huge', fetch)).toEqual({
+    kind: 'failed',
+    reason: 'registry.npmjs.org answered with more than the Hub reads.',
+  });
+  expect(sent).toBeLessThan(40);
+  expect(cancelled).toBe(true);
+});
+
+test('a registry that redirects before it challenges gets the token, and the first host does not', async () => {
+  const { fetch, sent } = stubFetch({
+    'https://auth.example/token?service=registry.docker.io&scope=repository%3Alibrary%2Fnginx%3Apull':
+      () => Response.json({ token: 't0k' }),
+    'https://mirror.example/v2/o/app/tags/list': (request) =>
+      request.headers.get('authorization') === 'Bearer t0k'
+        ? Response.json({ name: 'o/app', tags: ['3.0'] })
+        : challenge('https://auth.example/token'),
+    'https://registry.example/v2/o/app/tags/list': () =>
+      Response.redirect('https://mirror.example/v2/o/app/tags/list', 307),
+  });
+
+  expect(await list('oci:registry.example/o/app', fetch)).toEqual({
+    kind: 'listed',
+    releases: ['3.0'],
+  });
+  expect(sent.map(({ authorization, url }) => [url, authorization])).toEqual([
+    ['https://registry.example/v2/o/app/tags/list', null],
+    ['https://mirror.example/v2/o/app/tags/list', null],
+    [
+      'https://auth.example/token?service=registry.docker.io&scope=repository%3Alibrary%2Fnginx%3Apull',
+      null,
+    ],
+    ['https://mirror.example/v2/o/app/tags/list', 'Bearer t0k'],
+  ]);
+});
+
+test.each([
+  'Basic realm="registry", Bearer realm="https://auth.example/token",service="svc"',
+  'Bearer realm="https://auth.example/token",service="svc", Basic realm="registry"',
+  'Bearer realm=https://auth.example/token, service=svc',
+])('the Bearer challenge is read among others: %s', async (header) => {
+  const { fetch } = stubFetch({
+    'https://auth.example/token?service=svc&scope=repository%3Ao%2Fapp%3Apull': () =>
+      Response.json({ token: 't0k' }),
+    'https://registry.example/v2/o/app/tags/list': (request) =>
+      request.headers.get('authorization') === 'Bearer t0k'
+        ? Response.json({ name: 'o/app', tags: ['1.0'] })
+        : new Response('', { headers: { 'www-authenticate': header }, status: 401 }),
+  });
+
+  expect(await list('oci:registry.example/o/app', fetch)).toEqual({
+    kind: 'listed',
+    releases: ['1.0'],
+  });
+});
+
+test('a registry that lists more tags than the Hub reads fails', async () => {
+  const { fetch } = stubFetch({
+    'https://registry.example/v2/o/app/tags/list': () =>
+      Response.json({
+        name: 'o/app',
+        tags: Array.from({ length: 100_001 }, (_, i) => `1.0.${String(i)}`),
+      }),
+  });
+
+  expect(await list('oci:registry.example/o/app', fetch)).toEqual({
+    kind: 'failed',
+    reason: 'registry.example lists more tags than the Hub reads.',
+  });
 });

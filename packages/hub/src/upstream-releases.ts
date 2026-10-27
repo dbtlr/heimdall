@@ -6,16 +6,21 @@ import { HUB_VERSION } from './version.ts';
 export type Fetch = (url: URL, init: RequestInit) => Promise<Response>;
 
 // What one check of an upstream found: every release it lists, or why it
-// could not tell, with when the upstream allows asking again if it said.
+// could not tell. A rate-limited answer says when the upstream allows asking
+// again, when it says.
 export type CheckAnswer =
   | { kind: 'listed'; releases: string[] }
-  | { kind: 'failed'; reason: string; retryAt: number | null };
+  | { kind: 'failed'; reason: string }
+  | { kind: 'limited'; reason: string; retryAt: number | null };
 
 const REQUEST_TIMEOUT_MS = 30_000;
 // npm's abbreviated metadata for its largest packages is a few MiB.
 const MAX_ANSWER_BYTES = 32 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const MAX_TAG_PAGES = 50;
+// Far more tags than any image publishes, so a registry cannot fill memory
+// across pages.
+const MAX_TAGS = 100_000;
 
 const GITHUB = /^github:([\dA-Za-z-]{1,39})\/([\w.-]{1,100})$/u;
 const NPM = /^npm:((?:@[\w~-][\w.~-]*\/)?[\w~-][\w.~-]*)$/u;
@@ -29,13 +34,14 @@ const OCI =
 export const checkedUpstream = (upstream: string) => /^(?:github|npm|oci):/u.test(upstream);
 
 // Why a check found no releases, thrown from deep in a check and turned into
-// its answer at the top.
+// its answer at the top. `limited` holds a rate limit's retry time, null when
+// the upstream gave none; it is undefined for any other failure.
 class CheckFailureError extends Error {
-  readonly retryAt: number | null;
-  constructor(reason: string, retryAt: number | null = null) {
+  readonly limited: { retryAt: number | null } | undefined;
+  constructor(reason: string, limited?: { retryAt: number | null }) {
     super(reason);
     this.name = 'CheckFailureError';
-    this.retryAt = retryAt;
+    this.limited = limited;
   }
 }
 
@@ -80,8 +86,9 @@ const readCapped = async (response: Response, host: string) => {
 };
 
 type Answer = { body: string; response: Response; url: URL };
-// How a check makes its requests: `signal` ends one early when serve stops.
-export type Requester = { fetch: Fetch; now: number; signal?: AbortSignal };
+// How a check makes its requests. `now` reads a Retry-After given in seconds
+// when the answer arrives, and `signal` ends a request early when serve stops.
+export type Requester = { fetch: Fetch; now: () => number; signal?: AbortSignal };
 
 // A GET over HTTPS only, following redirects by hand so none leaves HTTPS, and
 // sending `authorization` only to its own origin. `host` names the upstream
@@ -140,7 +147,9 @@ const get = async (
     if (rateLimited(response)) {
       // oxlint-disable-next-line no-await-in-loop -- the body is unused.
       await response.body?.cancel();
-      throw new CheckFailureError(`${host} is rate-limiting the Hub.`, retryTime(response, now));
+      throw new CheckFailureError(`${host} is rate-limiting the Hub.`, {
+        retryAt: retryTime(response, now()),
+      });
     }
     if (response.status === 401) {
       // oxlint-disable-next-line no-await-in-loop -- the body is unused.
@@ -219,17 +228,22 @@ const TokenSchema = z.union([
   z.object({ access_token: z.string().min(1) }),
 ]);
 
-// The parameters of a `Bearer` challenge, such as realm, service, and scope.
+// The parameters of the `Bearer` challenge among a header's challenges, such
+// as realm, service, and scope. Reading stops at the next challenge's scheme,
+// so another challenge's realm is never taken for the Bearer one.
 const bearerChallenge = (header: string | null) => {
-  if (header === null || !/^bearer\s/iu.test(header)) {
+  const scheme = header === null ? null : /(?:^|[\s,])bearer\s/iu.exec(header);
+  if (header === null || scheme === null) {
     return undefined;
   }
-  return Object.fromEntries(
-    [...header.matchAll(/(\w+)="([^"]*)"/gu)].map(([, key = '', value = '']) => [
-      key.toLowerCase(),
-      value,
-    ]),
-  );
+  const params: Record<string, string> = {};
+  const param = /\s*,?\s*(\w+)\s*=\s*(?:"([^"]*)"|([^\s",]*))/uy;
+  param.lastIndex = scheme.index + scheme[0].length;
+  for (let match = param.exec(header); match !== null; match = param.exec(header)) {
+    const key = (match[1] ?? '').toLowerCase();
+    params[key] ??= match[2] ?? match[3] ?? '';
+  }
+  return params;
 };
 
 // An anonymous pull token, as the registry's challenge asks for one.
@@ -281,12 +295,21 @@ const ociTags = async (registry: string, repository: string, request: Requester)
     if (answer.response.status === 401 && authorization === undefined) {
       // oxlint-disable-next-line no-await-in-loop -- the token gates every page.
       const token = await anonymousToken(answer, repository, { host, request });
-      authorization = { origin: url.origin, value: `Bearer ${token}` };
+      // The token is for the host that challenged, after any redirect.
+      authorization = { origin: answer.url.origin, value: `Bearer ${token}` };
       // oxlint-disable-next-line no-await-in-loop -- the same page, now with the token.
-      answer = await get(url, { accept: 'application/json', authorization, host, request });
+      answer = await get(answer.url, {
+        accept: 'application/json',
+        authorization,
+        host,
+        request,
+      });
     }
     const list = parseJson(unauthorized(answer, host), TagListSchema, host, 'a tag list');
     tags.push(...(list.tags ?? []));
+    if (tags.length > MAX_TAGS) {
+      throw new CheckFailureError(`${host} lists more tags than the Hub reads.`);
+    }
     url = nextPage(answer.response.headers.get('link'), answer.url);
   }
   return tags;
@@ -310,14 +333,16 @@ const releasesOf = (upstream: string, request: Requester) => {
 
 // Asks a `github:`, `npm:`, or `oci:` upstream for every release it lists,
 // over HTTPS and without credentials (ADR-0022). Never throws: a failure is
-// an answer, so the caller keeps the last one it had. `now` reads a
-// Retry-After given in seconds.
+// an answer, so the caller keeps the last one it had.
 export const listReleases = async (upstream: string, request: Requester): Promise<CheckAnswer> => {
   try {
     return { kind: 'listed', releases: await releasesOf(upstream, request) };
   } catch (error) {
-    return error instanceof CheckFailureError
-      ? { kind: 'failed', reason: error.message, retryAt: error.retryAt }
-      : { kind: 'failed', reason: describeError(error), retryAt: null };
+    if (!(error instanceof CheckFailureError)) {
+      return { kind: 'failed', reason: describeError(error) };
+    }
+    return error.limited === undefined
+      ? { kind: 'failed', reason: error.message }
+      : { kind: 'limited', reason: error.message, retryAt: error.limited.retryAt };
   }
 };

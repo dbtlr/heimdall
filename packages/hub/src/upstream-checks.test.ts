@@ -170,7 +170,7 @@ test('a failed check keeps the last answer, records why, and a later success cle
   const failedAt = NOW + UPSTREAM_CHECK_INTERVAL_MS;
   await checkUpstreams(db.sql, {
     list: lister({
-      'npm:app': { kind: 'failed', reason: 'registry.npmjs.org answered 503.', retryAt: null },
+      'npm:app': { kind: 'failed', reason: 'registry.npmjs.org answered 503.' },
     }).list,
     now: () => failedAt,
   });
@@ -200,7 +200,7 @@ test('an upstream that never answered has no releases', async () => {
   await runs(db.sql, { service: 'app', upstream: 'npm:app' });
 
   await checkUpstreams(db.sql, {
-    list: lister({ 'npm:app': { kind: 'failed', reason: 'down', retryAt: null } }).list,
+    list: lister({ 'npm:app': { kind: 'failed', reason: 'down' } }).list,
     now: () => NOW,
   });
 
@@ -217,7 +217,7 @@ test('a rate limit defers that upstream to its reset and skips its host for the 
   const reset = NOW + 20 * 60_000;
   const { asked, list } = lister({
     'github:o/a': {
-      kind: 'failed',
+      kind: 'limited',
       reason: 'api.github.com is rate-limiting the Hub.',
       retryAt: reset,
     },
@@ -238,7 +238,7 @@ test('a reset time already past waits the usual interval', async () => {
   await runs(db.sql, { service: 'a', upstream: 'github:o/a' });
 
   await checkUpstreams(db.sql, {
-    list: lister({ 'github:o/a': { kind: 'failed', reason: 'limited', retryAt: NOW - 1 } }).list,
+    list: lister({ 'github:o/a': { kind: 'limited', reason: 'limited', retryAt: NOW - 1 } }).list,
     now: () => NOW,
   });
 
@@ -304,7 +304,6 @@ test('a stop ends the pass without storing the answer it cut short', async () =>
       return Promise.resolve({
         kind: 'failed',
         reason: 'This operation was aborted.',
-        retryAt: null,
       });
     },
     now: () => NOW,
@@ -313,4 +312,67 @@ test('a stop ends the pass without storing the answer it cut short', async () =>
 
   expect(asked).toEqual(['npm:a']);
   expect(await checks(db.sql)).toEqual([]);
+});
+
+test('a rate limit with no reset time still spares its host for the rest of the pass', async () => {
+  await using db = await database();
+  await runs(db.sql, { service: 'a', upstream: 'github:o/a' });
+  await runs(db.sql, { service: 'b', upstream: 'github:o/b' });
+  const { asked, list } = lister({
+    'github:o/a': { kind: 'limited', reason: 'limited', retryAt: null },
+  });
+
+  await checkUpstreams(db.sql, { list, now: () => NOW });
+
+  expect(asked).toEqual(['github:o/a']);
+  expect(await checks(db.sql)).toMatchObject([
+    { next_check_at: new Date(NOW + UPSTREAM_CHECK_INTERVAL_MS), upstream: 'github:o/a' },
+  ]);
+});
+
+test('a reset time far off defers a check by a day at most', async () => {
+  await using db = await database();
+  await runs(db.sql, { service: 'a', upstream: 'github:o/a' });
+
+  await checkUpstreams(db.sql, {
+    list: lister({
+      'github:o/a': { kind: 'limited', reason: 'limited', retryAt: Date.UTC(2099, 0, 1) },
+    }).list,
+    now: () => NOW,
+  });
+
+  expect(await checks(db.sql)).toMatchObject([{ next_check_at: new Date(NOW + 24 * HOUR) }]);
+});
+
+test('when a release was first found never moves, though it is listed again or withdrawn and restored', async () => {
+  await using db = await database();
+  await runs(db.sql, { service: 'app', upstream: 'npm:app' });
+  const answers = [listed('1.1.0'), listed('1.1.0'), listed('1.0.0'), listed('1.1.0')];
+  for (const [index, answer] of answers.entries()) {
+    // oxlint-disable-next-line no-await-in-loop -- each check follows the last.
+    await checkUpstreams(db.sql, {
+      list: lister({ 'npm:app': answer }).list,
+      now: () => NOW + index * UPSTREAM_CHECK_INTERVAL_MS,
+    });
+  }
+
+  expect(await releases(db.sql)).toEqual([
+    {
+      first_found_at: new Date(NOW + 2 * UPSTREAM_CHECK_INTERVAL_MS),
+      upstream: 'npm:app',
+      version: '1.0.0',
+    },
+    { first_found_at: new Date(NOW), upstream: 'npm:app', version: '1.1.0' },
+  ]);
+});
+
+test('a Service whose upstream became unknown is no longer checked for its old one', async () => {
+  await using db = await database();
+  await runs(db.sql, { at: NOW - 2 * HOUR, service: 'app', upstream: 'npm:app' });
+  await runs(db.sql, { service: 'app', upstream: null });
+  const { asked, list } = lister({});
+
+  await checkUpstreams(db.sql, { list, now: () => NOW });
+
+  expect(asked).toEqual([]);
 });
