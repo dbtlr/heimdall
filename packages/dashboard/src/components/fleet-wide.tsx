@@ -7,6 +7,7 @@ import { emptyFleetText } from '../lib/unpaired.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { PhraseText } from './date-time.tsx';
+import { DeliveryFailing } from './delivery-failing.tsx';
 import { FleetLane } from './fleet-lane.tsx';
 import { FleetLegend } from './fleet-legend.tsx';
 import { OpenNow } from './open-now.tsx';
@@ -20,18 +21,25 @@ import { UnpairedLanes, UnpairedLink } from './unpaired-lanes.tsx';
 // quiet placeholder. What renders depends on the loader data alone.
 export function FleetWide({
   data,
+  deliveryFailingSince,
   range,
   showUnpaired,
 }: {
   data: FleetData;
+  deliveryFailingSince: number | undefined;
   range: Range;
   showUnpaired: boolean;
 }) {
   const timeZone = useTimeZone();
+  // Below the header so the page's h1 comes first at `lg`; the phone's own copy sits in the route.
+  const strip = deliveryFailingSince !== undefined && (
+    <DeliveryFailing now={data.now} since={deliveryFailingSince} />
+  );
   if (!isOverview(data)) {
     return (
       <div className="hidden lg:block">
         <FleetWideHeader range={range} />
+        {strip}
         <p className="border-t py-3 text-muted-foreground">Loading lanes…</p>
       </div>
     );
@@ -43,6 +51,7 @@ export function FleetWide({
   return (
     <div className="hidden lg:block">
       <FleetWideHeader range={data.range} to={data.to} />
+      {strip}
       {empty !== undefined && <p className="border-t py-3 text-muted-foreground">{empty.text}</p>}
       <div className="[--lane-label:210px]">
         {empty?.replacesLanes !== true &&

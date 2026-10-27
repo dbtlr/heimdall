@@ -45,10 +45,27 @@ const glance: FleetGlance<Lane> = {
 
 const overview: FleetOverview = { ...glance, from: NOW - 86_400_000, range: '24h', to: NOW };
 
-const render = (data: FleetGlance | FleetOverview) =>
-  renderRouted(<FleetWide data={data} range="24h" showUnpaired={false} />);
+const render = (data: FleetGlance | FleetOverview, deliveryFailingSince?: number) =>
+  renderRouted(
+    <FleetWide
+      data={data}
+      deliveryFailingSince={deliveryFailingSince}
+      range="24h"
+      showUnpaired={false}
+    />,
+  );
 
 describe('the wide Fleet view', () => {
+  test('puts the Fleet heading before the delivery-failing strip', async () => {
+    const pages = await Promise.all([overview, glance].map((data) => render(data, NOW - 60_000)));
+    for (const html of pages) {
+      const strip = html.search(/delivery/i);
+      expect(strip).toBeGreaterThan(-1);
+      expect(html.indexOf('<h1')).toBeGreaterThan(-1);
+      expect(html.indexOf('<h1')).toBeLessThan(strip);
+    }
+  });
+
   test('with the overview, shows a lane per System, the legend, and Open now, from lg only', async () => {
     const html = await render(overview);
 

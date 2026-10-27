@@ -10,7 +10,7 @@ import { FleetVerdict } from '../components/fleet-verdict.tsx';
 import { FleetWide } from '../components/fleet-wide.tsx';
 import { OpenNow } from '../components/open-now.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
-import { isOverview } from '../lib/fleet-data.ts';
+import { isOverview, readFleetPage } from '../lib/fleet-data.ts';
 import type { FleetData } from '../lib/fleet-data.ts';
 import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
 import { deliveryFailingShown, fleetAttention } from '../lib/fleet.ts';
@@ -26,9 +26,13 @@ export const Route = createFileRoute('/')({
   // overview for the lanes; the server cannot tell, so a first load is a glance.
   // Annotated, because Router infers `deps` only from a `loaderDeps` written first, which key order forbids.
   loader: ({ deps }: { deps: { range: Range; unpaired: boolean } }): Promise<FleetData> =>
-    isWideBrowser()
-      ? getFleetOverview({ data: deps })
-      : getFleetGlance({ data: { unpaired: deps.unpaired } }),
+    readFleetPage(deps, {
+      glance: getFleetGlance,
+      overview: getFleetOverview,
+      wide: isWideBrowser(),
+    }),
+  // `range` is a dependency for the wide view only: a phone revisiting with a
+  // different `range` rereads the same glance, accepted as harmless.
   loaderDeps: ({ search }) => ({ range: search.range, unpaired: search.unpaired === true }),
   // `unpaired` is true or absent, so a URL without it is the plain overview.
   validateSearch: (search: { range?: unknown; unpaired?: unknown } & SearchSchemaInput) => ({
@@ -62,7 +66,9 @@ function Fleet() {
       <main className={`${contentFrame('wide')} pb-8`}>
         <h1 className="sr-only lg:hidden">Fleet</h1>
         {deliveryFailingSince !== undefined && (
-          <DeliveryFailing now={now} since={deliveryFailingSince} />
+          <div className="lg:hidden">
+            <DeliveryFailing now={now} since={deliveryFailingSince} />
+          </div>
         )}
         <div className="lg:hidden">
           {empty !== undefined && <p className="pt-4 text-lg font-semibold">{empty.text}</p>}
@@ -99,7 +105,12 @@ function Fleet() {
           )}
           <UnpairedLink count={overview.unpairedCount} shown={showUnpaired} />
         </div>
-        <FleetWide data={overview} range={range} showUnpaired={showUnpaired} />
+        <FleetWide
+          data={overview}
+          deliveryFailingSince={deliveryFailingSince}
+          range={range}
+          showUnpaired={showUnpaired}
+        />
       </main>
     </>
   );
