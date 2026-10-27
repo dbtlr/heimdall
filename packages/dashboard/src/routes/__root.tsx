@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AppSidebar } from '../components/app-sidebar.tsx';
-import { AutoRefresh } from '../components/auto-refresh.tsx';
+import { AutoRefresh, RefreshOnWiden } from '../components/auto-refresh.tsx';
 import { isNarrowBrowser } from '../lib/layout.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
 import { getServiceAttentionCount } from '../server/services-fn.ts';
@@ -71,6 +71,7 @@ function Root() {
   return (
     <ServiceAttentionCount value={count}>
       <AutoRefresh />
+      <RefreshOnWiden />
       <div className="fixed inset-y-0 left-0 z-40 hidden w-[248px] lg:flex">
         <AppSidebar glance={glance} />
       </div>

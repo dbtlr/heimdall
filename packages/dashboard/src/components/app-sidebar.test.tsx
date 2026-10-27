@@ -99,7 +99,7 @@ describe('the sidebar', () => {
     expect(html.indexOf('Fleet')).toBeLessThan(order[0] ?? 0);
     expect(html.indexOf('href="/services"')).toBeGreaterThan(order[2] ?? 0);
     expect(html).toContain('2 Systems');
-    expect(html).toContain('aria-label="old-1: Unpaired"');
+    expect(html).toMatch(/href="\/systems\/old-1"[^>]*>.*?aria-label="Unpaired"/u);
     expect(html).toContain('>Unpaired<');
   });
 

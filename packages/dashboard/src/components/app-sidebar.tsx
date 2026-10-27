@@ -4,7 +4,6 @@ import { laneSummary } from '../lib/attention.ts';
 import { diskReading, meterLevels, tileOrder } from '../lib/fleet-tile.ts';
 import type { SystemTile } from '../lib/fleet-tile.ts';
 import { fleetAttention } from '../lib/fleet.ts';
-import { statusWord } from '../lib/lane.ts';
 import { systemSearch } from '../lib/system-search.ts';
 import { emptyFleetText } from '../lib/unpaired.ts';
 import { cn } from '../lib/utils.ts';
@@ -32,16 +31,6 @@ const useCurrentSystem = () =>
       };
     },
   });
-
-const rowLabel = ({ lane, level }: SystemTile) => {
-  if (lane.status === 'unpaired') {
-    return `${lane.name}: Unpaired`;
-  }
-  if (level !== undefined) {
-    return `${lane.name}: ${level === 'alert' ? 'Alert' : 'Warning'}`;
-  }
-  return `${lane.name}: ${statusWord(lane.status)}`;
-};
 
 // One thin bar filled to the percent, colored by the level of what is wrong
 // with the resource. An unknown percent is an empty bar.
@@ -131,7 +120,6 @@ function SystemRow({
   );
   const shared = {
     'aria-current': current ? ('page' as const) : undefined,
-    'aria-label': rowLabel(tile),
     className,
     params: { name: tile.lane.name },
     to: '/systems/$name' as const,

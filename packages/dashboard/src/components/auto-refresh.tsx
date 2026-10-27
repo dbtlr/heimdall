@@ -1,6 +1,7 @@
 import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
+import { WIDE_MEDIA } from '../lib/layout.ts';
 import { isLoadRunning, keepRefreshing } from '../lib/refresh.ts';
 import type { RefreshHost } from '../lib/refresh.ts';
 
@@ -40,5 +41,24 @@ export function AutoRefresh() {
       ),
     [router],
   );
+  return null;
+}
+
+// A narrow browser skips the sidebar's read, so widening it past `lg` reads
+// the page's data again at once rather than at the next tick.
+export function RefreshOnWiden() {
+  const router = useRouter();
+  useEffect(() => {
+    const media = globalThis.matchMedia(WIDE_MEDIA);
+    const reread = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        void router.invalidate({ filter: (match) => match.routeId !== SESSION_ROUTE });
+      }
+    };
+    media.addEventListener('change', reread);
+    return () => {
+      media.removeEventListener('change', reread);
+    };
+  }, [router]);
   return null;
 }
