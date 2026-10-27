@@ -2,8 +2,7 @@ import { beforeAll, expect, test } from 'bun:test';
 
 import type { SQL } from 'bun';
 
-import { migrate } from './migrations.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, startTestServer } from './testing/postgres.ts';
 import { timeline } from './testing/timeline.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -16,8 +15,7 @@ const MAIN = '/work/project';
 const LINKED = '/trees/feature';
 
 const database = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await db.sql`
     INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now()), ('server-1', now())
   `;

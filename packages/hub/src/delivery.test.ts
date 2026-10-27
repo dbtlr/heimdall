@@ -5,8 +5,8 @@ import type { ConditionLevel } from '@heimdall/schema';
 import { clear, raise, recordClosedOccurrence } from './conditions.ts';
 import { clearFailingRun, clipBytes, deliverAlerts } from './delivery.ts';
 import type { Message } from './delivery.ts';
-import { failure, migrate, NOW, storeToken, unpair } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { failure, NOW, storeToken, unpair } from './testing/hub.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 
 const DASHBOARD = new URL('https://dashboard.example/');
 
@@ -15,8 +15,7 @@ const at = (minutes: number) => NOW + minutes * 60_000;
 // A database with server-1 and laptop-1 paired, and a delivery pass that sends
 // to `sent` unless `channel.down` holds delivery.
 const setup = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: NOW, system: 'server-1', token: 'server-token' });
   await storeToken(db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('server-1', now()), ('laptop-1', now())`;

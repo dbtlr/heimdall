@@ -3,13 +3,12 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import type { Host } from '@loomcli/core';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import { migrate } from './migrations.ts';
 import { projectTranscripts } from './projection.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import { agentPath, assistant, jsonl, mainPath, SESSION, user } from './testing/claude-code.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
 import { gzip } from './testing/hub.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, startTestServer, testDatabase } from './testing/postgres.ts';
 import { writeHeldLines, writeRequestLines } from './transcript-reader.ts';
 import { appendChunk, deleteTranscripts, openGeneration } from './transcripts.ts';
 
@@ -80,8 +79,7 @@ const store = async (db: Db, path: string, content: string | Uint8Array) => {
 // one more, which is marked deleted after it is projected, as when the Hub
 // deletes a System's transcripts before the next projection.
 const archive = async ({ deleted, rewritten }: { deleted?: string; rewritten?: string } = {}) => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   const main = await store(db, mainPath(), MAIN);
   await store(db, agentPath('s1'), SUBAGENT);
   if (rewritten !== undefined) {
@@ -400,8 +398,7 @@ describe('writeHeldLines', () => {
   const windowBytes = 7;
 
   test('writes from the offset to the end, a window at a time', async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
     const generation = await store(db, mainPath(), MAIN);
     const held = Buffer.byteLength(MAIN);
     const written: Uint8Array[] = [];
@@ -418,8 +415,7 @@ describe('writeHeldLines', () => {
   });
 
   test('with oneLine writes the line at the offset and stops after its newline', async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
     const generation = await store(db, mainPath(), MAIN);
     const from = Buffer.byteLength(jsonl(MAIN_LINES.slice(0, 1)));
     const written: Uint8Array[] = [];
@@ -438,8 +434,7 @@ describe('writeHeldLines', () => {
 
 describe('writeRequestLines', () => {
   test("writes a request's lines a window smaller than a line at a time, the last line without its newline too", async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
     const last = JSON.stringify(assistant({ at: at(5), id: 'msg_a' }));
     const content = MAIN + last;
     const generation = await store(db, mainPath(), content);
@@ -462,8 +457,7 @@ describe('writeRequestLines', () => {
   });
 
   test('skips a line longer than the parsers read, though no window held all of it', async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
     const line = JSON.stringify({ ...assistant({ at: at(1), id: 'msg_a' }), pad: '' });
     // One byte over the limit, read in windows of half the limit: the first two
     // windows hold the limit exactly, and the third ends the line.

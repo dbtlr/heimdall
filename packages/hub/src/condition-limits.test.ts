@@ -11,8 +11,8 @@ import {
   storeConditionLimits,
 } from './condition-limits.ts';
 import { configArgs, configFile, invoke } from './testing/cli.ts';
-import { migrate, report, storeReport, storeToken } from './testing/hub.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { report, storeReport, storeToken } from './testing/hub.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 
 test('update warning ages inherit fields per System and reject invalid limits', () => {
   const limits = parseConditionLimits({
@@ -234,8 +234,7 @@ test('serve refuses invalid load windows before touching its database', async ()
 });
 
 test('serve judges disk using fleet defaults and partial System overrides from hub.toml', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   const now = Date.now();
   for (const system of ['laptop-1', 'server-1']) {
     // oxlint-disable-next-line no-await-in-loop -- seed each System before serving.
@@ -294,8 +293,7 @@ const storedDiskLimits = (sql: SQL): Promise<{ disk: unknown; system: string }[]
   sql`SELECT system, limits->'disk' AS disk FROM condition_limits ORDER BY system`;
 
 test('stored limits hold the fleet defaults and each overridden System, replaced as a whole', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await storeConditionLimits(
     db.sql,
     parseConditionLimits({ systems: { 'laptop-1': { cpu: { percent: 80 } } } }),

@@ -3,11 +3,10 @@ import { expect, test } from 'bun:test';
 import type { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
-import { migrate } from './migrations.ts';
 import { issueCode } from './pairing.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
-import { testDatabase } from './testing/postgres.ts';
+import { migratedDatabase } from './testing/postgres.ts';
 import { timeline } from './testing/timeline.ts';
 import { storeToken } from './tokens.ts';
 
@@ -280,8 +279,7 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
 // A migrated database holding everything for old-1, which is unpaired, and
 // laptop-1, which is paired, and the Hub's configuration file for it.
 const setup = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await seedSystem(db.sql, 'old-1', 1001);
   await seedSystem(db.sql, 'laptop-1', 2002);
   await storeToken(db.sql, { pairedAt: AT.getTime(), system: 'laptop-1', token: 'laptop-token' });
@@ -421,8 +419,7 @@ test('purge system on a name the Hub holds nothing for says so and exits 1', asy
 });
 
 test('a Session purge system keeps no longer links to the Harness process it deleted', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('old-1', now())`;
   const { addProcess, addSession } = timeline(AT.getTime());
   await addProcess(db.sql, { end: 600, pid: 100, start: 0, system: 'old-1' });
@@ -439,8 +436,7 @@ test('a Session purge system keeps no longer links to the Harness process it del
 });
 
 test('purge system without --transcripts, when only transcript sources are left, says to add it', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
   await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('old-1', now())`;
   await db.sql`
     INSERT INTO transcript_source_harnesses (system, source, harness, sent_at)
@@ -513,8 +509,7 @@ const conditionRows = async (sql: SQL) => ({
 // an old-web of its own. A drift Condition on laptop-1 happens to have old-web
 // as its subject.
 const setupServices = async () => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   const later = new Date(AT.getTime() + 60_000);
   for (const system of ['laptop-1', 'server-1']) {
     // oxlint-disable-next-line no-await-in-loop -- two Systems.

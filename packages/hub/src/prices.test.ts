@@ -5,12 +5,11 @@ import { join } from 'node:path';
 
 import type { SQL } from 'bun';
 
-import { migrate } from './migrations.ts';
 import { loadPriceOverrides, parsePriceOverrides, syncPrices } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { BUNDLED_PRICES } from './prices.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
-import { startTestServer, testDatabase } from './testing/postgres.ts';
+import { migratedDatabase, startTestServer } from './testing/postgres.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
@@ -76,8 +75,7 @@ const seed = async (sql: SQL, rows: Row[], { session = 's-1' }: { session?: stri
 };
 
 const prepared = async (prices: { bundled?: PriceEntry[]; configured?: PriceEntry[] }) => {
-  const db = await testDatabase();
-  await migrate(db.sql);
+  const db = await migratedDatabase();
   await syncPrices(db.sql, { bundled: [], configured: [], ...prices });
   return db;
 };
@@ -557,8 +555,7 @@ describe('context fill', () => {
 });
 
 test('no projected table stores a cost or a price', async () => {
-  await using db = await testDatabase();
-  await migrate(db.sql);
+  await using db = await migratedDatabase();
 
   const columns: { column_name: string; table_name: string }[] = await db.sql`
     SELECT table_name, column_name FROM information_schema.columns
@@ -663,8 +660,7 @@ describe('the bundled table', () => {
   });
 
   test('concurrent loads all succeed and leave one full table', async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
 
     await Promise.all(
       Array.from({ length: 3 }, () =>
@@ -696,8 +692,7 @@ describe('the bundled table', () => {
   });
 
   test('loads into a migrated database', async () => {
-    await using db = await testDatabase();
-    await migrate(db.sql);
+    await using db = await migratedDatabase();
 
     await syncPrices(db.sql, { bundled: BUNDLED_PRICES, configured: [] });
 

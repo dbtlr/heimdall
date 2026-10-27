@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { SQL } from 'bun';
 
+import { migrate } from '../migrations.ts';
+
 // The server tests run against: the one `HEIMDALL_TEST_DATABASE_URL` names, or
 // else a throwaway cluster started from the `initdb` and `pg_ctl` on PATH on
 // first use. The test preload stops it after the last test, and a later run
@@ -174,8 +176,166 @@ export const startTestServer = async () => {
   await testServer();
 };
 
-// Stops the throwaway cluster, if this run started one.
+// What a test may change in a migrated database's schema: relations and their
+// columns, privileges, constraints, triggers and whether they fire, indexes,
+// functions, view definitions, and database settings, plus the migrations applied.
+const SCHEMA_FINGERPRINT = `
+  SELECT md5(string_agg(item, '|' ORDER BY item)) AS fingerprint FROM (
+    SELECT 'r' || c.oid::regclass::text || c.relkind::text || coalesce(c.relacl::text, '')
+      || coalesce(md5(pg_get_viewdef(c.oid)), '')
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+    UNION ALL
+    SELECT 'a' || a.attrelid::regclass::text || a.attname || a.atttypid::text || a.attnotnull::text
+      || coalesce(pg_get_expr(d.adbin, d.adrelid), '')
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+      AND a.attnum > 0 AND NOT a.attisdropped
+    UNION ALL
+    SELECT 'k' || conname || conrelid::regclass::text || pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE connamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg\\_%')
+    UNION ALL
+    SELECT 't' || tgname || tgrelid::regclass::text || tgenabled::text || pg_get_triggerdef(oid)
+    FROM pg_trigger WHERE NOT tgisinternal
+    UNION ALL
+    SELECT 'i' || indexrelid::regclass::text || pg_get_indexdef(indexrelid) FROM pg_index
+    WHERE indrelid IN (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema')
+    UNION ALL
+    SELECT 'p' || p.oid::regprocedure::text || md5(p.prosrc) || coalesce(p.proacl::text, '')
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+    UNION ALL
+    SELECT 'n' || nspname || coalesce(nspacl::text, '') FROM pg_namespace
+    WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema'
+    UNION ALL
+    SELECT 's' || array_to_string(setconfig, ',') FROM pg_db_role_setting
+    WHERE setdatabase = (SELECT oid FROM pg_database WHERE datname = current_database())
+    UNION ALL
+    SELECT 'm' || version::text FROM schema_migrations
+  ) items(item)`;
+
+const fingerprint = async (sql: SQL) => {
+  const [row]: { fingerprint: string }[] = await sql.unsafe(SCHEMA_FINGERPRINT);
+  return row?.fingerprint;
+};
+
+// A migrated database, kept to be reused, with the schema's fingerprint just
+// after migrating and the script that returns it to that moment.
+const migrateShared = async () => {
+  const db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql.close();
+  // One connection, so ending every other connection to the database leaves it working.
+  const own = new SQL(db.url.href, { max: 1 });
+  const tables: { name: string }[] = await own`
+    SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_tables
+    WHERE schemaname NOT LIKE 'pg\\_%' AND schemaname <> 'information_schema'
+      AND tablename <> 'schema_migrations'`;
+  const sequences: { name: string }[] = await own`
+    SELECT format('%I.%I', schemaname, sequencename) AS name FROM pg_sequences
+    WHERE schemaname NOT LIKE 'pg\\_%'`;
+  const seeds = await Promise.all(
+    tables.map(async ({ name }) => {
+      const [row]: { rows: string | null }[] = await own.unsafe(
+        `SELECT quote_literal(json_agg(t)::text) AS rows FROM ${name} t`,
+      );
+      return row?.rows == null
+        ? []
+        : [`INSERT INTO ${name} SELECT * FROM json_populate_recordset(NULL::${name}, ${row.rows})`];
+    }),
+  );
+  // Ends the connections an earlier test left open, as dropping a database with
+  // FORCE would, then empties and refills the tables as migrating left them,
+  // firing none of the triggers a truncate or an insert would, such as the price
+  // table's staleness marks.
+  const reset = [
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+     WHERE datname = current_database() AND pid <> pg_backend_pid()`,
+    'BEGIN',
+    'SET LOCAL session_replication_role = replica',
+    // Truncates only the tables holding rows, since TRUNCATE gives each table it
+    // names new files: across every table it costs about 20 ms, and a DELETE of
+    // the hundreds of thousands of rows some tests store costs seconds.
+    `DO $$
+     DECLARE
+       name text;
+       filled text[] := '{}';
+       holds boolean;
+     BEGIN
+       FOREACH name IN ARRAY ARRAY[${tables.map(({ name }) => `'${name.replaceAll("'", "''")}'`).join(', ')}] LOOP
+         EXECUTE format('SELECT EXISTS (SELECT FROM %s)', name) INTO holds;
+         IF holds THEN filled := filled || name; END IF;
+       END LOOP;
+       IF cardinality(filled) > 0 THEN
+         EXECUTE 'TRUNCATE ' || array_to_string(filled, ', ') || ' CASCADE';
+       END IF;
+     END $$`,
+    ...sequences.map(({ name }) => `ALTER SEQUENCE ${name} RESTART`),
+    ...seeds.flat(),
+    'COMMIT',
+  ].join(';\n');
+  return { db, own, reset, schema: await fingerprint(own) };
+};
+
+type Shared = Awaited<ReturnType<typeof migrateShared>>;
+let shared: Promise<Shared> | undefined;
+let sharedInUse = false;
+
+// Closes and drops the shared migrated database, if one was made and is reachable.
+const dropShared = async () => {
+  const pending = shared;
+  shared = undefined;
+  const current = await pending?.catch(() => undefined);
+  await current?.own.close();
+  await current?.db[Symbol.asyncDispose]().catch(() => undefined);
+};
+
+// A database migrated to the current schema, holding only what migrating seeds:
+// `await using db = await migratedDatabase()`. Tests reuse one such database,
+// reset between them, since migrating a fresh one costs about a third of a
+// second (HMD-194). A test that changes its schema gets a newly migrated one
+// next time, and one asked for while another is in use is fresh and its own.
+export const migratedDatabase = async () => {
+  if (sharedInUse) {
+    const db = await testDatabase();
+    await migrate(db.sql);
+    return db;
+  }
+  sharedInUse = true;
+  try {
+    shared ??= migrateShared();
+    let current = await shared;
+    if ((await fingerprint(current.own)) === current.schema) {
+      await current.own.unsafe(current.reset);
+    } else {
+      await dropShared();
+      shared = migrateShared();
+      current = await shared;
+    }
+    const sql = new SQL(current.db.url.href);
+    return {
+      sql,
+      url: current.db.url,
+      [Symbol.asyncDispose]: async () => {
+        await sql.close();
+        sharedInUse = false;
+      },
+    };
+  } catch (error) {
+    // The next test starts from a newly migrated database rather than a failed one.
+    await dropShared();
+    sharedInUse = false;
+    throw error;
+  }
+};
+
+// Stops the throwaway cluster, if this run started one, after dropping the
+// shared migrated database, which a configured server would otherwise keep.
 export const stopTestServer = async () => {
+  await dropShared();
   const stop = stopThrowawayCluster;
   stopThrowawayCluster = undefined;
   server = undefined;
