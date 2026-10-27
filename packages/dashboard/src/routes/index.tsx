@@ -10,6 +10,7 @@ import { OpenNow } from '../components/open-now.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
 import { deliveryFailingShown, fleetAttention } from '../lib/fleet.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { rangeFromSearch } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
@@ -40,7 +41,7 @@ function Fleet() {
   return (
     <>
       <AppHeader inline={empty === undefined ? <FleetVerdict counts={counts} /> : undefined} />
-      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} pb-8`}>
         <h1 className="sr-only">Fleet</h1>
         {deliveryFailingSince !== undefined && (
           <DeliveryFailing now={now} since={deliveryFailingSince} />

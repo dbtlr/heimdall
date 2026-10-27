@@ -20,7 +20,7 @@ import { ConditionGlyph } from './condition-glyph.tsx';
 import { silenceLeft } from './silence-line.tsx';
 
 // A meter's bar fill: the glyph color of the level, else a neutral blue-grey.
-const FILL_COLOR: Record<ConditionLevel, string> = {
+export const FILL_COLOR: Record<ConditionLevel, string> = {
   alert: 'bg-status-critical',
   note: 'bg-status-warning',
   warning: 'bg-status-serious',
@@ -136,7 +136,7 @@ function TileCondition({ tile }: { tile: SystemTile }) {
 // The status slot, labelled so a screen reader tells the states apart: the worst
 // alert or warning, else asleep as a moon, else the healthy circle for an up
 // System and an unknown ring for one never seen or unpaired.
-function StatusSlot({ tile }: { tile: SystemTile }) {
+export function StatusSlot({ tile }: { tile: SystemTile }) {
   const { asleep, lane, level } = tile;
   if (level === undefined && asleep) {
     return (
@@ -168,7 +168,7 @@ function StatusSlot({ tile }: { tile: SystemTile }) {
 
 // The tile's top-right: the time left on a silence with a crossed-out bell, else
 // the short time since Last seen, or "Never seen". Screen readers get the long form.
-function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
+export function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
   const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground';
   if (lane.silencedUntil !== undefined) {
     const left = silenceLeft(now, lane.silencedUntil);

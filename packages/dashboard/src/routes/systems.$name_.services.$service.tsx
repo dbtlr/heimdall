@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { StopList, StopsCard } from '../components/service-stops.tsx';
+import { contentFrame } from '../lib/layout.ts';
 import { serviceLine } from '../lib/recorded.ts';
 import type { RecordState } from '../lib/recorded.ts';
 import { supervisorLine } from '../lib/service-detail.ts';
@@ -23,7 +24,7 @@ export const Route = createFileRoute('/systems/$name_/services/$service')({
   notFoundComponent: () => (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[720px] px-3.5 py-6 sm:px-[22px]">
+      <main className={`${contentFrame('narrow')} py-6`}>
         <p>The Hub holds no such Service.</p>
       </main>
     </>
@@ -38,7 +39,7 @@ function ServicePage() {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[720px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('narrow')} pb-8`}>
         <Link className="flex min-h-11 items-center text-base text-primary" to="/services">
           ‹ Services
         </Link>

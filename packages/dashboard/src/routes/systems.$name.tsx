@@ -17,6 +17,7 @@ import { SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { headerLine } from '../lib/detail.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
 import { systemSearch } from '../lib/system-search.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
@@ -46,7 +47,7 @@ export const Route = createFileRoute('/systems/$name')({
   notFoundComponent: () => (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 py-6">
+      <main className={`${contentFrame('wide', true)} py-6`}>
         <p>No System has that name.</p>
       </main>
     </>
@@ -134,7 +135,7 @@ function SystemPage() {
         systems={navigation}
         tab={search.tab}
       />
-      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} pb-8`}>
         <p className="py-3 text-sm text-muted-foreground">
           {header.lead}
           <PhraseText phrase={header.tail} />
