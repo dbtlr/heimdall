@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useEffect, useRef } from 'react';
 
 import { statusWord } from '../lib/lane.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { SYSTEM_TABS } from '../lib/system-search.ts';
 import type { SystemTab } from '../lib/system-search.ts';
 import { cn } from '../lib/utils.ts';
@@ -59,10 +60,10 @@ export function SystemNavigationHeader({
   }, [current]);
   return (
     <header className="sticky top-0 z-20 border-b bg-card pt-[env(safe-area-inset-top)] sm:bg-background">
-      <div className="mx-auto max-w-[1200px] px-3.5 sm:px-[22px]">
+      <div className={contentFrame('wide')}>
         <div className="flex min-h-14 items-center gap-3">
           <Link
-            className="flex min-h-11 shrink-0 items-center text-base text-muted-foreground"
+            className="flex min-h-11 shrink-0 items-center text-base text-muted-foreground lg:hidden"
             to="/"
           >
             ‹ Fleet
@@ -83,7 +84,7 @@ export function SystemNavigationHeader({
         </div>
         <nav
           aria-label="Systems"
-          className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:thin]"
+          className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:thin] lg:hidden"
         >
           {systems.map((system) => (
             <Link
@@ -117,7 +118,10 @@ export function SystemNavigationHeader({
             </Link>
           ))}
         </nav>
-        <nav aria-label="System views" className="flex justify-between gap-1 overflow-x-auto">
+        <nav
+          aria-label="System views"
+          className="flex justify-between gap-1 overflow-x-auto lg:justify-start lg:gap-6"
+        >
           {SYSTEM_TABS.map((item) => (
             <Link
               aria-current={tab === item ? 'page' : undefined}

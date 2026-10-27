@@ -8,6 +8,7 @@ import { SessionHeader } from '../components/session-header.tsx';
 import { SessionTabs } from '../components/session-tabs.tsx';
 import { SessionTimeline } from '../components/session-timeline.tsx';
 import { SessionTrace } from '../components/session-trace.tsx';
+import { contentFrame } from '../lib/layout.ts';
 import { sessionSearch } from '../lib/session-search.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { agentLanes } from '../lib/session.ts';
@@ -33,7 +34,7 @@ export const Route = createFileRoute('/systems/$name_/sessions/$harness/$source/
   notFoundComponent: () => (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 py-6 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} py-6`}>
         <p>The Hub holds no such Session.</p>
       </main>
     </>
@@ -60,7 +61,7 @@ function SessionPage() {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} pb-8`}>
         <SessionHeader lanes={lanes} now={now} view={view} />
         <SessionTabs current={search.tab} />
         {search.tab === 'timeline' && (

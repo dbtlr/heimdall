@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { ConditionOccurrence } from '../components/timeline-rail.tsx';
+import { contentFrame } from '../lib/layout.ts';
 import { getFleetTimeline } from '../server/fleet-timeline-fn.ts';
 
 export const Route = createFileRoute('/timeline')({
@@ -14,7 +15,7 @@ function FleetTimeline() {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 py-5 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} py-5`}>
         <h1 className="text-2xl font-semibold">Timeline</h1>
         <p className="mt-1 mb-5 text-base text-muted-foreground">
           Across all Systems, last 7 days and still open. Newest occurrence first.

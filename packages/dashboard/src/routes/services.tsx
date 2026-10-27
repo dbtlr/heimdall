@@ -4,6 +4,7 @@ import type { SearchSchemaInput } from '@tanstack/react-router';
 import { AppHeader } from '../components/app-header.tsx';
 import { ActiveServiceFilters, ServicesFilters } from '../components/service-filters.tsx';
 import { ServicesTable } from '../components/services-table.tsx';
+import { contentFrame } from '../lib/layout.ts';
 import { filterServices, servicesSearch } from '../lib/services.ts';
 import type { ServiceFilters } from '../lib/services.ts';
 import { getServices } from '../server/services-fn.ts';
@@ -33,7 +34,7 @@ function ServicesPage() {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[720px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('narrow')} pb-8`}>
         <header className="flex items-center justify-between gap-3 py-5">
           <div>
             <h1 className="text-2xl font-semibold">Services</h1>

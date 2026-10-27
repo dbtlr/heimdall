@@ -9,6 +9,7 @@ import { AppHeader } from '../components/app-header.tsx';
 import { DateTime } from '../components/date-time.tsx';
 import { breakdownRows, sessionsIn } from '../lib/agents-breakdown.ts';
 import { agentsSearch } from '../lib/agents-search.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { getAgentsOverview } from '../server/agents-overview-fn.ts';
 import type { AgentsRange } from '../server/agents-overview-types.ts';
@@ -52,7 +53,7 @@ function Agents() {
       <AppHeader>
         <AgentsRangePicker current={search.range} />
       </AppHeader>
-      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} pb-8`}>
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-5 pb-4 sm:pt-6">
           <h1 className="text-[24px] font-semibold sm:text-[28px]">Agents</h1>
           {recent !== undefined && (

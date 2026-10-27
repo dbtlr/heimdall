@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { AppHeader } from '../components/app-header.tsx';
 import { ConditionDetailPanel } from '../components/condition-detail.tsx';
 import { conditionDetailView } from '../lib/condition-detail.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { getConditionDetail } from '../server/condition-detail-fn.ts';
 
 export const Route = createFileRoute('/systems/$name_/conditions/$id')({
@@ -15,7 +16,7 @@ export const Route = createFileRoute('/systems/$name_/conditions/$id')({
   notFoundComponent: () => (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[1200px] px-3.5 py-6 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} py-6`}>
         <p>The Hub holds no such Condition.</p>
       </main>
     </>
@@ -28,7 +29,7 @@ function ConditionPage() {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-[720px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('narrow')} pb-8`}>
         <Link
           className="flex min-h-11 items-center text-base text-primary"
           params={{ name: detail.system }}

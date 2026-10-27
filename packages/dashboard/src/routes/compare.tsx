@@ -10,6 +10,7 @@ import { RangePicker } from '../components/range-picker.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
 import { UnpairedLanes, UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { axisTicks } from '../lib/axis.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { clockAt } from '../lib/phrase.ts';
 import { rangeFromSearch, rangeLead } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
@@ -43,7 +44,7 @@ function Compare() {
       <AppHeader>
         <RangePicker current={range} />
       </AppHeader>
-      <main className="mx-auto max-w-[1200px] px-3.5 pb-8 sm:px-[22px]">
+      <main className={`${contentFrame('wide')} pb-8`}>
         <Link className="inline-flex min-h-11 items-center text-primary" to="/">
           ‹ Fleet
         </Link>

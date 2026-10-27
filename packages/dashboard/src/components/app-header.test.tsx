@@ -19,3 +19,16 @@ test('without inline the header holds no extra element, and children keep their 
   expect(html).not.toContain('verdict');
   expect(html).toContain('basis-full');
 });
+
+test('from lg the header is hidden unless it has children, and keeps only the children', async () => {
+  const bare = await renderRouted(<AppHeader inline={<b>verdict</b>} />);
+  const withChildren = await renderRouted(<AppHeader>{<i>range</i>}</AppHeader>);
+
+  expect(bare).toMatch(/<header[^>]*lg:hidden/u);
+  expect(bare).toMatch(/<b>verdict<\/b>/u);
+  expect(bare).toMatch(/<div class="[^"]*lg:hidden[^"]*"><b>verdict<\/b>/u);
+  expect(withChildren).not.toMatch(/<header[^>]*lg:hidden/u);
+  expect(withChildren).toMatch(/<span class="[^"]*lg:hidden[^"]*">Heimdall<\/span>/u);
+  expect(withChildren).toMatch(/<div class="hidden sm:block lg:hidden"><nav/u);
+  expect(withChildren).toMatch(/<div class="[^"]*basis-full[^"]*"><i>range<\/i>/u);
+});
