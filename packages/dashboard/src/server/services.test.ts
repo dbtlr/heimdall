@@ -189,6 +189,9 @@ test('quiet or never-heard Systems, or checks old beside Last seen, cannot estab
     ['worker', 'restarted'],
     ['web', 'unknown'],
   ]);
+  // Heard from now, so only the checks' age beside Last seen can make it unknown.
+  await h.db.sql`UPDATE systems SET last_seen_at = ${new Date(NOW)} WHERE name = 'server-1'`;
+  expect((await readServices(h.db.sql, NOW)).find(({ name }) => name === 'web')?.status).toBe('up');
   await h.db.sql`
     UPDATE check_sets SET received_at = received_at - ${OLD_EVIDENCE_MS + 1} * interval '1 millisecond'
     WHERE system = 'server-1'
