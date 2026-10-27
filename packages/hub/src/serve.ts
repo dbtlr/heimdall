@@ -35,6 +35,8 @@ import { pruneServiceStops, pruneVitals } from './retention.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
+import { checkUpstreams } from './upstream-checks.ts';
+import { listReleases } from './upstream-releases.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
@@ -48,6 +50,10 @@ const DELIVERY_INTERVAL_MS = 30_000;
 // an upload by about this; a backlog or a rebuild parses at most a budget each
 // time, so it trails further until it catches up.
 const PROJECT_INTERVAL_MS = 15_000;
+// How often serve looks for upstreams due a check. Each upstream waits
+// UPSTREAM_CHECK_INTERVAL_MS between its checks; this only bounds how soon a
+// newly recorded one is first checked.
+const UPSTREAM_PASS_INTERVAL_MS = 300_000;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -179,15 +185,17 @@ const serveUntilStopped = async ({
       hostname: options.host,
       port: options.port,
     });
-    // Pruning, judging Conditions, delivering alerts, and parsing transcripts
-    // are routine, so only a failure, a parser switch, or a parser left behind
-    // is logged, and the next round tries again.
+    // Pruning, judging Conditions, delivering alerts, parsing transcripts, and
+    // checking upstreams are routine, so only a failure, a parser switch, or a
+    // parser left behind is logged, and the next round tries again. A failed
+    // upstream check is stored with its upstream, not logged.
     let stopListening: (() => Promise<void>) | undefined;
     let stopPruning: (() => Promise<void>) | undefined;
     let stopJudging: (() => Promise<void>) | undefined;
     let stopDelivering: (() => Promise<void>) | undefined;
     let stopProjecting: (() => Promise<void>) | undefined;
     let stopRefreshing: (() => Promise<void>) | undefined;
+    let stopChecking: (() => Promise<void>) | undefined;
     const outdatedLogged = new Set<string>();
     try {
       const paired = await pairedSystemCount(sql);
@@ -258,17 +266,30 @@ const serveUntilStopped = async ({
         },
         task: () => refreshSessionInsight(sql),
       });
+      stopChecking = every({
+        intervalMs: UPSTREAM_PASS_INTERVAL_MS,
+        onError: (error) => {
+          void log.warn(clean(`Could not check upstreams: ${describeError(error)}`));
+        },
+        task: () =>
+          checkUpstreams(sql, {
+            list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
+            now: Date.now,
+            signal,
+          }),
+      });
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A record, prune, judgment, delivery, parse, or refresh still running must finish before the database closes.
+      // A record, prune, judgment, delivery, parse, refresh, or upstream check still running must finish before the database closes.
       await stopListening?.();
       await stopPruning?.();
       await stopJudging?.();
       await stopDelivering?.();
       await stopProjecting?.();
       await stopRefreshing?.();
+      await stopChecking?.();
       await server.stop();
     }
   } finally {

@@ -20,6 +20,8 @@ const FLEET_TABLES = new Set([
   'hub_listening',
   'model_prices',
   'schema_migrations',
+  'upstream_checks',
+  'upstream_releases',
 ]);
 
 // Tables a paired System or a pending Pairing code fills, which a purge refuses.

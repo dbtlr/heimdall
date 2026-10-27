@@ -45,7 +45,7 @@ Where newer releases of a Service's software are published, named by kind: a Git
 _Avoid_: source (a transcript source), origin, registry (one kind of upstream)
 
 **available update**:
-A release on a Service's upstream newer than its installed version on the same channel: a stable version counts only stable releases, and a prerelease also counts newer prereleases with its own label. It is shown with the Service and is never a Condition.
+A release on a Service's upstream newer than its installed version on the same channel: a stable version counts only stable releases, and a version with a suffix, such as `-next.32` or `-alpine`, also counts newer releases whose suffix has the same shape, with only its numbers changed. It is shown with the Service and is never a Condition.
 _Avoid_: outdated, pending update (an operating-system package update), Drift
 
 **Service stop**:

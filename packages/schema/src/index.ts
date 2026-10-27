@@ -152,3 +152,11 @@ export type {
   RebootObservation,
   UpdatesSection,
 } from './updates-section.ts';
+export {
+  availableUpdate,
+  newestPerChannel,
+  packageAvailableVersion,
+  packageMatchesUpstream,
+  parseVersion,
+} from './upstream-versions.ts';
+export type { ParsedVersion, UpdateStatus } from './upstream-versions.ts';
