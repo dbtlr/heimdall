@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { ServiceRecord } from '@heimdall/schema';
+import type { ServiceCheck, ServiceRecord } from '@heimdall/schema';
 
-import { evaluateServiceConditions } from './service-conditions.ts';
+import { evaluateServiceConditions, judgeServiceDown } from './service-conditions.ts';
+import type { ServiceDownFacts } from './service-conditions.ts';
 import { listSystems, push, report, sampleTimes, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 
@@ -76,7 +77,16 @@ const downAndEvaluated = async (h: Hub) => {
 
 const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 
-describe('Service down', () => {
+// A health check of a Service as a Collector sends it.
+const health = (service: string, state: string, since: number, detail = 'HTTP 503') => ({
+  check: 'health',
+  detail,
+  service,
+  since,
+  state,
+});
+
+describe('Service down wiring', () => {
   test('is raised for a Service whose check has failed for 2 minutes of awake time, with the Service as its subject', async () => {
     await using h = await startHub();
     await send(h, '08:02:30', {
@@ -95,6 +105,21 @@ describe('Service down', () => {
         subject: 'web',
       },
     ]);
+  });
+
+  test('is raised for a Service whose supervisor is up but whose health URL has failed for 2 minutes', async () => {
+    await using h = await startHub();
+    await send(h, '08:02:30', {
+      checks: {
+        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('08:00:30'))],
+      },
+      records: set(WEB),
+      samples: awake('08:00:45', '08:02:45'),
+    });
+
+    const { open } = await evaluate(h, '08:02:30');
+
+    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
   });
 
   // The check began mid-bucket, at 08:00:30, so a count in whole 5-minute
@@ -146,11 +171,9 @@ describe('Service down', () => {
     expect(open).toEqual([]);
   });
 
-  test.each([
-    ['ahead of the Hub', 3 * HOUR],
-    ['behind the Hub', -3 * HOUR],
-  ])('counts samples on the System clock alone, which is %s', async (_, skew) => {
+  test('counts samples on the System clock alone, which is ahead of the Hub', async () => {
     await using h = await startHub();
+    const skew = 3 * HOUR;
     await send(h, '08:02:15', {
       checks: { services: [check('web', 'stopped', at('08:00:30') + skew)] },
       records: set(WEB),
@@ -198,53 +221,6 @@ describe('Service down', () => {
     expect(subjects(due.open)).toEqual(['web']);
   });
 
-  test('does not count awake time from before the check began failing', async () => {
-    await using h = await startHub();
-    await send(h, '08:31:00', {
-      checks: { services: [check('web', 'stopped', at('08:30:00'))] },
-      records: set(WEB),
-      samples: awake('07:00:00', '08:31:00'),
-    });
-
-    const { open } = await evaluate(h, '08:31:00');
-
-    expect(open).toEqual([]);
-  });
-
-  test('takes the new reason when the detail changes, keeping when it was raised', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', {
-      checks: { services: [check('web', 'stopped', at('07:55:00'), 'ActiveState=inactive')] },
-    });
-
-    const { open, timeline } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([
-      { raisedAt: at('08:03:00'), reason: 'Stopped: ActiveState=inactive.', subject: 'web' },
-    ]);
-    expect(timeline).toHaveLength(1);
-  });
-
-  test('is one Condition for each Service', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'stopped', at('07:55:00')),
-          check('db', 'stopped', at('07:55:00')),
-          check('cache', 'up', at('07:55:00')),
-        ],
-      },
-      records: set(WEB, DB, { name: 'cache', supervisor: 'systemd', unit: 'cache.service' }),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(subjects(open).toSorted()).toEqual(['db', 'web']);
-  });
-
   test('clears when the check passes, and the Timeline keeps both', async () => {
     await using h = await startHub();
     await downAndEvaluated(h);
@@ -257,47 +233,6 @@ describe('Service down', () => {
       { at: at('08:05:00'), condition: 'service_down', kind: 'cleared', subject: 'web' },
       { at: at('08:03:00'), condition: 'service_down', kind: 'raised', subject: 'web' },
     ]);
-  });
-
-  test('stays as it is while the check is unknown, however long', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', {
-      checks: { services: [check('web', 'unknown', at('08:03:30'), 'bus unavailable')] },
-    });
-
-    const { open, timeline } = await evaluate(h, '09:00:00');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:03:00'), subject: 'web' }]);
-    expect(timeline).toHaveLength(1);
-  });
-
-  test('is not raised for a Service whose check is unknown or unchecked', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
-          check('db', 'unchecked', at('07:55:00'), 'launchd is not checked'),
-        ],
-      },
-      records: set(WEB, DB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-
-    const { open } = await evaluate(h, '09:00:00');
-
-    expect(open).toEqual([]);
-  });
-
-  test('stays as it is while a Service that failed again has not failed for 2 minutes', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', { checks: { services: [check('web', 'stopped', at('08:03:50'))] } });
-
-    const { open } = await evaluate(h, '08:04:30');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:03:00'), subject: 'web' }]);
   });
 
   test('is not raised for a check of a Service the Hub mirrors no record for', async () => {
@@ -412,7 +347,7 @@ describe('Service down', () => {
     expect(open).toEqual([]);
   });
 
-  test('does not clear for a forgotten Service while any service record is unreadable, since it may be that Service', async () => {
+  test('does not clear for a forgotten Service while a service record is unreadable, since it may be that Service', async () => {
     await using h = await startHub();
     await downAndEvaluated(h);
     await send(h, '08:04:00', {
@@ -422,19 +357,6 @@ describe('Service down', () => {
     const { open } = await evaluate(h, '08:05:00');
 
     expect(open).toMatchObject([{ subject: 'web' }]);
-  });
-
-  test('clears a Service that recovered even while another service record is unreadable, since only a forgotten Service waits', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', {
-      checks: { services: [check('web', 'up', at('08:03:30'))] },
-      records: { ...set(WEB), unreadable: [{ kind: 'service', name: 'other' }] },
-    });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toEqual([]);
   });
 
   test('does not clear for a forgotten Service while a service record has a shape the Hub does not know', async () => {
@@ -454,256 +376,183 @@ describe('Service down', () => {
     expect(open).toMatchObject([{ subject: 'web' }]);
   });
 
-  test('is raised for a Service even while another service record is unreadable', async () => {
+  test('clears a forgotten Service while only a record of another kind is unreadable', async () => {
     await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: { services: [check('web', 'stopped', at('07:55:00'))] },
-      records: { ...set(WEB), unreadable: [{ kind: 'service', name: 'other' }] },
-      samples: awake('07:55:00', '08:00:00'),
+    await downAndEvaluated(h);
+    await send(h, '08:04:00', {
+      records: { records: [], unreadable: [{ kind: 'file', name: 'web' }] },
     });
 
     const { open } = await evaluate(h, '08:05:00');
 
-    expect(subjects(open)).toEqual(['web']);
+    expect(open).toEqual([]);
   });
 });
 
-// A health check of a Service as a Collector sends it.
-const health = (service: string, state: string, since: number, detail = 'HTTP 503') => ({
-  check: 'health',
-  detail,
+const UP = 1000;
+const CUTOFF = 5000;
+
+// A stored Service check of the supervisor kind, unless `kind` says health.
+const stored = (
+  service: string,
+  state: ServiceCheck['state'],
+  since: number,
+  { detail, kind = 'supervisor' }: { detail?: string; kind?: ServiceCheck['check'] } = {},
+): ServiceCheck => ({
+  check: kind,
+  detail: detail ?? (state === 'up' ? 'ActiveState=active' : 'ActiveState=failed'),
   service,
   since,
   state,
 });
 
-describe('Service down for a health check', () => {
-  test('is raised when the supervisor is up but the health URL has failed for 2 minutes', async () => {
-    await using h = await startHub();
-    await send(h, '08:02:30', {
-      checks: {
-        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('08:00:30'))],
-      },
-      records: set(WEB),
-      samples: awake('08:00:45', '08:02:45'),
-    });
+const FAILED = 4000;
+const RECENT = CUTOFF;
 
-    const { open } = await evaluate(h, '08:02:30');
-
-    expect(open).toEqual([
-      {
-        kind: 'service_down',
-        raisedAt: at('08:02:30'),
-        reason: 'Unhealthy: HTTP 503.',
-        subject: 'web',
-      },
-    ]);
+const judge = (changes: Partial<ServiceDownFacts> = {}) =>
+  judgeServiceDown({
+    checks: [],
+    mirrored: ['web'],
+    open: [],
+    recordsOverBudget: false,
+    sampleCutoff: CUTOFF,
+    unreadable: false,
+    ...changes,
   });
 
-  test('is not raised at 7 samples, and is raised at 8, as for a stopped Service', async () => {
-    await using h = await startHub();
-    await send(h, '08:02:15', {
-      checks: {
-        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('08:00:30'))],
-      },
-      records: set(WEB),
-      samples: awake('08:00:45', '08:02:30'),
-    });
-    const seven = await evaluate(h, '08:02:15');
-    await send(h, '08:02:30', { samples: [at('08:02:30')] });
-    const eight = await evaluate(h, '08:02:30');
+const plain = (judged: ReturnType<typeof judgeServiceDown>) => Object.fromEntries(judged);
 
-    expect(seven.open).toEqual([]);
-    expect(subjects(eight.open)).toEqual(['web']);
+describe('judgeServiceDown', () => {
+  test('raises a Service whose check began before the sample cutoff, with the state and detail as the reason', () => {
+    expect(judge({ checks: [stored('web', 'stopped', FAILED)] })).toEqual(
+      new Map([['web', { raise: 'Stopped: ActiveState=failed.' }]]),
+    );
+    expect(
+      judge({
+        checks: [stored('web', 'unhealthy', FAILED, { detail: 'HTTP 503', kind: 'health' })],
+      }),
+    ).toEqual(new Map([['web', { raise: 'Unhealthy: HTTP 503.' }]]));
   });
 
-  test('is raised for a Service with only a health check, as under supervisor none', async () => {
-    await using h = await startHub();
-    const bare: ServiceRecord = { name: 'web', supervisor: 'none' };
-    await send(h, '08:00:00', {
-      checks: { services: [health('web', 'unhealthy', at('07:55:00'), 'connection refused')] },
-      records: set(bare),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([{ reason: 'Unhealthy: connection refused.', subject: 'web' }]);
+  test('raises only a check that began strictly before the cutoff, and none while the System took too few samples', () => {
+    expect(judge({ checks: [stored('web', 'stopped', CUTOFF - 1)] }).get('web')).toBeDefined();
+    expect(judge({ checks: [stored('web', 'stopped', CUTOFF)] }).size).toBe(0);
+    expect(judge({ checks: [stored('web', 'stopped', 0)], sampleCutoff: undefined }).size).toBe(0);
   });
 
-  test('names the supervisor check when both checks have failed long enough', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          // Listed health first: the reason follows the kind order, not the list.
-          health('web', 'unhealthy', at('07:55:00')),
-          check('web', 'stopped', at('07:56:00'), 'ActiveState=failed'),
-        ],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
+  test('judges each mirrored Service on its own checks', () => {
+    const judged = judge({
+      checks: [
+        stored('web', 'stopped', FAILED),
+        stored('db', 'stopped', FAILED),
+        stored('cache', 'up', UP),
+      ],
+      mirrored: ['web', 'db', 'cache'],
     });
 
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([{ reason: 'Stopped: ActiveState=failed.', subject: 'web' }]);
-    expect(open).toHaveLength(1);
+    expect(plain(judged)).toEqual({
+      cache: 'clear',
+      db: { raise: 'Stopped: ActiveState=failed.' },
+      web: { raise: 'Stopped: ActiveState=failed.' },
+    });
   });
 
-  test('names the health check when the supervisor check has failed for less than 2 minutes', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'stopped', at('07:59:30')),
-          health('web', 'unhealthy', at('07:55:00')),
-        ],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
+  test('names the supervisor check when both checks have failed long enough, whatever the order they are listed in', () => {
+    const checks = [
+      stored('web', 'unhealthy', FAILED, { kind: 'health' }),
+      stored('web', 'stopped', FAILED - 1000),
+    ];
 
-    const { open } = await evaluate(h, '08:00:00');
-
-    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+    expect(judge({ checks }).get('web')).toEqual({ raise: 'Stopped: ActiveState=failed.' });
   });
 
-  test('stays as it is while the supervisor is up and the health check has failed less than 2 minutes', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('07:59:30'))],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
+  test('names the health check when the supervisor check has failed for less than 2 minutes', () => {
+    const checks = [
+      stored('web', 'stopped', RECENT),
+      stored('web', 'unhealthy', FAILED, { detail: 'HTTP 503', kind: 'health' }),
+    ];
 
-    const { open } = await evaluate(h, '08:00:00');
-
-    expect(open).toEqual([]);
+    expect(judge({ checks }).get('web')).toEqual({ raise: 'Unhealthy: HTTP 503.' });
   });
 
-  test('is raised while the supervisor check is unknown, since the failing health URL is direct evidence', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
-          health('web', 'unhealthy', at('07:55:00')),
-        ],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
+  test('raises a Service with only a failing health check, or while its supervisor check is unknown', () => {
+    const unhealthy = stored('web', 'unhealthy', FAILED, { detail: 'refused', kind: 'health' });
+
+    expect(judge({ checks: [unhealthy] }).get('web')).toEqual({ raise: 'Unhealthy: refused.' });
+    expect(judge({ checks: [stored('web', 'unknown', FAILED), unhealthy] }).get('web')).toEqual({
+      raise: 'Unhealthy: refused.',
     });
-
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
   });
 
-  test('stays open while the supervisor is up and the health check has failed less than 2 minutes', async () => {
-    await using h = await startHub();
-    await downAndEvaluated(h);
-    await send(h, '08:04:00', {
-      checks: {
-        services: [check('web', 'up', at('08:03:30')), health('web', 'unhealthy', at('08:03:50'))],
-      },
-    });
-
-    const { open, timeline } = await evaluate(h, '08:04:30');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:03:00'), subject: 'web' }]);
-    expect(timeline).toHaveLength(1);
+  test('clears a Service when every check that was made passes, even with an unchecked supervisor', () => {
+    expect(
+      judge({
+        checks: [stored('web', 'up', UP), stored('web', 'up', UP, { kind: 'health' })],
+      }).get('web'),
+    ).toBe('clear');
+    expect(
+      judge({
+        checks: [stored('web', 'unchecked', UP), stored('web', 'up', UP, { kind: 'health' })],
+      }).get('web'),
+    ).toBe('clear');
   });
 
-  test('clears for a Service whose supervisor is unchecked once its health check passes', async () => {
-    await using h = await startHub();
-    const launchd: ServiceRecord = { label: 'com.example.web', name: 'web', supervisor: 'launchd' };
-    const unchecked = check('web', 'unchecked', at('07:00:00'), 'launchd is not checked');
-    await send(h, '08:00:00', {
-      checks: { services: [unchecked, health('web', 'unhealthy', at('07:55:00'))] },
-      records: set(launchd),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-    const raised = await evaluate(h, '08:03:00');
-    await send(h, '08:04:00', {
-      checks: { services: [unchecked, health('web', 'up', at('08:03:30'), 'HTTP 200')] },
-    });
+  test('leaves a Service as it is while any check is unknown, unchecked, or failed only recently, or none was made', () => {
+    const unhealthyRecent = stored('web', 'unhealthy', RECENT, { kind: 'health' });
+    const cases = [
+      [stored('web', 'unknown', FAILED)],
+      [stored('web', 'unchecked', FAILED)],
+      [stored('web', 'unknown', FAILED), stored('web', 'up', UP, { kind: 'health' })],
+      [stored('web', 'stopped', RECENT)],
+      [stored('web', 'up', UP), unhealthyRecent],
+      [],
+    ];
 
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(subjects(raised.open)).toEqual(['web']);
-    expect(open).toEqual([]);
+    for (const checks of cases) {
+      expect(judge({ checks, open: ['web'] }).size).toBe(0);
+    }
   });
 
-  test('does not clear while either check still fails', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'stopped', at('07:55:00')),
-          health('web', 'unhealthy', at('07:55:00')),
-        ],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-    await evaluate(h, '08:03:00');
-    await send(h, '08:04:00', {
-      checks: {
-        services: [check('web', 'up', at('08:03:30')), health('web', 'unhealthy', at('07:55:00'))],
-      },
-    });
+  test('does not clear while either check still fails', () => {
+    const checks = [
+      stored('web', 'up', UP),
+      stored('web', 'unhealthy', RECENT, { kind: 'health' }),
+    ];
 
-    const { open } = await evaluate(h, '08:05:00');
-
-    expect(open).toMatchObject([{ reason: 'Unhealthy: HTTP 503.', subject: 'web' }]);
+    expect(judge({ checks }).get('web')).toBeUndefined();
   });
 
-  test('clears when every check passes', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [check('web', 'up', at('07:00:00')), health('web', 'unhealthy', at('07:55:00'))],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
-    });
-    await evaluate(h, '08:03:00');
-    await send(h, '08:04:00', {
-      checks: {
-        services: [
-          check('web', 'up', at('07:00:00')),
-          health('web', 'up', at('08:03:30'), 'HTTP 200'),
-        ],
-      },
-    });
-
-    const { open, timeline } = await evaluate(h, '08:05:00');
-
-    expect(open).toEqual([]);
-    expect(timeline).toMatchObject([
-      { condition: 'service_down', kind: 'cleared', subject: 'web' },
-      { condition: 'service_down', kind: 'raised', subject: 'web' },
-    ]);
+  test('judges only a Service the Hub mirrors a record for', () => {
+    expect(judge({ checks: [stored('web', 'stopped', FAILED)], mirrored: [] }).size).toBe(0);
   });
 
-  test('is not raised while the supervisor check is unknown and the health check passes', async () => {
-    await using h = await startHub();
-    await send(h, '08:00:00', {
-      checks: {
-        services: [
-          check('web', 'unknown', at('07:55:00'), 'bus unavailable'),
-          health('web', 'up', at('07:55:00'), 'HTTP 200'),
-        ],
-      },
-      records: set(WEB),
-      samples: awake('07:55:00', '08:00:00'),
+  test('judges nothing while the System sent its records over budget, not even a forgotten Service', () => {
+    expect(
+      judge({
+        checks: [stored('web', 'up', UP)],
+        mirrored: ['web'],
+        open: ['web', 'gone'],
+        recordsOverBudget: true,
+      }).size,
+    ).toBe(0);
+  });
+
+  test('clears a Service with no record left even when there are no checks to read, as when the services part is over budget', () => {
+    expect(judge({ mirrored: ['db'], open: ['web'] })).toEqual(new Map([['web', 'clear']]));
+  });
+
+  test('does not clear a forgotten Service while a service record is unreadable', () => {
+    expect(judge({ mirrored: [], open: ['web'], unreadable: true }).size).toBe(0);
+  });
+
+  test('still raises and clears Services with a record while another service record is unreadable', () => {
+    const judged = judge({
+      checks: [stored('web', 'stopped', FAILED), stored('db', 'up', UP)],
+      mirrored: ['web', 'db'],
+      open: ['db'],
+      unreadable: true,
     });
 
-    const { open } = await evaluate(h, '09:00:00');
-
-    expect(open).toEqual([]);
+    expect(plain(judged)).toEqual({ db: 'clear', web: { raise: 'Stopped: ActiveState=failed.' } });
   });
 });

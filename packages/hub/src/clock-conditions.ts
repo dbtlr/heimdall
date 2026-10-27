@@ -116,43 +116,65 @@ const judgmentsOf = ({
       };
 };
 
+// What one System's clock skew Conditions are judged on, as read under its row
+// lock and from the offsets the evaluation round collected.
+export type ClockSkewFacts = {
+  blame: HubBlame | undefined;
+  // The level each identity's open Condition holds, if it has one.
+  held: Partial<Record<keyof typeof CLOCK_SKEW_SUBJECTS, ConditionLevel | undefined>>;
+  limits: Bands;
+  offsets: ReadonlyMap<string, number>;
+  // Whether the System is still paired.
+  paired: boolean;
+  system: string;
+};
+
+// What to do with one clock skew identity: raise it at a level with a reason
+// (or re-level the open one), clear it, or leave it as it is.
+export type ClockSkewVerdict = { level: ConditionLevel; reason: string } | 'clear' | 'hold';
+
+// Judges both clock skew identities of one System. A System that is no longer
+// paired has both cleared; otherwise `judgmentsOf` says whose clock is
+// wrong. A skew is levelled by that identity's own held level, so it escalates
+// at once, and steps down or clears only a hysteresis below each limit.
+export const judgeClockSkew = (
+  facts: ClockSkewFacts,
+): Record<keyof typeof CLOCK_SKEW_SUBJECTS, ClockSkewVerdict> => {
+  const judgments: Judgments = facts.paired ? judgmentsOf(facts) : { hub: 'clear', own: 'clear' };
+  const verdictOf = (identity: keyof Judgments): ClockSkewVerdict => {
+    const judgment = judgments[identity];
+    if (judgment === 'hold' || judgment === 'clear') {
+      return judgment;
+    }
+    const level = gradedLevel(judgment.skewMs / 1000, facts.limits, facts.held[identity]);
+    return level === undefined ? 'clear' : { level, reason: judgment.reason };
+  };
+  return { hub: verdictOf('hub'), own: verdictOf('own') };
+};
+
 // Raises, re-levels, or clears the System's clock skew Condition of one
-// identity, levelling by that identity's own held level.
-const applyJudgment = async (
+// identity as its verdict says.
+const applyVerdict = async (
   tx: SQL,
   {
-    judgment,
-    limits,
     now,
     subject,
     system,
-  }: {
-    judgment: Judgment;
-    limits: Bands;
-    now: Date;
-    subject: string;
-    system: string;
-  },
+    verdict,
+  }: { now: Date; subject: string; system: string; verdict: ClockSkewVerdict },
 ) => {
-  if (judgment === 'hold') {
+  if (verdict === 'hold') {
     return;
   }
-  const [held]: { level: ConditionLevel }[] = await tx`
-    SELECT level FROM conditions
-    WHERE system = ${system} AND kind = 'clock_skew' AND subject = ${subject} AND cleared_at IS NULL
-  `;
-  const level =
-    judgment === 'clear' ? undefined : gradedLevel(judgment.skewMs / 1000, limits, held?.level);
-  if (judgment === 'clear' || level === undefined) {
+  if (verdict === 'clear') {
     await clear(tx, { kind: 'clock_skew', now, subject, system });
   } else {
-    await raise(tx, { kind: 'clock_skew', level, now, reason: judgment.reason, subject, system });
+    await raise(tx, { kind: 'clock_skew', now, subject, system, ...verdict });
   }
 };
 
 // Raises, re-levels, or clears one System's clock skew Conditions under the
-// System's row lock, so they order with the System's Reports (ADR-0005). A
-// System that is no longer paired has them cleared.
+// System's row lock, so they order with the System's Reports (ADR-0005).
 const evaluateSystem = (
   sql: SQL,
   system: string,
@@ -171,19 +193,27 @@ const evaluateSystem = (
   sql.begin(async (tx) => {
     await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
     const now = new Date(clock());
-    const judgments: Judgments =
-      (await whenPaired(tx, system)) === undefined
-        ? { hub: 'clear', own: 'clear' }
-        : judgmentsOf({ blame, offsets, system });
-    const limits = thresholds.systems.get(system)?.clock ?? thresholds.clock;
+    const heldRows: { level: ConditionLevel; subject: string }[] = await tx`
+      SELECT subject, level FROM conditions
+      WHERE system = ${system} AND kind = 'clock_skew' AND cleared_at IS NULL
+    `;
+    const heldLevel = (identity: keyof typeof CLOCK_SKEW_SUBJECTS) =>
+      heldRows.find((row) => row.subject === CLOCK_SKEW_SUBJECTS[identity])?.level;
+    const verdicts = judgeClockSkew({
+      blame,
+      held: { hub: heldLevel('hub'), own: heldLevel('own') },
+      limits: thresholds.systems.get(system)?.clock ?? thresholds.clock,
+      offsets,
+      paired: (await whenPaired(tx, system)) !== undefined,
+      system,
+    });
     for (const identity of ['own', 'hub'] as const) {
       // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
-      await applyJudgment(tx, {
-        judgment: judgments[identity],
-        limits,
+      await applyVerdict(tx, {
         now,
         subject: CLOCK_SKEW_SUBJECTS[identity],
         system,
+        verdict: verdicts[identity],
       });
     }
   });
