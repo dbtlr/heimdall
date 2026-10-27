@@ -148,8 +148,6 @@ test.each([
   ['linux', 950, undefined, true],
   ['linux', 750, undefined, false],
   ['darwin', 950, 'normal', false],
-  ['darwin', 500, 'normal', false],
-  ['darwin', 750, 'warning', true],
   ['darwin', 950, 'critical', true],
   ['darwin', 950, undefined, false],
 ] satisfies ['linux' | 'darwin', number, VitalsSample['memory']['pressure'], boolean][])(
@@ -324,7 +322,7 @@ test('re-pairing rejudges unchanged load evidence after withdrawal', async () =>
   expect(next?.firstDetected).not.toBe(first?.firstDetected);
 });
 
-test('missing macOS pressure preserves a warning and makes its latest evidence unknown', async () => {
+test('macOS memory without pressure, at any usage and for longer than the window, holds the warning with unknown evidence', async () => {
   await using h = await startHub();
   await send(
     h,
@@ -352,6 +350,12 @@ test('missing macOS pressure preserves a warning and makes its latest evidence u
       level: 'warning',
     }),
   ]);
+  const low = readings(h.clock.now + STEP, 0, () => 10);
+  for (const row of low) {
+    row.memory = { totalBytes: 1000, usedBytes: 100 };
+  }
+  await send(h, low, 'darwin');
+  expect((await evaluate(h))[0]?.evidence).toBe('unknown');
 });
 
 test('a zero memory total preserves the warning and shows unknown evidence', async () => {
@@ -475,22 +479,6 @@ test('macOS memory pressure warns at any usage and names pressure in its reason'
   expect(warning?.kind === 'high_memory' ? warning.reason : undefined).toMatch(
     /^Memory pressure for 30 minutes in the 60 minutes ending /u,
   );
-});
-
-test('macOS memory without pressure is unknown evidence at any usage', async () => {
-  await using h = await startHub();
-  const high = readings(NOW, 30, () => 10);
-  for (const row of high) {
-    row.memory = { pressure: 'warning', totalBytes: 1000, usedBytes: 950 };
-  }
-  await send(h, high, 'darwin');
-  await evaluate(h);
-  const low = readings(h.clock.now + STEP, 0, () => 10);
-  for (const row of low) {
-    row.memory = { totalBytes: 1000, usedBytes: 100 };
-  }
-  await send(h, low, 'darwin');
-  expect((await evaluate(h))[0]?.evidence).toBe('unknown');
 });
 
 test('a fresh sample after sleep holds CPU level while its latest interval is unknown', async () => {

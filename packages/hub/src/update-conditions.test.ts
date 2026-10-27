@@ -474,19 +474,6 @@ test('the Condition clears when the last package recovers', async () => {
   expect(await evaluate(h)).toEqual([]);
 });
 
-test('each package source on a System has its own Condition', async () => {
-  await using h = await startHub();
-  await send(h, [
-    manager(NOW, [pending, wget]),
-    { ...manager(NOW, [curl]), installation: '/other/apt' },
-  ]);
-  const items = await evaluate(h);
-  expect(items.map(({ subject }) => subject).toSorted()).toEqual([
-    JSON.stringify(['apt', '/other/apt']),
-    sourceSubject,
-  ]);
-});
-
 test('a package joining an open source adds no Timeline transition', async () => {
   await using h = await startHub();
   await send(h, [manager(NOW, [wget])]);

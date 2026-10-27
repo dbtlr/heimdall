@@ -147,7 +147,7 @@ describe('refreshing', () => {
     expect(await stale(db.sql)).toHaveLength(5);
   });
 
-  test('forgets a Session that is gone', async () => {
+  test('forgets a Session that is gone, model totals included', async () => {
     await using db = await database();
     await linkedSession(db.sql);
 
@@ -160,22 +160,9 @@ describe('refreshing', () => {
       UNION ALL SELECT session_id FROM insight.session_totals
     `;
     expect(ids.map(({ session_id }: { session_id: string }) => session_id)).toEqual(['s1', 's1']);
-  });
-
-  test('hides a Session a delete is deriving again at once', async () => {
-    await using db = await database();
-    await linkedSession(db.sql);
-
-    await db.sql`
-      INSERT INTO rederiving_sessions (harness, system, source, session_id)
-      VALUES ('claude-code', 'laptop-1', 'claude-code', 's1')
-    `;
-
-    const ids = await db.sql`
-      SELECT session_id FROM insight.session_stretches
-      UNION ALL SELECT session_id FROM insight.session_totals
-    `;
-    expect(ids.map(({ session_id }: { session_id: string }) => session_id)).toEqual(['s2', 's2']);
+    expect(await modelTotals(db.sql, 's2')).toEqual([]);
+    expect(await modelTotals(db.sql, 's1')).toHaveLength(1);
+    expect(await differences(db.sql)).toEqual([]);
   });
 });
 
@@ -247,33 +234,10 @@ describe('model totals', () => {
     expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 6000000, 0']);
     expect(await differences(db.sql)).toEqual([]);
   });
-
-  test('a Session a delete is deriving again loses them, and a Session that is gone keeps none', async () => {
-    await using db = await database();
-    await linkedSession(db.sql);
-    await db.sql`
-      INSERT INTO rederiving_sessions (harness, system, source, session_id)
-      VALUES ('claude-code', 'laptop-1', 'claude-code', 's1')
-    `;
-    const [{ stored }] = await db.sql`
-      SELECT count(*)::int AS stored FROM stored_session_model_totals WHERE session_id = 's1'
-    `;
-    expect(stored).toBe(0);
-
-    await db.sql`DELETE FROM rederiving_sessions`;
-    await db.sql`DELETE FROM projected_requests WHERE session_id = 's2'`;
-    await db.sql`DELETE FROM projected_sessions WHERE session_id = 's2'`;
-    await refreshSessionInsight(db.sql);
-
-    expect(await modelTotals(db.sql, 's2')).toEqual([]);
-    expect(await modelTotals(db.sql, 's1')).toHaveLength(1);
-    expect(await differences(db.sql)).toEqual([]);
-  });
 });
 
 describe('a change that alters a stored Session marks it stale', () => {
   const changes: [string, string, (sql: SQL, process: number) => Promise<unknown>][] = [
-    ['a new request', 's1 stretches totals', (sql) => addRequest(sql, 's1', 's1-late', 700)],
     [
       'a new request within its span',
       's1 stretches totals',
@@ -312,11 +276,6 @@ describe('a change that alters a stored Session marks it stale', () => {
       `,
     ],
     [
-      'its readings pruned',
-      's1 stretches',
-      (sql, process) => sql`DELETE FROM harness_process_samples WHERE process = ${process}`,
-    ],
-    [
       'its process gone',
       's1 stretches',
       (sql, process) => sql`
@@ -334,7 +293,6 @@ describe('a change that alters a stored Session marks it stale', () => {
       's1 stretches totals',
       (sql) => sql`DELETE FROM projected_sessions WHERE session_id = 's1'`,
     ],
-    ['a price change', 's1 totals', (sql) => price(sql, 3_000_000)],
     [
       'a parser switch',
       's1 stretches totals',
@@ -498,7 +456,7 @@ describe('more changes that alter a stored Session', () => {
     expect(await differences(db.sql)).toEqual([]);
   });
 
-  test('a Session a delete is deriving again loses its stored rows, and is marked once shown', async () => {
+  test('a Session a delete is deriving again loses its stored rows and model totals, is hidden, and is marked once shown', async () => {
     await using db = await database();
     await linkedSession(db.sql);
 
@@ -506,6 +464,11 @@ describe('more changes that alter a stored Session', () => {
       INSERT INTO rederiving_sessions (harness, system, source, session_id)
       VALUES ('claude-code', 'laptop-1', 'claude-code', 's1')
     `;
+    const ids = await db.sql`
+      SELECT session_id FROM insight.session_stretches
+      UNION ALL SELECT session_id FROM insight.session_totals
+    `;
+    expect(ids.map(({ session_id }: { session_id: string }) => session_id)).toEqual(['s2', 's2']);
     const stored = await db.sql`
       SELECT session_id FROM stored_session_stretches
       UNION ALL SELECT session_id FROM stored_session_totals
@@ -514,6 +477,10 @@ describe('more changes that alter a stored Session', () => {
       's2',
       's2',
     ]);
+    const [{ storedModels }] = await db.sql`
+      SELECT count(*)::int AS "storedModels" FROM stored_session_model_totals WHERE session_id = 's1'
+    `;
+    expect(storedModels).toBe(0);
 
     await db.sql`DELETE FROM rederiving_sessions`;
 

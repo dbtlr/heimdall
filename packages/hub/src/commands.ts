@@ -9,6 +9,7 @@ const INTERRUPTED = 'Interrupted while waiting for a database lock.';
 
 // The parts of a Loom action context the commands use.
 type Context = {
+  lockTimeoutMs?: number;
   out: {
     fatal: (message: string) => never;
     print: (message: string) => Promise<void>;
@@ -32,7 +33,7 @@ export const configName = (options: object): string | undefined =>
 // it with the signal's exit code.
 export const withDatabase = async <T>(
   url: URL,
-  { out, signal, style }: Context,
+  { lockTimeoutMs, out, signal, style }: Context,
   work: (sql: SQL) => Promise<T>,
 ): Promise<T> => {
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
@@ -46,6 +47,7 @@ export const withDatabase = async <T>(
   const sql = openDatabase(url);
   try {
     const applied = await migrateWhenFree(sql, {
+      ...(lockTimeoutMs === undefined ? {} : { lockTimeoutMs }),
       onBlocked: (holders) => out.warn(clean(describeLockWait(holders))),
       ...(signal === undefined ? {} : { signal }),
     }).catch(async (error: unknown) =>

@@ -25,7 +25,7 @@ import { evaluateConditions } from './evaluate-conditions.ts';
 import { createHub } from './hub.ts';
 import { keepInsightReaderGranted } from './insight-reader.ts';
 import { recordListening } from './listening.ts';
-import { describeLockWait, migrateWhenFree } from './migration-wait.ts';
+import { describeLockWait, lockTimeoutOption, migrateWhenFree } from './migration-wait.ts';
 import { ntfySender } from './ntfy.ts';
 import { loadPriceOverrides, syncPrices } from './price-table.ts';
 import { BUNDLED_PRICES } from './prices.ts';
@@ -86,7 +86,15 @@ export const serveAction: ActionHandler<typeof serve> = async ({
       (error: unknown) =>
         log.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
     );
-    await serveUntilStopped({ clean, delivery, limits, log, options, signal });
+    await serveUntilStopped({
+      clean,
+      delivery,
+      limits,
+      lockTimeout: lockTimeoutOption(host.env),
+      log,
+      options,
+      signal,
+    });
   } finally {
     await stopRotating();
   }
@@ -113,6 +121,7 @@ const serveUntilStopped = async ({
   clean,
   delivery,
   limits,
+  lockTimeout,
   log,
   options,
   signal,
@@ -120,6 +129,7 @@ const serveUntilStopped = async ({
   clean: (message: string) => string;
   delivery: DeliveryChannel | undefined;
   limits: ConditionLimits;
+  lockTimeout: { lockTimeoutMs?: number };
   log: RuntimeLog;
   options: Parameters<ActionHandler<typeof serve>>[0]['options'];
   signal: AbortSignal;
@@ -134,6 +144,7 @@ const serveUntilStopped = async ({
     // holds, such as a backup's, is waited out and logged, not a failure.
     // PostgreSQL's messages name the host and role, never the password.
     const applied = await migrateWhenFree(sql, {
+      ...lockTimeout,
       onBlocked: (holders) => log.warn(clean(describeLockWait(holders))),
       signal,
     }).catch((error: unknown) =>

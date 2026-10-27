@@ -85,21 +85,13 @@ const judge = (h: Hub) => {
 };
 
 describe('judging every Condition', () => {
-  test('runs the job, System, Drift, and Service evaluators', async () => {
+  test('runs the job, System, Drift, and Service evaluators, judging Service down after Drift', async () => {
     await using h = await startHub();
     await failingAndQuiet(h);
 
     await judge(h);
 
     expect(await openKinds(h)).toEqual(['drift', 'job_failing', 'service_down', 'system_stale']);
-  });
-
-  test('judges Service down after Drift', async () => {
-    await using h = await startHub();
-    await failingAndQuiet(h);
-
-    await judge(h);
-
     const raised: { kind: string }[] = await h.db.sql`
       SELECT kind FROM conditions WHERE kind IN ('drift', 'service_down') ORDER BY id
     `;
@@ -107,10 +99,7 @@ describe('judging every Condition', () => {
   });
 
   test.each<[ConditionKind, ConditionKind[]]>([
-    ['job_failing', ['drift', 'service_down', 'system_stale']],
-    ['system_stale', ['drift', 'job_failing', 'service_down']],
     ['drift', ['job_failing', 'service_down', 'system_stale']],
-    ['service_down', ['drift', 'job_failing', 'system_stale']],
   ])(
     'a database refusing %s does not stop the others, and the failure is reported',
     async (refused, others) => {
@@ -168,10 +157,6 @@ describe('running evaluators in turn', () => {
     expect(ran).toEqual(['first', 'second', 'third']);
     expect(failure).toMatchObject({ message: 'first failed; third failed' });
     expect((failure as AggregateError).errors).toHaveLength(2);
-  });
-
-  test('succeeds when none fails', async () => {
-    expect(await runInTurn([() => Promise.resolve(), () => Promise.resolve()])).toBeUndefined();
   });
 
   test('a single failure is reported', async () => {

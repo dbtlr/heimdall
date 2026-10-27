@@ -97,13 +97,21 @@ test('a later Report updates the process in place, and the peak memory only grow
   ]);
 });
 
-test('a start time a second apart is the same process, and a pid reused much later is another', async () => {
+test('a start time a second apart is the same open process, and a pid reused much later is another', async () => {
   await using h = await startHub();
   await pushProcesses(h, 'laptop-1', [running()]);
-  await pushProcesses(h, 'laptop-1', [running({ startedAt: START + 1000 })], {
-    sentAt: NOW + 15_000,
-    t: NOW + 15_000,
-  });
+  await pushProcesses(
+    h,
+    'laptop-1',
+    [running({ lastSeenAt: NOW + 15_000, startedAt: START + 1000 })],
+    {
+      sentAt: NOW + 15_000,
+      t: NOW + 15_000,
+    },
+  );
+  expect(await rowsOf(h, 'laptop-1')).toEqual([
+    expect.objectContaining({ endMissed: false, endedAt: undefined, lastSeenAt: NOW + 15_000 }),
+  ]);
   await pushProcesses(h, 'laptop-1', [running({ startedAt: START + 600_000 })], {
     sentAt: NOW + 30_000,
     t: NOW + 30_000,
@@ -331,24 +339,6 @@ test('an ended process stays ended when a later section lists only the process t
       [START + apart, undefined, false],
     ]);
   }
-});
-
-test('a start read a second apart keeps the running process open, as one row', async () => {
-  await using h = await startHub();
-  await pushProcesses(h, 'laptop-1', [running()]);
-  await pushProcesses(
-    h,
-    'laptop-1',
-    [running({ lastSeenAt: NOW + 15_000, startedAt: START + 1000 })],
-    {
-      sentAt: NOW + 15_000,
-      t: NOW + 15_000,
-    },
-  );
-
-  expect(await rowsOf(h, 'laptop-1')).toEqual([
-    expect.objectContaining({ endMissed: false, endedAt: undefined, lastSeenAt: NOW + 15_000 }),
-  ]);
 });
 
 test('an end the Collector reports after the Hub closed the process as missed replaces the missed one', async () => {

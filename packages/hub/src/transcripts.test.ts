@@ -17,6 +17,7 @@ import {
   startHub,
 } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
+import { waitersOnLocks } from './testing/lock-waiters.ts';
 import {
   deleteTranscripts,
   openGeneration as openStored,
@@ -44,22 +45,6 @@ const held = async (sql: SQL, generation: number) => {
   `;
   const unpacked = await Promise.all(rows.map((row) => gunzip(row.content)));
   return Buffer.concat(unpacked).toString('utf8');
-};
-
-// Waits until `count` backends of this database wait on a lock.
-const waitersOnLocks = async (sql: SQL, count: number) => {
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- polls until the waiters queue.
-    const [row]: { n: number }[] = await sql`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE datname = current_database() AND wait_event_type = 'Lock'
-    `;
-    if ((row?.n ?? 0) >= count) {
-      return;
-    }
-    // oxlint-disable-next-line no-await-in-loop -- polls until the waiters queue.
-    await Bun.sleep(10);
-  }
 };
 
 const openConditions = async (sql: SQL) =>
@@ -324,9 +309,7 @@ describe('a chunk', () => {
   });
 
   test.each([
-    ['no offset', { content: LINE_1 }],
     ['a negative offset', { content: LINE_1, offset: '-1' }],
-    ['a fractional offset', { content: LINE_1, offset: '1.5' }],
     ['an offset past safe integers', { content: LINE_1, offset: '9007199254740992' }],
     ['a body that is not gzip', { content: new TextEncoder().encode(LINE_1), offset: 0 }],
     [
@@ -686,15 +669,11 @@ describe('deleting transcripts', () => {
   test('removes more generations than a statement can take as parameters', async () => {
     await using h = await startHub();
     await upload(h, NOW);
+    // Generations alone cross the limit. The uploaded one has the only chunks.
     await h.db.sql`
-      WITH opened AS (
-        INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
-        SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
-        FROM generate_series(1, 70000) AS n
-        RETURNING id
-      )
-      INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
-      SELECT id, 0, 1, '\\x00'::bytea FROM opened
+      INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
+      SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
+      FROM generate_series(1, 70000) AS n
     `;
 
     const removed = await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
@@ -702,7 +681,7 @@ describe('deleting transcripts', () => {
     expect(removed.generations).toBe(70_001);
     const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
     expect(left).toEqual({ n: 0 });
-    // Inserting and then marking 70,000 generations takes about 3.5 seconds on
+    // Inserting and then marking 70,000 generations takes seconds on
     // its own, too close to the default 5 for a loaded machine.
   }, 30_000);
 

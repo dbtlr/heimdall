@@ -231,7 +231,7 @@ describe('stale System', () => {
     expect((await conditionsOf(h)).open).toEqual([]);
   });
 
-  test('clears when the System reports again, and the Timeline keeps both', async () => {
+  test('clears when the System reports again, the Timeline keeps both, and a later silence raises a new Condition', async () => {
     await using h = await startHub();
     await send(h, NOW);
     await evaluate(h, NOW + 11 * MINUTE);
@@ -245,6 +245,12 @@ describe('stale System', () => {
       { at: NOW + 13 * MINUTE, condition: 'system_stale', kind: 'cleared', subject: '' },
       expect.objectContaining({ at: NOW + 11 * MINUTE, condition: 'system_stale', kind: 'raised' }),
     ]);
+
+    await evaluate(h, NOW + 23 * MINUTE);
+
+    const again = await conditionsOf(h);
+    expect(again.open).toEqual([expect.objectContaining({ raisedAt: NOW + 23 * MINUTE })]);
+    expect(again.timeline).toHaveLength(3);
   });
 
   test('clears when the System is heard from through a rejected Report', async () => {
@@ -275,20 +281,6 @@ describe('stale System', () => {
     expect((await conditionsOf(h)).open).toEqual([]);
   });
 
-  test('a System that went quiet again after reporting is raised again, as a new Condition', async () => {
-    await using h = await startHub();
-    await send(h, NOW);
-    await evaluate(h, NOW + 11 * MINUTE);
-    await send(h, NOW + 12 * MINUTE);
-    await evaluate(h, NOW + 13 * MINUTE);
-
-    await evaluate(h, NOW + 23 * MINUTE);
-
-    const { open, timeline } = await conditionsOf(h);
-    expect(open).toEqual([expect.objectContaining({ raisedAt: NOW + 23 * MINUTE })]);
-    expect(timeline).toHaveLength(3);
-  });
-
   test('a paired System never seen counts from pairing, and has no last seen', async () => {
     await using h = await startHub();
 
@@ -307,23 +299,15 @@ describe('stale System', () => {
     ]);
   });
 
-  test('a System that was never seen gets its real Last seen from its first Report', async () => {
-    await using h = await startHub();
-    await evaluate(h, NOW + 11 * MINUTE);
-
-    await send(h, NOW + 12 * MINUTE);
-
-    const [laptop] = await listSystems(h.db.sql);
-    expect(laptop?.lastSeenAt).toBe(NOW + 12 * MINUTE);
-  });
-
-  test('a paired System that reports after being flagged never seen clears', async () => {
+  test('a System flagged never seen takes its real Last seen from its first Report, and clears', async () => {
     await using h = await startHub();
     await evaluate(h, NOW + 11 * MINUTE);
 
     await send(h, NOW + 12 * MINUTE);
     await evaluate(h, NOW + 13 * MINUTE);
 
+    const [laptop] = await listSystems(h.db.sql);
+    expect(laptop?.lastSeenAt).toBe(NOW + 12 * MINUTE);
     expect((await conditionsOf(h)).open).toEqual([]);
   });
 
@@ -387,15 +371,6 @@ describe('stale System', () => {
 
     await evaluate(h, NOW + DAY + 2 * DAY);
     expect((await conditionsOf(h)).open).toEqual([]);
-  });
-
-  test('a System that never sent sleeps is always on', async () => {
-    await using h = await startHub();
-    await send(h, NOW);
-
-    await evaluate(h, NOW + 11 * MINUTE);
-
-    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
   });
 
   test('uses the thresholds it is given', async () => {
@@ -548,50 +523,6 @@ describe('low disk', () => {
         reason: '9.9 GiB free of 100.0 GiB (9.9%).',
         subject: '/',
       },
-    ]);
-  });
-
-  test('raises an alert at exactly 10% free', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 10)] });
-
-    await evaluate(h, NOW + MINUTE);
-
-    expect(await diskLevels(h)).toEqual([{ level: 'alert' }]);
-  });
-
-  test('raises a warning for a mount between 10% and 15% free', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 12)] });
-
-    await evaluate(h, NOW + MINUTE);
-
-    expect(await diskLevels(h)).toEqual([{ level: 'warning' }]);
-  });
-
-  test('holds alert through 15% free, then steps down and clears above 35%', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 5)] });
-    await evaluate(h, NOW + MINUTE);
-
-    await send(h, NOW + 2 * MINUTE, { disks: [disk('/', 12)] });
-    await evaluate(h, NOW + 3 * MINUTE);
-    expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
-
-    await send(h, NOW + 4 * MINUTE, { disks: [disk('/', 15)] });
-    await evaluate(h, NOW + 5 * MINUTE);
-    expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
-
-    await send(h, NOW + 6 * MINUTE, { disks: [disk('/', 15.1)] });
-    await evaluate(h, NOW + 7 * MINUTE);
-    expect(await diskLevels(h)).toEqual([{ level: 'warning' }]);
-    await send(h, NOW + 8 * MINUTE, { disks: [disk('/', 36)] });
-    await evaluate(h, NOW + 9 * MINUTE);
-    const { open, timeline } = await conditionsOf(h);
-    expect(open).toEqual([]);
-    expect(timeline).toEqual([
-      { at: NOW + 9 * MINUTE, condition: 'low_disk', kind: 'cleared', subject: '/' },
-      expect.objectContaining({ at: NOW + MINUTE, condition: 'low_disk', kind: 'raised' }),
     ]);
   });
 

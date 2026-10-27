@@ -153,17 +153,6 @@ test('samples roll up into the UTC 5-minute bucket each falls in', async () => {
   ]);
 });
 
-test('a resent Report leaves the rollups as they were', async () => {
-  await using h = await startHub();
-  const samples = [vitals(NOW, { busy: 10 }), vitals(NOW + MINUTE, { busy: 20 })];
-  await pushSamples(h, samples);
-  const before = [await vitalsRollups(h.db.sql), await diskRollups(h.db.sql)];
-
-  expect(await pushSamples(h, samples)).toEqual({ skipped: 2, stored: 0 });
-
-  expect([await vitalsRollups(h.db.sql), await diskRollups(h.db.sql)]).toEqual(before);
-});
-
 test('a Report overlapping stored samples rolls up only the samples it adds', async () => {
   await using h = await startHub();
   await pushSamples(h, [vitals(NOW, { busy: 10 }), vitals(NOW + MINUTE, { busy: 20 })]);

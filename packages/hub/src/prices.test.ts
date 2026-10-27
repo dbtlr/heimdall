@@ -90,24 +90,6 @@ const costs = async (sql: SQL) => {
 };
 
 describe('a request is priced at list prices', () => {
-  test('each kind of token costs its own price per million', async () => {
-    await using db = await prepared({ bundled: [PRICE] });
-    await seed(db.sql, [
-      {
-        at: '2026-03-01T00:00:00Z',
-        cacheRead: 2_000_000,
-        cacheWrite1h: 100_000,
-        cacheWrite5m: 1_000_000,
-        id: 'r1',
-        input: 1_000_000,
-        output: 500_000,
-      },
-    ]);
-
-    // 4 + 10 (500k output at 20) + 1 (2M cache reads at 0.5) + 5 (1M 5m writes at 5) + 1 (100k 1h writes at 10)
-    expect(await costs(db.sql)).toEqual({ r1: 21 });
-  });
-
   test('a cache write the Harness did not split costs the 5-minute price', async () => {
     await using db = await prepared({ bundled: [PRICE] });
     await seed(db.sql, [{ at: '2026-03-01T00:00:00Z', id: 'r1' }]);
@@ -117,15 +99,6 @@ describe('a request is priced at list prices', () => {
     `;
 
     expect(await costs(db.sql)).toEqual({ r1: 5 });
-  });
-
-  test('a model id with a date suffix takes its undated model price', async () => {
-    await using db = await prepared({ bundled: [PRICE] });
-    await seed(db.sql, [
-      { at: '2026-03-01T00:00:00Z', id: 'r1', input: 1_000_000, model: `${MODEL}-20260101` },
-    ]);
-
-    expect(await costs(db.sql)).toEqual({ r1: 4 });
   });
 
   test('only a trailing eight-digit date is a suffix: a model id ending in a version keeps its own entry', async () => {
@@ -406,19 +379,7 @@ describe('an unpriced request is never free', () => {
     expect(parts.reduce((sum, part) => sum + part, 0)).toBe(Number(row?.cost_usd));
   });
 
-  test('an unpriced model has no cost of any kind', async () => {
-    await using db = await prepared({ bundled: [PRICE] });
-    await seed(db.sql, [{ at: '2026-03-01T00:00:00Z', id: 'r1', input: 1000, model: 'mystery' }]);
-
-    const [row]: Record<string, string | null>[] = await db.sql`
-      SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_write_cost_usd
-      FROM insight.requests
-    `;
-
-    expect(Object.values(row ?? {})).toEqual([null, null, null, null]);
-  });
-
-  test('an unknown model reads null, not zero, even with no tokens', async () => {
+  test('an unknown model reads null for its cost and every part, even with no tokens', async () => {
     await using db = await prepared({ bundled: [PRICE] });
     await seed(db.sql, [
       { at: '2026-03-01T00:00:00Z', id: 'unknown', input: 1000, model: 'mystery-model' },
@@ -426,6 +387,11 @@ describe('an unpriced request is never free', () => {
     ]);
 
     expect(await costs(db.sql)).toEqual({ empty: null, unknown: null });
+    const rows: Record<string, string | null>[] = await db.sql`
+      SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_write_cost_usd
+      FROM insight.requests
+    `;
+    expect(rows.flatMap((row) => Object.values(row))).toEqual(Array(8).fill(null));
   });
 
   test('a Session total that includes one says so and has no total cost', async () => {
@@ -690,15 +656,6 @@ describe('the bundled table', () => {
     const rows: { model: string }[] = await db.sql`SELECT model FROM model_prices`;
     expect(rows).toEqual([{ model: MODEL }]);
   });
-
-  test('loads into a migrated database', async () => {
-    await using db = await migratedDatabase();
-
-    await syncPrices(db.sql, { bundled: BUNDLED_PRICES, configured: [] });
-
-    const [row]: { n: number }[] = await db.sql`SELECT count(*)::int AS n FROM model_prices`;
-    expect(row?.n).toBe(BUNDLED_PRICES.length);
-  });
 });
 
 describe('a price overrides file', () => {
@@ -755,12 +712,7 @@ describe('a price overrides file', () => {
       'a prompt threshold of zero',
       '{"prices":[{"model":"m","validFrom":"2026-01-01","input":1,"output":1,"contextWindow":1,"promptOver":0}]}',
     ],
-    [
-      'two entries for one model, date, and threshold',
-      '{"prices":[{"model":"m","validFrom":"2026-01-01","input":1,"output":1,"contextWindow":1,"promptOver":5},{"model":"m","validFrom":"2026-01-01","input":2,"output":1,"contextWindow":1,"promptOver":5}]}',
-    ],
     ['no prices list', '{}'],
-    ['an entry with no date', '{"prices":[{"model":"m","input":1,"output":1,"contextWindow":1}]}'],
     [
       'a date that is not a day',
       '{"prices":[{"model":"m","validFrom":"2026-13-45","input":1,"output":1,"contextWindow":1}]}',

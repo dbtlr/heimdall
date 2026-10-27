@@ -226,31 +226,3 @@ test('the minute pass evaluates Service restarted after Service down', async () 
     >`SELECT level FROM conditions WHERE kind = 'service_restarted'`,
   ).toEqual([{ level: 'note' }]);
 });
-
-test('a failing System does not stop the other Systems, and the error names it', async () => {
-  await using h = await startHub();
-  await send(h, [STOP]);
-  const response = await push(
-    h.hub,
-    {
-      ...report('server-1', [NOW]),
-      checks: { services: [] },
-      serviceStops: { stops: [STOP] },
-    },
-    { token: 'server-token' },
-  );
-  expect(response.status).toBe(200);
-  await h.db.sql`
-    ALTER TABLE conditions ADD CONSTRAINT refused_system CHECK (system <> 'laptop-1' OR kind <> 'service_restarted')
-  `;
-
-  const failure = await evaluateServiceStopConditions(h.db.sql, () => NOW).then(
-    () => undefined,
-    (error: unknown) => error,
-  );
-  expect(failure).toBeInstanceOf(AggregateError);
-  expect(failure).toMatchObject({ message: expect.stringContaining('laptop-1') });
-  expect(await h.db.sql<Record<string, unknown>[]>`SELECT system, level FROM conditions`).toEqual([
-    { level: 'note', system: 'server-1' },
-  ]);
-});

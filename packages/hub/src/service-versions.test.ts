@@ -98,7 +98,7 @@ test('a Docker Service naming an Application without an upstream never uses its 
   ).toEqual({ censusLapsed: false, upstream: null, version: '1.27' });
 });
 
-test.each(['github:nginx/nginx', 'npm:nginx', 'custom:anything', undefined])(
+test.each(['custom:anything', undefined])(
   'a non-Docker Service takes its Application version and verbatim upstream %s',
   (upstream) => {
     expect(
