@@ -12,6 +12,7 @@ import type { Attention } from '../server/attention-types.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
+import { DateTime } from './date-time.tsx';
 
 const SPARK_WIDTH = 100;
 const SPARK_HEIGHT = 34;
@@ -118,9 +119,15 @@ export function SystemNowCards({
       aria-labelledby="now-cards-heading"
       className="mb-4 hidden lg:grid lg:grid-cols-4 lg:gap-3"
     >
-      <h2 className="sr-only" id="now-cards-heading">
-        Last reported
-      </h2>
+      <div className="flex items-baseline gap-3 lg:col-span-4">
+        <h2 className="text-lg font-semibold" id="now-cards-heading">
+          Last reported
+        </h2>
+        {/* As on the phone: a System's clock alone cannot prove freshness, so say when. */}
+        <p className="text-sm text-muted-foreground">
+          Sample time <DateTime at={latest.t} format="when" now={now} />.
+        </p>
+      </div>
       {stale && <span className="sr-only">Vitals as of {formatSpanShort(now - latest.t)} ago</span>}
       <Card
         caption={

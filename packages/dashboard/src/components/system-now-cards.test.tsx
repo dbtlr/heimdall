@@ -64,7 +64,10 @@ test('the four cards show CPU with its range high, memory, the disk, and load', 
   expect(html).toContain('of 16.0 GiB');
   expect(html).toContain('disk /data');
   expect(html).not.toContain('aria-label="Disk');
-  expect(html).toContain('<h2 class="sr-only" id="now-cards-heading">Last reported</h2>');
+  expect(html).toContain(
+    '<h2 class="text-lg font-semibold" id="now-cards-heading">Last reported</h2>',
+  );
+  expect(html).toContain('Sample time');
   expect(html).toContain('1.50');
   expect(html).toContain('5-min 1.25 · 15-min 0.50');
   expect((html.match(/<path /gu) ?? []).length).toBe(2);
