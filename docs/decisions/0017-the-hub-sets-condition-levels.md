@@ -4,7 +4,7 @@ title: ADR-0017 - The Hub sets each Condition's level
 description: "Every Condition carries a Hub-set level: note, warning, or alert. Levels can change without replacing the Condition, and the Timeline records those changes, superseding ADR-0005's raised-and-cleared-only history. A System's health is its worst open level, with limits in Hub configuration and per-System overrides, and no muting."
 status: accepted
 created: 2026-10-15
-modified: 2026-10-15
+modified: 2026-10-27
 ---
 
 # The Hub sets each Condition's level
@@ -88,3 +88,7 @@ The [spec](../spec.md#condition-levels-and-history) describes the runtime rules.
 Migration keeps existing `low_disk` identities and occurrence history, assigns alert to legacy disk occurrences, and marks their historical levels as backfilled.
 Subsequent judgments use the graded limits without replacing an open occurrence.
 The configuration shape, migration schema, and dashboard layout are not prescribed here.
+
+## Changelog
+
+- 2026-10-27: Clarification. The dashboard shows Service restarted notes on the Services page instead of a System's open Conditions and the Fleet page's Can wait ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The notes stay visible and leave their System healthy; the Hub's judgment and the Timeline are unchanged. The decision is unchanged.

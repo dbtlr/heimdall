@@ -1,5 +1,5 @@
 ---
-description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1, alerting (M8), which follows v1, and short Service stops (M9)."
+description: "Heimdall milestones from walking skeleton through the Session archive, fleet state from provisioner records, Session insight, the dashboard, and graded System health, with the settled scope of v1, alerting (M8), which follows v1, short Service stops (M9), and the Services section (M10)."
 ---
 
 # Roadmap
@@ -109,7 +109,7 @@ The dashboard answers "is any System unhealthy, and what needs me?" first, on a 
 - Every Condition carries a level the Hub sets: a note to know about, a warning to act on this week, or an alert to act on now. A Condition keeps its identity as its level changes, and the Timeline records each change. A System's health is its worst open level, never a score, so notes never make a System look unhealthy.
 - Every Condition names its culprit, such as the mount and how fast it fills, the process, or for pending updates the package source with the packages in it, and the dashboard shows that evidence with a next step.
 - Low disk becomes graded disk: a note at 70% used, a warning at 80%, and an alert at 90%. Limits live in the Hub's configuration, with overrides per System; there is no muting.
-- New Conditions: sustained CPU and memory (spikes stay in the charts), a hot process that holds a lot of CPU for a long time, named by its executable, and pending updates. The Collector checks pending apt, Homebrew, and macOS updates and whether a reboot is required, on an occasional schedule. [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md) starts with existing local metadata and leaves room to revisit metadata refresh; unavailable coverage stays explicit. Whether a provisioner's Application is behind its channel stays the provisioner's own check.
+- New Conditions: sustained CPU and memory (spikes stay in the charts), a hot process that holds a lot of CPU for a long time, named by its executable, and pending updates. The Collector checks pending apt, Homebrew, and macOS updates and whether a reboot is required, on an occasional schedule. [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md) starts with existing local metadata and leaves room to revisit metadata refresh; unavailable coverage stays explicit. Whether a provisioner's Application is behind the version it declares stays the provisioner's own check; M10 shows a newer upstream release as Heimdall's own fact.
 - The dashboard is rebuilt from a chosen mock: the Fleet page opens with a verdict and the Conditions that need you, ordered by level, then a compact card per System. A System page has a way back, a switcher between Systems, and tabs that each fit about one phone screen. An Agents view shows the fleet's list-price cost and Sessions across Systems. The shared-time-axis lanes move to a Compare view one tap from the Fleet page.
 - Order: levels in the Hub first, with an ADR, since every health screen reads them. Dashboard navigation and the Agents view need no levels and run beside it. Load, hot-process, and update Conditions follow; [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md) governs the Collector's package-manager checks.
 
@@ -138,6 +138,19 @@ Every stop of a recorded Service leaves evidence and a quiet note, however short
 - Order: the ADR first, then systemd end to end through the Collector, the Hub, and the dashboard, then Docker, then launchd, whose stops are timed only to the minute. Proven live by a deliberate restart of a recorded Service. Evidence of why a Service stopped, pushed by its provisioner, is a later initiative.
 
 Size: medium. Sharp edges: telling a reboot from a stop on each supervisor, and a Service its provisioner leaves unrecorded, such as one on a System whose Collector runs under another account, stays invisible.
+
+## M10: Services
+
+One place lists every Service in the fleet with its status, its System, the version it runs, and whether a newer release exists upstream ([ADR-0022](decisions/0022-services-show-their-version-and-the-hub-checks-upstreams.md)).
+
+- A Services tab lists every recorded Service, one row per System and Service, worst first: down, restarted in the last 24 hours, available update, then the rest, with a Service whose status is unknown last. A filter sheet narrows it by status and by System, several of each, and the filters live in the URL.
+- Service restarted notes move to the Services page: they leave a System's open Conditions and the Fleet page's Can wait, and the Services tab counts Services down or restarted in the last 24 hours. The Hub still raises the note under [ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md), so the Timeline is unchanged.
+- A Service's page shows its history, newest first: stops, Service down raised and cleared, installed version changes, and available updates first seen. The newest events show, and older ones open on request.
+- A Docker Service's installed version is the image tag the Collector reads from its container. Any Service can name the Application record it runs, which gives a non-Docker Service its version and any Service its upstream; the Application's `source` names the upstream with a typed prefix: `github:`, `npm:`, `oci:`, `apt:`, or `brew:`.
+- The Hub checks GitHub, npm, and OCI upstreams every few hours, and APT and Homebrew upstreams come from the Collector's package observations. An available update is a newer release on the installed version's channel, shown with the Service and never a Condition.
+- Order: the ADR, then the Services list and the Service page's history on today's data, then installed versions, then upstream checks and available updates, then the release. Fleet records Applications with typed sources and links its Services after that release (Fleet-side work in the Fleet repository). Proven live when every recorded Service is listed with its version and a Service known to be behind shows its update.
+
+Size: medium to large. Sharp edges: registries that rate-limit or need a token even for public images, and version strings that read as semver but do not sort like it.
 
 ## Later
 
