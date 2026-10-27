@@ -56,6 +56,19 @@ test('a Service moved to its upstream when its latest run of rows on that upstre
       { at: NOW - DAY, upstream: valkey },
     ]),
   ).toBe(NOW - 80 * DAY);
+  // A row with no upstream ends the run, and a row whose version is unknown is still on its upstream.
+  expect(
+    upstreamSince([
+      { at: NOW - 30 * DAY, upstream: null },
+      { at: NOW - 20 * DAY, upstream: valkey },
+      { at: NOW - 10 * DAY, upstream: valkey },
+    ]),
+  ).toBe(NOW - 20 * DAY);
+  const rows = [
+    { at: NOW - 30 * DAY, upstream: valkey, version: null },
+    { at: NOW - 20 * DAY, upstream: valkey, version: '8.0' },
+  ];
+  expect(upstreamSince(rows)).toBe(NOW - 30 * DAY);
 });
 
 test('dating an update ignores older releases and releases on other channels', () => {
