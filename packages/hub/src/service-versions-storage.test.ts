@@ -266,3 +266,63 @@ test('Reports store the first installed version, ignore repeats, and keep Applic
     { first_seen_at: new Date(NOW + 2000), upstream: 'apt:nginx', version: '1.27' },
   ]);
 });
+
+const aptCensus = (observedAt: number, installed: boolean) => ({
+  managers: [
+    {
+      installation: '/',
+      ...(installed
+        ? {
+            installed: {
+              names: ['nginx:amd64'],
+              observedAt,
+              versions: [{ name: 'nginx:amd64', version: '1.26-1ubuntu2' }],
+            },
+          }
+        : {}),
+      manager: 'apt' as const,
+      observedAt,
+      result: { kind: 'available' as const, metadataAt: observedAt, updates: [] },
+    },
+  ],
+  reboot: { kind: 'available' as const, observedAt, required: false },
+});
+
+test('a gap in the package census keeps the installed version rather than recording two installs', async () => {
+  await using h = await startHub();
+  const send = async (at: number, installed: boolean) => {
+    h.clock.now = at;
+    const body = {
+      ...report('laptop-1', [at]),
+      records: records(),
+      updates: aptCensus(at, installed),
+    };
+    expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
+  };
+  await send(NOW, true);
+  await send(NOW + 60_000, false);
+  await send(NOW + 120_000, true);
+  expect(await h.db.sql<Record<string, unknown>[]>`SELECT version FROM service_versions`).toEqual([
+    { version: '1.26-1ubuntu2' },
+  ]);
+});
+
+test('a Hub clock that steps back still puts the newest version last', async () => {
+  await using h = await startHub();
+  const send = async (at: number, version: string) => {
+    h.clock.now = at;
+    const body = {
+      ...report('laptop-1', [NOW]),
+      records: records({ ...APPLICATION, source: 'github:nginx/nginx', version }),
+    };
+    expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
+  };
+  await send(NOW + 10_000, '1.26');
+  await send(NOW + 5000, '1.27');
+  await send(NOW + 6000, '1.27');
+  expect(
+    await h.db.sql<
+      Record<string, unknown>[]
+    >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+  ).toEqual([{ version: '1.26' }, { version: '1.27' }]);
+});

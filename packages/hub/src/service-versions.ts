@@ -10,12 +10,17 @@ import type { SQL } from 'bun';
 import { storableJson } from './storable.ts';
 
 type ServiceVersion = { version: string | null; upstream: string | null };
+// `censusLapsed` marks an `apt:` or `brew:` upstream whose package manager the
+// System has reported, but with no fresh census now, so the version fell back
+// to the recorded one only for the moment.
+type DerivedVersion = ServiceVersion & { censusLapsed: boolean };
 type Census = { observation: UpdateManager; withdrawn: boolean };
 
 // Reads Config.Image without inventing a latest tag or treating a registry's
 // port or a digest's colon as a tag (ADR-0022).
 export const parseDockerImage = (image: string): ServiceVersion => {
-  if (image.startsWith('sha256:') || /^[\da-f]{64}$/iu.test(image)) {
+  // A full or short image ID names no repository.
+  if (image.startsWith('sha256:') || /^[\da-f]{12,64}$/iu.test(image)) {
     return { upstream: null, version: null };
   }
   const reference = image.split('@')[0] ?? '';
@@ -35,30 +40,45 @@ export const parseDockerImage = (image: string): ServiceVersion => {
   return { upstream: `oci:${registry}/${path}`, version };
 };
 
+// The package manager whose census can supersede an upstream's recorded version.
+const censusManager = (upstream: string | null) => {
+  if (upstream?.startsWith('apt:')) {
+    return 'apt';
+  }
+  return upstream?.startsWith('brew:') ? 'homebrew' : undefined;
+};
+
 // Only confirmed installed versions count, even if package metadata could
 // not be read. Freshness belongs to the census, not the pending-update check.
+// `lapsed` says the upstream's package manager was reported, but no census of
+// it is fresh.
 const packageVersion = (upstream: string | null, censuses: readonly Census[], now: number) => {
+  const manager = censusManager(upstream);
+  let reported = false;
+  let covered = false;
   for (const { observation, withdrawn } of censuses) {
     const census = observation.installed;
+    if (upstream === null || observation.manager !== manager) {
+      continue;
+    }
+    reported = true;
     if (withdrawn || census === undefined || !freshUpdateTime(census.observedAt, now)) {
       continue;
     }
+    covered = true;
     const match = census.versions?.find(({ name }) => {
-      if (observation.manager === 'apt' && upstream?.startsWith('apt:')) {
+      if (manager === 'apt') {
         const prefix = `${upstream.slice(4)}:`;
         return name.startsWith(prefix) && name.length > prefix.length;
       }
-      if (observation.manager === 'homebrew' && upstream?.startsWith('brew:')) {
-        const formula = upstream.slice(5);
-        return name === `formula:${formula}` || name === `cask:${formula}`;
-      }
-      return false;
+      const formula = upstream.slice(5);
+      return name === `formula:${formula}` || name === `cask:${formula}`;
     });
     if (match !== undefined) {
-      return match.version;
+      return { lapsed: false, version: match.version };
     }
   }
-  return null;
+  return { lapsed: reported && !covered, version: null };
 };
 
 // Applications are from this Service's System; a named but missing one never
@@ -75,26 +95,33 @@ export const deriveServiceVersion = ({
   image?: ServiceCheck['image'];
   now: number;
   service: ServiceRecord;
-}): ServiceVersion => {
+}): DerivedVersion => {
   const application = applications.find((record) => record.name === service.application);
   const upstream = application?.source ?? null;
   if (service.supervisor === 'docker') {
     const parsed =
       image === undefined ? { upstream: null, version: null } : parseDockerImage(image);
     return {
+      censusLapsed: false,
       upstream: service.application === undefined ? parsed.upstream : upstream,
       version: parsed.version,
     };
   }
+  const observed = packageVersion(upstream, censuses, now);
   return {
+    censusLapsed: observed.lapsed,
     upstream,
-    version: packageVersion(upstream, censuses, now) ?? application?.version ?? null,
+    version: observed.version ?? application?.version ?? null,
   };
 };
 
 // The caller holds the System's row lock and has stored all Report sections.
 // Missing Docker supervisor checks add no knowledge; a present check without
-// an image does. Forgotten Services keep their history without adding rows.
+// an image does. A version read while its census has lapsed is written only as
+// a Service's first row, so a census that lapses and returns records no
+// install. A row is never dated before the latest, so a Hub clock that steps
+// back still adds the newest value last. Forgotten Services keep their
+// history without adding rows.
 export const storeServiceVersions = async (
   tx: SQL,
   { receivedAt, system }: { receivedAt: number; system: string },
@@ -126,10 +153,20 @@ export const storeServiceVersions = async (
   const [checks]: { services: ServiceCheck[] | null }[] = await tx`
     SELECT services FROM check_sets WHERE system = ${system}
   `;
-  const managers: { observation: unknown; withdrawn: boolean }[] = await tx`
-    SELECT observation, withdrawn FROM update_managers
-    WHERE system = ${system} ORDER BY manager, installation
-  `;
+  // A census can be large, so it is read only for a Service it can supersede.
+  const censused = services.some(
+    (service) =>
+      service.supervisor !== 'docker' &&
+      censusManager(
+        applications.find((record) => record.name === service.application)?.source ?? null,
+      ) !== undefined,
+  );
+  const managers: { observation: unknown; withdrawn: boolean }[] = censused
+    ? await tx`
+        SELECT observation, withdrawn FROM update_managers
+        WHERE system = ${system} ORDER BY manager, installation
+      `
+    : [];
   const censuses = managers.flatMap(({ observation, withdrawn }) => {
     const parsed = UpdateManagerSchema.safeParse(observation);
     return parsed.success ? [{ observation: parsed.data, withdrawn }] : [];
@@ -156,7 +193,10 @@ export const storeServiceVersions = async (
   });
   await tx`
     INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
-    SELECT ${system}, v->>'service', v->>'version', v->>'upstream', ${new Date(receivedAt)}
+    SELECT ${system}, v->>'service', v->>'version', v->>'upstream',
+           CASE WHEN ${new Date(receivedAt)}::timestamptz < latest.first_seen_at
+                THEN latest.first_seen_at + interval '1 millisecond'
+                ELSE ${new Date(receivedAt)}::timestamptz END
     FROM jsonb_array_elements(${storableJson(versions)}::text::jsonb) AS v
     LEFT JOIN LATERAL (
       SELECT version, upstream, first_seen_at FROM service_versions
@@ -164,7 +204,8 @@ export const storeServiceVersions = async (
       ORDER BY first_seen_at DESC LIMIT 1
     ) latest ON true
     WHERE latest.first_seen_at IS NULL
-       OR (latest.version, latest.upstream) IS DISTINCT FROM (v->>'version', v->>'upstream')
+       OR (NOT (v->>'censusLapsed')::boolean
+           AND (latest.version, latest.upstream) IS DISTINCT FROM (v->>'version', v->>'upstream'))
     ON CONFLICT (system, service, first_seen_at) DO UPDATE SET
       version = excluded.version, upstream = excluded.upstream
   `;

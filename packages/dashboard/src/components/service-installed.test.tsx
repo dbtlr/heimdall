@@ -27,3 +27,10 @@ test('says which Application the Service names when it is not recorded', async (
     'Installed version unknown · names Application web, which is not recorded',
   );
 });
+
+test('names a missing Application beside a Docker image tag', async () => {
+  const html = await renderRouted(
+    <InstalledLine installed={{ missingApplication: 'web', upstream: null, version: '1.27' }} />,
+  );
+  expect(html).toContain('Installed 1.27 · names Application web, which is not recorded');
+});

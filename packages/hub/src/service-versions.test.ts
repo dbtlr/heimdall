@@ -52,7 +52,7 @@ test.each([
 test('a Docker Service takes the image tag and its normalized upstream', () => {
   expect(
     deriveServiceVersion({ applications: [], image: 'nginx:1.27', now: NOW, service: DOCKER }),
-  ).toEqual({ upstream: 'oci:docker.io/library/nginx', version: '1.27' });
+  ).toEqual({ censusLapsed: false, upstream: 'oci:docker.io/library/nginx', version: '1.27' });
 });
 
 test('a Docker Service naming an Application keeps its image tag and takes that upstream', () => {
@@ -63,7 +63,7 @@ test('a Docker Service naming an Application keeps its image tag and takes that 
       now: NOW,
       service: { ...DOCKER, application: 'nginx' },
     }),
-  ).toEqual({ upstream: 'github:nginx/nginx', version: '1.27' });
+  ).toEqual({ censusLapsed: false, upstream: 'github:nginx/nginx', version: '1.27' });
 });
 
 test('a missing Application leaves a Docker image tag known but its upstream unknown', () => {
@@ -74,7 +74,7 @@ test('a missing Application leaves a Docker image tag known but its upstream unk
       now: NOW,
       service: { ...DOCKER, application: 'missing' },
     }),
-  ).toEqual({ upstream: null, version: '1.27' });
+  ).toEqual({ censusLapsed: false, upstream: null, version: '1.27' });
 });
 
 test('a Docker Service without an image never falls back to the recorded version', () => {
@@ -84,7 +84,7 @@ test('a Docker Service without an image never falls back to the recorded version
       now: NOW,
       service: { ...DOCKER, application: 'nginx' },
     }),
-  ).toEqual({ upstream: 'github:nginx/nginx', version: null });
+  ).toEqual({ censusLapsed: false, upstream: 'github:nginx/nginx', version: null });
 });
 
 test('a Docker Service naming an Application without an upstream never uses its image upstream', () => {
@@ -95,7 +95,7 @@ test('a Docker Service naming an Application without an upstream never uses its 
       now: NOW,
       service: { ...DOCKER, application: 'nginx' },
     }),
-  ).toEqual({ upstream: null, version: '1.27' });
+  ).toEqual({ censusLapsed: false, upstream: null, version: '1.27' });
 });
 
 test.each(['github:nginx/nginx', 'npm:nginx', 'custom:anything', undefined])(
@@ -108,7 +108,7 @@ test.each(['github:nginx/nginx', 'npm:nginx', 'custom:anything', undefined])(
         now: NOW,
         service: SERVICE,
       }),
-    ).toEqual({ upstream: upstream ?? null, version: '1.26' });
+    ).toEqual({ censusLapsed: false, upstream: upstream ?? null, version: '1.26' });
   },
 );
 
@@ -120,7 +120,7 @@ test('APT matches any architecture and takes the first confirmed version in cens
       now: NOW,
       service: SERVICE,
     }),
-  ).toEqual({ upstream: 'apt:nginx', version: '1.28' });
+  ).toEqual({ censusLapsed: false, upstream: 'apt:nginx', version: '1.28' });
 });
 
 test('census freshness uses the installed observation time, including the freshness boundary', () => {
@@ -140,7 +140,7 @@ test('census freshness uses the installed observation time, including the freshn
       now: NOW,
       service: SERVICE,
     }),
-  ).toEqual({ upstream: 'apt:nginx', version: '1.28' });
+  ).toEqual({ censusLapsed: false, upstream: 'apt:nginx', version: '1.28' });
 });
 
 test.each(['formula:nginx', 'cask:nginx'])(
@@ -170,7 +170,7 @@ test.each(['formula:nginx', 'cask:nginx'])(
         now: NOW,
         service: SERVICE,
       }),
-    ).toEqual({ upstream: 'brew:nginx', version: '1.30' });
+    ).toEqual({ censusLapsed: false, upstream: 'brew:nginx', version: '1.30' });
   },
 );
 
@@ -183,7 +183,7 @@ test('a package census never replaces a Docker image tag', () => {
       now: NOW,
       service: { ...DOCKER, application: 'nginx' },
     }),
-  ).toEqual({ upstream: 'apt:nginx', version: '1.27' });
+  ).toEqual({ censusLapsed: false, upstream: 'apt:nginx', version: '1.27' });
 });
 
 test.each([
@@ -238,7 +238,7 @@ test.each([
   ],
 ] satisfies [string, { observation: UpdateManager; withdrawn: boolean }][])(
   'a %s census leaves the Application version as recorded',
-  (_, census) => {
+  (kind, census) => {
     expect(
       deriveServiceVersion({
         applications: [{ ...APPLICATION, source: 'apt:nginx' }],
@@ -246,7 +246,12 @@ test.each([
         now: NOW,
         service: SERVICE,
       }),
-    ).toEqual({ upstream: 'apt:nginx', version: '1.26' });
+    ).toEqual({
+      // A fresh census covers the package even when it lacks its version.
+      censusLapsed: kind !== 'another package' && kind !== 'names without versions',
+      upstream: 'apt:nginx',
+      version: '1.26',
+    });
   },
 );
 
@@ -254,8 +259,13 @@ test.each([SERVICE, { name: 'web', supervisor: 'none' } satisfies ServiceRecord]
   'a Service without a recorded Application has unknown version and upstream: %j',
   (service) => {
     expect(deriveServiceVersion({ applications: [], now: NOW, service })).toEqual({
+      censusLapsed: false,
       upstream: null,
       version: null,
     });
   },
 );
+
+test('a short image ID names no repository', () => {
+  expect(parseDockerImage('4f2a1b3c9d8e')).toEqual({ upstream: null, version: null });
+});
