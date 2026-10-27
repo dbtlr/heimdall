@@ -1043,4 +1043,6 @@ test('System Open Conditions exclude Service restarted notes while keeping Servi
   const uncertain = attention({ kind: 'checks_missing', set: 'checks' });
   expect(withoutServiceRestartedNotes([note, down, uncertain])).toEqual([down, uncertain]);
   expect(withoutServiceRestartedNotes([note])).toEqual([]);
+  const unpaired = { ...note, unpaired: true };
+  expect(withoutServiceRestartedNotes([note, unpaired])).toEqual([unpaired]);
 });

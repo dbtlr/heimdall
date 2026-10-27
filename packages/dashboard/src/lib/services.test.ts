@@ -96,5 +96,26 @@ test('search validation drops unknown statuses and non-string System values and 
   expect(
     servicesSearch({ status: ['down', 'bad', 'up', 'down'], system: ['alpha', 1, 'alpha'] }),
   ).toEqual({ status: ['down', 'up'], system: ['alpha'] });
-  expect(servicesSearch({ status: 'down', system: null })).toEqual({ status: [], system: [] });
+  expect(servicesSearch({ status: 'down', system: null })).toEqual({
+    status: ['down'],
+    system: undefined,
+  });
 });
+
+for (const [search, expected] of [
+  [{ status: 'down' }, { status: ['down'], system: undefined }],
+  [{ system: 'web-1' }, { status: undefined, system: ['web-1'] }],
+  [{ system: 123 }, { status: undefined, system: ['123'] }],
+  [
+    { status: 'bad', system: Infinity },
+    { status: undefined, system: undefined },
+  ],
+  [
+    { status: [], system: [] },
+    { status: undefined, system: undefined },
+  ],
+] satisfies [Parameters<typeof servicesSearch>[0], ReturnType<typeof servicesSearch>][]) {
+  test(`search accepts single values and omits empty selections: ${JSON.stringify(search)}`, () => {
+    expect(servicesSearch(search ?? {})).toEqual(expected);
+  });
+}

@@ -17,11 +17,18 @@ export const Route = createFileRoute('/services')({
 
 function ServicesPage() {
   const { now, services } = Route.useLoaderData();
-  const filters = Route.useSearch();
+  const search = Route.useSearch();
+  const filters = { status: search.status ?? [], system: search.system ?? [] };
   const navigate = Route.useNavigate();
   const rows = filterServices(services, filters);
-  const change = (search: ServiceFilters) => {
-    void navigate({ resetScroll: false, search });
+  const change = (next: ServiceFilters) => {
+    void navigate({
+      resetScroll: false,
+      search: {
+        status: (next.status.length > 0 && next.status) || undefined,
+        system: (next.system.length > 0 && next.system) || undefined,
+      },
+    });
   };
   return (
     <>

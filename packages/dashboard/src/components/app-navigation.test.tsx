@@ -78,7 +78,12 @@ for (const count of [0, 3]) {
     });
     await router.load();
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
-    expect(html.includes('aria-label="3 Services down or restarted"')).toBe(count > 0);
+    expect(html.includes('<span class="sr-only">3 Services down or restarted</span>')).toBe(
+      count > 0,
+    );
+    if (count > 0) {
+      expect(html).toMatch(/<span aria-hidden="true"[^>]*>3<\/span>/u);
+    }
     expect(html).toContain('href="/services"');
   });
 }

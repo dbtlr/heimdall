@@ -52,3 +52,10 @@ test('sheet labels its sections, reflects selection and counts, and keeps zero-c
   expect(html).toContain('Show 0 Services');
   expect(html).toContain('Close</button>');
 });
+
+test('active filters form an accessible group', () => {
+  const html = renderToStaticMarkup(
+    <ActiveServiceFilters filters={{ status: ['down'], system: [] }} onChange={ignore} />,
+  );
+  expect(html).toMatch(/<div(?=[^>]*role="group")(?=[^>]*aria-label="Active filters")/u);
+});

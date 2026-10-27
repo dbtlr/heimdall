@@ -39,12 +39,15 @@ export function AppNavigation() {
           <span className="inline-flex items-center gap-1">
             {label}
             {to === '/services' && count > 0 && (
-              <span
-                aria-label={`${String(count)} Services down or restarted`}
-                className="rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary"
-              >
-                {count}
-              </span>
+              <>
+                <span
+                  aria-hidden="true"
+                  className="rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary"
+                >
+                  {count}
+                </span>
+                <span className="sr-only">{count} Services down or restarted</span>
+              </>
             )}
           </span>
         </Link>

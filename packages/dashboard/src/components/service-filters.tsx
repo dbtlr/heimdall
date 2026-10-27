@@ -34,7 +34,11 @@ export function ActiveServiceFilters({ filters, onChange }: FilterProps) {
     })),
   ];
   return (
-    <div aria-label="Active filters" className="flex flex-wrap items-center gap-2 pb-4">
+    <div
+      aria-label="Active filters"
+      className="flex flex-wrap items-center gap-2 pb-4"
+      role="group"
+    >
       {pills.map(({ key, label, remove }) => (
         <button
           aria-label={`Remove ${label} filter`}

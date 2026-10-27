@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
+import { OpenNow } from './open-now.tsx';
 import { renderRouted } from './render-routed.tsx';
 import { SystemOpenConditions } from './system-open-conditions.tsx';
 
@@ -45,4 +46,20 @@ test('restart notes alone leave System Open Conditions empty', async () => {
   const html = await renderRouted(<SystemOpenConditions items={[restarted]} now={1000} />);
   expect(html).toContain('No open Condition or uncertain evidence.');
   expect(html).not.toContain('<details');
+});
+
+test('an unpaired System keeps its Service restarted note on its own page', async () => {
+  const html = await renderRouted(
+    <SystemOpenConditions items={[{ ...restarted, unpaired: true }]} now={1000} />,
+  );
+  expect(html).toContain('Service restarted');
+  expect(html).toContain('/conditions/restart');
+});
+
+test('the Fleet unpaired section keeps Service restarted notes', async () => {
+  const html = await renderRouted(
+    <OpenNow items={[{ ...restarted, unpaired: true }]} now={1000} />,
+  );
+  expect(html).toContain('Service restarted');
+  expect(html).toContain('/conditions/restart');
 });

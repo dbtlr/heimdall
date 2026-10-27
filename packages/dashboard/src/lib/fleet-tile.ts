@@ -3,7 +3,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { Attention, AttentionKind } from '../server/attention-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import type { Disk } from '../server/system-detail-types.ts';
-import { ATTENTION_NAMES, subjectText, withoutServiceRestartedNotes } from './attention.ts';
+import { ATTENTION_NAMES, subjectText } from './attention.ts';
 import { diskUsage, fullestDisk } from './facts.ts';
 import { fleetAttention, isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
 
@@ -44,7 +44,7 @@ export const canWaitRows = (
   names: readonly string[],
   items: readonly Attention[],
 ): { notes: string[]; system: string }[] => {
-  const { notes } = fleetAttention(withoutServiceRestartedNotes(items));
+  const { notes } = fleetAttention(items);
   return names.flatMap((system) => {
     const texts = notes
       .filter((note) => note.system === system)

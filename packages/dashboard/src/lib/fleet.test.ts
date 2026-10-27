@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
 import { DELIVERY_FAILING_SHOWN_AFTER_MS } from '../server/fleet-overview-types.ts';
+import { canWaitRows } from './fleet-tile.ts';
 import { deliveryFailingShown, fleetAttention, isAsleep } from './fleet.ts';
 
 const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
@@ -48,4 +49,29 @@ test('delivery failing is shown only once the run of failures is 10 minutes old'
   expect(
     deliveryFailingShown({ deliveryFailingSince: now - DELIVERY_FAILING_SHOWN_AFTER_MS, now }),
   ).toBe(now - DELIVERY_FAILING_SHOWN_AFTER_MS);
+});
+
+test('Fleet verdict counts the same notes as Can wait, keeping other levels and excluding unpaired history', () => {
+  const restarted: Attention = {
+    checkedAt: 100,
+    conditionId: 'restart',
+    evidence: 'current',
+    firstDetected: 100,
+    kind: 'service_restarted',
+    level: 'note',
+    reason: 'Stopped once',
+    service: undefined,
+    subject: 'web',
+    system: 'server-1',
+    unpaired: false,
+  };
+  const items = [
+    disk(),
+    disk({ level: 'alert' }),
+    disk({ level: 'note' }),
+    restarted,
+    { ...restarted, unpaired: true },
+  ];
+  expect(fleetAttention(items).counts).toEqual({ alert: 1, note: 1, warning: 1 });
+  expect(canWaitRows(['server-1'], items)).toEqual([{ notes: ['Low disk /'], system: 'server-1' }]);
 });

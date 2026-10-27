@@ -104,10 +104,11 @@ test('lists paired recorded Services, with down before restarted and missing che
     VALUES ('server-1', 'api', ${new Date(NOW - 120_000)}, ${new Date(NOW - 110_000)}, false, 1, ${new Date(NOW)}, ${new Date(NOW)}),
            ('server-1', 'api', ${new Date(NOW - 60_000)}, ${new Date(NOW - 50_000)}, false, 1, ${new Date(NOW)}, ${new Date(NOW)})`;
 
-  const rows = await readServices(h.db.sql);
+  const rows = await readServices(h.db.sql, NOW);
   expect(rows.map(({ name, status, system }) => [system, name, status])).toEqual([
     ['server-1', 'web', 'down'],
     ['server-1', 'api', 'restarted'],
+    ['server-1', 'forgotten', 'restarted'],
     ['server-1', 'mixed', 'unknown'],
     ['server-1', 'unchecked', 'unknown'],
     ['server-1', 'unknown', 'unknown'],
@@ -115,10 +116,10 @@ test('lists paired recorded Services, with down before restarted and missing che
   ]);
   expect(rows[0]?.downSince).toBe(NOW - 60_000);
   expect(rows[1]?.latestStopAt).toBe(NOW - 60_000);
-  expect(await readServiceAttentionCount(h.db.sql)).toBe(2);
+  expect(await readServiceAttentionCount(h.db.sql)).toBe(3);
 
   await unpair(h.db.sql, 'server-1');
-  expect((await readServices(h.db.sql)).map(({ system, name }) => [system, name])).toEqual([
+  expect((await readServices(h.db.sql, NOW)).map(({ system, name }) => [system, name])).toEqual([
     ['laptop-1', 'web'],
   ]);
   expect(await readServiceAttentionCount(h.db.sql)).toBe(0);
@@ -145,6 +146,88 @@ test('up requires all held checks to pass; a System with no check set still list
     ],
   });
   await hear(h, 'laptop-1', ['web']);
-  expect((await readServices(h.db.sql)).map(({ status }) => status)).toEqual(['up', 'unknown']);
+  expect((await readServices(h.db.sql, NOW)).map(({ status }) => status)).toEqual([
+    'up',
+    'unknown',
+  ]);
+  expect(await readServiceAttentionCount(h.db.sql)).toBe(0);
+});
+
+test('quiet or never-heard Systems cannot establish up, but open Service Conditions still win', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', ['web', 'api', 'worker'], {
+    services: ['web', 'api', 'worker'].map((service) => ({
+      check: 'supervisor',
+      detail: 'Running',
+      service,
+      since: NOW,
+      state: 'up',
+    })),
+  });
+  await addCondition(h.db.sql, {
+    kind: 'service_down',
+    level: 'alert',
+    raisedAt: -60,
+    subject: 'api',
+    system: 'server-1',
+  });
+  await addCondition(h.db.sql, {
+    kind: 'service_restarted',
+    level: 'note',
+    raisedAt: -60,
+    subject: 'worker',
+    system: 'server-1',
+  });
+  expect(
+    (await readServices(h.db.sql, NOW + 120_000)).find(({ name }) => name === 'web')?.status,
+  ).toBe('up');
+  expect(
+    (await readServices(h.db.sql, NOW + 120_001)).map(({ name, status }) => [name, status]),
+  ).toEqual([
+    ['api', 'down'],
+    ['worker', 'restarted'],
+    ['web', 'unknown'],
+  ]);
+  await h.db.sql`UPDATE systems SET last_seen_at = NULL WHERE name = 'server-1'`;
+  expect((await readServices(h.db.sql, NOW)).find(({ name }) => name === 'web')?.status).toBe(
+    'unknown',
+  );
+});
+
+test('forgotten Services remain for either open Condition and disappear after both clear', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', []);
+  await hear(h, 'laptop-1', []);
+  await Promise.all(
+    ['server-1', 'laptop-1'].flatMap((system) => [
+      addCondition(h.db.sql, {
+        kind: 'service_down',
+        level: 'alert',
+        raisedAt: -60,
+        subject: 'web',
+        system,
+      }),
+      addCondition(h.db.sql, {
+        kind: 'service_restarted',
+        level: 'note',
+        raisedAt: -60,
+        subject: 'web',
+        system,
+      }),
+    ]),
+  );
+  expect(
+    (await readServices(h.db.sql, NOW)).map(({ system, name, status }) => [system, name, status]),
+  ).toEqual([
+    ['laptop-1', 'web', 'down'],
+    ['server-1', 'web', 'down'],
+  ]);
+  expect(await readServiceAttentionCount(h.db.sql)).toBe(2);
+  await h.db
+    .sql`UPDATE conditions SET cleared_at = ${new Date(NOW)} WHERE kind = 'service_restarted'`;
+  expect((await readServices(h.db.sql, NOW)).map(({ status }) => status)).toEqual(['down', 'down']);
+  expect(await readServiceAttentionCount(h.db.sql)).toBe(2);
+  await h.db.sql`UPDATE conditions SET cleared_at = ${new Date(NOW)} WHERE kind = 'service_down'`;
+  expect(await readServices(h.db.sql, NOW)).toEqual([]);
   expect(await readServiceAttentionCount(h.db.sql)).toBe(0);
 });

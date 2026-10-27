@@ -30,17 +30,29 @@ export const serviceStatus = ({
 
 export type ServiceFilters = { status: ServiceStatus[]; system: string[] };
 
-const strings = (value: unknown): string[] =>
-  Array.isArray(value)
+const strings = (value: unknown): string[] => {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  return Array.isArray(value)
     ? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
     : [];
+};
 
-export const servicesSearch = (search: { status?: unknown; system?: unknown }): ServiceFilters => ({
-  status: strings(search.status).filter((value): value is ServiceStatus =>
-    SERVICE_STATUSES.some((status) => status === value),
-  ),
-  system: strings(search.system),
-});
+export const servicesSearch = (search: { status?: unknown; system?: unknown }) => {
+  const status = strings(search.status).filter((value): value is ServiceStatus =>
+    SERVICE_STATUSES.some((known) => known === value),
+  );
+  const system = strings(
+    typeof search.system === 'number' && Number.isFinite(search.system)
+      ? String(search.system)
+      : search.system,
+  );
+  return {
+    status: status.length > 0 ? status : undefined,
+    system: system.length > 0 ? system : undefined,
+  };
+};
 
 export const sortServices = (rows: readonly ServiceSummary[]): ServiceSummary[] =>
   rows.toSorted(
