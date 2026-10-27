@@ -3,6 +3,14 @@ import type { UpdateManager } from '@heimdall/schema';
 
 import { WINDOW_DAYS } from './service-detail.ts';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const isCheckedUpstream = (upstream: string | null): boolean =>
+  upstream !== null && /^(github|npm|oci):/u.test(upstream);
+
+export const isPackageUpstream = (upstream: string | null): boolean =>
+  upstream !== null && /^(apt|brew):/u.test(upstream);
+
 export type UpstreamCheck = {
   checkedAt: number;
   failure: string | null;
@@ -12,7 +20,7 @@ export type UpstreamCheck = {
 export type UpstreamRelease = { at: number; version: string };
 
 export type ServiceUpdate = {
-  failure: { at: number; reason: string; succeededAt: number | null; upstream: string } | undefined;
+  failure: { at: number; reason: string; succeededAt: number | null } | undefined;
   status:
     | { kind: 'update'; since: number | undefined; source: 'upstream'; version: string }
     | { kind: 'update'; source: 'APT' | 'Homebrew'; version: string }
@@ -39,7 +47,7 @@ export const serviceUpdate = ({
   version: string | null;
 }): ServiceUpdate => {
   let status: ServiceUpdate['status'];
-  if (version !== null && upstream !== null && /^(apt|brew):/u.test(upstream)) {
+  if (version !== null && upstream !== null && isPackageUpstream(upstream)) {
     const available = packageAvailableVersion(upstream, observations, now);
     return {
       failure: undefined,
@@ -53,7 +61,7 @@ export const serviceUpdate = ({
           : undefined,
     };
   }
-  if (upstream === null || !/^(github|npm|oci):/u.test(upstream)) {
+  if (!isCheckedUpstream(upstream)) {
     return { failure: undefined, status };
   }
   if (version !== null) {
@@ -82,7 +90,7 @@ export const serviceUpdate = ({
   return {
     failure:
       check !== undefined && check.failure !== null
-        ? { at: check.checkedAt, reason: check.failure, succeededAt: check.succeededAt, upstream }
+        ? { at: check.checkedAt, reason: check.failure, succeededAt: check.succeededAt }
         : undefined,
     status,
   };
@@ -100,19 +108,20 @@ export const updatesOf = ({
   now: number;
   releases: readonly UpstreamRelease[];
   upstream: string | null;
-  versions: readonly { at: number; version: string | null }[];
+  versions: readonly { at: number; upstream: string | null; version: string | null }[];
 }): UpstreamRelease[] => {
-  if (upstream === null || !/^(github|npm|oci):/u.test(upstream)) {
+  if (!isCheckedUpstream(upstream)) {
     return [];
   }
   return releases
     .filter(({ at, version }) => {
-      if (at < now - WINDOW_DAYS * 86_400_000 || at > now) {
+      if (at < now - WINDOW_DAYS * DAY_MS || at > now) {
         return false;
       }
       const installed = versions.findLast((row) => row.at <= at && row.version !== null);
       return (
         installed !== undefined &&
+        installed.upstream === upstream &&
         availableUpdate(installed.version, newestPerChannel([version])).kind === 'update'
       );
     })

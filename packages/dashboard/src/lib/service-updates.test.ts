@@ -62,21 +62,56 @@ test('a current release, an unreadable version, and missing knowledge stay disti
   expect(serviceUpdate({ ...base, check, version: null }).status).toBeUndefined();
 });
 
-for (const succeededAt of [null, NOW - DAY]) {
-  test(`a failed check keeps its answer and the last success ${String(succeededAt)}`, () => {
-    expect(
-      serviceUpdate({
-        check: { checkedAt: NOW, failure: 'Rate limited', releases: { '': '2.0' }, succeededAt },
-        now: NOW,
-        upstream: 'github:owner/web',
-        version: '1.0',
-      }),
-    ).toEqual({
-      failure: { at: NOW, reason: 'Rate limited', succeededAt, upstream: 'github:owner/web' },
-      status: { kind: 'update', since: undefined, source: 'upstream', version: '2.0' },
-    });
+test('a first failed check has no releases and shows only the failure', () => {
+  expect(
+    serviceUpdate({
+      check: { checkedAt: NOW, failure: 'Rate limited', releases: null, succeededAt: null },
+      now: NOW,
+      upstream: 'github:owner/web',
+      version: '1.0',
+    }),
+  ).toEqual({
+    failure: { at: NOW, reason: 'Rate limited', succeededAt: null },
+    status: undefined,
   });
-}
+});
+
+test('a failed check after a success keeps its releases and shows the update and failure', () => {
+  expect(
+    serviceUpdate({
+      check: {
+        checkedAt: NOW,
+        failure: 'Rate limited',
+        releases: { '': '2.0' },
+        succeededAt: NOW - DAY,
+      },
+      now: NOW,
+      upstream: 'github:owner/web',
+      version: '1.0',
+    }),
+  ).toEqual({
+    failure: {
+      at: NOW,
+      reason: 'Rate limited',
+      succeededAt: NOW - DAY,
+    },
+    status: { kind: 'update', since: undefined, source: 'upstream', version: '2.0' },
+  });
+});
+
+test('a check failure still shows when the installed version is unknown', () => {
+  expect(
+    serviceUpdate({
+      check: { checkedAt: NOW, failure: 'Rate limited', releases: null, succeededAt: null },
+      now: NOW,
+      upstream: 'github:owner/web',
+      version: null,
+    }),
+  ).toEqual({
+    failure: { at: NOW, reason: 'Rate limited', succeededAt: null },
+    status: undefined,
+  });
+});
 
 test('unrecognized or missing upstreams show nothing, even for unreadable versions', () => {
   for (const upstream of [null, 'owner/web']) {
@@ -123,8 +158,8 @@ test('release history compares against what ran then, retaining rows after an up
       ],
       upstream: 'github:owner/web',
       versions: [
-        { at: NOW - 3 * DAY, version: '1.0' },
-        { at: NOW - DAY, version: '3.0' },
+        { at: NOW - 3 * DAY, upstream: 'github:owner/web', version: '1.0' },
+        { at: NOW - DAY, upstream: 'github:owner/web', version: '3.0' },
       ],
     }),
   ).toEqual([{ at: NOW - 2 * DAY, version: '2.0' }]);
@@ -141,8 +176,8 @@ test('history skips releases before a known install, outside the window, and on 
     ],
     upstream: 'npm:web',
     versions: [
-      { at: NOW - 88 * DAY, version: '1.0' },
-      { at: NOW - 3 * DAY, version: null },
+      { at: NOW - 88 * DAY, upstream: 'npm:web', version: '1.0' },
+      { at: NOW - 3 * DAY, upstream: 'npm:web', version: null },
     ],
   };
   expect(updatesOf(base)).toEqual([{ at: NOW - DAY, version: '4.0' }]);
@@ -160,7 +195,24 @@ test('history includes the window boundary and skips older releases despite a kn
         { at: NOW - 90 * DAY, version: '1.2' },
       ],
       upstream: 'oci:registry/web',
-      versions: [{ at: NOW - 120 * DAY, version: '1.0' }],
+      versions: [{ at: NOW - 120 * DAY, upstream: 'oci:registry/web', version: '1.0' }],
     }),
   ).toEqual([{ at: NOW - 90 * DAY, version: '1.2' }]);
+});
+
+test('history does not compare current upstream releases with a previous upstream’s installed version', () => {
+  expect(
+    updatesOf({
+      now: NOW,
+      releases: [
+        { at: NOW - 60 * DAY, version: '7.2.5' },
+        { at: NOW - 30 * DAY, version: '8.0' },
+      ],
+      upstream: 'oci:docker.io/valkey/valkey',
+      versions: [
+        { at: NOW - 80 * DAY, upstream: 'oci:docker.io/library/redis', version: '7.2' },
+        { at: NOW - DAY, upstream: 'oci:docker.io/valkey/valkey', version: '8.0' },
+      ],
+    }),
+  ).toEqual([]);
 });

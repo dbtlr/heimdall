@@ -98,22 +98,31 @@ test('a current version, an unreadable version, and unknown knowledge have disti
   ).toBe('');
 });
 
-for (const succeededAt of [null, 1000]) {
-  test(`a failed check names the upstream, failure time, and last success ${String(succeededAt)}`, async () => {
+// The Hub's reasons usually end a sentence already; the line adds a period only when one does not.
+for (const [succeededAt, reason] of [
+  [null, 'Rate limited'],
+  [1000, 'Rate limited.'],
+] as const) {
+  test(`a failed check states its failure time and last success in one paragraph ${String(succeededAt)}`, async () => {
     const html = await renderRouted(
       <UpdateLines
         now={3000}
         update={{
-          failure: { at: 2000, reason: 'Rate limited', succeededAt, upstream: 'npm:web' },
-          status: { kind: 'current' },
+          failure: { at: 2000, reason, succeededAt },
+          status: succeededAt === null ? undefined : { kind: 'current' },
         }}
       />,
     );
-    expect(html).toContain('Up to date');
-    expect(html).toContain('Couldn&#x27;t check npm:web');
+    expect(html).not.toContain('npm:web');
+    expect(html).not.toContain('<span');
+    expect(html).toContain('Last check failed ');
     expect(html).toContain('dateTime="1970-01-01T00:00:02.000Z"');
-    expect(html).toContain(': Rate limited');
-    expect(html).toContain(succeededAt === null ? 'never succeeded' : 'last succeeded');
+    const text = html.replace(/<time\b[^>]*>.*?<\/time>/gu, '[time]').replace(/<[^>]+>/gu, '');
+    expect(text).toBe(
+      succeededAt === null
+        ? 'Last check failed [time]: Rate limited. It has never succeeded.'
+        : 'Up to dateLast check failed [time]: Rate limited. Last succeeded [time].',
+    );
     if (succeededAt !== null) {
       expect(html).toContain('dateTime="1970-01-01T00:00:01.000Z"');
     }

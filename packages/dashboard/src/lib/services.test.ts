@@ -197,3 +197,18 @@ test('updates rank after down and restarted, ahead of up and unknown', () => {
     'up',
   ]);
 });
+
+test('a restarted Service without an update ranks before an up Service with an earlier name and an update', () => {
+  const base = {
+    downSince: undefined,
+    latestStopAt: undefined,
+    system: 'alpha',
+    version: '1.0',
+  };
+  expect(
+    sortServices([
+      { ...base, name: 'api', status: 'up', update: '2.0' },
+      { ...base, name: 'web', status: 'restarted', update: undefined },
+    ]).map(({ name }) => name),
+  ).toEqual(['web', 'api']);
+});

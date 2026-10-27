@@ -44,6 +44,9 @@ function UpdateFact({ now, status }: { now: number; status: ServiceDetail['updat
   return <p className="mt-1 text-sm text-muted-foreground wrap-anywhere">{fact}</p>;
 }
 
+// The Hub's failure reasons mostly end a sentence already.
+const sentence = (text: string) => (/[.!?]$/u.test(text) ? text : `${text}.`);
+
 // Available updates and check failures are facts, independent of Service status.
 export function UpdateLines({ now, update }: { now: number; update: ServiceDetail['update'] }) {
   const { failure, status } = update;
@@ -52,17 +55,14 @@ export function UpdateLines({ now, update }: { now: number; update: ServiceDetai
       <UpdateFact now={now} status={status} />
       {failure !== undefined && (
         <p className="mt-1 text-sm text-muted-foreground wrap-anywhere">
-          Couldn&apos;t check {failure.upstream} <DateTime {...whenAt(failure.at, now)} />:{' '}
-          {failure.reason}
-          <span className="block">
-            {failure.succeededAt === null ? (
-              'never succeeded'
-            ) : (
-              <>
-                last succeeded <DateTime {...whenAt(failure.succeededAt, now)} />
-              </>
-            )}
-          </span>
+          Last check failed <DateTime {...whenAt(failure.at, now)} />: {sentence(failure.reason)}{' '}
+          {failure.succeededAt === null ? (
+            'It has never succeeded.'
+          ) : (
+            <>
+              Last succeeded <DateTime {...whenAt(failure.succeededAt, now)} />.
+            </>
+          )}
         </p>
       )}
     </>

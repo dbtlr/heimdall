@@ -376,7 +376,6 @@ test('reads the latest upstream check, its retained releases, and the versions i
       at: NOW,
       reason: 'Rate limited',
       succeededAt: NOW - HOUR,
-      upstream: 'github:owner/web',
     },
     status: { kind: 'update', since: NOW - HOUR, source: 'upstream', version: '3.0' },
   });
@@ -423,3 +422,24 @@ for (const [upstream, manager, name, source] of [
     expect((await read(h, 'laptop-1'))?.update.status).toBeUndefined();
   });
 }
+
+test('history skips valkey releases found while the Service ran redis', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', { records });
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      ('server-1', 'web', '7.2', 'oci:docker.io/library/redis', ${new Date(NOW - 80 * DAY)}),
+      ('server-1', 'web', '8.0', 'oci:docker.io/valkey/valkey', ${new Date(NOW - DAY)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
+      ('oci:docker.io/valkey/valkey', '{"":"8.0"}', ${new Date(NOW)}, ${new Date(NOW)}, ${new Date(NOW)})
+  `;
+  await h.db.sql`
+    INSERT INTO upstream_releases (upstream, version, first_found_at) VALUES
+      ('oci:docker.io/valkey/valkey', '7.2.5', ${new Date(NOW - 60 * DAY)}),
+      ('oci:docker.io/valkey/valkey', '8.0', ${new Date(NOW - 30 * DAY)})
+  `;
+  expect((await read(h))?.updates).toEqual([]);
+});

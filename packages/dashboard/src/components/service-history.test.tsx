@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test';
 
+import { historyRows } from '../lib/service-detail.ts';
 import type { ServiceDetail, ServiceStop } from '../server/service-detail-types.ts';
 import { renderRouted } from './render-routed.tsx';
-import { ServiceHistory } from './service-history.tsx';
+import { historyKey, ServiceHistory } from './service-history.tsx';
 
 const NOW = Date.UTC(2026, 9, 24, 12, 0);
 const HOUR = 3_600_000;
@@ -118,4 +119,19 @@ test('an available update is a neutral dated row beside an install at the same t
   expect(html).toContain('bg-muted-foreground');
   expect(html).toContain(`dateTime="${new Date(NOW - HOUR).toISOString()}"`);
   expect(html).not.toContain('bg-status-good');
+});
+
+test('history keys distinguish releases and an installed version at the same instant', () => {
+  const rows = historyRows(
+    [],
+    [],
+    [{ at: NOW, version: '2.0', was: '1.0' }],
+    [
+      { at: NOW, version: '3.0' },
+      { at: NOW, version: '3.0-alpine' },
+    ],
+    NOW,
+  );
+  expect(rows).toHaveLength(3);
+  expect(new Set(rows.map(historyKey)).size).toBe(3);
 });

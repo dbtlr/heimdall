@@ -1,4 +1,3 @@
-import { UpdateManagerSchema } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { serviceUpdate } from '../lib/service-updates.ts';
@@ -7,6 +6,8 @@ import type { ServiceSummary } from '../lib/services.ts';
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
 import { QUIET_AFTER_MS } from './fleet-overview-types.ts';
 import type { ChecksRow } from './hub-rows.ts';
+import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
+import type { UpstreamCheckRow } from './update-observations.ts';
 
 const serviceSubjects = (sql: SQL) => sql`
   SELECT r.system, r.name FROM mirrored_records r
@@ -18,7 +19,7 @@ const serviceSubjects = (sql: SQL) => sql`
   WHERE c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
 `;
 
-type ServiceRow = {
+type ServiceRow = UpstreamCheckRow & {
   checks_received_at: Date | null;
   down_since: Date | null;
   last_seen_at: Date | null;
@@ -29,11 +30,7 @@ type ServiceRow = {
   system: string;
   version: string | null;
   upstream: string | null;
-  releases: Record<string, string> | null;
   observations: unknown[] | null;
-  checked_at: Date | null;
-  succeeded_at: Date | null;
-  failure: string | null;
 };
 
 // Held checks say a Service is up only while its System is heard from and the
@@ -88,20 +85,9 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
     rows.map((row) => {
       const downSince = row.down_since?.getTime();
       const { status: update } = serviceUpdate({
-        check:
-          row.checked_at === null
-            ? undefined
-            : {
-                checkedAt: row.checked_at.getTime(),
-                failure: row.failure,
-                releases: row.releases,
-                succeededAt: row.succeeded_at?.getTime() ?? null,
-              },
+        check: upstreamCheckOf(row),
         now,
-        observations: (row.observations ?? []).flatMap((observation) => {
-          const parsed = UpdateManagerSchema.safeParse(observation);
-          return parsed.success ? [parsed.data] : [];
-        }),
+        observations: parseUpdateObservations(row.observations ?? []),
         upstream: row.upstream,
         version: row.version,
       });

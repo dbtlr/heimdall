@@ -119,7 +119,7 @@ function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; syste
   );
 }
 
-const historyKey = (row: HistoryRow): string => {
+export const historyKey = (row: HistoryRow): string => {
   if (row.kind === 'update') {
     return `${row.kind}-${String(row.at)}-${row.version}`;
   }

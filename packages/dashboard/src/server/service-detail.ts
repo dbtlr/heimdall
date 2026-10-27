@@ -1,14 +1,19 @@
-import { UpdateManagerSchema } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { installsOf } from '../lib/service-installs.ts';
-import { serviceUpdate, updatesOf } from '../lib/service-updates.ts';
-import type { UpstreamCheck } from '../lib/service-updates.ts';
+import {
+  isCheckedUpstream,
+  isPackageUpstream,
+  serviceUpdate,
+  updatesOf,
+} from '../lib/service-updates.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
 import type { ServiceDetail, ServiceDownTransition } from './service-detail-types.ts';
 import { readServiceStops } from './service-stops.ts';
 import { recordedService } from './system-detail.ts';
+import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
+import type { UpstreamCheckRow } from './update-observations.ts';
 
 const nameField = (input: unknown, key: string, what: string): string => {
   const name = field(input, key);
@@ -108,14 +113,9 @@ export const readServiceDetail = (
     const latest = versions.at(-1);
     const application = text(record?.application);
     const upstream = latest?.upstream ?? null;
-    const remote = upstream !== null && /^(github|npm|oci):/u.test(upstream);
+    const remote = isCheckedUpstream(upstream);
     const [upstreamChecks, releases, managers]: [
-      {
-        checked_at: Date;
-        failure: string | null;
-        releases: UpstreamCheck['releases'];
-        succeeded_at: Date | null;
-      }[],
+      UpstreamCheckRow[],
       { first_found_at: Date; version: string }[],
       { observation: unknown }[],
     ] = await Promise.all([
@@ -125,7 +125,7 @@ export const readServiceDetail = (
       remote
         ? tx`SELECT version, first_found_at FROM upstream_releases WHERE upstream = ${upstream} ORDER BY first_found_at, version`
         : [],
-      upstream !== null && /^(apt|brew):/u.test(upstream)
+      isPackageUpstream(upstream)
         ? tx`SELECT observation FROM update_managers WHERE system = ${system} AND NOT withdrawn ORDER BY manager, installation`
         : [],
     ]);
@@ -134,8 +134,9 @@ export const readServiceDetail = (
       at: first_found_at.getTime(),
       version,
     }));
-    const versionRows = versions.map(({ first_seen_at, version }) => ({
+    const versionRows = versions.map(({ first_seen_at, upstream: installedUpstream, version }) => ({
       at: first_seen_at.getTime(),
+      upstream: installedUpstream,
       version,
     }));
     return {
@@ -168,20 +169,9 @@ export const readServiceDetail = (
       system,
       unit: record === undefined ? undefined : unitOf(record),
       update: serviceUpdate({
-        check:
-          check === undefined
-            ? undefined
-            : {
-                checkedAt: check.checked_at.getTime(),
-                failure: check.failure,
-                releases: check.releases,
-                succeededAt: check.succeeded_at?.getTime() ?? null,
-              },
+        check: upstreamCheckOf(check),
         now,
-        observations: managers.flatMap(({ observation }) => {
-          const parsed = UpdateManagerSchema.safeParse(observation);
-          return parsed.success ? [parsed.data] : [];
-        }),
+        observations: parseUpdateObservations(managers.map(({ observation }) => observation)),
         releases: releaseRows,
         upstream,
         version: latest?.version ?? null,
