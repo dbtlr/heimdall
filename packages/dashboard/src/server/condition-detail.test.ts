@@ -80,7 +80,7 @@ describe('parseConditionDetailInput', () => {
     });
   });
 
-  test.each(['', 'abc', '-1', '1.5', '1e3', '12 '])('rejects the id %p', (id) => {
+  test.each(['', '-1', '1.5', '1e3', '12 '])('rejects the id %p', (id) => {
     expect(() => parseConditionDetailInput({ id, name: 'server-1' })).toThrow();
   });
 

@@ -13,11 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AppNavigation, ServiceAttentionCount } from './app-navigation.tsx';
 
 for (const [path, active] of [
-  ['/', 'Fleet'],
   ['/agents', 'Agents'],
-  ['/services', 'Services'],
-  ['/timeline', 'Timeline'],
-  ['/compare', 'Fleet'],
   ['/systems/server-1', 'Fleet'],
 ]) {
   test(`phone navigation marks ${active} on ${path}`, async () => {

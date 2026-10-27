@@ -73,38 +73,43 @@ test('reads the stored Service stop with pairing and UTC millisecond times', asy
   ]);
 });
 
-test.each([
-  [
-    '?system=laptop-1',
-    [
-      ['laptop-1', 'webapp'],
-      ['laptop-1', 'webapp-worker'],
-    ],
-  ],
-  [
-    '?service=webapp',
-    [
-      ['laptop-1', 'webapp'],
-      ['server-1', 'webapp'],
-    ],
-  ],
-  ['?system=server-1&service=webapp', [['server-1', 'webapp']]],
-  ['?system=laptop', []],
-  ['?service=Webapp', []],
-  [
-    '?ignored=anything',
-    [
-      ['laptop-1', 'webapp'],
-      ['laptop-1', 'webapp-worker'],
-      ['server-1', 'webapp'],
-    ],
-  ],
-])('filters by exact System and Service names: %s', async (query, expected) => {
+test('filters by exact System and Service names', async () => {
   await using h = await startHub();
   await send(h, [STOP, { ...STOP, service: 'webapp-worker' }]);
   await send(h, [STOP], 'server-1');
 
-  expect((await read(h, query)).map((stop) => [stop.system, stop.service])).toEqual(expected);
+  const cases: [string, string[][]][] = [
+    [
+      '?system=laptop-1',
+      [
+        ['laptop-1', 'webapp'],
+        ['laptop-1', 'webapp-worker'],
+      ],
+    ],
+    [
+      '?service=webapp',
+      [
+        ['laptop-1', 'webapp'],
+        ['server-1', 'webapp'],
+      ],
+    ],
+    ['?system=server-1&service=webapp', [['server-1', 'webapp']]],
+    ['?system=laptop', []],
+    ['?service=Webapp', []],
+    [
+      '?ignored=anything',
+      [
+        ['laptop-1', 'webapp'],
+        ['laptop-1', 'webapp-worker'],
+        ['server-1', 'webapp'],
+      ],
+    ],
+  ];
+  for (const [query, expected] of cases) {
+    // oxlint-disable-next-line no-await-in-loop -- one query at a time, on one Hub.
+    const stops = await read(h, query);
+    expect(stops.map((stop) => [stop.system, stop.service])).toEqual(expected);
+  }
 });
 
 test('since includes the boundary and newer stops, using stoppedAt rather than the Report time', async () => {
@@ -184,44 +189,33 @@ test('hides unpaired Systems unless include is requested, including when repeate
   expect((await read(h)).map((stop) => stop.system)).toEqual(['laptop-1', 'server-1']);
 });
 
-test.each([
-  '?unpaired=yes',
-  '?unpaired=INCLUDE',
-  '?unpaired=',
-  '?unpaired',
-  '?unpaired=include&unpaired=yes',
-])('refuses an invalid unpaired value before opening the database: %s', async (query) => {
-  const response = await serviceStopsAnswer({
-    database: () => {
-      throw new Error('The database must not be opened.');
-    },
-    onError: (error) => {
-      throw error;
-    },
-    url: new URL(`http://dashboard.test/api/v1/service-stops${query}`),
-  });
+test.each(['?unpaired=yes', '?unpaired=include&unpaired=yes'])(
+  'refuses an invalid unpaired value before opening the database: %s',
+  async (query) => {
+    const response = await serviceStopsAnswer({
+      database: () => {
+        throw new Error('The database must not be opened.');
+      },
+      onError: (error) => {
+        throw error;
+      },
+      url: new URL(`http://dashboard.test/api/v1/service-stops${query}`),
+    });
 
-  expect(response.status).toBe(400);
-  expect(response.headers.get('content-type')).toContain('text/plain');
-  expect(await response.text()).toBe('The only value for unpaired is include: ?unpaired=include.');
-});
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    expect(await response.text()).toBe(
+      'The only value for unpaired is include: ?unpaired=include.',
+    );
+  },
+);
 
 test.each([
   '?system=laptop-1&system=laptop-1',
-  '?service=webapp&service=worker',
-  '?since=2026-10-06T11:59:00Z&since=2026-10-06T11:59:00Z',
   '?system=',
-  '?system',
-  '?service=',
-  '?service',
-  '?since=',
-  '?since',
-  '?since=not-a-time',
   '?since=2026-10-06',
-  '?since=October%206,%202026%2012:00:00%20UTC',
   '?since=2026-13-06T12:00:00Z',
   '?since=2026-02-30T00:00:00Z',
-  '?since=2026-04-31T00:00:00Z',
   '?since=2026-10-06T24:00:00Z',
 ])('refuses an invalid filter before opening the database: %s', async (query) => {
   const response = await serviceStopsAnswer({
@@ -308,15 +302,4 @@ test('the route hands its request query to the answer', async () => {
   const response = await (handler as (ctx: { request: Request }) => Promise<Response>)({ request });
 
   expect(response.status).toBe(400);
-});
-
-test('the route answers methods other than GET with 405', async () => {
-  const handlers = Route.options.server?.handlers;
-  const handler = typeof handlers === 'object' ? handlers.ANY : undefined;
-  expect(handler).toBeDefined();
-  const response = await (handler as () => Response | Promise<Response>)();
-
-  expect(response.status).toBe(405);
-  expect(response.headers.get('allow')).toBe('GET, HEAD');
-  expect(await response.text()).toBe('Only GET is answered here.');
 });

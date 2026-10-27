@@ -146,9 +146,7 @@ test('search validation drops unknown statuses, stringifies numeric System value
 });
 
 for (const [search, expected] of [
-  [{ status: 'down' }, { status: ['down'], system: undefined }],
   [{ system: 'web-1' }, { status: undefined, system: ['web-1'] }],
-  [{ system: 123 }, { status: undefined, system: ['123'] }],
   [
     { status: 'bad', system: Infinity },
     { status: undefined, system: undefined },

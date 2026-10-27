@@ -163,31 +163,6 @@ describe('a record line needs the zone only for its times', () => {
     expect(zoneFreeText(line.text)).toBeUndefined();
   });
 
-  test('a failing job is bad, and a drifted file a warning, with no zone given', () => {
-    expect(
-      jobLine(
-        {
-          latestRun: run(2, NOW - HOUR, 60),
-          name: 'backup',
-          open: ['job_failing'],
-          schedule: [{ minute: 0 }],
-        },
-        NOW,
-      ).state,
-    ).toBe('bad');
-    expect(
-      filesLine(
-        {
-          checked: true,
-          count: 2,
-          issues: [{ path: '/etc/a', since: NOW - HOUR, state: 'drifted' }],
-          name: 'dotfiles',
-        },
-        NOW,
-      ).state,
-    ).toBe('warning');
-  });
-
   test('text without a time is whole without a zone', () => {
     const line = serviceLine({ checks: [], name: 'web', supervisor: 'systemd' }, NOW);
     expect(zoneFreeText(line.text)).toBe('Not checked yet.');

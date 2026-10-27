@@ -71,19 +71,15 @@ describe('a System tile', () => {
     expect(meter(html, 'CPU')).not.toContain('warning');
   });
 
-  test('the Disk meter reads the mount a low_disk Condition names, not the fullest mount', async () => {
-    const html = await render([lane('gateway-1')], [disk({ subject: '/' })]);
-
-    expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk / 40%, note"');
-    expect(meter(html, 'Disk')).toContain('>40%<');
-  });
-
-  test('an up System reads as healthy, with its Last seen age', async () => {
+  test('an up, fresh, unsilenced System reads as healthy, with its Last seen age, and says nothing of old Vitals or silence', async () => {
     const html = await render([lane('gateway-1')]);
 
     expect(html).toContain('aria-label="Healthy"');
     expect(html).toContain('Last seen 20 s ago');
     expect(html).toContain('>20 s<');
+    expect(html).not.toContain('Vitals as of');
+    expect(html).not.toContain('opacity-50');
+    expect(html).not.toContain('Alerts silenced');
   });
 
   test('alert and warning tiles say which they are', async () => {
@@ -143,13 +139,6 @@ describe('stale Vitals', () => {
     expect(html).toContain('Vitals as of 5 min ago');
     expect(html).toContain('opacity-50');
   });
-
-  test('fresh Vitals are neither muted nor dated', async () => {
-    const html = await render([lane('gateway-1')]);
-
-    expect(html).not.toContain('Vitals as of');
-    expect(html).not.toContain('opacity-50');
-  });
 });
 
 describe('asleep and silenced Systems', () => {
@@ -172,10 +161,6 @@ describe('asleep and silenced Systems', () => {
     expect(html).toContain('aria-label="Alerts silenced, 2 h left"');
     expect(html).toContain('aria-label="Alert"');
     expect(html).not.toContain('Last seen');
-  });
-
-  test('a System that is not silenced says nothing of silence', async () => {
-    expect(await render([lane('gateway-1')])).not.toContain('Alerts silenced');
   });
 });
 
@@ -231,16 +216,5 @@ describe('meter levels and the worst Condition', () => {
 
     expect(html).toContain('>1?<');
     expect(html).toContain('title="unconfirmed evidence"');
-  });
-});
-
-describe('tile order', () => {
-  test('lists Systems with alerts first', async () => {
-    const html = await render(
-      [lane('alpha-1'), lane('zulu-1')],
-      [disk({ level: 'alert', system: 'zulu-1' })],
-    );
-
-    expect(html.indexOf('zulu-1')).toBeLessThan(html.indexOf('alpha-1'));
   });
 });

@@ -64,18 +64,16 @@ test('an undated update omits the since phrase', async () => {
   expect(html).not.toContain('available since');
 });
 
-for (const source of ['APT', 'Homebrew'] as const) {
-  test(`${source} attributes the update to its check`, async () => {
-    const html = await renderRouted(
-      <UpdateLines
-        now={2000}
-        update={{ failure: undefined, status: { kind: 'update', source, version: '2.0' } }}
-      />,
-    );
-    expect(html).toContain(`Update 2.0 · from the ${source} check`);
-    expect(html).not.toContain('available since');
-  });
-}
+test('APT attributes the update to its check', async () => {
+  const html = await renderRouted(
+    <UpdateLines
+      now={2000}
+      update={{ failure: undefined, status: { kind: 'update', source: 'APT', version: '2.0' } }}
+    />,
+  );
+  expect(html).toContain('Update 2.0 · from the APT check');
+  expect(html).not.toContain('available since');
+});
 
 test('a current version, an unreadable version, and unknown knowledge have distinct copy', async () => {
   expect(

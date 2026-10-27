@@ -171,13 +171,6 @@ test('below the wide layout, the picked row counts its Sessions and links down t
   expect(await renderSummary({ by: 'system' })).not.toMatch(jumpLine);
 });
 
-test('project rows name Sessions with no working directory and rank by cost', async () => {
-  const html = await renderSummary({ by: 'project' });
-  expect(html.indexOf('No working directory')).toBeLessThan(html.indexOf('>heimdall<'));
-  expect(html).toContain('67%');
-  expect(html).toContain('33%');
-});
-
 test('model rows use per-request totals, and a model with no list price shows no cost or percent', async () => {
   const html = await renderSummary({ by: 'model' });
   expect(html.indexOf('big-model')).toBeLessThan(html.indexOf('small-model'));

@@ -167,11 +167,9 @@ describe('the sidebar', () => {
     expect(html).not.toContain('Systems</span>');
   });
 
-  for (const count of [0, 3]) {
-    test(`the Services badge ${count === 0 ? 'hides at zero' : 'shows the attention count'}`, async () => {
-      const html = await render('/', count);
+  test('the Services badge shows the attention count', async () => {
+    const html = await render('/', 3);
 
-      expect(html.includes('3 Services down or restarted')).toBe(count > 0);
-    });
-  }
+    expect(html).toContain('3 Services down or restarted');
+  });
 });

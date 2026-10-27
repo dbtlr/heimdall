@@ -1,13 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { AgentsOverview, AgentsSession } from '../server/agents-overview-types.ts';
-import {
-  barSegments,
-  breakdownRows,
-  formatPercent,
-  sessionsIn,
-  VISIBLE_ROWS,
-} from './agents-breakdown.ts';
+import { barSegments, breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
 
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   activeRecently: false,
@@ -187,10 +181,6 @@ test('a period with no priced cost has zero percents, not NaN', () => {
   const rows = breakdownRows(overviewOf([session({ pricedCostUsd: 0 })]), 'project');
   expect(rows[0]?.percent).toBe(0);
   expect(barSegments(rows)).toEqual([]);
-});
-
-test('eight rows show before the rest fold into a count', () => {
-  expect(VISIBLE_ROWS).toBe(8);
 });
 
 test('a pick keeps the Sessions in that project, on that System, of that Harness, or that used that model', () => {

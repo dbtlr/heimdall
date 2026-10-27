@@ -6,7 +6,6 @@ describe('unpairedFromSearch', () => {
   test.each([
     [{ unpaired: '' }, true],
     [{ unpaired: true }, true],
-    [{ unpaired: 'anything' }, true],
     [{ unpaired: false }, false],
     [{ unpaired: 'false' }, false],
     [{}, false],

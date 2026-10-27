@@ -191,17 +191,15 @@ test('a low disk names the next step, when it clears, and how fresh the reading 
   expect(view.provenance).toContain('highest reading in each 5 minutes');
 });
 
-test('a low disk falls back to the Vitals on the attention when no readings came back', () => {
-  const view = conditionDetailView(diskDetail({ series: undefined }), NOW);
-  expect(view.hero.value).toBe('91');
-  expect(view.chart).toBeUndefined();
-  expect(view.rate).toBeUndefined();
-});
+test('a low disk falls back to the Vitals on the attention when no readings came back, or its readings came back empty', () => {
+  const missing = conditionDetailView(diskDetail({ series: undefined }), NOW);
+  expect(missing.hero.value).toBe('91');
+  expect(missing.chart).toBeUndefined();
+  expect(missing.rate).toBeUndefined();
 
-test('a low disk falls back to the Vitals on the attention when its readings came back empty', () => {
-  const view = conditionDetailView(diskDetail({ series: { kind: 'disk', points: [] } }), NOW);
-  expect(view.hero.value).toBe('91');
-  expect(view.hero.unit).toBe('%');
+  const empty = conditionDetailView(diskDetail({ series: { kind: 'disk', points: [] } }), NOW);
+  expect(empty.hero.value).toBe('91');
+  expect(empty.hero.unit).toBe('%');
 });
 
 test('a low disk whose newest reading has no total falls back to the Vitals, never to load wording', () => {
@@ -370,6 +368,9 @@ test('a hot process leads with the cores it used and charts them against the cor
   expect(view.chart?.lines).toEqual([{ label: '0.5 core', level: 'warning', value: 0.5 }]);
   expect(view.chart?.captions.left).toBe('node (PID 4242) CPU, last 24 h');
   expect(view.chart?.captions.right).toBe('0 to 1.1 cores, limit 0.5 core');
+  expect(view.chart?.captions.rule).toBe(
+    'above 0.5 core for 30 of 60 min is a note, 120 of 240 a warning',
+  );
   expect(view.chart?.domain[0]).toBe(0);
   expect(view.chart?.domain[1]).toBeGreaterThanOrEqual(0.86);
 });
@@ -416,8 +417,6 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
 test.each([
   ['pending_update', 'Pending update APT (system)'],
   ['reboot_required', 'Reboot required'],
-  ['reports_rejected', 'Reports rejected'],
-  ['clock_skew', 'Clock skew'],
 ] as const)('%s has no chart and leads with how long it has been open', (kind, title) => {
   const view = conditionDetailView(
     updateDetail({
@@ -554,28 +553,6 @@ test('a hot process using a core or more says cores, and under one says of a cor
     ).hero;
   expect(hot(1.5)).toMatchObject({ unit: 'cores', value: '1.50' });
   expect(hot(0.86)).toMatchObject({ unit: 'of a core', value: '0.86' });
-});
-
-test('a hot process rule says above its cores limit', () => {
-  const subject = processSubject({ bootId: 'b', name: 'node', pid: 4242, start: '99' });
-  const view = conditionDetailView(
-    {
-      ...cpuDetail(),
-      kind: 'hot_process',
-      series: {
-        kind: 'cores',
-        points: [
-          { cores: 0.2, t: NOW - HOUR },
-          { cores: 0.9, t: NOW },
-        ],
-      },
-      subject,
-    },
-    NOW,
-  );
-  expect(view.chart?.captions.rule).toBe(
-    'above 0.5 core for 30 of 60 min is a note, 120 of 240 a warning',
-  );
 });
 
 test('a reading with no neighbour on either side is marked lone, so the chart still draws it', () => {

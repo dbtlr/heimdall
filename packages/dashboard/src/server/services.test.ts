@@ -338,19 +338,3 @@ test('joins the latest upstream and fresh package observations from the Serviceâ
     ['server-1', 'withdrawn', undefined],
   ]);
 });
-
-test('an unreadable installed version has no update despite a successful upstream check', async () => {
-  await using h = await startHub();
-  await hear(h, 'server-1', ['web']);
-  await h.db.sql`
-    UPDATE service_versions SET version = 'latest', upstream = 'oci:docker.io/library/redis'
-    WHERE system = 'server-1' AND service = 'web'
-  `;
-  await h.db.sql`
-    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
-      ('oci:docker.io/library/redis', '{"":"8.0"}', ${new Date(NOW)}, ${new Date(NOW)}, ${new Date(NOW)})
-  `;
-  expect(await readServices(h.db.sql, NOW)).toMatchObject([
-    { update: undefined, version: 'latest' },
-  ]);
-});

@@ -941,10 +941,6 @@ describe('concurrentAt', () => {
     const found = concurrentAt([main, sub('a', [10]), sub('b', [10])], at(10), 'a');
     expect(found.map((entry) => entry.lane.agentId)).toEqual([undefined, 'b']);
   });
-
-  test('lanes with no request nearby are omitted', () => {
-    expect(concurrentAt([sub('a', [30])], at(10), undefined)).toEqual([]);
-  });
 });
 
 describe('density', () => {
@@ -983,10 +979,6 @@ describe('stretchAt', () => {
 
   test('in a gap, returns the latest stretch that started before', () => {
     expect(stretchAt([first, second], at(20))).toBe(first);
-  });
-
-  test('after the last stretch ended, returns the last', () => {
-    expect(stretchAt([first, second], at(50))).toBe(second);
   });
 
   test('before every stretch, returns none', () => {

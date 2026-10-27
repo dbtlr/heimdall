@@ -158,19 +158,18 @@ const neverChecked = (set: 'checks' | 'runs') =>
   attention({ kind: 'checks_missing', set }, { checkedAt: undefined, evidence: 'old' });
 
 describe('names and marks', () => {
-  test('keeps a stored level when its evidence becomes old or unknown', () => {
+  test("an item's mark is its stored level whatever its evidence; only items without a Hub Condition are unknown", () => {
     const item = { ...lowDisk(undefined), level: 'alert' as const };
     expect(attentionMark(item)).toBe('alert');
     expect(attentionMark({ ...item, evidence: 'old' })).toBe('alert');
     expect(attentionMark({ ...item, evidence: 'unknown' })).toBe('alert');
     expect(attentionMark({ ...item, level: 'note' })).toBe('note');
-  });
-
-  test('Condition kinds keep their names and the two dashboard-only kinds get theirs', () => {
-    expect(ATTENTION_NAMES.drift).toBe('Drift');
-    expect(ATTENTION_NAMES.system_stale).toBe('Stale System');
-    expect(ATTENTION_NAMES.file_unreadable).toBe('File unreadable');
-    expect(ATTENTION_NAMES.checks_missing).toBe('Checks missing');
+    expect(attentionMark(service('systemd', 'caddy.service'))).toBe('alert');
+    expect(attentionMark(failing('launchd', 'x'))).toBe('alert');
+    expect(attentionMark(drift())).toBe('warning');
+    expect(attentionMark(attention(DRIFT, { evidence: 'old' }))).toBe('warning');
+    expect(attentionMark(unreadable())).toBe('unknown');
+    expect(attentionMark(missing('runs'))).toBe('unknown');
   });
 
   test('only current evidence confirms an item', () => {
@@ -182,18 +181,6 @@ describe('names and marks', () => {
   test('file_unreadable and checks_missing are never confirmed', () => {
     expect(isConfirmed(unreadable())).toBe(false);
     expect(isConfirmed(missing('checks'))).toBe(false);
-  });
-
-  test('an item takes its stored Condition level as its mark', () => {
-    expect(attentionMark(service('systemd', 'caddy.service'))).toBe('alert');
-    expect(attentionMark(failing('launchd', 'x'))).toBe('alert');
-    expect(attentionMark(drift())).toBe('warning');
-  });
-
-  test('only evidence without a Hub Condition is marked unknown', () => {
-    expect(attentionMark(attention(DRIFT, { evidence: 'old' }))).toBe('warning');
-    expect(attentionMark(unreadable())).toBe('unknown');
-    expect(attentionMark(missing('runs'))).toBe('unknown');
   });
 });
 
@@ -719,14 +706,11 @@ describe('nextSteps: service_down', () => {
     ]);
   });
 
-  test('launchd label', () => {
+  test('launchd label, and the steps say how to reach a LaunchDaemon', () => {
     expect(commands(service('launchd', 'com.example.caddy'))).toEqual([
       'launchctl print gui/$(id -u)/com.example.caddy',
       'launchctl kickstart gui/$(id -u)/com.example.caddy',
     ]);
-  });
-
-  test('launchd steps say how to reach a LaunchDaemon', () => {
     expect(nextSteps(service('launchd', 'com.example.caddy')).steps[0]?.text).toContain(
       'For a LaunchDaemon, use sudo and system/ in place of gui/$(id -u)/.',
     );

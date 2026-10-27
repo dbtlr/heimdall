@@ -25,10 +25,12 @@ const invoke = async (
   argv: string[],
   {
     home,
+    idleTimeout,
     loadServer = () => Promise.resolve(echo),
     whileServing,
   }: {
     home: string;
+    idleTimeout?: number;
     loadServer?: () => Promise<BuiltServer>;
     whileServing?: (url: URL) => Promise<void>;
   },
@@ -57,7 +59,7 @@ const invoke = async (
   const runnerExitCode = process.exitCode;
   let code: number;
   try {
-    code = await createApp({ loadServer }).run({
+    code = await createApp({ idleTimeout, loadServer }).run({
       host: { argv, cwd: home, env: { HOME: home }, stderr, stdout },
       signal: controller.signal,
     });
@@ -128,19 +130,22 @@ test('serve listens on the port in dashboard.toml and answers with the built app
   });
 });
 
-test('serve keeps a slow page request open beyond the default HTTP idle timeout', async () => {
+// Bun checks idle sockets about every 4 seconds, so a 1 second timeout cuts a
+// request that has waited 6 seconds off after about 4.
+test('serve gives the server its idle timeout, which cuts off a request slower than it', async () => {
   await withHome(async (home) => {
     let body: string | undefined;
     let failure: string | undefined;
     const slow: BuiltServer = {
       fetch: async () => {
-        await Bun.sleep(21_000);
+        await Bun.sleep(6000);
         return new Response('served slow overview');
       },
     };
 
     const { code } = await invoke(['serve', '--port', '0'], {
       home,
+      idleTimeout: 1,
       loadServer: () => Promise.resolve(slow),
       whileServing: async (url) => {
         try {
@@ -151,11 +156,11 @@ test('serve keeps a slow page request open beyond the default HTTP idle timeout'
       },
     });
 
-    expect(failure).toBeUndefined();
-    expect(body).toBe('served slow overview');
+    expect(body).toBeUndefined();
+    expect(failure).toContain('socket connection was closed');
     expect(code).toBe(130);
   });
-}, 35_000);
+}, 15_000);
 
 test('serve without a built app says how to build it, and exits 1', async () => {
   await withHome(async (home) => {

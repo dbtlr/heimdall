@@ -417,31 +417,6 @@ describe('readSessionView', () => {
     expect(found.processes.map(({ project }) => project)).toEqual(['api']);
   });
 
-  test('names a process by its repository from the rollups too', async () => {
-    await using h = await start();
-    await addVitals(h.db.sql, 'server-1', -2 * 86_400, 10);
-    await addProcess(h.db.sql, {
-      cpuCores: 2,
-      cwd: '/srv/trees/feature',
-      end: -86_400 + 7200,
-      pid: 10,
-      readings: 'rollups',
-      repository: '/srv/work/api',
-      seenFrom: -86_400,
-      seenTo: -86_400 + 7200,
-      start: -86_400 - 3600,
-      system: 'server-1',
-    });
-    await addSession(h.db.sql, {
-      id: 's1',
-      lastCwd: '/srv/trees/feature',
-      requests: [-2 * 86_400, -86_400 + 600, -86_400 + 1200, 0],
-      system: 'server-1',
-    });
-
-    expect((await view(h)).processes.map(({ project }) => project)).toEqual(['api']);
-  });
-
   test('names a Session outside any matched repository by its working directory', async () => {
     await using h = await start();
     await addSession(h.db.sql, {
@@ -580,8 +555,9 @@ describe('readSessionView', () => {
 
   test('bins the rollups of a long Session to the width that keeps it within 90 buckets', async () => {
     await using h = await start();
-    for (let t = -3 * 86_400; t <= 0; t += 300) {
-      // oxlint-disable-next-line no-await-in-loop -- 865 fixture rows, in order.
+    // The first hour's 12 rollups, then one at the end of the Session.
+    for (const t of [...Array.from({ length: 12 }, (_, i) => -3 * 86_400 + i * 300), 0]) {
+      // oxlint-disable-next-line no-await-in-loop -- 13 fixture rows, in order.
       await addVitals(h.db.sql, 'server-1', t, t === -3 * 86_400 ? 10 : 20);
     }
     await h.db.sql`DELETE FROM vitals_samples`;
@@ -599,15 +575,16 @@ describe('readSessionView', () => {
     });
   });
 
-  test('bins the rollup cores of a process over the same width', async () => {
+  test('bins the rollup cores of a process over the same width, and names it by its repository', async () => {
     await using h = await start();
     await addVitals(h.db.sql, 'server-1', -2 * 86_400, 10);
     await addProcess(h.db.sql, {
       cpuCores: 2,
-      cwd: '/srv/work/api',
+      cwd: '/srv/trees/feature',
       end: -86_400 + 7200,
       pid: 10,
       readings: 'rollups',
+      repository: '/srv/work/api',
       seenFrom: -86_400,
       seenTo: -86_400 + 7200,
       start: -86_400 - 3600,
@@ -615,12 +592,14 @@ describe('readSessionView', () => {
     });
     await addSession(h.db.sql, {
       id: 's1',
-      lastCwd: '/srv/work/api',
+      lastCwd: '/srv/trees/feature',
       requests: [-2 * 86_400, -86_400 + 600, -86_400 + 1200, 0],
       system: 'server-1',
     });
 
     const { bucketMs, processes } = await view(h);
+
+    expect(processes.map(({ project }) => project)).toEqual(['api']);
 
     expect(bucketMs).toBe(HOUR);
     const points = processes[0]?.points ?? [];

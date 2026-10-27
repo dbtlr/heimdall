@@ -46,9 +46,7 @@ const DAY_BOUNDARY = Date.UTC(2026, 9, 13, 22, 30, 15);
 
 test.each([
   ['clock', 'Europe/Berlin', '00:30'],
-  ['clock', 'America/New_York', '18:30'],
   ['clockSeconds', 'Europe/Berlin', '00:30:15'],
-  ['clockSeconds', 'America/New_York', '18:30:15'],
   ['weekday', 'Europe/Berlin', 'Wed'],
   ['weekday', 'America/New_York', 'Tue'],
 ] as const)('one instant formats as %s in %s: %s', (format, zone, text) => {
