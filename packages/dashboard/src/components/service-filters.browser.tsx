@@ -98,30 +98,27 @@ async function run() {
     assert(!dialog.open, 'Sheet starts closed');
     click('Filter');
     assert(dialog.open, 'Filter opens the native modal');
-    click('Down, 1 Services');
-    assert(
-      button('Down, 1 Services').getAttribute('aria-pressed') === 'true',
-      'Chip updates draft',
-    );
-    button('Show 1 Services');
+    click('Down, 1 Service');
+    assert(button('Down, 1 Service').getAttribute('aria-pressed') === 'true', 'Chip updates draft');
+    button('Show 1 Service');
     assert(url() === '/services', 'Draft leaves URL unchanged');
     dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
     await settle();
     assert(!dialog.open && url() === '/services', 'Escape discards draft');
     click('Filter');
     assert(
-      button('Down, 1 Services').getAttribute('aria-pressed') === 'false',
+      button('Down, 1 Service').getAttribute('aria-pressed') === 'false',
       'Reopen resets discarded draft',
     );
     button('Show 2 Services');
-    click('Up, 1 Services');
+    click('Up, 1 Service');
     dialog.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: -1, clientY: -1 }));
     await settle();
     assert(!dialog.open && url() === '/services', 'Backdrop discards draft');
     click('Filter');
-    click('Down, 1 Services');
-    click('alpha, 1 Services');
-    click('Show 1 Services');
+    click('Down, 1 Service');
+    click('alpha, 1 Service');
+    click('Show 1 Service');
     await settle();
     assert(!dialog.open, 'Show closes sheet');
     assert(
@@ -131,11 +128,11 @@ async function run() {
     );
     click('Filter');
     assert(
-      button('Down, 1 Services').getAttribute('aria-pressed') === 'true',
+      button('Down, 1 Service').getAttribute('aria-pressed') === 'true',
       'Reopen reads applied status',
     );
     assert(
-      button('alpha, 1 Services').getAttribute('aria-pressed') === 'true',
+      button('alpha, 1 Service').getAttribute('aria-pressed') === 'true',
       'Reopen reads applied System',
     );
     click('Clear all');
@@ -146,8 +143,8 @@ async function run() {
     assert(url() === '/services', 'Applying Clear all omits both URL params');
     const clear = async (action: string) => {
       click('Filter');
-      click('Down, 1 Services');
-      click('Show 1 Services');
+      click('Down, 1 Service');
+      click('Show 1 Service');
       await settle();
       click(action);
       await settle();
