@@ -59,16 +59,68 @@ const verdictOf = (
   return made.length > 0 && made.every((c) => c.state === 'up') ? 'clear' : 'unknown';
 };
 
+// What one System's Service down is judged on, as read under its row lock.
+export type ServiceDownFacts = {
+  // The checks of the services part, none when the Collector sent none or one
+  // the Hub cannot read.
+  checks: readonly ServiceCheck[];
+  // The Services the Hub mirrors a record for.
+  mirrored: readonly string[];
+  // The Services whose Service down is open.
+  open: readonly string[];
+  // Whether the System's records are over budget, so the Hub cannot tell which
+  // Services it has.
+  recordsOverBudget: boolean;
+  // The System-clock time with 2 minutes of awake samples after it, or
+  // undefined while the System has taken fewer.
+  sampleCutoff: number | undefined;
+  // Whether any service record is unreadable.
+  unreadable: boolean;
+};
+
+// Judges one System's Service down: for each Service, whether to raise its
+// Condition with a reason (or update the open one's reason) or clear it. A
+// Service left out stays as it is. It is one Condition per Service, whatever
+// checks it has. Only a Service the Hub mirrors a record for is judged, and
+// nothing is while the records are over budget. A check has failed for long
+// enough once the System took samples for that long since its `since`, 15
+// seconds each; both are on the System's clock, so neither the Hub's clock nor
+// the time the System spent silent or asleep counts, and a System whose clock
+// runs ahead is still judged. A Service with no record left, which is how a
+// forgotten record looks, is cleared, even while the services part is over
+// budget, but not while any service record is unreadable, since that record
+// may be the Service.
+export const judgeServiceDown = (
+  facts: ServiceDownFacts,
+): Map<string, Exclude<Verdict, 'unknown'>> => {
+  const judged = new Map<string, Exclude<Verdict, 'unknown'>>();
+  if (facts.recordsOverBudget) {
+    return judged;
+  }
+  const { sampleCutoff } = facts;
+  const failedLongEnough = (check: ServiceCheck) =>
+    sampleCutoff !== undefined && check.since < sampleCutoff;
+  for (const name of facts.mirrored) {
+    const verdict = verdictOf(
+      facts.checks.filter((c) => c.service === name),
+      failedLongEnough,
+    );
+    if (verdict !== 'unknown') {
+      judged.set(name, verdict);
+    }
+  }
+  for (const subject of facts.open) {
+    if (!facts.mirrored.includes(subject) && !facts.unreadable) {
+      judged.set(subject, 'clear');
+    }
+  }
+  return judged;
+};
+
 // Raises and clears one System's Service down under the System's row lock, so
 // it orders with its Reports (ADR-0005), at the time `clock` reads once the
-// lock is held. It is one Condition per Service, whatever checks it has, with
-// the Service's name as subject. Only a Service the Hub mirrors a record for is
-// judged. The Condition is left as it is while the System's records are over
-// budget or its checks have no services part, because the Collector sent none
-// or sent it over budget, and for a Service with no readable check. A Service
-// with no record left, which is how a forgotten record looks, is cleared, even
-// while the services part is over budget, but not while any service record is
-// unreadable, since that record may be the Service.
+// lock is held, with the Service's name as subject. The Condition is left as
+// it is while the System has no checks or records stored.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -81,12 +133,7 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
     const [recordSet]: RecordSetRow[] = await tx`
       SELECT over_budget_bytes, unreadable FROM record_sets WHERE system = ${system}
     `;
-    if (
-      held === undefined ||
-      checkSet === undefined ||
-      recordSet === undefined ||
-      recordSet.over_budget_bytes !== null
-    ) {
+    if (held === undefined || checkSet === undefined || recordSet === undefined) {
       return;
     }
     const mirrored: { name: string }[] = await tx`
@@ -96,51 +143,23 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
       SELECT subject FROM conditions
       WHERE system = ${system} AND kind = ${SERVICE_DOWN} AND cleared_at IS NULL
     `;
-    const unreadable = (UnreadableRecordsSchema.safeParse(recordSet.unreadable).data ?? []).some(
-      (ref) => ref.kind === 'service',
-    );
-    // No services part, or one the Hub cannot read, judges no Service.
-    const checks = StoredServicesSchema.safeParse(checkSet.services).data ?? [];
-    // A check has failed for long enough once the System took samples for that
-    // long since its `since`, 15 seconds each. Both are on the System's clock,
-    // so neither the Hub's clock nor the time the System spent silent or asleep
-    // counts. The Hub's clock bounds nothing, since a System whose clock runs
-    // ahead would then never be judged.
-    const sampleCutoff = await sampleCutoffOf(tx, { spanMs: SERVICE_DOWN_AFTER_MS, system });
-    const failedLongEnough = (check: ServiceCheck) =>
-      sampleCutoff !== undefined && check.since < sampleCutoff;
-
-    const verdicts = new Map<string, Verdict>();
-    for (const { name } of mirrored) {
-      verdicts.set(
-        name,
-        verdictOf(
-          checks.filter((c) => c.service === name),
-          failedLongEnough,
-        ),
-      );
-    }
-    // A Service no record names any more is cleared, which is how a forgotten
-    // record clears its Service down.
-    for (const { subject } of open) {
-      if (!verdicts.has(subject)) {
-        verdicts.set(subject, 'clear');
-      }
-    }
+    const judged = judgeServiceDown({
+      checks: StoredServicesSchema.safeParse(checkSet.services).data ?? [],
+      mirrored: mirrored.map((row) => row.name),
+      open: open.map((row) => row.subject),
+      recordsOverBudget: recordSet.over_budget_bytes !== null,
+      sampleCutoff: await sampleCutoffOf(tx, { spanMs: SERVICE_DOWN_AFTER_MS, system }),
+      unreadable: (UnreadableRecordsSchema.safeParse(recordSet.unreadable).data ?? []).some(
+        (ref) => ref.kind === 'service',
+      ),
+    });
 
     const at = new Date(now);
-    for (const [subject, verdict] of verdicts) {
-      // An unreadable record may be any Service, so a forgotten one is not
-      // cleared while one exists; a Service can still be raised or cleared on
-      // its own checks.
-      const forgotten = !mirrored.some((m) => m.name === subject);
-      if (verdict === 'clear' && forgotten && unreadable) {
-        continue;
-      }
+    for (const [subject, verdict] of judged) {
       if (verdict === 'clear') {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await clear(tx, { kind: SERVICE_DOWN, now: at, subject, system });
-      } else if (verdict !== 'unknown') {
+      } else {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await raise(tx, { kind: SERVICE_DOWN, now: at, reason: verdict.raise, subject, system });
       }
