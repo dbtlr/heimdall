@@ -55,6 +55,11 @@ test('the newest 6 show, a Service down links its Condition, and the rest wait b
   expect(html.indexOf('Service down')).toBeLessThan(html.indexOf('Stopped cleanly'));
   expect(html.split('Stopped cleanly')).toHaveLength(6);
   expect(html).toContain('Show 2 older');
+  const times = [...html.matchAll(/<time [^>]*datetime="([^"]+)"/gi)].map(([, at]) => at);
+  expect(times).toEqual([
+    new Date(NOW - HOUR / 2).toISOString(),
+    ...[1, 2, 3, 4, 5].map((hours) => new Date(NOW - hours * HOUR).toISOString()),
+  ]);
 });
 
 test('a cleared Service down reads as cleared', async () => {

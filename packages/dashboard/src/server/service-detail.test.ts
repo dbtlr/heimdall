@@ -242,7 +242,41 @@ for (const kind of ['service_down', 'service_restarted'] as const) {
       system: 'server-1',
     });
     expect(await read(h)).toMatchObject({ recorded: undefined, service: 'web', stops: [] });
-    await h.db.sql`UPDATE conditions SET cleared_at = ${new Date(NOW)} WHERE system = 'server-1'`;
-    expect(await read(h)).toBeUndefined();
   });
 }
+
+test('a forgotten Service with only a cleared Service restarted note is not found', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await addCondition(h.db.sql, {
+    clearedAt: -30,
+    kind: 'service_restarted',
+    level: 'note',
+    raisedAt: -60,
+    subject: 'web',
+    system: 'server-1',
+  });
+  expect(await read(h)).toBeUndefined();
+});
+
+test('a forgotten Service opens while its history holds a cleared Service down, and not after', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await addCondition(h.db.sql, {
+    clearedAt: -89 * 86_400,
+    kind: 'service_down',
+    raisedAt: -89 * 86_400 - 60,
+    subject: 'web',
+    system: 'server-1',
+  });
+  await addCondition(h.db.sql, {
+    clearedAt: -100 * 86_400,
+    kind: 'service_down',
+    raisedAt: -100 * 86_400 - 60,
+    subject: 'gone',
+    system: 'server-1',
+  });
+
+  expect((await read(h))?.downs.map(({ kind }) => kind)).toEqual(['raised', 'cleared']);
+  expect(await read(h, 'server-1', 'gone')).toBeUndefined();
+});

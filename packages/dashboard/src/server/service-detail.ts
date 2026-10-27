@@ -31,7 +31,8 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
 // Service restarted note, and the stops and Service down raises and clears of
 // the last 90 days, from one snapshot.
 // A System that is no longer paired opens as it was left. Undefined for a
-// System that does not exist, and for a Service with no record, stop, or open Service Condition.
+// System that does not exist, and for a Service with no record, stop, Service
+// down in its history, or open Service Condition.
 export const readServiceDetail = (
   sql: SQL,
   { now, service, system }: { now: number; service: string; system: string },
@@ -79,7 +80,12 @@ export const readServiceDetail = (
       `,
     ]);
     const record = records[0]?.record;
-    if (record === undefined && stops.length === 0 && conditions.length === 0) {
+    if (
+      record === undefined &&
+      stops.length === 0 &&
+      conditions.length === 0 &&
+      downs.length === 0
+    ) {
       return undefined;
     }
     const note = conditions.find(({ kind }) => kind === 'service_restarted');
