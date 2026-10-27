@@ -102,16 +102,18 @@ export type FlushResult =
   | { delivered: number; kind: 'drained'; rejected: Rejection[] }
   | { delivered: number; kind: 'failed'; reason: string; rejected: Rejection[] };
 
-// Sends the queued backlog oldest first, within `batchSize` and `maxReportBytes`.
-// The byte cap defaults to the Hub's limit. Delivery stops when the queue is empty
-// or a delivery fails. Every Report carries transcripts as sent (ADR-0013), and
+// Sends the queued backlog oldest first, in Reports of at most `batchSize`
+// samples and `maxReportBytes` bytes, until the queue is empty or a delivery
+// fails. Every Report carries the transcripts section as it stands when the
+// Report is sent (ADR-0013), and
 // the System's time zone when it has one. The pending records, runs, and checks
 // sections are asked for once per flush and ride on the first Report that stays within
 // the Hub's cap. A Report that would exceed it goes without them, and they stay
 // pending, not settled, for a later and smaller Report, such as the end of a
 // backlog. If the Hub refuses a Report carrying them, its samples are sent again
 // without them, so the sections never cost Vitals; only a refused Report without
-// them drops its samples. One 422 settles all carried sections until the hourly refresh.
+// them drops its samples. One 422 settles every section the Report carried, so
+// a section the Hub refuses holds back the other until the hourly refresh.
 export const flushQueue = async ({
   batchSize = MAX_SAMPLES_PER_REPORT,
   identity,
@@ -125,13 +127,14 @@ export const flushQueue = async ({
 }: {
   batchSize?: number;
   identity: ReportIdentity;
+  maxReportBytes?: number;
   now: () => number;
   queue: SampleQueue;
   sections: SectionsSource;
   send: (report: Report) => Promise<Delivery>;
   timeZone: () => string | undefined;
   transcripts: () => TranscriptsSection;
-} & { maxReportBytes?: number }): Promise<FlushResult> => {
+}): Promise<FlushResult> => {
   let delivered = 0;
   let waiting: PendingSections | undefined;
   const rejected: Rejection[] = [];

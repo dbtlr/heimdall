@@ -86,16 +86,19 @@ type BaselineRow = {
 
 type StopRow = SentServiceStop & { id: number; ongoing: number; revision: number };
 
-// Opens observed stops apart from provisioner records (ADR-0011), capped per Service.
-// `maxStopsPerService` bounds retained entries. `now` is the pruning clock in epoch ms.
+// Opens the log in `stateDir`, apart from the records, since a stop is what
+// the Collector observed and not what a provisioner recorded (ADR-0011). `now`
+// is the clock for pruning, in epoch milliseconds, and `maxStopsPerService` how
+// many ended stops it keeps for each Service.
 export const openStopLog = async ({
   maxStopsPerService = MAX_STOPS_PER_SERVICE,
   now = Date.now,
   stateDir,
 }: {
+  maxStopsPerService?: number;
   now?: () => number;
   stateDir: string;
-} & { maxStopsPerService?: number }): Promise<StopLog> => {
+}): Promise<StopLog> => {
   await mkdir(stateDir, { mode: 0o700, recursive: true });
   const db = new Database(join(stateDir, 'stops.sqlite'), { create: true, strict: true });
   try {
