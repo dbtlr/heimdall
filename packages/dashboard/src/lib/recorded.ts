@@ -30,6 +30,13 @@ const STATE_WORDS: Record<string, string> = {
 // A check's detail as the end of a sentence, without a doubled full stop.
 const tail = (detail: string) => (detail === '' ? '' : `: ${detail.replace(/\.$/u, '')}`);
 
+const checkState = (state: string): RecordState => {
+  if (state === 'up') {
+    return 'good';
+  }
+  return state === 'stopped' || state === 'unhealthy' ? 'bad' : 'unknown';
+};
+
 // What a Service's checks say: its supervisor's check first, then whether its
 // health URL answers. Bad when any check found it stopped or unhealthy,
 // unknown when any could not tell. The state needs no time zone, only the
@@ -60,11 +67,11 @@ export const serviceLine = (
       `${under}${check.state === 'up' ? '' : tail(check.detail)}.`,
     ];
   });
-  const states = new Set(service.checks.map(({ state }) => state));
+  const states = new Set(service.checks.map((check) => checkState(check.state)));
   let state: RecordState = 'good';
-  if (states.has('stopped') || states.has('unhealthy')) {
+  if (states.has('bad')) {
     state = 'bad';
-  } else if ([...states].some((found) => found !== 'up')) {
+  } else if (states.has('unknown')) {
     state = 'unknown';
   }
   return {
@@ -72,6 +79,31 @@ export const serviceLine = (
     text: parts.flatMap((part, index) => (index === 0 ? [part] : [[' '], part])).flat(),
   };
 };
+
+// Each of a Service's checks on its own row, for the wide Service page's panel,
+// which names the supervisor separately: the supervisor's check, then its health.
+export const serviceChecks = (
+  service: RecordedService,
+  now: number,
+): { label: string; state: RecordState; text: Phrase }[] =>
+  service.checks.map((check) => {
+    const health = check.check === 'health';
+    const state = checkState(check.state);
+    if (health && state === 'good') {
+      return { label: 'Health', state, text: ['Health URL answers'] };
+    }
+    const words =
+      health && check.state === 'unhealthy' ? 'Failing' : (STATE_WORDS[check.state] ?? check.state);
+    return {
+      label: health ? 'Health' : 'Supervisor',
+      state,
+      text: [
+        `${words} since `,
+        whenAt(check.since, now),
+        state === 'good' ? '' : tail(check.detail),
+      ],
+    };
+  });
 
 const WEEKDAYS = [
   'Sundays',

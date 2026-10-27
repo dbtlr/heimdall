@@ -14,7 +14,8 @@ import type { Recorded } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
-const DOT: Record<RecordState, string> = {
+// The dot that shows how a recorded thing stands.
+export const RECORD_DOT: Record<RecordState, string> = {
   bad: 'bg-status-critical',
   good: 'bg-status-good',
   unknown: 'border-[1.5px] border-muted-foreground',
@@ -35,7 +36,9 @@ function Row({
 }) {
   return (
     <li className="grid grid-cols-[8px_1fr] items-baseline gap-x-3 gap-y-0.5 py-[3px] sm:grid-cols-[8px_minmax(130px,auto)_1fr]">
-      <span className={cn('size-2 self-center rounded-full', state !== undefined && DOT[state])} />
+      <span
+        className={cn('size-2 self-center rounded-full', state !== undefined && RECORD_DOT[state])}
+      />
       <b className="min-w-0 font-semibold wrap-anywhere">
         {system === undefined ? (
           name
