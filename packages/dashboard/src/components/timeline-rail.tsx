@@ -9,6 +9,26 @@ import { ConditionGlyph } from './condition-glyph.tsx';
 import { DateTime, PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
+// The Condition's name and subject, linking to its page.
+export function ConditionLink({
+  entry,
+  system,
+}: {
+  entry: Pick<TimelineEntry, 'id' | 'kind' | 'subject'>;
+  system: string;
+}) {
+  return (
+    <Link
+      className="text-primary"
+      params={{ id: entry.id, name: system }}
+      to="/systems/$name/conditions/$id"
+    >
+      <b className="font-semibold">{CONDITION_KIND_NAMES[entry.kind]}</b>
+      {entry.subject !== '' && ` ${conditionSubject(entry)}`}
+    </Link>
+  );
+}
+
 // An occurrence keeps the Hub's transition order, including backfilled levels.
 export function ConditionOccurrence({
   entry,
@@ -29,14 +49,7 @@ export function ConditionOccurrence({
       <ConditionGlyph className="mt-1" kind={entry.level} />
       <div className="min-w-0">
         <p className="break-words">
-          <Link
-            className="text-primary"
-            params={{ id: entry.id, name: system }}
-            to="/systems/$name/conditions/$id"
-          >
-            <b className="font-semibold">{CONDITION_KIND_NAMES[entry.kind]}</b>
-            {entry.subject !== '' && ` ${conditionSubject(entry)}`}
-          </Link>
+          <ConditionLink entry={entry} system={system} />
         </p>
         <p className="text-muted-foreground">
           <PhraseText phrase={timelineWhen(entry, now)} />

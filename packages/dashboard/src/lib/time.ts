@@ -53,6 +53,10 @@ export const localDayNumber = (t: number, timeZone: string): number => {
 export const formatDate = (t: number, timeZone: string): string =>
   formatter(timeZone, { day: 'numeric', month: 'short' }).format(t);
 
+// The weekday and date as "Sunday 19 Oct".
+export const formatDayHeading = (t: number, timeZone: string): string =>
+  `${formatter(timeZone, { weekday: 'long' }).format(t)} ${formatDate(t, timeZone)}`;
+
 // The local hour (0 to 23) and minute of `t`.
 export const localHourMinute = (t: number, timeZone: string): { hour: number; minute: number } => {
   const [hour = '0', minute = '0'] = formatClock(t, timeZone).split(':');
