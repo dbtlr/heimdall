@@ -176,17 +176,9 @@ export const startTestServer = async () => {
   await testServer();
 };
 
-// Stops the throwaway cluster, if this run started one.
-export const stopTestServer = async () => {
-  const stop = stopThrowawayCluster;
-  stopThrowawayCluster = undefined;
-  server = undefined;
-  await stop?.();
-};
-
 // What a test may change in a migrated database's schema: relations and their
-// columns, privileges, constraints, triggers, functions, view definitions, and
-// database settings, plus the migrations applied.
+// columns, privileges, constraints, triggers and whether they fire, indexes,
+// functions, view definitions, and database settings, plus the migrations applied.
 const SCHEMA_FINGERPRINT = `
   SELECT md5(string_agg(item, '|' ORDER BY item)) AS fingerprint FROM (
     SELECT 'r' || c.oid::regclass::text || c.relkind::text || coalesce(c.relacl::text, '')
@@ -205,7 +197,12 @@ const SCHEMA_FINGERPRINT = `
     SELECT 'k' || conname || conrelid::regclass::text || pg_get_constraintdef(oid) FROM pg_constraint
     WHERE connamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg\\_%')
     UNION ALL
-    SELECT 't' || tgname || tgrelid::regclass::text FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 't' || tgname || tgrelid::regclass::text || tgenabled::text || pg_get_triggerdef(oid)
+    FROM pg_trigger WHERE NOT tgisinternal
+    UNION ALL
+    SELECT 'i' || indexrelid::regclass::text || pg_get_indexdef(indexrelid) FROM pg_index
+    WHERE indrelid IN (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema')
     UNION ALL
     SELECT 'p' || p.oid::regprocedure::text || md5(p.prosrc) || coalesce(p.proacl::text, '')
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -287,6 +284,15 @@ type Shared = Awaited<ReturnType<typeof migrateShared>>;
 let shared: Promise<Shared> | undefined;
 let sharedInUse = false;
 
+// Closes and drops the shared migrated database, if one was made and is reachable.
+const dropShared = async () => {
+  const pending = shared;
+  shared = undefined;
+  const current = await pending?.catch(() => undefined);
+  await current?.own.close();
+  await current?.db[Symbol.asyncDispose]().catch(() => undefined);
+};
+
 // A database migrated to the current schema, holding only what migrating seeds:
 // `await using db = await migratedDatabase()`. Tests reuse one such database,
 // reset between them, since migrating a fresh one costs about a third of a
@@ -305,8 +311,7 @@ export const migratedDatabase = async () => {
     if ((await fingerprint(current.own)) === current.schema) {
       await current.own.unsafe(current.reset);
     } else {
-      await current.own.close();
-      await current.db[Symbol.asyncDispose]();
+      await dropShared();
       shared = migrateShared();
       current = await shared;
     }
@@ -321,10 +326,20 @@ export const migratedDatabase = async () => {
     };
   } catch (error) {
     // The next test starts from a newly migrated database rather than a failed one.
-    shared = undefined;
+    await dropShared();
     sharedInUse = false;
     throw error;
   }
+};
+
+// Stops the throwaway cluster, if this run started one, after dropping the
+// shared migrated database, which a configured server would otherwise keep.
+export const stopTestServer = async () => {
+  await dropShared();
+  const stop = stopThrowawayCluster;
+  stopThrowawayCluster = undefined;
+  server = undefined;
+  await stop?.();
 };
 
 // A fresh, empty database that drops itself when disposed:

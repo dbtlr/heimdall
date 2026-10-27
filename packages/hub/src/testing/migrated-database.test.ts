@@ -56,6 +56,17 @@ test('a migrated database has none of the schema changes the test before it made
   expect(await pairedCount(db.sql)).toBe(1);
 });
 
+test('a migrated database has every trigger migrating made firing, whatever the test before it disabled', async () => {
+  {
+    await using before = await migratedDatabase();
+    await before.sql`ALTER TABLE model_prices DISABLE TRIGGER mark_stale_on_price_change`;
+  }
+  await using db = await migratedDatabase();
+  const [trigger]: { enabled: string }[] = await db.sql`
+    SELECT tgenabled AS enabled FROM pg_trigger WHERE tgname = 'mark_stale_on_price_change'`;
+  expect(trigger?.enabled).toBe('O');
+});
+
 test('two migrated databases in use at once are separate', async () => {
   await using first = await migratedDatabase();
   await using second = await migratedDatabase();
