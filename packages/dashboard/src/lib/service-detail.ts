@@ -131,24 +131,23 @@ export type HistoryRow =
   | { at: number; condition: string; duration: string; kind: 'downRaised'; reason: string }
   | { at: number; condition: string; kind: 'downCleared' };
 
+// `clearedAt` holds when each cleared Service down Condition cleared, by id.
 const downRow = (
   down: ServiceDownTransition,
-  downs: readonly ServiceDownTransition[],
+  clearedAt: ReadonlyMap<string, number>,
   now: number,
 ): HistoryRow => {
   if (down.kind === 'cleared') {
     return { at: down.at, condition: down.condition, kind: 'downCleared' };
   }
-  const cleared = downs.find(
-    (found) => found.kind === 'cleared' && found.condition === down.condition,
-  );
+  const cleared = clearedAt.get(down.condition);
   return {
     at: down.at,
     condition: down.condition,
     duration:
       cleared === undefined
         ? formatSpanShort(Math.max(0, now - down.at))
-        : formatSpan(Math.max(0, cleared.at - down.at)),
+        : formatSpan(Math.max(0, cleared - down.at)),
     kind: 'downRaised',
     reason: down.reason,
   };
@@ -161,14 +160,18 @@ export const historyRows = (
   stops: readonly ServiceStop[],
   downs: readonly ServiceDownTransition[],
   now: number,
-): HistoryRow[] =>
-  [
-    ...downs.toReversed().map((down) => downRow(down, downs, now)),
+): HistoryRow[] => {
+  const clearedAt = new Map(
+    downs.filter(({ kind }) => kind === 'cleared').map(({ at, condition }) => [condition, at]),
+  );
+  return [
+    ...downs.toReversed().map((down) => downRow(down, clearedAt, now)),
     ...stops.map((stop): HistoryRow => {
       const row = stopRow(stop, now);
       return { at: row.stoppedAt, kind: 'stop', stop: row };
     }),
   ].toSorted((a, b) => b.at - a.at);
+};
 
 // The rows the history shows: the newest HISTORY_LIMIT until asked for all,
 // and how many more there are.
