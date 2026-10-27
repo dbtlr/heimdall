@@ -1,21 +1,14 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-import { AppNavigation } from '../components/app-navigation.tsx';
+import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
+import { getServiceAttentionCount } from '../server/services-fn.ts';
 
 import appCss from '../styles.css?url';
 
 export const Route = createRootRoute({
-  component: () => (
-    <>
-      <AutoRefresh />
-      <Outlet />
-      <div className="sm:hidden">
-        <AppNavigation />
-      </div>
-    </>
-  ),
+  component: Root,
   head: () => ({
     // The icons are files in public/ at fixed paths: mobile Safari showed no
     // icon for an SVG inlined in the page, and wants the PNG apple-touch-icon.
@@ -32,6 +25,7 @@ export const Route = createRootRoute({
       { title: 'Heimdall' },
     ],
   }),
+  loader: () => getServiceAttentionCount(),
   shellComponent: ({ children }: { children: ReactNode }) => (
     <html className="dark" lang="en">
       <head>
@@ -50,3 +44,16 @@ export const Route = createRootRoute({
     </html>
   ),
 });
+
+function Root() {
+  const count = Route.useLoaderData();
+  return (
+    <ServiceAttentionCount value={count}>
+      <AutoRefresh />
+      <Outlet />
+      <div className="sm:hidden">
+        <AppNavigation />
+      </div>
+    </ServiceAttentionCount>
+  );
+}

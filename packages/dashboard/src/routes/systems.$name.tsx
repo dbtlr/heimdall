@@ -3,7 +3,6 @@ import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
 import { AppHeader } from '../components/app-header.tsx';
-import { AttentionList } from '../components/attention-list.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
@@ -14,6 +13,7 @@ import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
 import { SystemNavigationHeader } from '../components/system-navigation.tsx';
+import { SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { headerLine } from '../lib/detail.ts';
@@ -143,14 +143,7 @@ function SystemPage() {
         <SilenceBanner now={detail.now} until={detail.silencedUntil} />
         {search.tab === 'now' && (
           <>
-            <h2 className="mb-2 text-lg font-semibold">Open Conditions</h2>
-            {attention.length === 0 ? (
-              <p className="rounded-xl bg-card p-4 text-base">
-                No open Condition or uncertain evidence.
-              </p>
-            ) : (
-              <AttentionList compact items={attention} key={detail.name} now={detail.now} />
-            )}
+            <SystemOpenConditions items={attention} key={detail.name} now={detail.now} />
             <SystemGlance detail={detail} />
           </>
         )}

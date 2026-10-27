@@ -864,3 +864,7 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
     }
   }
 };
+
+// Service restarted notes live on the Services page.
+export const withoutServiceRestartedNotes = (items: readonly Attention[]): Attention[] =>
+  items.filter(({ kind }) => kind !== 'service_restarted');
