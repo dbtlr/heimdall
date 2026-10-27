@@ -2,22 +2,16 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 
 import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
+import { RECORD_DOT } from '../components/recorded-panel.tsx';
 import { ServiceHistory } from '../components/service-history.tsx';
 import { InstalledLine, UpdateLines } from '../components/service-installed.tsx';
+import { ServicePanel } from '../components/service-panel.tsx';
 import { StopsCard } from '../components/service-stops.tsx';
 import { contentFrame } from '../lib/layout.ts';
 import { serviceLine } from '../lib/recorded.ts';
-import type { RecordState } from '../lib/recorded.ts';
 import { supervisorLine } from '../lib/service-detail.ts';
 import { cn } from '../lib/utils.ts';
 import { getServiceDetail } from '../server/service-detail-fn.ts';
-
-const DOT: Record<RecordState, string> = {
-  bad: 'bg-status-critical',
-  good: 'bg-status-good',
-  unknown: 'border-[1.5px] border-muted-foreground',
-  warning: 'bg-status-warning',
-};
 
 export const Route = createFileRoute('/systems/$name_/services/$service')({
   component: ServicePage,
@@ -41,35 +35,47 @@ function ServicePage() {
   return (
     <>
       <AppHeader />
-      <main className={`${contentFrame('narrow')} pb-8`}>
-        <Link className="flex min-h-11 items-center text-base text-primary" to="/services">
-          ‹ Services
-        </Link>
-        <header className="min-w-0">
-          <h1 className="text-2xl leading-tight font-semibold wrap-anywhere">{service}</h1>
-          <p className="text-sm text-muted-foreground wrap-anywhere">
-            <Link className="text-primary" params={{ name: system }} to="/systems/$name">
-              {system}
-            </Link>
-            {where !== undefined && <> · {where}</>}
+      <main
+        className={`${contentFrame('narrow')} pb-8 lg:grid lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-x-7`}
+      >
+        <div className="min-w-0">
+          <Link className="flex min-h-11 items-center text-base text-primary" to="/services">
+            ‹ Services
+          </Link>
+          <header className="min-w-0">
+            <h1 className="text-2xl leading-tight font-semibold wrap-anywhere">{service}</h1>
+            <p className="text-sm text-muted-foreground wrap-anywhere">
+              <Link className="text-primary" params={{ name: system }} to="/systems/$name">
+                {system}
+              </Link>
+              {where !== undefined && <> · {where}</>}
+            </p>
+          </header>
+          {/* On a wide screen the side panel holds these. */}
+          <div className="lg:hidden">
+            {line !== undefined && (
+              <p className="mt-3 flex items-baseline gap-2 text-sm text-muted-foreground">
+                <span
+                  className={cn('size-2 shrink-0 self-center rounded-full', RECORD_DOT[line.state])}
+                />
+                <span className="min-w-0 wrap-anywhere">
+                  <PhraseText phrase={line.text} />
+                </span>
+              </p>
+            )}
+            <InstalledLine installed={installed} />
+            <UpdateLines now={now} update={detail.update} />
+          </div>
+          <StopsCard detail={detail} />
+          <ServiceHistory detail={detail} />
+          <p className="mt-4 text-xs text-muted-foreground">
+            Stop times use the System&apos;s clock. Received times, version changes, and upstream
+            checks use the Hub&apos;s.
           </p>
-        </header>
-        {line !== undefined && (
-          <p className="mt-3 flex items-baseline gap-2 text-sm text-muted-foreground">
-            <span className={cn('size-2 shrink-0 self-center rounded-full', DOT[line.state])} />
-            <span className="min-w-0 wrap-anywhere">
-              <PhraseText phrase={line.text} />
-            </span>
-          </p>
-        )}
-        <InstalledLine installed={installed} />
-        <UpdateLines now={now} update={detail.update} />
-        <StopsCard detail={detail} />
-        <ServiceHistory detail={detail} />
-        <p className="mt-4 text-xs text-muted-foreground">
-          Stop times use the System&apos;s clock. Received times, version changes, and upstream
-          checks use the Hub&apos;s.
-        </p>
+        </div>
+        <aside className="hidden lg:sticky lg:top-6 lg:block">
+          <ServicePanel detail={detail} />
+        </aside>
       </main>
     </>
   );

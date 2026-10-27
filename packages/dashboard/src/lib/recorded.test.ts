@@ -8,6 +8,7 @@ import {
   jobLine,
   provenanceLine,
   scheduleWords,
+  serviceChecks,
   serviceLine,
 } from './recorded.ts';
 
@@ -39,6 +40,10 @@ const supervisor = (state: string, detail = 'ActiveState=active', since = NOW - 
   since,
   state,
 });
+
+// Each check row as written in UTC.
+const checks = (record: Parameters<typeof serviceChecks>[0]) =>
+  serviceChecks(record, NOW).map(({ label, state, text }) => ({ label, state, text: utc(text) }));
 
 describe('serviceLine', () => {
   test('says since when a Service is up, and under which supervisor', () => {
@@ -92,6 +97,55 @@ describe('serviceLine', () => {
         supervisor: 'launchd',
       }),
     ).toEqual({ state: 'unknown', text: 'Unknown since 10:00 (launchd): launchctl exited 112.' });
+  });
+});
+
+describe('serviceChecks', () => {
+  test('gives each check its own row, the supervisor first', () => {
+    const health = { check: 'health', detail: 'HTTP 200', since: NOW - HOUR, state: 'up' };
+    expect(
+      checks({ checks: [supervisor('up'), health], name: 'web', supervisor: 'systemd' }),
+    ).toEqual([
+      { label: 'Supervisor', state: 'good', text: 'Up since 10:00' },
+      { label: 'Health', state: 'good', text: 'Health URL answers' },
+    ]);
+  });
+
+  test('says since when a check went bad, with what it found', () => {
+    const failing = { check: 'health', detail: 'HTTP 503.', since: NOW - HOUR, state: 'unhealthy' };
+    expect(
+      checks({
+        checks: [supervisor('stopped', 'ActiveState=failed', NOW - 10 * MINUTE), failing],
+        name: 'web',
+        supervisor: 'systemd',
+      }),
+    ).toEqual([
+      { label: 'Supervisor', state: 'bad', text: 'Stopped since 15:50: ActiveState=failed' },
+      { label: 'Health', state: 'bad', text: 'Failing since 15:00: HTTP 503' },
+    ]);
+  });
+
+  test('is unknown when the Collector could not tell', () => {
+    expect(
+      checks({
+        checks: [supervisor('unknown', 'launchctl exited 112')],
+        name: 'web',
+        supervisor: 'launchd',
+      }),
+    ).toEqual([
+      { label: 'Supervisor', state: 'unknown', text: 'Unknown since 10:00: launchctl exited 112' },
+    ]);
+  });
+
+  test('names a check of a kind it does not know by its kind', () => {
+    const port = { check: 'port', detail: '', since: NOW - HOUR, state: 'up' };
+    expect(checks({ checks: [port], name: 'web', supervisor: 'systemd' })).toEqual([
+      { label: 'port', state: 'good', text: 'Up since 15:00' },
+    ]);
+  });
+
+  test('has no rows before the first check', () => {
+    expect(checks({ checks: [], name: 'web', supervisor: 'systemd' })).toEqual([]);
   });
 });
 
