@@ -41,7 +41,7 @@ The Hub treats equal upstreams on different Systems as one.
 
 **The Hub checks GitHub, npm, and OCI upstreams on a slow schedule.**
 It queries each distinct upstream at most every few hours, without credentials: GitHub's releases, the npm registry's versions, or a registry's tag list after its anonymous token challenge.
-It keeps the newest release it found per channel and when it last checked.
+It keeps the newest release per channel that its latest successful check listed, and when it last checked.
 A failed check keeps the last answer and records the failure, and a rate-limited answer defers the next check to the reset time it gives.
 The Collector contacts no upstream.
 The Hub uses HTTPS only and contacts the registry host an `oci:` upstream names, which a paired System's provisioner recorded; under the single-person trust model a paired System is trusted, and limiting which hosts the Hub contacts waits for Hardening, as authentication does.
@@ -66,7 +66,7 @@ The pending-update Condition that an APT or Homebrew package raises under ADR-00
 
 **The Hub keeps each version a Service runs.**
 Each change of a Service's installed version is stored with when the Hub first saw it, from the release that adds this, so a Service's history shows when it changed.
-The Hub also keeps when it first found each newer release of an upstream, so a Service's history shows when an update became available; a release found once stays found, whether or not later checks succeed.
+The Hub also keeps when it first found each newer release of an upstream, so a Service's history shows when an update became available. That time stays in the history, while the comparison uses the releases the latest successful check listed, so a release the upstream withdraws stops counting as an update.
 
 **Service restarted notes are shown on the Services page.**
 The dashboard lists them with their Services, and leaves them out of a System's open Conditions and the Fleet page's Can wait.
