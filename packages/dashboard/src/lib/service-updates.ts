@@ -29,14 +29,29 @@ export type ServiceUpdate = {
     | undefined;
 };
 
+// When the Service moved to the upstream of its latest version row: the start
+// of its latest run of rows on that upstream, from rows oldest first.
+export const upstreamSince = (
+  versions: readonly { at: number; upstream: string | null }[],
+): number | undefined => {
+  const latest = versions.at(-1);
+  if (latest === undefined) {
+    return undefined;
+  }
+  const before = versions.findLastIndex((row) => row.upstream !== latest.upstream);
+  return versions[before + 1]?.at;
+};
+
 // A release is compared on the installed version's channel, including releases
-// no longer listed when dating when an update first became available.
+// no longer listed when dating when an update first became available. The date
+// is never before `upstreamSince`, when the Service moved to its upstream.
 export const serviceUpdate = ({
   check,
   now,
   observations = [],
   releases = [],
   upstream,
+  upstreamSince: movedAt,
   version,
 }: {
   check?: UpstreamCheck | undefined;
@@ -44,6 +59,7 @@ export const serviceUpdate = ({
   observations?: readonly UpdateManager[];
   releases?: readonly UpstreamRelease[];
   upstream: string | null;
+  upstreamSince?: number | undefined;
   version: string | null;
 }): ServiceUpdate => {
   let status: ServiceUpdate['status'];
@@ -72,7 +88,7 @@ export const serviceUpdate = ({
           (release) =>
             availableUpdate(version, newestPerChannel([release.version])).kind === 'update',
         )
-        .map(({ at }) => at);
+        .map(({ at }) => (movedAt === undefined ? at : Math.max(at, movedAt)));
       status = {
         ...compared,
         since: times.reduce<number | undefined>(

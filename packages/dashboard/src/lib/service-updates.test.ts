@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 
 import type { UpdateManager } from '@heimdall/schema';
 
-import { serviceUpdate, updatesOf } from './service-updates.ts';
+import { serviceUpdate, updatesOf, upstreamSince } from './service-updates.ts';
 
 const DAY = 86_400_000;
 const NOW = 200 * DAY;
@@ -23,6 +23,39 @@ test('an update dates from the first newer release, even one later withdrawn', (
     failure: undefined,
     status: { kind: 'update', since: NOW - 3 * DAY, source: 'upstream', version: '1.3' },
   });
+});
+
+test('an update dates no earlier than the Service moved to its upstream', () => {
+  expect(
+    serviceUpdate({
+      check: { checkedAt: NOW, failure: null, releases: { '': '8.0' }, succeededAt: NOW },
+      now: NOW,
+      releases: [{ at: NOW - 30 * DAY, version: '8.0' }],
+      upstream: 'oci:docker.io/valkey/valkey',
+      upstreamSince: NOW - DAY,
+      version: '7.2',
+    }).status,
+  ).toEqual({ kind: 'update', since: NOW - DAY, source: 'upstream', version: '8.0' });
+});
+
+test('a Service moved to its upstream when its latest run of rows on that upstream began', () => {
+  const redis = 'oci:docker.io/library/redis';
+  const valkey = 'oci:docker.io/valkey/valkey';
+  expect(upstreamSince([])).toBeUndefined();
+  expect(
+    upstreamSince([
+      { at: NOW - 80 * DAY, upstream: valkey },
+      { at: NOW - 50 * DAY, upstream: redis },
+      { at: NOW - 2 * DAY, upstream: valkey },
+      { at: NOW - DAY, upstream: valkey },
+    ]),
+  ).toBe(NOW - 2 * DAY);
+  expect(
+    upstreamSince([
+      { at: NOW - 80 * DAY, upstream: valkey },
+      { at: NOW - DAY, upstream: valkey },
+    ]),
+  ).toBe(NOW - 80 * DAY);
 });
 
 test('dating an update ignores older releases and releases on other channels', () => {

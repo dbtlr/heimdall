@@ -423,14 +423,14 @@ for (const [upstream, manager, name, source] of [
   });
 }
 
-test('history skips valkey releases found while the Service ran redis', async () => {
+test('valkey releases found while the Service ran redis make no history, and its update dates from the switch', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', { records });
   await h.db.sql`DELETE FROM service_versions`;
   await h.db.sql`
     INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
       ('server-1', 'web', '7.2', 'oci:docker.io/library/redis', ${new Date(NOW - 80 * DAY)}),
-      ('server-1', 'web', '8.0', 'oci:docker.io/valkey/valkey', ${new Date(NOW - DAY)})
+      ('server-1', 'web', '7.2', 'oci:docker.io/valkey/valkey', ${new Date(NOW - DAY)})
   `;
   await h.db.sql`
     INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
@@ -441,5 +441,12 @@ test('history skips valkey releases found while the Service ran redis', async ()
       ('oci:docker.io/valkey/valkey', '7.2.5', ${new Date(NOW - 60 * DAY)}),
       ('oci:docker.io/valkey/valkey', '8.0', ${new Date(NOW - 30 * DAY)})
   `;
-  expect((await read(h))?.updates).toEqual([]);
+  const found = await read(h);
+  expect(found?.updates).toEqual([]);
+  expect(found?.update.status).toEqual({
+    kind: 'update',
+    since: NOW - DAY,
+    source: 'upstream',
+    version: '8.0',
+  });
 });

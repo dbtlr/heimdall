@@ -6,6 +6,7 @@ import {
   isPackageUpstream,
   serviceUpdate,
   updatesOf,
+  upstreamSince,
 } from '../lib/service-updates.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
@@ -174,6 +175,7 @@ export const readServiceDetail = (
         observations: parseUpdateObservations(managers.map(({ observation }) => observation)),
         releases: releaseRows,
         upstream,
+        upstreamSince: upstreamSince(versionRows),
         version: latest?.version ?? null,
       }),
       updates: updatesOf({ now, releases: releaseRows, upstream, versions: versionRows }),
