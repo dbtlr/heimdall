@@ -4,7 +4,7 @@ title: ADR-0021 - The Collector logs Service stops from supervisor facts, and th
 description: "At each Service check the Collector compares the supervisor's own facts with a baseline it keeps per Service and per boot, and logs each stop it finds. The log rides Reports until the Hub settles it, so a stop survives recovery, network gaps, and Collector restarts. The Hub keeps stops for 90 days and raises one note-level Service restarted Condition per Service, cleared after 24 hours with no new stop."
 status: accepted
 created: 2026-10-24
-modified: 2026-10-24
+modified: 2026-10-27
 ---
 
 # The Collector logs Service stops from supervisor facts, and the Hub raises a note
@@ -71,3 +71,4 @@ The evidence of why a Service stopped, such as a provisioner's own health events
 ## Changelog
 
 - 2026-10-24: Clarification. systemd forgets a unit's result and exit status when the unit starts again, so a stop that begins and ends between two checks carries neither, and its note cannot tell a clean stop from a failure (HMD-164). The decision is unchanged.
+- 2026-10-27: Clarification. The dashboard shows the note on the Services page with its Service, not in a System's open Conditions or the Fleet page's Can wait ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The note is unchanged.

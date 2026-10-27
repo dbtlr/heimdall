@@ -4,7 +4,7 @@ title: ADR-0011 - Collectors hold what provisioners record, and Heimdall stores 
 description: "Any provisioner tells a System's Collector what it installed through the Collector's command line, and the Collector keeps those records in its own state, checks each against the System, and reports both to the Hub. Heimdall compares recorded state with observed state on one System; comparing declarations with records belongs to the provisioner, which can read the records the Hub mirrors. Supersedes ADR-0010."
 status: accepted
 created: 2026-10-08
-modified: 2026-10-11
+modified: 2026-10-27
 ---
 
 # Collectors hold what provisioners record, and Heimdall stores no declarations
@@ -60,3 +60,4 @@ The Fleet Inventory schema and the `heimdall-hub inventory` publish ADR-0010 int
 
 - 2026-10-11: Clarification. "Reports Vitals and Sessions" means its Sessions' transcripts, which travel beside Reports; the process-table side of a Session, a Harness process, reaches Reports in M5 ([ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The decision is unchanged.
 - 2026-10-11: Clarification. "The Collector does not observe installed versions" is about `application` records: it does not compare a recorded application's version with the System. Separately, the Collector observes each Harness's installed version from its install files, since Harnesses are what Heimdall itself watches and not something a provisioner recorded ([the spec](../spec.md#installed-harnesses)). The decision is unchanged.
+- 2026-10-27: Clarification. A newer upstream release of a recorded Application is Heimdall's fact, and whether the provisioner's declared version is behind stays the provisioner's check. The Hub, not the Collector, joins an Application's `apt:` or `brew:` upstream with the package observations its System reports, and shows a newer upstream release with the Service ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The decision is unchanged.

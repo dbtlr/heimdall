@@ -37,11 +37,11 @@ A long-running program a provisioner recorded, with its supervisor, its unit, la
 _Avoid_: daemon, process
 
 **installed version**:
-The version of the software a Service runs: its Docker image's tag, which the Collector observes, or otherwise the version of the Application the Service names. A Service with neither has an unknown installed version.
+A Service's installed version is the version of the software it runs: its Docker image's tag, which the Collector observes, or otherwise the version of the Application the Service names. A Service with neither has an unknown installed version.
 _Avoid_: current version, deployed version
 
 **upstream**:
-Where newer releases of a Service's software are published, named by kind: a GitHub repository, an npm package, a container image repository, or an APT or Homebrew package.
+Where newer releases of a Service's software are published, named by kind: a GitHub repository, an npm package, a container image repository, or an APT or Homebrew package. An Application records its upstream in its `source`, and a Docker Service's image names its own.
 _Avoid_: source (a transcript source), origin, registry (one kind of upstream)
 
 **available update**:

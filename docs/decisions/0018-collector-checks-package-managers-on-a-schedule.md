@@ -4,7 +4,7 @@ title: ADR-0018 - The Collector checks package managers on a schedule
 description: "The Collector observes pending package and operating-system updates on an occasional local schedule. M7 starts with existing local metadata, reports unavailable coverage honestly, and leaves room to revisit metadata refresh separately from installing updates."
 status: accepted
 created: 2026-10-16
-modified: 2026-10-16
+modified: 2026-10-27
 ---
 
 # The Collector checks package managers on a schedule
@@ -80,3 +80,7 @@ Some Systems may initially have no usable macOS or Homebrew coverage.
 HMD-118 implements this contract and fixes the exact cadence, configuration, command and parser choices, separate-account execution arrangement, and freshness rules.
 It also defines the additive Report section, update Condition identities, age thresholds, and explicit subject-removal clearing rules.
 Those runtime interfaces are not implemented by this ADR.
+
+## Changelog
+
+- 2026-10-27: Clarification. The Collector's observations still compare nothing with Application records. The Hub reads them to give a Service whose Application names an `apt:` or `brew:` upstream its installed and available versions ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The decision is unchanged.
