@@ -252,15 +252,30 @@ const migrateShared = async () => {
   );
   // Ends the connections an earlier test left open, as dropping a database with
   // FORCE would, then empties and refills the tables as migrating left them,
-  // firing none of the triggers a delete or an insert would, such as the price
-  // table's staleness marks, and so checking no foreign key on the way.
+  // firing none of the triggers a truncate or an insert would, such as the price
+  // table's staleness marks.
   const reset = [
     `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
      WHERE datname = current_database() AND pid <> pg_backend_pid()`,
     'BEGIN',
     'SET LOCAL session_replication_role = replica',
-    // DELETE, since TRUNCATE gives every table new files and costs 20 times as much here.
-    ...tables.map(({ name }) => `DELETE FROM ${name}`),
+    // Truncates only the tables holding rows, since TRUNCATE gives each table it
+    // names new files: across every table it costs about 20 ms, and a DELETE of
+    // the hundreds of thousands of rows some tests store costs seconds.
+    `DO $$
+     DECLARE
+       name text;
+       filled text[] := '{}';
+       holds boolean;
+     BEGIN
+       FOREACH name IN ARRAY ARRAY[${tables.map(({ name }) => `'${name.replaceAll("'", "''")}'`).join(', ')}] LOOP
+         EXECUTE format('SELECT EXISTS (SELECT FROM %s)', name) INTO holds;
+         IF holds THEN filled := filled || name; END IF;
+       END LOOP;
+       IF cardinality(filled) > 0 THEN
+         EXECUTE 'TRUNCATE ' || array_to_string(filled, ', ') || ' CASCADE';
+       END IF;
+     END $$`,
     ...sequences.map(({ name }) => `ALTER SEQUENCE ${name} RESTART`),
     ...seeds.flat(),
     'COMMIT',
