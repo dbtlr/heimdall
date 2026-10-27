@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -8,6 +8,7 @@ Heimdall observes a fleet and the agent work done on it, whatever provisions its
 Condition levels and level-change history follow [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
 Delivery and silences follow [ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md).
 Service stops follow [ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md).
+Installed versions, upstreams, and available updates follow [ADR-0022](decisions/0022-services-show-their-version-and-the-hub-checks-upstreams.md).
 
 ## Language
 
@@ -28,12 +29,24 @@ What a provisioner tells a Collector it installed: an Application, a Service, a 
 _Avoid_: Inventory (retired; it named Fleet's declared snapshot), install record, manifest, declaration
 
 **Application**:
-Software a provisioner installed on a System and recorded with its version. The Collector reports it as recorded and does not observe the version.
+Software a provisioner installed on a System and recorded with its version and, optionally, its upstream. The Collector reports it as recorded and does not observe the version.
 _Avoid_: package, app
 
 **Service**:
-A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, and optionally a loopback health URL. The Collector checks its supervisor state and health; a stopped or unhealthy Service raises the Service down Condition, and any Service stop raises the Service restarted note.
+A long-running program a provisioner recorded, with its supervisor, its unit, label, or container, optionally a loopback health URL, and optionally the Application it runs. The Collector checks its supervisor state and health; a stopped or unhealthy Service raises the Service down Condition, and any Service stop raises the Service restarted note.
 _Avoid_: daemon, process
+
+**installed version**:
+The version of the software a Service runs: its Docker image's tag, which the Collector observes, or otherwise the version of the Application the Service names. A Service with neither has an unknown installed version.
+_Avoid_: current version, deployed version
+
+**upstream**:
+Where newer releases of a Service's software are published, named by kind: a GitHub repository, an npm package, a container image repository, or an APT or Homebrew package.
+_Avoid_: source (a transcript source), origin, registry (one kind of upstream)
+
+**available update**:
+A release on a Service's upstream newer than its installed version on the same channel: a stable version counts only stable releases, and a prerelease also counts newer prereleases with its own label. It is shown with the Service and is never a Condition.
+_Avoid_: outdated, pending update (an operating-system package update), Drift
 
 **Service stop**:
 A time a Service's supervisor shows it stopped, from when it stopped to when it ran again, with the result, exit status, and restart count the supervisor holds. A reboot is not a Service stop, and a failed health check is not one either.
