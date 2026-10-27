@@ -2303,6 +2303,31 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 40,
   },
+  {
+    // What the Hub's latest check of each GitHub, npm, or OCI upstream found
+    // (ADR-0022). `releases` maps each channel's label, '' for unlabelled, to
+    // the newest release the latest successful check listed; null until one
+    // succeeds. A failed check keeps it and records `failure`; a success
+    // clears that. `upstream_releases` keeps when each of those newest
+    // releases was first found, after the upstream withdraws it too.
+    sql: `
+      CREATE TABLE upstream_checks (
+        upstream text PRIMARY KEY,
+        releases jsonb,
+        checked_at timestamptz NOT NULL,
+        succeeded_at timestamptz,
+        failure text,
+        next_check_at timestamptz NOT NULL
+      );
+      CREATE TABLE upstream_releases (
+        upstream text NOT NULL REFERENCES upstream_checks (upstream),
+        version text NOT NULL,
+        first_found_at timestamptz NOT NULL,
+        PRIMARY KEY (upstream, version)
+      );
+    `,
+    version: 41,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -1,4 +1,9 @@
-import { freshUpdateTime, REPORTED_RECORD_SCHEMAS, UpdateManagerSchema } from '@heimdall/schema';
+import {
+  freshUpdateTime,
+  packageMatchesUpstream,
+  REPORTED_RECORD_SCHEMAS,
+  UpdateManagerSchema,
+} from '@heimdall/schema';
 import type {
   ApplicationRecord,
   ServiceCheck,
@@ -66,14 +71,7 @@ const packageVersion = (upstream: string | null, censuses: readonly Census[], no
       continue;
     }
     covered = true;
-    const match = census.versions?.find(({ name }) => {
-      if (manager === 'apt') {
-        const prefix = `${upstream.slice(4)}:`;
-        return name.startsWith(prefix) && name.length > prefix.length;
-      }
-      const formula = upstream.slice(5);
-      return name === `formula:${formula}` || name === `cask:${formula}`;
-    });
+    const match = census.versions?.find(({ name }) => packageMatchesUpstream(upstream, name));
     if (match !== undefined) {
       return { lapsed: false, version: match.version };
     }
