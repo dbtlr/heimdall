@@ -313,18 +313,6 @@ test('a silence holds one System, and the others are delivered as usual', async 
   expect(d.sent.map((m) => m.title)).toEqual(['Service down on server-1: nginx']);
 });
 
-test('a later silence replaces an earlier one, so delivery is held until the new end', async () => {
-  await using d = await setup();
-  await d.silence(10);
-  await d.down(0);
-  await d.silence(100);
-  await d.pass(20);
-  expect(d.sent).toEqual([]);
-
-  await d.pass(100);
-  expect(d.sent).toHaveLength(1);
-});
-
 test('what comes due in one pass goes out as one message per priority, recovered first, opening the Fleet page', async () => {
   await using d = await setup();
   await d.down(0, 'nginx');

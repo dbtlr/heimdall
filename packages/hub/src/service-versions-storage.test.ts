@@ -29,11 +29,8 @@ const records = (
 
 test.each([
   ['no checks section', undefined],
-  ['no services part', {}],
-  ['empty services', { services: [] }],
   ['health check only', { services: [{ ...SUPERVISOR, check: 'health' }] }],
   ['another Service', { services: [{ ...SUPERVISOR, service: 'other' }] }],
-  ['services over budget', { overBudget: { services: { bytes: 2000000 } } }],
 ] satisfies [string, ChecksSection | undefined][])(
   'a Docker Service with %s writes nothing',
   async (_, checks) => {

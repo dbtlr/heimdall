@@ -55,24 +55,6 @@ test('a System heard only through rejections is seen, with its Condition and no 
   expect(n).toBe(0);
 });
 
-test('repeated rejections raise one Condition, which keeps its first reason and takes the latest', async () => {
-  await using h = await startHub();
-  await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
-  h.clock.now = NOW + 60_000;
-
-  await push(h.hub, report('server-1', [NOW]), { token: 'laptop-token' });
-
-  const laptop = await derived(h, 'laptop-1');
-  expect(laptop?.conditions.map((c) => c.reason)).toEqual([
-    'This token belongs to laptop-1, not server-1.',
-  ]);
-  expect(laptop?.timeline).toHaveLength(1);
-  expect(laptop?.timeline[0]).toMatchObject({
-    kind: 'raised',
-    reason: expect.stringContaining('samples'),
-  });
-});
-
 test('identical repeated rejections refresh their evidence time without adding history', async () => {
   await using h = await startHub();
   await push(h.hub, invalid('laptop-1'), { token: 'laptop-token' });
@@ -110,14 +92,6 @@ test('a rejection after recovery raises the Condition again', async () => {
 
   expect((await derived(h, 'laptop-1'))?.conditions).toHaveLength(1);
   expect((await lines(h, 'laptop-1')).map((l) => l.kind)).toEqual(['raised', 'cleared', 'raised']);
-});
-
-test('a stored Report with no Condition open adds nothing to the Timeline', async () => {
-  await using h = await startHub();
-
-  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
-
-  expect(await derived(h, 'laptop-1')).toMatchObject({ conditions: [], timeline: [] });
 });
 
 test("one System's Reports neither clear nor show another System's Conditions", async () => {

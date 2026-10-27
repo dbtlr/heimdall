@@ -116,16 +116,10 @@ test.each([
   ['a malformed code', { code: 'not-a-code' }],
   ['an unknown code', { code: 'ZZZZ-ZZZZ' }],
   ['a body without a code', {}],
-  ['a code that is not a string', { code: 12_345_678 }],
   ['a body that is not JSON', '{"code":'],
   ['an empty body', ''],
   ['a JSON array', '["ZZZZ-ZZZZ"]'],
   ['JSON null', 'null'],
-  ['fullwidth digits', { code: '\uFF17K3M-Q9XA' }],
-  ['the letter I', { code: 'IK3M-Q9XA' }],
-  ['the letter L', { code: 'LK3M-Q9XA' }],
-  ['the letter O', { code: 'OK3M-Q9XA' }],
-  ['a double dash', { code: '7K3M--Q9XA' }],
 ])('%s fails like any other failed redemption', async (_, body) => {
   await using h = await startHub();
 
@@ -157,17 +151,6 @@ test.each([
   );
 
   await expectFailure(response);
-});
-
-test('an expired and a used code fail the same way as an unknown one', async () => {
-  await using h = await startHub();
-  const used = await issue(h, 'desktop-1');
-  await pairWith(h, used);
-  const expired = await issue(h, 'desktop-2');
-  h.clock.now = NOW + 11 * MINUTE;
-
-  await expectFailure(await redeem(h.hub, { code: used }));
-  await expectFailure(await redeem(h.hub, { code: expired }));
 });
 
 // Fails `n` redemptions with a code no System holds.

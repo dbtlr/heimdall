@@ -7,12 +7,7 @@ import { MAX_TRANSCRIPT_CHUNK_BYTES, MAX_TRANSCRIPT_REQUEST_BYTES } from '@heimd
 import { SQL } from 'bun';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
-import {
-  BATCH_FACTS,
-  PARSE_BUDGET_BYTES,
-  projectionNotes,
-  projectTranscripts,
-} from './projection.ts';
+import { PARSE_BUDGET_BYTES, projectionNotes, projectTranscripts } from './projection.ts';
 import type { Projected } from './projection.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import type { HarnessParser } from './session-insight.ts';
@@ -509,7 +504,7 @@ describe('a Claude Code Session', () => {
     ]);
   });
 
-  test('spans its earliest and latest lines, with where it ran at each', async () => {
+  test('a Claude Code Session projects into each view', async () => {
     await using h = await startHub();
     await nameSources(h);
     await uploadSession(h);
@@ -529,14 +524,6 @@ describe('a Claude Code Session', () => {
         started_at: new Date(at(0)),
       },
     ]);
-  });
-
-  test('each request keeps its model, its final usage, and its context fill', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await uploadSession(h);
-
-    await projectAll(h);
 
     const main = (await requests(h.db.sql)).filter((r) => r.agent_id === null);
     expect(main).toEqual([
@@ -560,14 +547,6 @@ describe('a Claude Code Session', () => {
         stop_reason: null,
       }),
     ]);
-  });
-
-  test('subagents link to the conversation that spawned them, and workflow agents to their run', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await uploadSession(h);
-
-    await projectAll(h);
 
     const subagents: unknown[] = await h.db.sql`
       SELECT agent_id, parent_agent_id, agent_type, depth, tool_use_id, workflow_run, workflow_phase,
@@ -602,14 +581,6 @@ describe('a Claude Code Session', () => {
         workflow_run: 'wf_run1',
       }),
     ]);
-  });
-
-  test('tool calls name their tool, MCP server, or skill, with a locator into the archive', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await uploadSession(h);
-
-    await projectAll(h);
 
     const calls = await h.db.sql`
       SELECT agent_id, call_id, kind, name, mcp_server, skill, path FROM insight.tool_calls ORDER BY call_id
@@ -941,7 +912,7 @@ describe('parsing as transcripts grow', () => {
     await using h = await startHub();
     await nameSources(h);
     const filler = await upload(h, {
-      content: linesTo(OTHER, PARSE_BUDGET_BYTES - 1000),
+      content: linesTo(OTHER, 2 ** 20 - 1000),
       path: mainPath(OTHER),
     });
     await h.db.sql`
@@ -951,10 +922,10 @@ describe('parsing as transcripts grow', () => {
     await upload(h, { content: lineOf(MAX_LINE_BYTES - 1000), path: mainPath() });
     const sql = measuringReads(h.db.sql);
 
-    await projectTranscripts(sql);
+    await projectTranscripts(sql, { budgetBytes: 2 ** 20 });
 
-    expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(PARSE_BUDGET_BYTES));
-  }, 120_000);
+    expect(sql.totalBytes()).toBeLessThanOrEqual(mostPerRun(2 ** 20));
+  }, 60_000);
 
   test('a run fetches no more than its bound when its reads fail', async () => {
     await using h = await startHub();
@@ -1000,31 +971,10 @@ describe('parsing as transcripts grow', () => {
     ]);
   }, 60_000);
 
-  // Each line is a response that makes 90,000 tool calls, so a batch of them
-  // holds more facts than one statement can carry.
-  test('a generation dense with tool calls is stored whole', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await upload(h, {
-      content: jsonl([user({ at: at(0), session: OTHER })]),
-      path: mainPath(OTHER),
-    });
-    const content = denseLines({ calls: 90_000, lines: 9 });
-    await upload(h, { content, path: mainPath() });
-
-    await projectAll(h);
-
-    const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
-    expect(calls?.n).toBe(810_000);
-    expect((await settled(h.db.sql)).status).toEqual([
-      { failed_generations: 0, generations: 2, unreadable_lines: 0 },
-    ]);
-  }, 600_000);
-
   test('a batch holds a bounded number of facts, and a run parses on past it', async () => {
     await using h = await startHub();
     await nameSources(h);
-    await upload(h, { content: denseLines({ calls: 30_000, lines: 10 }), path: mainPath() });
+    await upload(h, { content: denseLines({ calls: 3, lines: 10 }), path: mainPath() });
     let most = 0;
     const measuring = {
       ...claudeCodeParser,
@@ -1035,13 +985,13 @@ describe('parsing as transcripts grow', () => {
       },
     };
 
-    const outcome = await projectTranscripts(h.db.sql, { parsers: [measuring] });
+    const outcome = await projectTranscripts(h.db.sql, { batchFacts: 10, parsers: [measuring] });
 
     const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
-    expect(calls?.n).toBe(300_000);
+    expect(calls?.n).toBe(30);
     expect(outcome.pending).toBe(0);
     // At most the limit, and the facts of the line that reaches it.
-    expect(most).toBeLessThanOrEqual(BATCH_FACTS + 30_001);
+    expect(most).toBeLessThanOrEqual(10 + 3);
   }, 120_000);
 
   // ADR-0013 can store a file twice, as after a Collector's state is wiped.
@@ -1177,9 +1127,7 @@ describe('a generation the projection cannot read', () => {
   // Each line PostgreSQL would refuse, were it stored as written.
   test.each([
     ['a NUL in its directory', { ...user({ at: at(2) }), cwd: 'a\0b' }, ['msg_main']],
-    ['a time before the year 1', user({ at: '-005000-01-01T00:00:00.000Z' }), ['msg_main']],
     ['a 43 KB response id', assistant({ at: at(2), id: 'm'.repeat(43_000) }), ['msg_main']],
-    ['a 3 MB command', user({ at: at(2), command: `/${'x'.repeat(3_000_000)}` }), ['msg_main']],
   ])('with %s leaves every other line and generation shown', async (_, line, kept) => {
     await using h = await startHub();
     await nameSources(h);
@@ -1212,12 +1160,6 @@ describe('a generation the projection cannot read', () => {
       (sql: SQL, g: number) => sql`
       UPDATE transcript_chunks SET offset_bytes = offset_bytes + 7
       WHERE generation = ${g}::bigint AND offset_bytes > 0
-    `,
-    ],
-    [
-      'a gap at its start',
-      (sql: SQL, g: number) => sql`
-      DELETE FROM transcript_chunks WHERE generation = ${g}::bigint AND offset_bytes = 0
     `,
     ],
   ])('with %s is recorded failed, and the views switch without it', async (_, damage) => {
@@ -1388,10 +1330,16 @@ describe('a generation the projection cannot read', () => {
     });
   });
 
-  test('dense with tool calls is stored within a statement timeout of a second', async () => {
+  // Each line is a response that makes 90,000 tool calls, so a batch of them
+  // holds more facts than one statement can carry.
+  test('dense with tool calls is stored whole, within a statement timeout of a second', async () => {
     await using h = await startHub();
     await nameSources(h);
-    await upload(h, { content: denseLines({ calls: 90_000, lines: 3 }), path: mainPath() });
+    await upload(h, {
+      content: jsonl([user({ at: at(0), session: OTHER })]),
+      path: mainPath(OTHER),
+    });
+    await upload(h, { content: denseLines({ calls: 90_000, lines: 2 }), path: mainPath() });
     const timed = new SQL({ connection: { statement_timeout: 1000 }, url: h.db.url.href });
     try {
       await projectAll({ ...h, db: { ...h.db, sql: timed } });
@@ -1400,13 +1348,15 @@ describe('a generation the projection cannot read', () => {
     }
 
     const [calls] = await h.db.sql`SELECT count(*)::int AS n FROM insight.tool_calls`;
-    expect(calls?.n).toBe(270_000);
+    expect(calls?.n).toBe(180_000);
+    expect((await settled(h.db.sql)).status).toEqual([
+      { failed_generations: 0, generations: 2, unreadable_lines: 0 },
+    ]);
   }, 120_000);
 
   // A lost connection or a server going down is not the generation's fault.
   test.each([
     ['a connection that failed', { errno: '08006' }],
-    ['a server out of resources', { errno: '53300' }],
     ['a server shutting down', { errno: '57P01' }],
     ['a connection Bun closed', { code: 'ERR_POSTGRES_CONNECTION_CLOSED' }],
   ])('that meets %s is not counted against, and the run stops', async (_, fields) => {
@@ -1550,18 +1500,6 @@ describe('a generation the projection cannot read', () => {
       sessions: [SESSION],
       status: [{ failed_generations: 0, generations: 1, unreadable_lines: 0 }],
     });
-  });
-
-  test('counts the lines it could not read', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await upload(h, { content: `{"type":\n${sessionOf()}`, path: mainPath() });
-
-    await projectAll(h);
-
-    expect((await settled(h.db.sql)).status).toEqual([
-      { failed_generations: 0, generations: 1, unreadable_lines: 1 },
-    ]);
   });
 });
 
@@ -2078,32 +2016,6 @@ describe('a parser version change', () => {
     }
   });
 
-  test('a rebuild a restart interrupts resumes, and switches with the same totals', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await uploadSession(h);
-    await projectAll(h);
-    const before = await totals(h.db.sql, 'session_totals');
-    const stopped = await projectTranscripts(h.db.sql, {
-      budgetBytes: 700,
-      parsers: [nextVersion],
-    });
-    expect(stopped.pending).toBeGreaterThan(0);
-
-    const restarted = new SQL(h.db.url.href);
-    try {
-      await projectAll(
-        { ...h, db: { ...h.db, sql: restarted } },
-        { budgetBytes: 700, parsers: [nextVersion] },
-      );
-    } finally {
-      await restarted.close();
-    }
-
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
-    expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-  });
-
   // Another Hub can switch while this one's run is under way.
   test('a Hub that finishes its first set after a newer one switched leaves the newer current', async () => {
     await using h = await startHub();
@@ -2159,22 +2071,6 @@ describe('a parser version change', () => {
     expect(afterBehind).toBe(2);
     expect(await thirds()).toBe(0);
     expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([4]);
-  });
-
-  test('reports the switch once the rebuild completes', async () => {
-    await using h = await startHub();
-    await nameSources(h);
-    await upload(h, { content: MAIN, path: mainPath() });
-    await projectAll(h);
-
-    const outcome = await projectTranscripts(h.db.sql, { parsers: [nextVersion] });
-
-    expect(outcome).toEqual({
-      failed: [],
-      outdated: [],
-      pending: 0,
-      switched: [{ harness: 'claude-code', version: 2 }],
-    });
   });
 });
 

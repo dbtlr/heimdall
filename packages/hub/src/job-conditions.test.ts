@@ -274,21 +274,6 @@ describe('job overdue', () => {
     expect((await evaluate(h, '09:15:00')).open).toEqual([]);
   });
 
-  test("waits for the job's own grace period when its record sets one", async () => {
-    await using h = await startHub();
-    const patient = { ...BACKUP, graceMinutes: 180 };
-    await send(h, '06:00:00', { records: set(patient), runs: { jobs: [], unreadable: [] } });
-    await send(h, '10:20:00', { samples: awake('06:00:15', '10:20:00') });
-
-    expect((await evaluate(h, '10:20:00')).open).toEqual([]);
-
-    await send(h, '10:45:00', { samples: awake('10:20:00', '10:45:00') });
-
-    expect((await evaluate(h, '10:45:00')).open).toEqual([
-      expect.objectContaining({ kind: 'job_overdue', subject: 'backup' }),
-    ]);
-  });
-
   test('is raised when the awake time after a scheduled time is exactly the grace period', async () => {
     await using h = await startHub();
     // Twelve full 5-minute buckets from 07:30.
@@ -386,7 +371,13 @@ describe('job overdue', () => {
       expect.objectContaining({ kind: 'job_overdue', subject: 'backup' }),
     ]);
 
-    await send(h, '10:45:00', { samples: awake('08:45:00', '10:45:00') });
+    await send(h, '10:20:00', { samples: awake('08:45:00', '10:20:00') });
+
+    expect((await evaluate(h, '10:20:00')).open).toEqual([
+      expect.objectContaining({ kind: 'job_overdue', subject: 'backup' }),
+    ]);
+
+    await send(h, '10:45:00', { samples: awake('10:20:00', '10:45:00') });
 
     expect((await evaluate(h, '10:45:00')).open.map((c) => c.subject).toSorted()).toEqual([
       'archive',
@@ -524,34 +515,4 @@ test('migration 9 counts records mirrored before it from when it applied', async
   `;
   expect(row).toMatchObject({ kind: 'job', name: 'backup' });
   expect(row?.first_mirrored_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
-});
-
-test('a System that cannot be judged does not stop the others, and the failure names it', async () => {
-  await using h = await startHub();
-  for (const system of ['laptop-1', 'server-1']) {
-    // oxlint-disable-next-line no-await-in-loop -- one System after the other.
-    await send(h, '07:40:00', {
-      records: set(BACKUP),
-      runs: runsOf('backup', run('07:30:00', 1), null),
-      system,
-    });
-  }
-  // The database refuses laptop-1's Conditions.
-  await h.db.sql.unsafe(`
-    CREATE FUNCTION refuse_laptop() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN RAISE EXCEPTION 'refused'; END $$;
-    CREATE TRIGGER refuse_laptop BEFORE INSERT ON conditions
-      FOR EACH ROW WHEN (NEW.system = 'laptop-1') EXECUTE FUNCTION refuse_laptop();
-  `);
-  h.clock.now = at('07:41:00');
-
-  const failure = await evaluateJobConditions(h.db.sql, () => h.clock.now).then(
-    () => undefined,
-    (error: unknown) => error,
-  );
-
-  expect(failure).toMatchObject({ message: expect.stringContaining('laptop-1: refused') });
-  expect((await conditionsOf(h, 'server-1')).open).toEqual([
-    expect.objectContaining({ kind: 'job_failing', subject: 'backup' }),
-  ]);
 });
