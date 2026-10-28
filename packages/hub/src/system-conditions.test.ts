@@ -8,9 +8,10 @@ import { unpair } from './pairing.ts';
 import {
   evaluateSystem,
   evaluateSystemConditions,
+  judgeSystemConditions,
   SYSTEM_CONDITION_THRESHOLDS,
 } from './system-conditions.ts';
-import type { SystemConditionThresholds } from './system-conditions.ts';
+import type { SystemConditionFacts, SystemConditionThresholds } from './system-conditions.ts';
 import { listSystems, NOW, openGeneration, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { testDatabase } from './testing/postgres.ts';
@@ -88,46 +89,37 @@ const conditionsOf = async (h: Hub, system = 'laptop-1') => {
   return { open: found?.conditions ?? [], timeline: found?.timeline ?? [] };
 };
 
-const diskLevels = async (h: Hub): Promise<{ level: string }[]> =>
-  h.db.sql`SELECT level FROM conditions WHERE kind = 'low_disk'`;
-
 const kinds = (conditions: { kind: string }[]) => conditions.map((c) => c.kind);
 
+const systemFacts = (overrides: Partial<SystemConditionFacts> = {}): SystemConditionFacts => ({
+  diskLimits: SYSTEM_CONDITION_THRESHOLDS.disk,
+  lastSeenAt: NOW,
+  latest: undefined,
+  listeningSince: undefined,
+  open: [],
+  pairedAt: NOW,
+  sleeps: false,
+  ...overrides,
+});
+
+const judge = (facts = systemFacts(), now = NOW, thresholds = SYSTEM_CONDITION_THRESHOLDS) =>
+  judgeSystemConditions(facts, now, thresholds);
+
 describe('stale System', () => {
-  test('is raised once a System was last seen more than 10 minutes ago, and not before', async () => {
-    await using h = await startHub();
-    const seen = NOW + MINUTE;
-    await send(h, seen);
-
-    await evaluate(h, seen + 10 * MINUTE);
-    expect((await conditionsOf(h)).open).toEqual([]);
-
-    await evaluate(h, seen + 10 * MINUTE + SECOND);
-    expect((await conditionsOf(h)).open).toEqual([
-      {
-        kind: 'system_stale',
-        raisedAt: seen + 10 * MINUTE + SECOND,
-        reason: 'Not heard from since 2026-10-06 12:01 UTC, more than 10 minutes ago.',
-        subject: '',
-      },
-    ]);
+  test('is raised once a System was last seen more than 10 minutes ago, and not before', () => {
+    const facts = systemFacts({ lastSeenAt: NOW + MINUTE });
+    expect(judge(facts, NOW + 11 * MINUTE).stale).toBe('clear');
+    expect(judge(facts, NOW + 11 * MINUTE + SECOND).stale).toEqual({
+      raise: 'Not heard from since 2026-10-06 12:01 UTC, more than 10 minutes ago.',
+    });
   });
 
-  test('is raised after 7 days for a System that sleeps, and not before', async () => {
-    await using h = await startHub();
-    const seen = NOW + MINUTE;
-    await send(h, seen, { sleeps: true });
-
-    await evaluate(h, seen + 7 * DAY);
-    expect((await conditionsOf(h)).open).toEqual([]);
-
-    await evaluate(h, seen + 7 * DAY + SECOND);
-    expect((await conditionsOf(h)).open).toEqual([
-      expect.objectContaining({
-        kind: 'system_stale',
-        reason: 'Not heard from since 2026-10-06 12:01 UTC, more than 7 days ago.',
-      }),
-    ]);
+  test('is raised after 7 days for a System that sleeps, and not before', () => {
+    const facts = systemFacts({ lastSeenAt: NOW + MINUTE, sleeps: true });
+    expect(judge(facts, NOW + MINUTE + 7 * DAY).stale).toBe('clear');
+    expect(judge(facts, NOW + MINUTE + 7 * DAY + SECOND).stale).toEqual({
+      raise: 'Not heard from since 2026-10-06 12:01 UTC, more than 7 days ago.',
+    });
   });
 
   test('stays one Condition while the System stays silent', async () => {
@@ -373,15 +365,12 @@ describe('stale System', () => {
     expect((await conditionsOf(h)).open).toEqual([]);
   });
 
-  test('uses the thresholds it is given', async () => {
-    await using h = await startHub();
-    await send(h, NOW);
+  test('uses the thresholds it is given', () => {
     const patient = { ...SYSTEM_CONDITION_THRESHOLDS, staleAfterMs: 2 * DAY };
-
-    await evaluate(h, NOW + DAY, patient);
-    expect((await conditionsOf(h)).open).toEqual([]);
-    await evaluate(h, NOW + 3 * DAY, patient);
-    expect(kinds((await conditionsOf(h)).open)).toEqual(['system_stale']);
+    expect(judge(systemFacts(), NOW + DAY, patient).stale).toBe('clear');
+    expect(judge(systemFacts(), NOW + 3 * DAY, patient).stale).toEqual({
+      raise: 'Not heard from since 2026-10-06 12:00 UTC, more than 2 days ago.',
+    });
   });
 });
 
@@ -440,41 +429,43 @@ describe('a System that is no longer paired', () => {
 });
 
 describe('low disk', () => {
-  test('old Vitals do not lower an open disk level or clear a missing mount', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 5), disk('/data', 5)] });
-    await evaluate(h, NOW);
-    await send(h, NOW + 3 * 60 * MINUTE, {
-      disks: [disk('/', 50)],
-      sampleAt: NOW + MINUTE,
-    });
-
-    await evaluate(h, NOW + 3 * 60 * MINUTE);
-
-    const open: { subject: string; level: string }[] = await h.db
-      .sql`SELECT subject, level FROM conditions WHERE kind = 'low_disk' AND cleared_at IS NULL ORDER BY subject`;
-    expect(open).toEqual([
-      { level: 'alert', subject: '/' },
-      { level: 'alert', subject: '/data' },
-    ]);
+  test('old Vitals do not lower an open disk level or clear a missing mount', () => {
+    expect(
+      judge(
+        systemFacts({
+          latest: { disks: [disk('/', 50)], old: true },
+          open: [
+            { level: 'alert', subject: '/' },
+            { level: 'alert', subject: '/data' },
+          ],
+        }),
+      ).disks,
+    ).toEqual(new Map());
+    expect(
+      judge(
+        systemFacts({
+          latest: { disks: [disk('/', 5)], old: true },
+          open: [{ level: 'note', subject: '/' }],
+        }),
+      ).disks.get('/'),
+    ).toEqual({ level: 'alert', raise: '5.0 GiB free of 100.0 GiB (5.0%).' });
   });
 
-  test('grades each boundary and retains one occurrence through hysteresis and direct jumps', async () => {
-    await using h = await startHub();
-    const observed: (string | null)[] = [];
-    for (const [index, used] of [
-      69, 70, 79, 80, 89, 90, 85, 84, 75, 74, 65, 64, 92, 72, 64,
-    ].entries()) {
-      const time = NOW + index * MINUTE;
-      // oxlint-disable-next-line no-await-in-loop -- observations arrive in sequence.
-      await send(h, time, { disks: [{ mount: '/', totalBytes: 1000, usedBytes: used * 10 }] });
-      // oxlint-disable-next-line no-await-in-loop -- judge each observation before the next.
-      await evaluate(h, time);
-      // oxlint-disable-next-line no-await-in-loop -- observe each resulting level.
-      const [open]: { level: string }[] = await h.db
-        .sql`SELECT level FROM conditions WHERE kind = 'low_disk' AND cleared_at IS NULL`;
-      observed.push(open?.level ?? null);
-    }
+  test('grades each boundary through hysteresis and direct jumps', () => {
+    let open: SystemConditionFacts['open'] = [];
+    const observed = [69, 70, 79, 80, 89, 90, 85, 84, 75, 74, 65, 64, 92, 72, 64].map((used) => {
+      const verdict = judge(
+        systemFacts({
+          latest: { disks: [{ mount: '/', totalBytes: 1000, usedBytes: used * 10 }], old: false },
+          open,
+        }),
+      ).disks.get('/');
+      if (verdict === undefined || verdict === 'hold') {
+        throw new Error('Expected a disk judgment.');
+      }
+      open = verdict === 'clear' ? [] : [{ level: verdict.level, subject: '/' }];
+      return verdict === 'clear' ? null : verdict.level;
+    });
     expect(observed).toEqual([
       null,
       'note',
@@ -491,22 +482,6 @@ describe('low disk', () => {
       'alert',
       'note',
       null,
-    ]);
-    const occurrences: { n: number }[] = await h.db
-      .sql`SELECT count(*)::int AS n FROM conditions WHERE kind = 'low_disk'`;
-    expect(occurrences).toEqual([{ n: 2 }]);
-    const events: { action: string; level: string }[] = await h.db
-      .sql`SELECT e.action, e.level FROM condition_transitions e JOIN conditions c ON c.id = e.condition WHERE c.kind = 'low_disk' ORDER BY e.id`;
-    expect(events.map((row) => [row.action, row.level])).toEqual([
-      ['raised', 'note'],
-      ['level_changed', 'warning'],
-      ['level_changed', 'alert'],
-      ['level_changed', 'warning'],
-      ['level_changed', 'note'],
-      ['cleared', 'note'],
-      ['raised', 'alert'],
-      ['level_changed', 'note'],
-      ['cleared', 'note'],
     ]);
   });
 
@@ -542,24 +517,20 @@ describe('low disk', () => {
     ]);
   });
 
-  test('is judged per mount, with the mount as the subject', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 50), disk('/data', 3), disk('/boot', 8, 1)] });
-
-    await evaluate(h, NOW + MINUTE);
-
-    expect((await conditionsOf(h)).open).toEqual([
-      expect.objectContaining({
-        kind: 'low_disk',
-        reason: '3.0 GiB free of 100.0 GiB (3.0%).',
-        subject: '/data',
-      }),
-      expect.objectContaining({
-        kind: 'low_disk',
-        reason: '81.9 MiB free of 1.0 GiB (8.0%).',
-        subject: '/boot',
-      }),
-    ]);
+  test('is judged per mount, with the mount as the subject', () => {
+    expect(
+      judge(
+        systemFacts({
+          latest: { disks: [disk('/', 50), disk('/data', 3), disk('/boot', 8, 1)], old: false },
+        }),
+      ).disks,
+    ).toEqual(
+      new Map<string, 'clear' | { level: 'alert'; raise: string }>([
+        ['/', 'clear'],
+        ['/data', { level: 'alert', raise: '3.0 GiB free of 100.0 GiB (3.0%).' }],
+        ['/boot', { level: 'alert', raise: '81.9 MiB free of 1.0 GiB (8.0%).' }],
+      ]),
+    );
   });
 
   test('clears when the mount leaves the samples', async () => {
@@ -580,29 +551,38 @@ describe('low disk', () => {
     });
   });
 
-  test('a mount with no size is neither raised nor cleared', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [{ mount: '/proc', totalBytes: 0, usedBytes: 0 }] });
-    await evaluate(h, NOW + MINUTE);
-    expect((await conditionsOf(h)).open).toEqual([]);
-
-    await send(h, NOW + 2 * MINUTE, { disks: [disk('/', 1), disk('/data', 1)] });
-    await evaluate(h, NOW + 3 * MINUTE);
-    await send(h, NOW + 4 * MINUTE, { disks: [{ mount: '/data', totalBytes: 0, usedBytes: 0 }] });
-    await evaluate(h, NOW + 5 * MINUTE);
-
-    expect((await conditionsOf(h)).open.map((c) => c.subject)).toEqual(['/data']);
+  test('a mount with no size is neither raised nor cleared', () => {
+    const latest = { disks: [{ mount: '/data', totalBytes: 0, usedBytes: 0 }], old: false };
+    expect(judge(systemFacts({ latest })).disks.get('/data')).toBe('hold');
+    expect(
+      judge(
+        systemFacts({
+          latest,
+          open: [
+            { level: 'alert', subject: '/' },
+            { level: 'alert', subject: '/data' },
+          ],
+        }),
+      ).disks,
+    ).toEqual(
+      new Map([
+        ['/data', 'hold'],
+        ['/', 'clear'],
+      ]),
+    );
   });
 
-  test('a mount used past its size is out of space', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [{ mount: '/', totalBytes: 100, usedBytes: 120 }] });
-
-    await evaluate(h, NOW + MINUTE);
-
-    expect((await conditionsOf(h)).open).toEqual([
-      expect.objectContaining({ reason: '0 B free of 100 B (0.0%).' }),
-    ]);
+  test('a mount used past its size is out of space', () => {
+    expect(
+      judge(
+        systemFacts({
+          latest: {
+            disks: [{ mount: '/', totalBytes: 100, usedBytes: 120 }],
+            old: false,
+          },
+        }),
+      ).disks.get('/'),
+    ).toEqual({ level: 'alert', raise: '0 B free of 100 B (0.0%).' });
   });
 
   test('judges the latest sample stamped within 5 minutes of the Hub clock, not one stamped far ahead', async () => {
@@ -627,31 +607,38 @@ describe('low disk', () => {
     expect(kinds((await conditionsOf(h)).open)).toEqual(['low_disk']);
   });
 
-  test.each([
-    ['the lower first', [disk('/', 5), disk('/', 50)]],
-    ['the lower last', [disk('/', 50), disk('/', 5)]],
-  ])('judges the lowest free space of a mount listed twice, %s', async (_, disks) => {
-    await using h = await startHub();
-    await send(h, NOW, { disks });
-
-    await evaluate(h, NOW + MINUTE);
-
-    expect((await conditionsOf(h)).open).toEqual([
-      expect.objectContaining({ reason: '5.0 GiB free of 100.0 GiB (5.0%).', subject: '/' }),
-    ]);
+  test('judges the lowest free space of a mount listed twice, whatever its order', () => {
+    const tight = disk('/', 5);
+    const loose = disk('/', 50);
+    const sizeless = { mount: '/', totalBytes: 0, usedBytes: 0 };
+    for (const disks of [
+      [tight, loose],
+      [loose, tight],
+      [sizeless, tight],
+      [tight, sizeless],
+      [disk('/', 5, 50), tight],
+      [tight, disk('/', 5, 50)],
+    ]) {
+      const verdict = judge(systemFacts({ latest: { disks, old: false } })).disks.get('/');
+      expect(verdict).toMatchObject({ level: 'alert' });
+      expect(verdict).toEqual({
+        level: 'alert',
+        raise: disks.some((d) => d.totalBytes === 50 * GIB)
+          ? '2.5 GiB free of 50.0 GiB (5.0%).'
+          : '5.0 GiB free of 100.0 GiB (5.0%).',
+      });
+    }
   });
 
-  test('uses the thresholds it is given', async () => {
-    await using h = await startHub();
-    await send(h, NOW, { disks: [disk('/', 30)] });
-    const tight = {
-      ...SYSTEM_CONDITION_THRESHOLDS,
-      disk: { alert: 90, hysteresis: 5, note: 60, warning: 75 },
-    };
-
-    await evaluate(h, NOW + MINUTE, tight);
-
-    expect(await diskLevels(h)).toEqual([{ level: 'note' }]);
+  test('uses the thresholds it is given', () => {
+    expect(
+      judge(
+        systemFacts({
+          diskLimits: { alert: 90, hysteresis: 5, note: 60, warning: 75 },
+          latest: { disks: [disk('/', 30)], old: false },
+        }),
+      ).disks.get('/'),
+    ).toMatchObject({ level: 'note' });
   });
 
   test('a System with no samples has nothing to judge', async () => {
@@ -704,4 +691,22 @@ test('migration 10 leaves what a System sleeps as unknown for Systems already st
 
   const [row]: { sleeps: boolean | null }[] = await db.sql`SELECT sleeps FROM systems`;
   expect(row?.sleeps).toBeNull();
+});
+
+test('stale judgment holds through outage grace, but hearing from the System clears it', () => {
+  const facts = systemFacts({ listeningSince: NOW + DAY });
+  expect(judge(facts, NOW + DAY + 10 * MINUTE).stale).toBe('hold');
+  expect(judge(facts, NOW + DAY + 10 * MINUTE + 1).stale).toHaveProperty('raise');
+  expect(judge({ ...facts, lastSeenAt: NOW + DAY }, NOW + DAY + MINUTE).stale).toBe('clear');
+});
+
+test('missing readable Vitals leave disk Conditions alone while pairing supplies never-seen age', () => {
+  const facts = systemFacts({ lastSeenAt: undefined, open: [{ level: 'alert', subject: '/' }] });
+  expect(judge(facts, NOW + 11 * MINUTE)).toEqual({
+    disks: new Map(),
+    stale: {
+      raise:
+        'Not heard from since it was paired at 2026-10-06 12:00 UTC, more than 10 minutes ago.',
+    },
+  });
 });

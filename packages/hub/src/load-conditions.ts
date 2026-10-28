@@ -11,6 +11,95 @@ import { pairedSystems, whenPaired } from './tokens.ts';
 
 const KINDS: Kind[] = ['high_cpu', 'high_memory'];
 
+// The readings, held levels, replay cursor, and historical spans read under
+// one System's lock. Limits are already resolved for that System.
+export type LoadConditionFacts = {
+  rows: readonly Reading[];
+  held: readonly { kind: Kind; level: Level }[];
+  through: Date | undefined;
+  backfilled: Awaited<ReturnType<typeof recordHistoricalLoad>>['inserted'];
+  limits: Omit<ConditionLimits, 'systems'>;
+};
+
+type LoadTransition = {
+  at: Date;
+  kind: Kind;
+  verdict: 'clear' | { level: Level; raise: string };
+};
+
+// Replays readings in sample order. Only measured busy time raises levels;
+// unknown intervals hold them, and old evidence cannot create a live episode.
+// The durable cursor and recorded spans prevent replaying completed episodes.
+export const judgeLoadConditions = (facts: LoadConditionFacts, now: number) => {
+  const transitions: LoadTransition[] = [];
+  const latest = facts.rows.at(-1);
+  if (latest === undefined) {
+    return { coverage: { cpuKnown: false, memoryKnown: false }, transitions };
+  }
+  const rules = rulesFor(facts.limits);
+  const old = now - latest.t.getTime() > OLD_EVIDENCE_MS;
+  const spans = new Map(
+    KINDS.map((kind) => [kind, facts.backfilled.filter((span) => span.kind === kind)]),
+  );
+  const positions = new Map<Kind, number>();
+  const current = new Map(facts.held.map(({ kind, level }) => [kind, level]));
+  let previous: Reading | undefined;
+  let coverage = { cpuKnown: false, memoryKnown: false };
+  for (const row of facts.rows) {
+    const at = row.t.getTime();
+    coverage = feedRules(rules, row, previous);
+    previous = row;
+    // A durable cursor prevents a completed historical episode from being
+    // raised again. The newest reading is still rejudged after limit changes.
+    if (row !== latest && ((facts.through !== undefined && at <= facts.through.getTime()) || old)) {
+      continue;
+    }
+    for (const kind of KINDS) {
+      const level = current.get(kind);
+      const covered = spans.get(kind) ?? [];
+      let position = positions.get(kind) ?? 0;
+      let span = covered[position];
+      while (span !== undefined && span.sample_until < row.t) {
+        position += 1;
+        span = covered[position];
+      }
+      positions.set(kind, position);
+      if (level === undefined && span !== undefined && span.sample_from <= row.t) {
+        continue;
+      }
+
+      if (old && level === undefined) {
+        continue;
+      }
+      const qualifying = selectedRule(rules, kind, level, old);
+      if (
+        qualifying?.level === level &&
+        qualifying !== undefined &&
+        qualifying.window.busy < qualifying.duration
+      ) {
+        continue;
+      }
+      if (qualifying === undefined) {
+        if (level === undefined) {
+          continue;
+        }
+        transitions.push({ at: row.t, kind, verdict: 'clear' });
+        current.delete(kind);
+      } else {
+        if (qualifying.level === level && row !== latest) {
+          continue;
+        }
+        const reason = reasonFor(qualifying, row);
+        transitions.push({ at: row.t, kind, verdict: { level: qualifying.level, raise: reason } });
+        current.set(kind, qualifying.level);
+      }
+    }
+  }
+  return { coverage, transitions };
+};
+
+// Reads and applies replay under the System's row lock, ordering with Reports.
+// Missing samples, a cursor ahead of them, or unchanged evidence judge nothing.
 const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: ConditionLimits) =>
   sql.begin(async (tx) => {
     const paired = await whenPaired(tx, system);
@@ -115,74 +204,34 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       pendingFrom = history.pendingFrom;
       backfilled = history.inserted;
     }
-    const spans = new Map(
-      KINDS.map((kind) => [kind, backfilled.filter((span) => span.kind === kind)]),
+    const { coverage, transitions } = judgeLoadConditions(
+      {
+        backfilled,
+        held,
+        limits: selected,
+        rows,
+        through: cursor?.through,
+      },
+      now,
     );
-    const positions = new Map<Kind, number>();
-    const current = new Map(held.map(({ kind, level }) => [kind, level]));
-    let previous: Reading | undefined;
-    let coverage = { cpuKnown: false, memoryKnown: false };
-    for (const row of rows) {
-      const at = row.t.getTime();
-      coverage = feedRules(rules, row, previous);
-      previous = row;
-      // A durable cursor prevents a completed historical episode from being
-      // raised again. The newest reading is still rejudged after limit changes.
-      if (row !== latest && ((cursor !== undefined && at <= cursor.through.getTime()) || old)) {
-        continue;
-      }
-      for (const kind of KINDS) {
-        const level = current.get(kind);
-        const covered = spans.get(kind) ?? [];
-        let position = positions.get(kind) ?? 0;
-        let span = covered[position];
-        while (span !== undefined && span.sample_until < row.t) {
-          position += 1;
-          span = covered[position];
-        }
-        positions.set(kind, position);
-        if (level === undefined && span !== undefined && span.sample_from <= row.t) {
-          continue;
-        }
-
-        if (old && level === undefined) {
-          continue;
-        }
-        const qualifying = selectedRule(rules, kind, level, old);
-        if (
-          qualifying?.level === level &&
-          qualifying !== undefined &&
-          qualifying.window.busy < qualifying.duration
-        ) {
-          continue;
-        }
-        if (qualifying === undefined) {
-          if (level === undefined) {
-            continue;
-          }
-          // oxlint-disable-next-line no-await-in-loop -- all changes share the System transaction.
-          await trackEpisodeSample(tx, { at: row.t, kind, subject: '', system, terminal: true });
-          // oxlint-disable-next-line no-await-in-loop -- record recovery with its sampled span.
-          await clear(tx, { kind, now: new Date(now), subject: '', system });
-          current.delete(kind);
-        } else {
-          if (qualifying.level === level && row !== latest) {
-            continue;
-          }
-          const reason = reasonFor(qualifying, row);
-          // oxlint-disable-next-line no-await-in-loop -- level and history commit with the replay cursor.
-          await raise(tx, {
-            kind,
-            level: qualifying.level,
-            now: new Date(now),
-            reason,
-            subject: '',
-            system,
-          });
-          // oxlint-disable-next-line no-await-in-loop -- metadata shares the Condition transaction.
-          await trackEpisodeSample(tx, { at: row.t, kind, subject: '', system });
-          current.set(kind, qualifying.level);
-        }
+    for (const { at, kind, verdict } of transitions) {
+      if (verdict === 'clear') {
+        // oxlint-disable-next-line no-await-in-loop -- all changes share the System transaction.
+        await trackEpisodeSample(tx, { at, kind, subject: '', system, terminal: true });
+        // oxlint-disable-next-line no-await-in-loop -- record recovery with its sampled span.
+        await clear(tx, { kind, now: new Date(now), subject: '', system });
+      } else {
+        // oxlint-disable-next-line no-await-in-loop -- level and history commit with the replay cursor.
+        await raise(tx, {
+          kind,
+          level: verdict.level,
+          now: new Date(now),
+          reason: verdict.raise,
+          subject: '',
+          system,
+        });
+        // oxlint-disable-next-line no-await-in-loop -- metadata shares the Condition transaction.
+        await trackEpisodeSample(tx, { at, kind, subject: '', system });
       }
     }
     for (const kind of KINDS) {

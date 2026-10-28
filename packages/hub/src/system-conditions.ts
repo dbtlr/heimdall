@@ -189,6 +189,70 @@ const withdraw = async (tx: SQL, { now, system }: { now: Date; system: string })
   }
 };
 
+// What one System's stale System and low disk Conditions are judged on.
+export type SystemConditionFacts = {
+  lastSeenAt: number | undefined;
+  pairedAt: number;
+  sleeps: boolean | null;
+  listeningSince: number | undefined;
+  latest: { disks: readonly Disk[]; old: boolean } | undefined;
+  open: readonly { subject: string; level: ConditionLevel }[];
+  diskLimits: DiskLimits;
+};
+
+// Judges silence from Last seen or pairing, allowing the always-on grace
+// after a Hub outage even for sleeping Systems. Judges each mount's tightest
+// reading with hysteresis; old Vitals cannot lower or clear an open level.
+// Missing or sizeless Vitals leave their Conditions as they are.
+export const judgeSystemConditions = (
+  facts: SystemConditionFacts,
+  now: number,
+  thresholds: SystemConditionThresholds,
+): { stale: Verdict; disks: Map<string, DiskVerdict> } => {
+  const stale = staleVerdict({
+    // The always-on limit, so that a sleeping System that died is not held
+    // for days after every outage. It outlasts the Collector's longest wait
+    // between retries (MAX_BACKOFF_MS, 5 minutes).
+    graceMs: thresholds.staleAfterMs,
+    lastSeenAt: facts.lastSeenAt,
+    limitMs: facts.sleeps === true ? thresholds.sleepingStaleAfterMs : thresholds.staleAfterMs,
+    listeningSince: facts.listeningSince,
+    now,
+    pairedAt: facts.pairedAt,
+  });
+  const disks = new Map<string, DiskVerdict>();
+  if (facts.latest === undefined) {
+    return { disks, stale };
+  }
+  const mounts = new Map<string, Disk>();
+  for (const disk of facts.latest.disks) {
+    const other = mounts.get(disk.mount);
+    mounts.set(disk.mount, other === undefined ? disk : tighter(other, disk));
+  }
+  const subjects = new Set([...mounts.keys(), ...facts.open.map((condition) => condition.subject)]);
+  const levels = new Map(facts.open.map(({ subject, level }) => [subject, level]));
+  const limits = facts.diskLimits;
+  for (const subject of subjects) {
+    const disk = mounts.get(subject);
+    // A mount that left the samples recovered or was unmounted.
+    const verdict = disk === undefined ? 'clear' : diskVerdict(disk, limits, levels.get(subject));
+    const current = levels.get(subject);
+    const order = ['note', 'warning', 'alert'];
+    // Old Vitals cannot establish recovery, including a mount missing from
+    // that sample. Explicit unpairing still clears under its own rule.
+    if (
+      facts.latest.old &&
+      current !== undefined &&
+      (verdict === 'clear' ||
+        (verdict !== 'hold' && order.indexOf(verdict.level) < order.indexOf(current)))
+    ) {
+      continue;
+    }
+    disks.set(subject, verdict);
+  }
+  return { disks, stale };
+};
+
 // Raises and clears one System's stale System and low disk Conditions under
 // the System's row lock, so they order with its Reports (ADR-0005), at the
 // time `clock` reads once the lock is held. A System that is not paired, such
@@ -226,54 +290,30 @@ export const evaluateSystem = (
       }
     };
 
-    await apply(
-      'system_stale',
-      '',
-      staleVerdict({
-        // The always-on limit, so that a sleeping System that died is not held
-        // for days after every outage. It outlasts the Collector's longest
-        // wait between retries (MAX_BACKOFF_MS, 5 minutes).
-        graceMs: thresholds.staleAfterMs,
-        lastSeenAt: held.last_seen_at?.getTime(),
-        limitMs: held.sleeps === true ? thresholds.sleepingStaleAfterMs : thresholds.staleAfterMs,
-        listeningSince: await whenListening(tx, now),
-        now,
-        pairedAt: pairedAtMs,
-      }),
-    );
-
+    const listeningSince = await whenListening(tx, now);
     const latest = await latestDisks(tx, system, now);
-    if (latest === undefined) {
-      return;
-    }
-    const open: { subject: string; level: ConditionLevel }[] = await tx`
+    const open: { subject: string; level: ConditionLevel }[] =
+      latest === undefined
+        ? []
+        : await tx`
       SELECT subject, level FROM conditions
       WHERE system = ${system} AND kind = 'low_disk' AND cleared_at IS NULL
     `;
-    const mounts = new Map<string, Disk>();
-    for (const disk of latest.disks) {
-      const other = mounts.get(disk.mount);
-      mounts.set(disk.mount, other === undefined ? disk : tighter(other, disk));
-    }
-    const subjects = new Set([...mounts.keys(), ...open.map((condition) => condition.subject)]);
-    const levels = new Map(open.map(({ subject, level }) => [subject, level]));
-    const limits = thresholds.systems.get(system)?.disk ?? thresholds.disk;
-    for (const subject of subjects) {
-      const disk = mounts.get(subject);
-      // A mount that left the samples recovered or was unmounted.
-      const verdict = disk === undefined ? 'clear' : diskVerdict(disk, limits, levels.get(subject));
-      const current = levels.get(subject);
-      const order = ['note', 'warning', 'alert'];
-      // Old Vitals cannot establish recovery, including a mount missing from
-      // that sample. Explicit unpairing still clears under its own rule.
-      if (
-        latest.old &&
-        current !== undefined &&
-        (verdict === 'clear' ||
-          (verdict !== 'hold' && order.indexOf(verdict.level) < order.indexOf(current)))
-      ) {
-        continue;
-      }
+    const judged = judgeSystemConditions(
+      {
+        diskLimits: thresholds.systems.get(system)?.disk ?? thresholds.disk,
+        lastSeenAt: held.last_seen_at?.getTime(),
+        latest,
+        listeningSince,
+        open,
+        pairedAt: pairedAtMs,
+        sleeps: held.sleeps,
+      },
+      now,
+      thresholds,
+    );
+    await apply('system_stale', '', judged.stale);
+    for (const [subject, verdict] of judged.disks) {
       if (verdict === 'clear') {
         // oxlint-disable-next-line no-await-in-loop -- one transaction runs one statement at a time.
         await clear(tx, { kind: 'low_disk', now: at, subject, system });
