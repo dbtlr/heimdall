@@ -1,11 +1,10 @@
 import { expect, test } from 'bun:test';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
 
 import { Application } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
+import { mockProcess } from '@loomcli/testing';
 
 import { serviceCommand } from './command.ts';
 import type { ServiceEnvironment, ServiceSpec } from './command.ts';
@@ -75,22 +74,9 @@ const invoke = async (
       ...environment,
     }),
   );
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  // Bun ignores assigning undefined, so an unset code is restored as 0.
-  const runnerExitCode = process.exitCode;
-  let code: number;
-  try {
-    code = await app.run({
-      host: { argv, cwd: home, env: { HOME: home, ...env }, stderr, stdout },
-    });
-  } finally {
-    process.exitCode = runnerExitCode ?? 0;
-  }
-  stdout.end();
-  stderr.end();
-  return { calls: fake.calls, code, stderr: await text(stderr), stdout: await text(stdout) };
+  const mock = mockProcess({ argv, cwd: home, env: { HOME: home, ...env } });
+  const code = await app.run({ process: mock });
+  return { calls: fake.calls, code, stderr: mock.stderr.text, stdout: mock.stdout.text };
 };
 
 // A Hub that answers its health at `version`, noting each URL asked in `seen`.

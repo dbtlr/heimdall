@@ -77,7 +77,7 @@ The Collector learns which System it is, and the token it authenticates with, by
 
 `run` refuses to start without an identity and says to run `heimdall-collector pair <code>`. The identity is bound to its Hub: when the configured `hub` has another origin, `run` refuses before it sends anything, so the token never reaches another Hub, and the System pairs again with the new Hub. A `hub` that differs only in its path, such as a trailing slash or a path prefix, is the same Hub. It warns, and still runs, when `identity.json` is not private: when group or others have any access to it, can write to the state directory, or when another user owns it. Wiping the state directory loses the identity as well as the queue, and the System pairs again.
 
-SIGTERM or SIGINT stops the Collector between samples with exit status 143 or 130; queued samples stay on disk for the next start.
+SIGTERM or SIGINT stops the Collector between samples, within 10 seconds, and the process ends by that signal; queued samples stay on disk for the next start.
 
 ## Running the Hub
 
@@ -186,7 +186,7 @@ A code redeems once, reads in any case with the dash optional, and expires 10 mi
 
 The ingest endpoint answers 200 with the number of samples stored and skipped, 401 for a missing token, 403 for a token no paired System holds or a Report that names another System than its token's, 422 for an invalid Report, and 503 when the database cannot take it. Only 422 makes the Collector drop a Report ([ADR-0004](docs/decisions/0004-report-grows-additively-samples-keyed-by-system-and-time.md)). A Report rejected with 422, or with 403 for naming another System, still counts as seeing the System its token names and raises that System's Reports rejected Condition until a Report from it is stored ([ADR-0005](docs/decisions/0005-rejected-reports-count-as-seen-conditions-keep-a-timeline.md)).
 
-SIGTERM or SIGINT stops the Hub with exit status 143 or 130.
+SIGTERM or SIGINT stops the Hub within 10 seconds, once its running work finishes and its database connections close, and the process ends by that signal.
 
 ## Running the dashboard
 
@@ -215,7 +215,7 @@ Each binary installs and supervises itself as a systemd user unit on Linux and a
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
 - `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's and the dashboard's add their health from `GET http://<host>:<port>/api/health`, with the host and port each reads from its own config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
-The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; exit status 143 or 130, after SIGTERM or SIGINT, counts as a clean stop.
+The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; an end by SIGTERM or SIGINT, or exit status 143 or 130, counts as a clean stop.
 
 On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user's GUI domain, `gui/<uid>`, as Mimir's agent is. It runs only while the user is logged in and loads again at each login. The plist runs the same command from home with no environment, appends both output streams to the same log, and has launchd relaunch the binary after any exit, at most once every 10 seconds.
 

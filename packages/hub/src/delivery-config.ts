@@ -1,4 +1,4 @@
-import { configHome, readConfigSection } from '@heimdall/service';
+import { readConfigSection } from '@heimdall/service';
 import { z } from 'zod';
 
 const httpUrl = z
@@ -68,18 +68,18 @@ export const parseDeliveryChannel = (value: unknown): DeliveryChannel | undefine
 
 export const readDeliveryChannel = async ({
   cwd,
-  env,
+  home,
   named,
 }: {
   cwd: string;
-  env: Readonly<Record<string, string | undefined>>;
+  home: string;
   named: string | undefined;
 }) =>
   parseDeliveryChannel(
     await readConfigSection({
       binary: 'hub',
       cwd,
-      home: configHome(env),
+      home,
       named,
       section: 'delivery',
     }),

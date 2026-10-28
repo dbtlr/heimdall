@@ -1,6 +1,6 @@
 import { RECORD_NAME, SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
-import { Application, Command, plugin } from '@loomcli/core';
+import { Application, Command } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
@@ -17,9 +17,11 @@ import { silenceAction } from './silence-commands.ts';
 import { deleteTranscriptsAction, showTranscriptAction } from './transcript-commands.ts';
 import { HUB_VERSION, versionPostfix } from './version.ts';
 
-// SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops
-// listening and closes its database connections.
-const signals = () => plugin('@heimdall/hub/signals', { signals: ['SIGINT', 'SIGTERM'] });
+// SIGTERM from systemd and SIGINT from a terminal cancel `serve`, and it gets
+// this long to finish its running jobs, stop listening, and close its database
+// connections before the signal ends the process. Loom's default of 500 ms can
+// cut that short.
+const shutdown = { timeout: 10_000 };
 
 // The database every command opens, from its flag, then its variable, then
 // `[database] url` in the configuration file, where Fleet's secret path reaches it.
@@ -247,8 +249,8 @@ export const app = new Application('heimdall-hub', {
     help(),
     version({ postfix: versionPostfix }),
     config({ file: '.config/heimdall/hub.{toml,json}' }),
-    signals(),
   ],
+  shutdown,
   version: HUB_VERSION,
 })
   .command(serve)

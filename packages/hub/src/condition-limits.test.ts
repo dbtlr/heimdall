@@ -162,7 +162,7 @@ percent = 95
           }),
     );
 
-    const limits = await readConditionLimits({ cwd: home.path, env: {}, named });
+    const limits = await readConditionLimits({ cwd: home.path, home: '', named });
 
     expect(limits.disk).toEqual({ alert: 90, hysteresis: 5, note: 60, warning: 75 });
     expect(limits.systems.get('laptop-1')?.disk).toEqual({

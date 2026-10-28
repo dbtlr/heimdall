@@ -8,9 +8,12 @@
     "./testing": "./src/testing.ts"
   },
   "dependencies": {
-    "@loomcli/core": "0.10.0",
-    "@loomcli/plugins": "0.10.0",
-    "@loomcli/validators": "0.10.0",
+    "@loomcli/core": "0.16.0",
+    "@loomcli/plugins": "0.16.0",
+    "@loomcli/validators": "0.16.0",
     "smol-toml": "^1.9.0"
+  },
+  "devDependencies": {
+    "@loomcli/testing": "0.16.0"
   }
 }

@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
+
+import { mockProcess } from '@loomcli/testing';
 
 import { app } from './application.ts';
 import { migrate } from './migrations.ts';
@@ -17,42 +17,36 @@ const SLOW_TEST_MS = 30_000;
 // Runs the Hub command line in-process and aborts the run as soon as `abortWhen`
 // is seen in its output.
 const runUntil = async (argv: string[], { abortWhen = WAITING } = {}) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 20_000);
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
-  let output = '';
-  const watch = (chunk: Buffer) => {
-    output += chunk.toString();
-    if (output.includes(abortWhen)) {
+  const mock = mockProcess({
+    argv,
+    cwd: process.cwd(),
+    env: { HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS: LOCK_TIMEOUT_MS, HOME: home },
+  });
+  // The mock records output without events, so check it after each write: the
+  // run must stop as the text appears, not a poll later.
+  const stop = () => {
+    if (mock.stdout.text.includes(abortWhen) || mock.stderr.text.includes(abortWhen)) {
       controller.abort();
     }
   };
-  stdout.on('data', watch);
-  stderr.on('data', watch);
-  const errors = text(stderr);
-  const logged = text(stdout);
-  const runnerExitCode = process.exitCode;
-  let code: number;
+  for (const stream of [mock.stdout, mock.stderr]) {
+    const write = stream.write.bind(stream);
+    stream.write = ((...args: Parameters<typeof write>) => {
+      const accepted = write(...args);
+      stop();
+      return accepted;
+    }) as typeof write;
+  }
   try {
-    code = await app.run({
-      host: {
-        argv,
-        env: { HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS: LOCK_TIMEOUT_MS, HOME: home },
-        stderr,
-        stdout,
-      },
-      signal: controller.signal,
-    });
+    const code = await app.run({ process: mock, signal: controller.signal });
+    return { code, stderr: mock.stderr.text, stdout: mock.stdout.text };
   } finally {
-    process.exitCode = runnerExitCode ?? 0;
     clearTimeout(safety);
     await rm(home, { force: true, recursive: true });
   }
-  stdout.end();
-  stderr.end();
-  return { code, stderr: await errors, stdout: await logged };
 };
 
 // A migrated database where another session holds the lock every migration needs

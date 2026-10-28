@@ -58,15 +58,10 @@ const readDirectory = async (directory: string, candidates: readonly string[]) =
   return path === undefined ? undefined : readTable(path);
 };
 
-// The home directory Loom's config plugin looks in: HOME, when it is an
-// absolute path, and none otherwise.
-export const configHome = (env: Readonly<Record<string, string | undefined>>) => {
-  const home = env.HOME;
-  return home !== undefined && isAbsolute(home) ? home : undefined;
-};
-
 // Loom exposes only scalar config values to options. Nested sections use the
-// same file discovery and parsers after Loom has checked the selected file.
+// same file discovery and parsers after Loom has checked the selected file:
+// the working directory, then `home`, the run's `host.home`, when it is an
+// absolute path, as Loom's config plugin looks there only then.
 export const readConfigSection = async ({
   binary,
   section,
@@ -77,14 +72,14 @@ export const readConfigSection = async ({
   binary: Binary;
   section: string;
   cwd: string;
-  home: string | undefined;
+  home: string;
   named: string | undefined;
 }): Promise<unknown> => {
   if (named !== undefined) {
     return (await readTable(resolve(cwd, named)))?.[section];
   }
   const candidates = [`.config/heimdall/${binary}.toml`, `.config/heimdall/${binary}.json`];
-  const directories = home === undefined || resolve(home) === resolve(cwd) ? [cwd] : [cwd, home];
+  const directories = !isAbsolute(home) || resolve(home) === resolve(cwd) ? [cwd] : [cwd, home];
   const tables = await Promise.all(
     directories.map((directory) => readDirectory(directory, candidates)),
   );

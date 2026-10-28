@@ -1,13 +1,6 @@
 import { once } from 'node:events';
 
-import {
-  every,
-  homeOf,
-  keepLogRotated,
-  listenOrFail,
-  runtimeLog,
-  servicePaths,
-} from '@heimdall/service';
+import { every, keepLogRotated, listenOrFail, runtimeLog, servicePaths } from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
@@ -75,14 +68,14 @@ export const serveAction: ActionHandler<typeof serve> = async ({
     onError: (error) => {
       void log.warn(clean(`Could not rotate the log: ${describeError(error)}`));
     },
-    path: servicePaths('hub', homeOf(host.env)).log,
+    path: servicePaths('hub', host.home).log,
   });
   try {
     const named = configName(options);
-    const limits = await readConditionLimits({ cwd: host.cwd, env: host.env, named }).catch(
+    const limits = await readConditionLimits({ cwd: host.cwd, home: host.home, named }).catch(
       (error: unknown) => log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
     );
-    const delivery = await readDeliveryChannel({ cwd: host.cwd, env: host.env, named }).catch(
+    const delivery = await readDeliveryChannel({ cwd: host.cwd, home: host.home, named }).catch(
       (error: unknown) =>
         log.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
     );

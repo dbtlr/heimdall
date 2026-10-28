@@ -103,7 +103,11 @@ export const pairAction: ActionHandler<typeof pair> = async ({
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
   const fail: (message: string) => never = (message) => out.fatal(clean(message));
   const { hub } = options;
-  const stateDir = resolveStateDir({ env: host.env, option: options['state-dir'] });
+  const stateDir = resolveStateDir({
+    env: host.env,
+    home: host.home,
+    option: options['state-dir'],
+  });
   // The directory comes first, so a state directory that cannot exist does not
   // spend the code. One `pair` creates is its owner's alone; an existing one keeps its mode.
   await mkdir(stateDir, { mode: 0o700, recursive: true }).catch((error: unknown) =>

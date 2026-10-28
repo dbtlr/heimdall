@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 // The binaries that supervise themselves, by the name their files carry.
@@ -76,10 +75,3 @@ export const serviceDefinition = ({
 // `path` with `home` shown as `~`, for output an operator reads.
 export const displayPath = (path: string, home: string): string =>
   path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
-
-// Home as the binaries find it: HOME, or the account's home when HOME is unset
-// or empty. Every path a Service involves lies under it.
-export const homeOf = (env: Readonly<Record<string, string | undefined>>): string => {
-  const home = env.HOME;
-  return home === undefined || home === '' ? homedir() : home;
-};

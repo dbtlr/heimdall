@@ -2,10 +2,9 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
+import { assertAssembles, mockProcess } from '@loomcli/testing';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { createApp } from './application.ts';
@@ -35,15 +34,13 @@ const invoke = async (
     whileServing?: (url: URL) => Promise<void>;
   },
 ) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 35_000);
-  let logged = '';
+  const mock = mockProcess({ argv, cwd: home, env: { HOME: home } });
   let serving: Promise<void> | undefined;
-  stdout.on('data', (chunk: Buffer) => {
-    logged += chunk.toString();
-    const url = LISTENING.exec(logged)?.groups?.url;
+  // The mock records output without events, so poll it for the address.
+  const watch = setInterval(() => {
+    const url = LISTENING.exec(mock.stdout.text)?.groups?.url;
     if (url !== undefined && serving === undefined) {
       serving = (async () => {
         try {
@@ -53,24 +50,18 @@ const invoke = async (
         }
       })();
     }
-  });
-  const errors = text(stderr);
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  const runnerExitCode = process.exitCode;
-  let code: number;
+  }, 10);
   try {
-    code = await createApp({ idleTimeout, loadServer }).run({
-      host: { argv, cwd: home, env: { HOME: home }, stderr, stdout },
+    const code = await createApp({ idleTimeout, loadServer }).run({
+      process: mock,
       signal: controller.signal,
     });
     await serving;
+    return { code, stderr: mock.stderr.text, stdout: mock.stdout.text };
   } finally {
-    process.exitCode = runnerExitCode ?? 0;
+    clearInterval(watch);
     clearTimeout(safety);
   }
-  stdout.end();
-  stderr.end();
-  return { code, stderr: await errors, stdout: logged };
 };
 
 const withHome = async (work: (home: string) => Promise<void>) => {
@@ -89,6 +80,10 @@ const freePort = async () => {
   await probe.stop();
   return port;
 };
+
+test('the application assembles', () => {
+  assertAssembles(createApp({ loadServer: () => Promise.resolve(echo) }));
+});
 
 test('--version names the dashboard release in the form every Heimdall binary prints', async () => {
   await withHome(async (home) => {

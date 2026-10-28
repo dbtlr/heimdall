@@ -1,5 +1,5 @@
 import { serviceCommand } from '@heimdall/service';
-import { Application, plugin } from '@loomcli/core';
+import { Application } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
@@ -10,8 +10,10 @@ import { DASHBOARD_VERSION, versionPostfix } from './version.ts';
 
 export type { BuiltServer } from './cli/serve.ts';
 
-// SIGTERM from systemd and SIGINT from a terminal cancel `serve`, which stops listening.
-const signals = () => plugin('@heimdall/dashboard/signals', { signals: ['SIGINT', 'SIGTERM'] });
+// SIGTERM from systemd and SIGINT from a terminal cancel `serve`, and it gets
+// this long to stop listening before the signal ends the process. Loom's
+// default of 500 ms can cut that short.
+const shutdown = { timeout: 10_000 };
 
 // The `heimdall-dashboard` command line. `loadServer` loads the app Vite
 // built; tests give it their own, and a shorter `idleTimeout` in seconds.
@@ -28,8 +30,8 @@ export const createApp = ({
       help(),
       version({ postfix: versionPostfix }),
       config({ file: '.config/heimdall/dashboard.{toml,json}' }),
-      signals(),
     ],
+    shutdown,
     version: DASHBOARD_VERSION,
   })
     .command(serveCommand(loadServer, idleTimeout))

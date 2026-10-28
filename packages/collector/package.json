@@ -9,12 +9,13 @@
   "dependencies": {
     "@heimdall/schema": "workspace:*",
     "@heimdall/service": "workspace:*",
-    "@loomcli/core": "0.10.0",
-    "@loomcli/plugins": "0.10.0",
-    "@loomcli/validators": "0.10.0"
+    "@loomcli/core": "0.16.0",
+    "@loomcli/plugins": "0.16.0",
+    "@loomcli/validators": "0.16.0"
   },
   "devDependencies": {
     "@heimdall/hub": "workspace:*",
-    "@loomcli/loom": "0.10.0"
+    "@loomcli/loom": "0.16.0",
+    "@loomcli/testing": "0.16.0"
   }
 }

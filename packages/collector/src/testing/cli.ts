@@ -1,31 +1,24 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PassThrough, Readable } from 'node:stream';
-import { text } from 'node:stream/consumers';
+import { Readable } from 'node:stream';
+
+import { mockProcess } from '@loomcli/testing';
 
 import { app } from '../application.ts';
 import { tempStateDir } from './fixtures.ts';
 
-// The host fields that stand in for standard input: `input` as a pipe or terminal delivers it.
-const piped = (input: string | Uint8Array, isTTY: boolean) => ({
-  stdin: Readable.from(input.length === 0 ? [] : [input]),
-  terminal: {
-    stderr: { columns: undefined, isTTY: false, rows: undefined },
-    stdin: { isTTY },
-    stdout: { columns: undefined, isTTY: false, rows: undefined },
-  },
-});
+const POLL_MS = 10;
 
 // Runs the Collector command line in-process and captures what it prints. A run
 // that starts collecting is cancelled once its log shows it started, or after a
 // few seconds, so a `run` test ends either way. HOME is a fresh directory unless
 // `env` names one, so `run` never rotates a real log. `stdin` is what a pipe
-// delivers, and `stdinIsTerminal` makes standard input a terminal; without
-// either, the command reads the process's own standard input.
+// delivers (empty when omitted), and `stdinIsTerminal` makes standard input a
+// terminal.
 export const invoke = async (
   argv: string[],
   {
-    cwd,
+    cwd = process.cwd(),
     env = {},
     stdin,
     stdinIsTerminal = false,
@@ -36,41 +29,36 @@ export const invoke = async (
     stdinIsTerminal?: boolean;
   } = {},
 ) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
   await using home = await tempStateDir();
-  let logged = '';
-  stdout.on('data', (chunk: Buffer) => {
-    logged += chunk.toString();
-    if (logged.includes('Sampling ')) {
+  const mock = mockProcess({
+    argv,
+    cwd,
+    env: { HOME: home.path, ...env },
+    ...(stdinIsTerminal
+      ? { terminal: { columns: 80, keys: [], rows: 24, streams: [] } }
+      : { stdin: typeof stdin === 'string' ? stdin : '' }),
+  });
+  // The mock takes piped text only; bytes that are not text go in as the stream itself.
+  if (stdin instanceof Uint8Array) {
+    Object.defineProperty(mock, 'stdin', {
+      value: Object.assign(Readable.from([stdin]), { isRaw: false, isTTY: false }),
+    });
+  }
+  // The mock records output without events, so poll it for the start of collecting.
+  const watch = setInterval(() => {
+    if (mock.stdout.text.includes('Sampling ')) {
       controller.abort();
     }
-  });
-  const errors = text(stderr);
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  const runnerExitCode = process.exitCode;
-  let code: number;
+  }, POLL_MS);
   try {
-    code = await app.run({
-      host: {
-        argv,
-        env: { HOME: home.path, ...env },
-        stderr,
-        stdout,
-        ...(cwd === undefined ? {} : { cwd }),
-        ...(stdin === undefined && !stdinIsTerminal ? {} : piped(stdin ?? '', stdinIsTerminal)),
-      },
-      signal: controller.signal,
-    });
+    const code = await app.run({ process: mock, signal: controller.signal });
+    return { code, stderr: mock.stderr.text, stdout: mock.stdout.text };
   } finally {
-    process.exitCode = runnerExitCode;
+    clearInterval(watch);
     clearTimeout(safety);
   }
-  stdout.end();
-  stderr.end();
-  return { code, stderr: await errors, stdout: logged };
 };
 
 // A token of the shape the Hub issues: 32 bytes in base64url.

@@ -1,14 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
 
-import type { Host } from '@loomcli/core';
+import { mockProcess } from '@loomcli/testing';
+import type { MockTerminal } from '@loomcli/testing';
 
 import { app } from '../application.ts';
 
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
+const POLL_MS = 10;
 
 // Runs the Hub command line in-process and captures what it prints, stdout as
 // text and as the bytes written. Once `serve` logs the address it listens on,
@@ -16,33 +16,34 @@ const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
 // timeout cancels it after a few seconds anyway. HOME is a fresh directory
 // unless `env` names one, so `serve` never rotates a real log. `terminal`
 // stands in for the process's own, so output does not depend on where the
-// tests run.
+// tests run; without it, no stream is a terminal.
 export const invoke = async (
   argv: string[],
   {
-    cwd,
+    cwd = process.cwd(),
     env = {},
     terminal,
     whileServing,
   }: {
     cwd?: string;
     env?: Record<string, string>;
-    terminal?: Host['terminal'];
+    terminal?: MockTerminal | undefined;
     whileServing?: (hub: URL) => Promise<void>;
   } = {},
 ) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
-  const written: Buffer[] = [];
-  let logged = '';
+  const mock = mockProcess({
+    argv,
+    cwd,
+    env: { HOME: home, ...env },
+    ...(terminal === undefined ? {} : { terminal }),
+  });
   let serving: Promise<void> | undefined;
-  stdout.on('data', (chunk: Buffer) => {
-    written.push(chunk);
-    logged += chunk.toString();
-    const url = LISTENING.exec(logged)?.groups?.url;
+  // The mock records output without events, so poll it for the address.
+  const watch = setInterval(() => {
+    const url = LISTENING.exec(mock.stdout.text)?.groups?.url;
     if (url !== undefined && serving === undefined) {
       serving = (async () => {
         try {
@@ -52,33 +53,17 @@ export const invoke = async (
         }
       })();
     }
-  });
-  const errors = text(stderr);
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  // Bun ignores assigning undefined, so an unset code is restored as 0.
-  const runnerExitCode = process.exitCode;
-  let code: number;
+  }, POLL_MS);
   try {
-    code = await app.run({
-      host: {
-        argv,
-        env: { HOME: home, ...env },
-        stderr,
-        stdout,
-        ...(cwd === undefined ? {} : { cwd }),
-        ...(terminal === undefined ? {} : { terminal }),
-      },
-      signal: controller.signal,
-    });
+    const code = await app.run({ process: mock, signal: controller.signal });
     await serving;
+    const { text } = mock.stdout;
+    return { bytes: Buffer.from(text), code, stderr: mock.stderr.text, stdout: text };
   } finally {
-    process.exitCode = runnerExitCode ?? 0;
+    clearInterval(watch);
     clearTimeout(safety);
     await rm(home, { force: true, recursive: true });
   }
-  stdout.end();
-  stderr.end();
-  return { bytes: Buffer.concat(written), code, stderr: await errors, stdout: logged };
 };
 
 // A configuration file in a fresh directory that removes itself when disposed.

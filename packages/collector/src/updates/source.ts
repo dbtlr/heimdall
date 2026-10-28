@@ -92,7 +92,7 @@ export type UpdatesConfig = ReturnType<typeof parseUpdatesConfig>;
 export type UpdatesSource = { latest: () => UpdatesSection | undefined };
 export const readUpdatesConfig = async (options: {
   cwd: string;
-  home: string | undefined;
+  home: string;
   named: string | undefined;
 }) =>
   parseUpdatesConfig(
