@@ -5,7 +5,7 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 const QUIET_MS = 24 * 60 * 60_000;
 
 // One Service's latest run of stops, separated by no more than 24 hours.
-type StopRun = {
+export type StopRun = {
   service: string;
   first_stopped_at: Date;
   stopped_at: Date;
@@ -40,8 +40,43 @@ const reasonOf = (run: StopRun) => {
   return `The Service stopped ${when}. ${result}${restarts}${ongoing}.`;
 };
 
-// The System lock orders evaluation with Reports and purges. The Hub's clock,
-// read after locking, decides expiry even when no more checks arrive.
+// What one System's service_restarted Conditions are judged on, as read under
+// its row lock.
+export type ServiceStopFacts = {
+  // The Hub's clock, in epoch milliseconds.
+  now: number;
+  // The Services whose service_restarted Condition is open.
+  open: readonly string[];
+  // Each Service's latest run of stops.
+  runs: readonly StopRun[];
+};
+
+// Judges one System's service_restarted Conditions: each Service whose latest
+// run of stops began or ended, by its stop or its Report, within 24 hours of
+// `now` is raised with the run described, and an open Condition of a Service
+// with no such run is cleared. The Hub's clock, not a later check, expires a
+// run.
+export const judgeServiceStops = (
+  facts: ServiceStopFacts,
+): Map<string, { raise: string } | 'clear'> => {
+  const judged = new Map<string, { raise: string } | 'clear'>();
+  const recent = facts.runs.filter(
+    (run) => facts.now - Math.min(run.stopped_at.getTime(), run.received_at.getTime()) < QUIET_MS,
+  );
+  for (const run of recent) {
+    judged.set(run.service, { raise: reasonOf(run) });
+  }
+  for (const subject of facts.open) {
+    if (!recent.some((run) => run.service === subject)) {
+      judged.set(subject, 'clear');
+    }
+  }
+  return judged;
+};
+
+// Raises and clears one System's service_restarted Conditions. The System lock
+// orders evaluation with Reports and purges, and the Hub's clock is read after
+// locking. A System with no row is left alone.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
@@ -72,28 +107,25 @@ const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
         (sum(restarts) OVER (PARTITION BY service, run))::double precision AS restarts
       FROM runs ORDER BY service, stopped_at DESC
     `;
-    const recent = runs.filter(
-      (run) => now - Math.min(run.stopped_at.getTime(), run.received_at.getTime()) < QUIET_MS,
-    );
     const open: { subject: string }[] = await tx`
       SELECT subject FROM conditions
       WHERE system = ${system} AND kind = 'service_restarted' AND cleared_at IS NULL
     `;
+    const judged = judgeServiceStops({ now, open: open.map((row) => row.subject), runs });
     const at = new Date(now);
-    for (const run of recent) {
-      // oxlint-disable-next-line no-await-in-loop -- judgments share the System transaction.
-      await raise(tx, {
-        kind: 'service_restarted',
-        now: at,
-        reason: reasonOf(run),
-        subject: run.service,
-        system,
-      });
-    }
-    for (const { subject } of open) {
-      if (!recent.some((run) => run.service === subject)) {
+    for (const [subject, verdict] of judged) {
+      if (verdict === 'clear') {
         // oxlint-disable-next-line no-await-in-loop -- judgments share the System transaction.
         await clear(tx, { kind: 'service_restarted', now: at, subject, system });
+      } else {
+        // oxlint-disable-next-line no-await-in-loop -- judgments share the System transaction.
+        await raise(tx, {
+          kind: 'service_restarted',
+          now: at,
+          reason: verdict.raise,
+          subject,
+          system,
+        });
       }
     }
   });

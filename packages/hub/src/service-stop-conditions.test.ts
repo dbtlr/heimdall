@@ -1,9 +1,10 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 import type { SentServiceStop } from '@heimdall/schema';
 
 import { evaluateConditions } from './evaluate-conditions.ts';
-import { evaluateServiceStopConditions } from './service-stop-conditions.ts';
+import { evaluateServiceStopConditions, judgeServiceStops } from './service-stop-conditions.ts';
+import type { StopRun } from './service-stop-conditions.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
@@ -91,42 +92,6 @@ test('a second stop updates the count and times without another Timeline transit
   ).toEqual([{ action: 'raised', level: 'note' }]);
 });
 
-test('the note clears at 24 hours after the latest stop on the Hub clock, without another Report', async () => {
-  await using h = await startHub();
-  await send(h, [STOP]);
-  await evaluate(h);
-
-  expect(await evaluate(h, STOP.stoppedAt + DAY - 1)).toHaveLength(1);
-  expect(await evaluate(h, STOP.stoppedAt + DAY)).toEqual([]);
-  expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT action, level FROM condition_transitions ORDER BY id`,
-  ).toEqual([
-    { action: 'raised', level: 'note' },
-    { action: 'cleared', level: 'note' },
-  ]);
-});
-
-test('a stop five days ahead names the reported time and clears 24 hours after receipt', async () => {
-  await using h = await startHub();
-  await send(h, [{ ...STOP, startedAt: NOW + 5 * DAY + 30_000, stoppedAt: NOW + 5 * DAY }]);
-
-  expect(await evaluate(h)).toEqual([
-    {
-      kind: 'service_restarted',
-      level: 'note',
-      reason: 'The Service stopped once at 2026-10-11 12:00 UTC. It last stopped cleanly.',
-      subject: 'web',
-    },
-  ]);
-  expect(await evaluate(h, NOW + DAY - 1)).toHaveLength(1);
-  expect(await evaluate(h, NOW + DAY)).toEqual([]);
-  expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions ORDER BY id`,
-  ).toEqual([{ action: 'raised' }, { action: 'cleared' }]);
-});
-
 test('a stop delivered more than 24 hours after it stopped is stored but raises nothing', async () => {
   await using h = await startHub();
   await send(h, [{ ...STOP, stoppedAt: NOW - DAY - 1 }]);
@@ -149,38 +114,6 @@ test('a System with only old stops clears its open note and raises nothing', asy
   expect(
     await h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions ORDER BY id`,
   ).toEqual([{ action: 'raised' }, { action: 'cleared' }]);
-});
-
-test.each([
-  { exitStatus: 0, ongoing: false, result: 'success', words: 'It last stopped cleanly.' },
-  {
-    exitStatus: 1,
-    ongoing: false,
-    result: 'exit-code',
-    words: 'It last failed (exit-code, exit status 1).',
-  },
-  {
-    exitStatus: null,
-    ongoing: false,
-    result: 'signal',
-    words: 'It last failed (signal, exit status unknown).',
-  },
-  { exitStatus: null, ongoing: false, result: null, words: 'The latest result is unknown.' },
-  {
-    exitStatus: 1,
-    ongoing: true,
-    result: 'exit-code',
-    words: 'It last failed (exit-code, exit status 1); it is still stopped.',
-  },
-])('the latest result reads honestly: $words', async ({ words, ...changes }) => {
-  await using h = await startHub();
-  await send(h, [{ ...STOP, ...changes, startedAt: null }]);
-
-  expect(await evaluate(h)).toMatchObject([
-    {
-      reason: `The Service stopped once at 2026-10-06 11:59 UTC. ${words}`,
-    },
-  ]);
 });
 
 test('the count covers only the latest run, including 24-hour gaps and stops older than a day', async () => {
@@ -225,4 +158,87 @@ test('the minute pass evaluates Service restarted after Service down', async () 
       Record<string, unknown>[]
     >`SELECT level FROM conditions WHERE kind = 'service_restarted'`,
   ).toEqual([{ level: 'note' }]);
+});
+
+const AT = new Date(NOW - 60_000);
+const run = (changes: Partial<StopRun> = {}): StopRun => ({
+  exit_status: 0,
+  first_stopped_at: AT,
+  ongoing: false,
+  received_at: AT,
+  restarts: 0,
+  result: 'success',
+  service: 'web',
+  stopped_at: AT,
+  stops: 1,
+  ...changes,
+});
+
+const reasonOf = (changes: Partial<StopRun>) => {
+  const judged = judgeServiceStops({ now: NOW, open: [], runs: [run(changes)] });
+  return (judged.get('web') as { raise: string }).raise;
+};
+
+describe('judgeServiceStops', () => {
+  test.each([
+    { changes: {}, words: 'It last stopped cleanly.' },
+    {
+      changes: { exit_status: 1, result: 'exit-code' },
+      words: 'It last failed (exit-code, exit status 1).',
+    },
+    {
+      changes: { exit_status: null, result: 'signal' },
+      words: 'It last failed (signal, exit status unknown).',
+    },
+    { changes: { exit_status: null, result: null }, words: 'The latest result is unknown.' },
+    {
+      changes: { exit_status: 1, ongoing: true, result: 'exit-code' },
+      words: 'It last failed (exit-code, exit status 1); it is still stopped.',
+    },
+  ])('the latest result reads honestly: $words', ({ changes, words }) => {
+    expect(reasonOf(changes)).toBe(`The Service stopped once at 2026-10-06 11:59 UTC. ${words}`);
+  });
+
+  test('counts the stops of a run with the first and last times, and its automatic restarts', () => {
+    const first = new Date(NOW - 2 * DAY);
+
+    expect(reasonOf({ first_stopped_at: first, restarts: 3, stops: 3 })).toBe(
+      'The Service stopped 3 times, first at 2026-10-04 12:00 UTC and last at 2026-10-06 11:59 UTC. It last stopped cleanly, with 3 automatic restarts in total.',
+    );
+    expect(reasonOf({ restarts: 1 })).toContain(', with 1 automatic restart in total.');
+  });
+
+  test('raises a run until 24 hours after its latest stop on the Hub clock, then lets go of it', () => {
+    const stopped = run({ received_at: new Date(NOW - DAY), stopped_at: new Date(NOW - DAY) });
+    const judge = (now: number) => judgeServiceStops({ now, open: ['web'], runs: [stopped] });
+
+    expect(judge(NOW - 1).get('web')).toMatchObject({ raise: expect.any(String) });
+    expect(judge(NOW).get('web')).toBe('clear');
+  });
+
+  test('expires a run by whichever is earlier, its stop or its Report, so a stop ahead of the clock still ends', () => {
+    const ahead = run({ received_at: new Date(NOW), stopped_at: new Date(NOW + 5 * DAY) });
+
+    expect(
+      judgeServiceStops({ now: NOW + DAY - 1, open: [], runs: [ahead] }).get('web'),
+    ).toMatchObject({
+      raise: expect.stringContaining('2026-10-11 12:00 UTC'),
+    });
+    expect(judgeServiceStops({ now: NOW + DAY, open: [], runs: [ahead] }).size).toBe(0);
+  });
+
+  test('judges each Service on its own run, clears an open Condition with no recent run, and leaves a Service with neither alone', () => {
+    const old = new Date(NOW - 2 * DAY);
+    const judged = judgeServiceStops({
+      now: NOW,
+      open: ['web', 'proxy', 'gone'],
+      runs: [run(), run({ received_at: old, service: 'proxy', stopped_at: old })],
+    });
+
+    expect(judged.get('web')).toMatchObject({ raise: expect.any(String) });
+    expect(judged.get('proxy')).toBe('clear');
+    expect(judged.get('gone')).toBe('clear');
+    expect(judged.size).toBe(3);
+    expect(judgeServiceStops({ now: NOW, open: [], runs: [] }).size).toBe(0);
+  });
 });
