@@ -3,7 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import { filesRecordDigest } from '@heimdall/schema';
 import type { FilesRecord } from '@heimdall/schema';
 
-import { evaluateDrift } from './drift.ts';
+import { evaluateDrift, judgeDrift } from './drift.ts';
+import type { DriftFacts } from './drift.ts';
 import { unpair } from './pairing.ts';
 import { listSystems, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
@@ -89,7 +90,229 @@ const driftedAndEvaluated = async (h: Hub) => {
 
 const subjects = (open: { subject: string }[]) => open.map((c) => c.subject);
 
-describe('Drift', () => {
+// Facts use a digest already read from the mirrored record; hashing stays in
+// the database tests, where records and checks arrive in separate Reports.
+const facts = (overrides: Partial<DriftFacts> = {}): DriftFacts => ({
+  files: [],
+  judged: new Map([['webapp-config', 'digest']]),
+  open: [CONF],
+  records: [{ digest: 'digest', name: 'webapp-config', paths: new Set([CONF]) }],
+  recordsOverBudget: false,
+  unreadable: false,
+  ...overrides,
+});
+
+const file = (
+  state: DriftFacts['files'][number]['state'],
+  path = CONF,
+  record = 'webapp-config',
+) => ({ path, record, since: at('08:00:00'), state });
+
+const changed = 'Changed: its content no longer matches the hash recorded in webapp-config.';
+
+describe('judgeDrift', () => {
+  test('raises changed and missing files with the path as subject and the record in the reason', () => {
+    expect(judgeDrift(facts({ files: [file('drifted')] }))).toEqual(
+      new Map([[CONF, { raise: changed }]]),
+    );
+    expect(judgeDrift(facts({ files: [file('missing')] }))).toEqual(
+      new Map([[CONF, { raise: 'Missing: the file recorded in webapp-config does not exist.' }]]),
+    );
+  });
+
+  test('judges each path once and takes the first changed record by code unit order', () => {
+    const records = [
+      { digest: 'a', name: 'a-config', paths: new Set([CONF, ENV]) },
+      { digest: 'b', name: 'B-config', paths: new Set([CONF]) },
+    ];
+    const input = facts({
+      files: [
+        file('drifted', CONF, 'a-config'),
+        file('missing', CONF, 'B-config'),
+        file('drifted', ENV, 'a-config'),
+      ],
+      judged: new Map([
+        ['a-config', 'a'],
+        ['B-config', 'b'],
+      ]),
+      records,
+    });
+    const expected = new Map([
+      [CONF, { raise: 'Missing: the file recorded in B-config does not exist.' }],
+      [ENV, { raise: 'Changed: its content no longer matches the hash recorded in a-config.' }],
+    ]);
+    expect(judgeDrift(input)).toEqual(expected);
+    expect(judgeDrift({ ...input, records: records.toReversed() })).toEqual(expected);
+  });
+
+  test('leaves unreadable files and directories alone', () => {
+    expect(
+      judgeDrift(
+        facts({
+          files: [file('unreadable'), file('unreadable', '/etc/webapp')],
+          records: [
+            { digest: 'digest', name: 'webapp-config', paths: new Set([CONF, '/etc/webapp']) },
+          ],
+        }),
+      ),
+    ).toEqual(new Map());
+  });
+
+  test('raises a changed path even if another record cannot judge it, in either record order', () => {
+    const records = [
+      { digest: 'a', name: 'a-config', paths: new Set([CONF]) },
+      { digest: 'b', name: 'b-config', paths: new Set([CONF]) },
+    ];
+    const input = facts({
+      judged: new Map([
+        ['a-config', 'a'],
+        ['b-config', 'b'],
+      ]),
+      records,
+    });
+    expect(
+      judgeDrift({
+        ...input,
+        files: [file('unreadable', CONF, 'a-config'), file('drifted', CONF, 'b-config')],
+      }),
+    ).toEqual(
+      new Map([
+        [CONF, { raise: 'Changed: its content no longer matches the hash recorded in b-config.' }],
+      ]),
+    );
+    expect(
+      judgeDrift({
+        ...input,
+        files: [file('drifted', CONF, 'a-config'), file('unreadable', CONF, 'b-config')],
+      }),
+    ).toEqual(
+      new Map([
+        [CONF, { raise: 'Changed: its content no longer matches the hash recorded in a-config.' }],
+      ]),
+    );
+  });
+
+  test('clears only when every record naming a path was judged and matches', () => {
+    const records = [
+      { digest: 'a', name: 'a-config', paths: new Set([CONF]) },
+      { digest: 'b', name: 'b-config', paths: new Set([CONF]) },
+    ];
+    expect(judgeDrift(facts({ judged: new Map([['a-config', 'a']]), records }))).toEqual(new Map());
+    expect(
+      judgeDrift(facts({ judged: new Map([['a-config', 'a']]), records: records.toReversed() })),
+    ).toEqual(new Map());
+    expect(
+      judgeDrift(
+        facts({
+          judged: new Map([
+            ['a-config', 'a'],
+            ['b-config', 'b'],
+          ]),
+          records,
+        }),
+      ),
+    ).toEqual(new Map([[CONF, 'clear']]));
+  });
+
+  test('judges no named path without hashed records, but clears a forgotten path even with stale checks', () => {
+    expect(judgeDrift(facts({ judged: new Map() }))).toEqual(new Map());
+    expect(
+      judgeDrift(
+        facts({
+          files: [file('drifted')],
+          judged: new Map(),
+          records: [{ digest: 'other', name: 'other-config', paths: new Set([ENV]) }],
+        }),
+      ),
+    ).toEqual(new Map([[CONF, 'clear']]));
+    expect(judgeDrift(facts({ files: [file('drifted')], records: [] }))).toEqual(
+      new Map([[CONF, 'clear']]),
+    );
+  });
+
+  test('an unreadable files record blocks all clearing but does not block raising', () => {
+    expect(judgeDrift(facts({ judged: new Map(), records: [], unreadable: true }))).toEqual(
+      new Map(),
+    );
+    expect(judgeDrift(facts({ unreadable: true }))).toEqual(new Map());
+    expect(judgeDrift(facts({ files: [file('drifted')], unreadable: true }))).toEqual(
+      new Map([[CONF, { raise: changed }]]),
+    );
+    expect(
+      judgeDrift(
+        facts({
+          files: [file('drifted', ENV)],
+          records: [{ digest: 'digest', name: 'webapp-config', paths: new Set([CONF, ENV]) }],
+          unreadable: true,
+        }),
+      ),
+    ).toEqual(new Map([[ENV, { raise: changed }]]));
+  });
+
+  test('records over budget leave both changed and forgotten paths alone', () => {
+    expect(
+      judgeDrift(facts({ files: [file('drifted')], open: [ENV], recordsOverBudget: true })),
+    ).toEqual(new Map());
+  });
+
+  test('ignores mismatches for paths the mirrored record does not name', () => {
+    expect(judgeDrift(facts({ files: [file('drifted', ENV)] }))).toEqual(
+      new Map([[CONF, 'clear']]),
+    );
+  });
+
+  test('an older record digest cannot raise or clear until matching checks arrive', () => {
+    const input = facts({ judged: new Map([['webapp-config', 'old-digest']]) });
+    expect(judgeDrift(input)).toEqual(new Map());
+    expect(judgeDrift({ ...input, files: [file('drifted')] })).toEqual(new Map());
+    expect(judgeDrift(facts())).toEqual(new Map([[CONF, 'clear']]));
+  });
+
+  test('a path moved to another record stays unknown until its new checks arrive', () => {
+    const input = facts({
+      files: [file('drifted')],
+      records: [
+        { digest: 'emptied', name: 'webapp-config', paths: new Set([ENV]) },
+        { digest: 'moved', name: 'webapp-moved', paths: new Set([CONF]) },
+      ],
+    });
+    expect(judgeDrift(input)).toEqual(new Map());
+    expect(
+      judgeDrift({
+        ...input,
+        files: [file('drifted', CONF, 'webapp-moved')],
+        judged: new Map([
+          ['webapp-config', 'emptied'],
+          ['webapp-moved', 'moved'],
+        ]),
+      }),
+    ).toEqual(
+      new Map<string, 'clear' | { raise: string }>([
+        [ENV, 'clear'],
+        [
+          CONF,
+          { raise: 'Changed: its content no longer matches the hash recorded in webapp-moved.' },
+        ],
+      ]),
+    );
+  });
+});
+
+describe('Drift wiring', () => {
+  test('stays as it is for a record the Collector could not read, though the checks omit its paths', async () => {
+    await using h = await startHub();
+    await driftedAndEvaluated(h);
+    await send(h, '09:05:00', {
+      checks: await checks([]),
+      records: { records: [], unreadable: [{ kind: 'files', name: 'webapp-config' }] },
+    });
+
+    const { open, timeline } = await evaluate(h, '09:10:00');
+
+    expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
+    expect(timeline).toHaveLength(1);
+  });
+
   test('stays open on an unpaired System', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
@@ -99,77 +322,6 @@ describe('Drift', () => {
 
     expect(subjects(open)).toEqual([CONF]);
     expect((await listSystems(h.db.sql)).find((s) => s.name === 'laptop-1')?.paired).toBe(false);
-  });
-
-  test('is raised for a file whose content no longer matches, with the path as its subject', async () => {
-    await using h = await startHub();
-    await send(h, '08:05:00', {
-      checks: await checks([WEBAPP], mismatch('drifted')),
-      records: set(WEBAPP),
-    });
-
-    const { open } = await evaluate(h, '08:10:00');
-
-    expect(open).toEqual([
-      {
-        kind: 'drift',
-        raisedAt: at('08:10:00'),
-        reason: 'Changed: its content no longer matches the hash recorded in webapp-config.',
-        subject: CONF,
-      },
-    ]);
-  });
-
-  test('is raised for a recorded file that is missing, and says so', async () => {
-    await using h = await startHub();
-    await send(h, '08:05:00', {
-      checks: await checks([WEBAPP], mismatch('missing')),
-      records: set(WEBAPP),
-    });
-
-    const { open } = await evaluate(h, '08:10:00');
-
-    expect(open).toMatchObject([
-      { reason: 'Missing: the file recorded in webapp-config does not exist.', subject: CONF },
-    ]);
-  });
-
-  test('is one Condition for each path, however many records name it', async () => {
-    await using h = await startHub();
-    const a = filesRecord('a-config', CONF, ENV);
-    const b = filesRecord('b-config', CONF);
-    await send(h, '08:05:00', {
-      checks: await checks(
-        [a, b],
-        mismatch('drifted', CONF, 'a-config'),
-        mismatch('missing', CONF, 'b-config'),
-        mismatch('drifted', ENV, 'a-config'),
-      ),
-      records: set(a, b),
-    });
-
-    const { open } = await evaluate(h, '08:10:00');
-
-    expect(subjects(open)).toEqual([CONF, ENV]);
-  });
-
-  test('names, in its reason, the first record by name that shows the path changed', async () => {
-    await using h = await startHub();
-    const a = filesRecord('a-config', CONF);
-    const b = filesRecord('B-config', CONF);
-    await send(h, '08:05:00', {
-      checks: await checks(
-        [b, a],
-        mismatch('drifted', CONF, 'a-config'),
-        mismatch('drifted', CONF, 'B-config'),
-      ),
-      records: set(a, b),
-    });
-
-    const { open } = await evaluate(h, '08:10:00');
-
-    // Uppercase sorts before lowercase by code unit, in every locale.
-    expect(open).toMatchObject([{ reason: expect.stringContaining('B-config') }]);
   });
 
   test('clears when the file matches again, and the Timeline keeps both', async () => {
@@ -186,76 +338,6 @@ describe('Drift', () => {
     ]);
   });
 
-  test('takes the new reason when a changed file goes missing, without a new Condition', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', { checks: await checks([WEBAPP], mismatch('missing')) });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([
-      { raisedAt: at('08:10:00'), reason: expect.stringContaining('Missing'), subject: CONF },
-    ]);
-  });
-
-  test('is not raised for a file the Collector could not read, or a directory', async () => {
-    await using h = await startHub();
-    const app = filesRecord('webapp-config', CONF, '/etc/webapp');
-    await send(h, '08:05:00', {
-      checks: await checks(
-        [app],
-        mismatch('unreadable', CONF),
-        mismatch('unreadable', '/etc/webapp'),
-      ),
-      records: set(app),
-    });
-
-    const { open, timeline } = await evaluate(h, '08:10:00');
-
-    expect(open).toEqual([]);
-    expect(timeline).toEqual([]);
-  });
-
-  test('stays as it is when its file becomes unreadable', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', { checks: await checks([WEBAPP], mismatch('unreadable')) });
-
-    const { open, timeline } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-    expect(timeline).toHaveLength(1);
-  });
-
-  test('is raised for a path while any record shows it changed, though another cannot read it', async () => {
-    await using h = await startHub();
-    const a = filesRecord('a-config', CONF);
-    const b = filesRecord('b-config', CONF);
-    await send(h, '08:05:00', {
-      checks: await checks(
-        [a, b],
-        mismatch('unreadable', CONF, 'a-config'),
-        mismatch('drifted', CONF, 'b-config'),
-      ),
-      records: set(a, b),
-    });
-    await using other = await startHub();
-    await send(other, '08:05:00', {
-      checks: await checks(
-        [a, b],
-        mismatch('drifted', CONF, 'a-config'),
-        mismatch('unreadable', CONF, 'b-config'),
-      ),
-      records: set(a, b),
-    });
-
-    const first = await evaluate(h, '08:10:00');
-    const second = await evaluate(other, '08:10:00');
-
-    expect(subjects(first.open)).toEqual([CONF]);
-    expect(subjects(second.open)).toEqual([CONF]);
-  });
-
   test('stays as it is while the files part is over budget, and while the System has sent none', async () => {
     await using h = await startHub();
     await driftedAndEvaluated(h);
@@ -270,33 +352,6 @@ describe('Drift', () => {
     expect(noChecks).toEqual({ open: [], timeline: [] });
   });
 
-  test('clears for a forgotten record while the files part is over budget, since no record names the path', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', {
-      checks: { overBudget: { files: { bytes: 2_000_000 } } },
-      records: set(filesRecord('other-config', ENV)),
-    });
-
-    const { open, timeline } = await evaluate(h, '09:10:00');
-
-    expect(open).toEqual([]);
-    expect(timeline).toMatchObject([{ condition: 'drift', kind: 'cleared', subject: CONF }, {}]);
-  });
-
-  test('stays as it is while the files part is over budget and a record the Hub cannot read might name the path', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', {
-      checks: { overBudget: { files: { bytes: 2_000_000 } } },
-      records: { records: [], unreadable: [{ kind: 'files', name: 'webapp-config' }] },
-    });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ subject: CONF }]);
-  });
-
   test('judges nothing, and does not fail, for a System that sent checks but never records', async () => {
     await using h = await startHub();
     await send(h, '08:05:00', { checks: await checks([WEBAPP], mismatch('drifted')) });
@@ -304,19 +359,6 @@ describe('Drift', () => {
     const { open } = await evaluate(h, '08:10:00');
 
     expect(open).toEqual([]);
-  });
-
-  test('stays as it is while the System sent its records over budget', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', {
-      checks: await checks([WEBAPP]),
-      records: { overBudget: { bytes: 9e6 } },
-    });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ subject: CONF }]);
   });
 
   test('stays as it is when a Report carries no checks', async () => {
@@ -347,136 +389,6 @@ describe('Drift', () => {
     const { open } = await evaluate(h, '09:10:00');
 
     expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-  });
-
-  test('clears for a file whose record is forgotten while the section carries no files part, which judges no record', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', { checks: {}, records: set(filesRecord('other-config', ENV)) });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toEqual([]);
-  });
-
-  test('clears for a file whose record is forgotten, though the held checks still list it', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', { records: set(filesRecord('other-config', ENV)) });
-
-    const { open, timeline } = await evaluate(h, '09:10:00');
-
-    expect(open).toEqual([]);
-    expect(timeline).toMatchObject([{ condition: 'drift', kind: 'cleared', subject: CONF }, {}]);
-  });
-
-  test('is not raised for a file its record no longer names', async () => {
-    await using h = await startHub();
-    await send(h, '08:05:00', {
-      checks: await checks([WEBAPP], mismatch('drifted', ENV)),
-      records: set(WEBAPP),
-    });
-
-    const { open } = await evaluate(h, '08:10:00');
-
-    expect(open).toEqual([]);
-  });
-});
-
-describe('Drift while the checks and the records describe different versions', () => {
-  describe('beside another record that is unreadable', () => {
-    const a = filesRecord('a-config', CONF);
-    const b = filesRecord('b-config', CONF);
-
-    // b-config shows CONF drifted, so Drift is open; then b-config turns
-    // unreadable and a-config, judged, shows CONF matching.
-    const driftedByB = async (h: Hub) => {
-      await send(h, '08:05:00', {
-        checks: await checks([a, b], mismatch('drifted', CONF, 'b-config')),
-        records: set(a, b),
-      });
-      await evaluate(h, '08:10:00');
-    };
-
-    test('stays as it is when the Collector can no longer read the record', async () => {
-      await using h = await startHub();
-      await driftedByB(h);
-      await send(h, '09:05:00', {
-        checks: await checks([a]),
-        records: {
-          records: [{ kind: 'files', name: 'a-config', record: a }],
-          unreadable: [{ kind: 'files', name: 'b-config' }],
-        },
-      });
-
-      const { open, timeline } = await evaluate(h, '09:10:00');
-
-      expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-      expect(timeline).toHaveLength(1);
-    });
-
-    test('stays as it is when the Hub does not know the shape of the record', async () => {
-      await using h = await startHub();
-      await driftedByB(h);
-      await send(h, '09:05:00', { checks: await checks([a, b]) });
-      await h.db.sql`
-        UPDATE mirrored_records SET record = '{"name": "b-config", "files": "?"}'::jsonb
-        WHERE kind = 'files' AND name = 'b-config'
-      `;
-
-      const { open } = await evaluate(h, '09:10:00');
-
-      expect(open).toMatchObject([{ subject: CONF }]);
-    });
-
-    test('still raises Drift for another path a judged record shows changed', async () => {
-      await using h = await startHub();
-      await driftedByB(h);
-      const c = filesRecord('a-config', CONF, ENV);
-      await send(h, '09:05:00', {
-        checks: await checks([c], mismatch('drifted', ENV, 'a-config')),
-        records: {
-          records: [{ kind: 'files', name: 'a-config', record: c }],
-          unreadable: [{ kind: 'files', name: 'b-config' }],
-        },
-      });
-
-      const { open } = await evaluate(h, '09:10:00');
-
-      expect(subjects(open).toSorted()).toEqual([CONF, ENV]);
-    });
-  });
-
-  test('stays as it is for a path a judged matching record and a record the checks did not judge both name', async () => {
-    await using h = await startHub();
-    const a = filesRecord('a-config', CONF);
-    const b = filesRecord('b-config', CONF);
-    await send(h, '08:05:00', {
-      checks: await checks([a, b], mismatch('drifted', CONF, 'b-config')),
-      records: set(a, b),
-    });
-    await evaluate(h, '08:10:00');
-    // The checks hashed a-config again and found it matching, and have not
-    // reached b-config yet.
-    await send(h, '09:05:00', { checks: await checks([a]) });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-  });
-
-  test('stays as it is for a record the Collector could not read, though the checks omit its paths', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    await send(h, '09:05:00', {
-      checks: await checks([]),
-      records: { records: [], unreadable: [{ kind: 'files', name: 'webapp-config' }] },
-    });
-
-    const { open, timeline } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-    expect(timeline).toHaveLength(1);
   });
 
   test('stays as it is for a mirrored record whose shape the Hub does not know', async () => {
@@ -517,61 +429,6 @@ describe('Drift while the checks and the records describe different versions', (
     expect(open).toEqual([]);
   });
 
-  test('is not cleared or raised again when a path moves to another record before the new checks arrive', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    const emptied = filesRecord('webapp-config', ENV);
-    const moved = filesRecord('webapp-moved', CONF);
-    await send(h, '09:05:00', { records: set(emptied, moved) });
-
-    const whileChecksLag = await evaluate(h, '09:10:00');
-    await send(h, '09:15:00', {
-      checks: await checks([emptied, moved], mismatch('drifted', CONF, 'webapp-moved')),
-    });
-    const afterChecks = await evaluate(h, '09:16:00');
-
-    expect(whileChecksLag.open).toMatchObject([{ raisedAt: at('08:10:00'), subject: CONF }]);
-    expect(whileChecksLag.timeline).toHaveLength(1);
-    expect(afterChecks.open).toMatchObject([
-      { raisedAt: at('08:10:00'), reason: expect.stringContaining('webapp-moved'), subject: CONF },
-    ]);
-    expect(afterChecks.timeline).toHaveLength(1);
-  });
-
-  test('are unknown when the checks judged an older version of the record', async () => {
-    await using h = await startHub();
-    const rerecorded: FilesRecord = {
-      files: [{ path: CONF, sha256: 'b'.repeat(64) }],
-      name: 'webapp-config',
-    };
-    await send(h, '08:05:00', {
-      checks: await checks([WEBAPP], mismatch('drifted')),
-      records: set(rerecorded),
-    });
-    const raised = await evaluate(h, '08:10:00');
-    await send(h, '08:15:00', { checks: await checks([rerecorded]) });
-    const settled = await evaluate(h, '08:16:00');
-
-    expect(raised.open).toEqual([]);
-    expect(settled.open).toEqual([]);
-  });
-
-  test('leave an open Drift as it is when the checks judged an older version that omits the path', async () => {
-    await using h = await startHub();
-    await driftedAndEvaluated(h);
-    const rerecorded: FilesRecord = {
-      files: [{ path: CONF, sha256: 'b'.repeat(64) }],
-      name: 'webapp-config',
-    };
-    await send(h, '09:05:00', { records: set(rerecorded) });
-
-    const { open } = await evaluate(h, '09:10:00');
-
-    expect(open).toMatchObject([{ subject: CONF }]);
-  });
-});
-
-describe('the checks a Report carries', () => {
   test('keep the files the Hub can read when one has a state only a newer Collector knows', async () => {
     await using h = await startHub();
     const app = filesRecord('webapp-config', CONF, ENV);

@@ -69,6 +69,115 @@ const replayHistory = (rows: ProcessReading[], limits: ConditionLimits['process'
   return { completed, pending: [...open.values()] };
 };
 
+// What one System's Hot process is judged on, as read under its row lock.
+export type HotProcessFacts = {
+  rows: readonly ProcessReading[];
+  held: readonly { subject: string; level: Level; sample_from: Date | null }[];
+  cursor: { through: Date } | undefined;
+  inserted: readonly { subject: string; sample_from: Date; sample_until: Date }[];
+  limits: ConditionLimits['process'];
+};
+
+type ProcessVerdict = {
+  at: Date;
+  subject: string;
+  verdict: 'clear' | { level: Level; raise: string };
+};
+
+// Judges one System's Hot process, one subject per lifetime, in sample order.
+// Measured busy windows choose the level; unknown time preserves the held
+// level. Old evidence cannot open a Condition or make an old exit fresh.
+// Samples already judged or covered by replayed history do not raise again.
+// Returns the transitions to apply and each remaining lifetime's coverage.
+export const judgeHotProcessConditions = (facts: HotProcessFacts, now: number) => {
+  const { rows, held, cursor, inserted, limits: selectedLimits } = facts;
+  const verdicts: ProcessVerdict[] = [];
+  const latest = rows.at(-1);
+  if (latest === undefined) {
+    return { coverage: {}, verdicts };
+  }
+  const old = now - latest.t.getTime() > OLD_EVIDENCE_MS;
+  const covered = new Map<string, HotProcessFacts['inserted'][number][]>();
+  for (const span of inserted) {
+    const spans = covered.get(span.subject) ?? [];
+    spans.push(span);
+    covered.set(span.subject, spans);
+  }
+  const positions = new Map<string, number>();
+  const states = new Map<string, ProcessWindow>();
+  const current = new Map(held.map(({ subject, level }) => [subject, level]));
+  let previous: ProcessReading | undefined;
+  for (const row of rows) {
+    // Earlier generations in the replay must not end a lifetime that had
+    // not appeared yet. Quiet windows still seed held, older lifetimes.
+    for (const { subject, sample_from } of held) {
+      if (row.t >= (sample_from ?? latest.t)) {
+        addProcessWindow(states, subject, selectedLimits);
+      }
+    }
+    feedProcessWindows(states, row, previous, selectedLimits);
+    previous = row;
+    if (row !== latest && ((cursor !== undefined && row.t <= cursor.through) || old)) {
+      prune(states, current);
+      continue;
+    }
+    for (const [subject, state] of states) {
+      const level = current.get(subject);
+      const spans = covered.get(subject) ?? [];
+      let position = positions.get(subject) ?? 0;
+      while (
+        spans[position] !== undefined &&
+        (spans[position]?.sample_until.getTime() ?? 0) < row.t.getTime()
+      ) {
+        position += 1;
+      }
+      positions.set(subject, position);
+      const span = spans[position];
+      if (level === undefined && span !== undefined && span.sample_from <= row.t) {
+        continue;
+      }
+      if (old && level === undefined) {
+        continue;
+      }
+      // A later host-only sample cannot make an old exit observation fresh.
+      if (state.endedAt !== undefined && now - state.endedAt.getTime() > OLD_EVIDENCE_MS) {
+        continue;
+      }
+      const rule = selectProcessRule(state, level, old);
+      if (rule?.level === level && rule !== undefined && rule.window.busy < rule.duration) {
+        continue;
+      }
+      if (rule === undefined) {
+        if (level !== undefined) {
+          verdicts.push({ at: row.t, subject, verdict: 'clear' });
+          current.delete(subject);
+        }
+      } else {
+        if (rule.level === level && row !== latest) {
+          continue;
+        }
+        verdicts.push({
+          at: row.t,
+          subject,
+          verdict: {
+            level: rule.level,
+            raise: processReason(state, rule, row, selectedLimits.cores),
+          },
+        });
+        current.set(subject, rule.level);
+      }
+    }
+    prune(states, current);
+  }
+  const coverage = Object.fromEntries(
+    [...states].map(([subject, state]) => [subject, state.known]),
+  );
+  return { coverage, verdicts };
+};
+
+// Reads and applies one System's Hot process under its row lock, including
+// history replay and the evaluation cursor. Without Vitals nothing is judged;
+// unpairing withdraws the open Conditions and invalidates the fingerprint.
 const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: ConditionLimits) =>
   sql.begin(async (tx) => {
     const paired = await whenPaired(tx, system);
@@ -168,93 +277,36 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       inserted = history.inserted;
       pendingFrom = history.pendingFrom;
     }
-    const covered = new Map<string, typeof inserted>();
-    for (const span of inserted) {
-      const spans = covered.get(span.subject) ?? [];
-      spans.push(span);
-      covered.set(span.subject, spans);
-    }
-    const positions = new Map<string, number>();
-    const states = new Map<string, ProcessWindow>();
-    const current = new Map(held.map(({ subject, level }) => [subject, level]));
-    let previous: ProcessReading | undefined;
-    for (const row of rows) {
-      // Earlier generations in the replay must not end a lifetime that had
-      // not appeared yet. Quiet windows still seed held, older lifetimes.
-      for (const { subject, sample_from } of held) {
-        if (row.t >= (sample_from ?? latest.t)) {
-          addProcessWindow(states, subject, selectedLimits);
-        }
-      }
-      feedProcessWindows(states, row, previous, selectedLimits);
-      previous = row;
-      if (row !== latest && ((cursor !== undefined && row.t <= cursor.through) || old)) {
-        prune(states, current);
-        continue;
-      }
-      for (const [subject, state] of states) {
-        const level = current.get(subject);
-        const spans = covered.get(subject) ?? [];
-        let position = positions.get(subject) ?? 0;
-        while (
-          spans[position] !== undefined &&
-          (spans[position]?.sample_until.getTime() ?? 0) < row.t.getTime()
-        ) {
-          position += 1;
-        }
-        positions.set(subject, position);
-        const span = spans[position];
-        if (level === undefined && span !== undefined && span.sample_from <= row.t) {
-          continue;
-        }
-        if (old && level === undefined) {
-          continue;
-        }
-        // A later host-only sample cannot make an old exit observation fresh.
-        if (state.endedAt !== undefined && now - state.endedAt.getTime() > OLD_EVIDENCE_MS) {
-          continue;
-        }
-        const rule = selectProcessRule(state, level, old);
-        if (rule?.level === level && rule !== undefined && rule.window.busy < rule.duration) {
-          continue;
-        }
-        if (rule === undefined) {
-          if (level !== undefined) {
-            // oxlint-disable-next-line no-await-in-loop -- terminal span and clearing commit together.
-            await trackEpisodeSample(tx, {
-              at: row.t,
-              kind: KIND,
-              subject,
-              system,
-              terminal: true,
-            });
-            // oxlint-disable-next-line no-await-in-loop -- transitions share the System lock.
-            await clear(tx, { kind: KIND, now: new Date(now), subject, system });
-            current.delete(subject);
-          }
-        } else {
-          if (rule.level === level && row !== latest) {
-            continue;
-          }
-          // oxlint-disable-next-line no-await-in-loop -- level and cursor commit together.
-          await raise(tx, {
-            kind: KIND,
-            level: rule.level,
-            now: new Date(now),
-            reason: processReason(state, rule, row, selectedLimits.cores),
-            subject,
-            system,
-          });
-          // oxlint-disable-next-line no-await-in-loop -- span and level share the transaction.
-          await trackEpisodeSample(tx, { at: row.t, kind: KIND, subject, system });
-          current.set(subject, rule.level);
-        }
-      }
-      prune(states, current);
-    }
-    const coverage = Object.fromEntries(
-      [...states].map(([subject, state]) => [subject, state.known]),
+    const { coverage, verdicts } = judgeHotProcessConditions(
+      {
+        cursor,
+        held,
+        inserted,
+        limits: selectedLimits,
+        rows,
+      },
+      now,
     );
+    for (const { at, subject, verdict } of verdicts) {
+      if (verdict === 'clear') {
+        // oxlint-disable-next-line no-await-in-loop -- terminal span and clearing commit together.
+        await trackEpisodeSample(tx, { at, kind: KIND, subject, system, terminal: true });
+        // oxlint-disable-next-line no-await-in-loop -- transitions share the System lock.
+        await clear(tx, { kind: KIND, now: new Date(now), subject, system });
+      } else {
+        // oxlint-disable-next-line no-await-in-loop -- level and cursor commit together.
+        await raise(tx, {
+          kind: KIND,
+          level: verdict.level,
+          now: new Date(now),
+          reason: verdict.raise,
+          subject,
+          system,
+        });
+        // oxlint-disable-next-line no-await-in-loop -- span and level share the transaction.
+        await trackEpisodeSample(tx, { at, kind: KIND, subject, system });
+      }
+    }
     await tx`
       INSERT INTO hot_process_evaluations (system, through, pending_from, coverage, fingerprint)
       VALUES (${system}, ${latest.t}, ${pendingFrom ?? null}, ${storableJson(coverage)}::text::jsonb, ${fingerprint}::jsonb)
