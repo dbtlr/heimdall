@@ -15,13 +15,14 @@
       "dependencies": {
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
-        "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/core": "0.16.0",
+        "@loomcli/plugins": "0.16.0",
+        "@loomcli/validators": "0.16.0",
       },
       "devDependencies": {
         "@heimdall/hub": "workspace:*",
-        "@loomcli/loom": "0.10.0",
+        "@loomcli/loom": "0.16.0",
+        "@loomcli/testing": "0.16.0",
       },
     },
     "packages/dashboard": {
@@ -31,9 +32,9 @@
         "@fontsource/barlow-semi-condensed": "^5.3.0",
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
-        "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/core": "0.16.0",
+        "@loomcli/plugins": "0.16.0",
+        "@loomcli/validators": "0.16.0",
         "@tailwindcss/vite": "^4.3.3",
         "@tanstack/react-router": "^1.170.44",
         "@tanstack/react-start": "^1.169.1",
@@ -52,7 +53,8 @@
       },
       "devDependencies": {
         "@heimdall/hub": "workspace:*",
-        "@loomcli/loom": "0.10.0",
+        "@loomcli/loom": "0.16.0",
+        "@loomcli/testing": "0.16.0",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
       },
@@ -63,22 +65,26 @@
       "dependencies": {
         "@heimdall/schema": "workspace:*",
         "@heimdall/service": "workspace:*",
-        "@loomcli/core": "0.10.0",
-        "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/core": "0.16.0",
+        "@loomcli/plugins": "0.16.0",
+        "@loomcli/validators": "0.16.0",
         "zod": "^4.6.5",
       },
       "devDependencies": {
-        "@loomcli/loom": "0.10.0",
+        "@loomcli/loom": "0.16.0",
+        "@loomcli/testing": "0.16.0",
       },
     },
     "packages/release": {
       "name": "@heimdall/release",
       "version": "0.0.0",
       "dependencies": {
-        "@loomcli/core": "0.10.0",
-        "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/core": "0.16.0",
+        "@loomcli/plugins": "0.16.0",
+        "@loomcli/validators": "0.16.0",
+      },
+      "devDependencies": {
+        "@loomcli/testing": "0.16.0",
       },
     },
     "packages/schema": {
@@ -92,10 +98,13 @@
       "name": "@heimdall/service",
       "version": "0.0.0",
       "dependencies": {
-        "@loomcli/core": "0.10.0",
-        "@loomcli/plugins": "0.10.0",
-        "@loomcli/validators": "0.10.0",
+        "@loomcli/core": "0.16.0",
+        "@loomcli/plugins": "0.16.0",
+        "@loomcli/validators": "0.16.0",
         "smol-toml": "^1.9.0",
+      },
+      "devDependencies": {
+        "@loomcli/testing": "0.16.0",
       },
     },
   },
@@ -160,13 +169,19 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@loomcli/core": ["@loomcli/core@0.10.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-fCa7ZQlqaQ2fZRKJERJ9u2fvNszQA9a/nry6eMReu9tnyLjxELaFG0ymw40MuLiEpCXyr8LS4MOiyl6DOqv8fg=="],
+    "@loomcli/core": ["@loomcli/core@0.16.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/node": "22.20.5" } }, "sha512-S0jT8z0aQy5eZV0KjDbPxH72NXDleP9hJ9JjQvhITct8NZpaJEP8HyqZEm/fzPizPLYr99Iy+7aJLDtWsrwF7Q=="],
 
-    "@loomcli/loom": ["@loomcli/loom@0.10.0", "", { "dependencies": { "@loomcli/core": "0.10.0", "@loomcli/plugins": "0.10.0", "mdast-util-from-markdown": "^2.0.3", "yaml": "^2.9.1", "zod": "^4.6.5" }, "peerDependencies": { "pnpm": "12.8.1", "typescript": "^7.0.2" }, "optionalPeers": ["pnpm", "typescript"], "bin": { "loom": "dist/main.js" } }, "sha512-y6fhq6rjDxBONRyl1KkCWzH0qknOUbMUxEqjkUJ20H3W+IS0EYcWwh4sgs+DHNXsq4GoMGG3d+S5y/exnY4miw=="],
+    "@loomcli/eslint-plugin": ["@loomcli/eslint-plugin@0.16.0", "", { "peerDependencies": { "@loomcli/core": "0.16.0" } }, "sha512-V76Ja1Az9KDDg7TCiH9XJxfsqbmjgXsTIaxybdPsguUykJ0L6Lqalu7mfZTliwOQYDwhV0cvvWCLXrQD3sqcjA=="],
 
-    "@loomcli/plugins": ["@loomcli/plugins@0.10.0", "", { "dependencies": { "smol-toml": "^1.9.0", "yaml": "^2.9.1", "zod": "^4.6.5" }, "peerDependencies": { "@loomcli/core": "0.10.0" } }, "sha512-1QyqdSNUXAgiSqdS/qJABxEugKXTgb5lJ6crU71ZOdYRGjAoMCS+eMJSrDVPlJphlQqohd2nadMIjcjKXhArxQ=="],
+    "@loomcli/loom": ["@loomcli/loom@0.16.0", "", { "dependencies": { "@loomcli/core": "0.16.0", "@loomcli/eslint-plugin": "0.16.0", "@loomcli/plugins": "0.16.0", "@loomcli/prompts": "0.16.0", "@loomcli/validators": "0.16.0", "mdast-util-from-markdown": "^2.0.3", "valibot": "^1.5.0", "yaml": "^2.9.1" }, "peerDependencies": { "pnpm": "12.8.1", "typescript": "^7.0.2" }, "optionalPeers": ["pnpm", "typescript"], "bin": { "loom": "dist/main.js" } }, "sha512-qopX+K6VFEoUdrJqhcztF37Fpjuc3SLm1UwNTooj100XiiuxthWtscjd9SJj0p2YN+UiFhakLoiVIiMWujn0cw=="],
 
-    "@loomcli/validators": ["@loomcli/validators@0.10.0", "", { "peerDependencies": { "@loomcli/core": "0.10.0" } }, "sha512-elRX5Mr8SbAbF+Qf0RHSq2jcxW6poFD+NCLGXXzIjZa1It1icS58hL01kGeRGW4/g2QWvjNm1cE6eP5Me8h2aA=="],
+    "@loomcli/plugins": ["@loomcli/plugins@0.16.0", "", { "dependencies": { "@loomcli/validators": "0.16.0", "smol-toml": "^1.9.0", "valibot": "^1.5.0", "yaml": "^2.9.1" }, "peerDependencies": { "@loomcli/core": "0.16.0" } }, "sha512-rj0qwu3wUataIXHpPemaDcxExHordr9GdmKeqsWZTJujZY7zr1T55Ad9Dqtb1GIk6wyMOcBF4YMHcHVl7Y5spw=="],
+
+    "@loomcli/prompts": ["@loomcli/prompts@0.16.0", "", { "peerDependencies": { "@loomcli/core": "0.16.0" } }, "sha512-fxK+rOxIpwqPA0wTRafEqFW/i869jmoKIEiuYFi+6q6hGE5AcQZShCPHaI9Oq4aG/vS+3aJjWGrt6+J9eJUxDA=="],
+
+    "@loomcli/testing": ["@loomcli/testing@0.16.0", "", { "peerDependencies": { "@loomcli/core": "0.16.0" } }, "sha512-K7Pnd5C4BTzOsNVQRE29wYZ4Cktz556RAyWox7bGOUjLvybcDdnHh1K3mfSa1+t/1uzKmtp6ScGVlRMkzDcrCw=="],
+
+    "@loomcli/validators": ["@loomcli/validators@0.16.0", "", { "peerDependencies": { "@loomcli/core": "0.16.0" } }, "sha512-VntHnRf7dILSjzEzX+mlSDBcrgbyuJQThdFq1N2ogaFeWaaQhAzL6KKThNlm3xxessJuu/j3nTeqerdxIFUggg=="],
 
     "@oozcitak/dom": ["@oozcitak/dom@2.0.2", "", { "dependencies": { "@oozcitak/infra": "^2.0.2", "@oozcitak/url": "^3.0.0", "@oozcitak/util": "^10.0.0" } }, "sha512-GjpKhkSYC3Mj4+lfwEyI1dqnsKTgwGy48ytZEhm4A/xnH/8z9M3ZVXKr/YGQi3uCLs1AEBS+x5T2JPiueEDW8w=="],
 
@@ -845,6 +860,8 @@
     "update-browserslist-db": ["update-browserslist-db@1.3.4", "", { "dependencies": { "escalade": "^3.2.0", "picocolors": "^1.1.1" }, "peerDependencies": { "browserslist": ">= 4.21.0" }, "bin": { "update-browserslist-db": "cli.js" } }, "sha512-t8wonIOdQyOjtPd2VktlBu6QjTVTks6v8bSi7kd0r2Vll8TK1JYDZtRRdbmCHOAMphkZgrzK+L+vXK4pyZ8t4A=="],
 
     "use-sync-external-store": ["use-sync-external-store@1.7.0", "", { "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A=="],
+
+    "valibot": ["valibot@1.5.0", "", { "peerDependencies": { "typescript": ">=5" }, "optionalPeers": ["typescript"] }, "sha512-nil6AkP2TChWL43Z5uJ6GTxX01CUA+g8LWUM+N/rB9NBbkUMaUsi9PUNzlUPgoKASgmx9f7eGOYpJ04/fSa6FQ=="],
 
     "victory-vendor": ["victory-vendor@37.3.6", "", { "dependencies": { "@types/d3-array": "^3.0.3", "@types/d3-ease": "^3.0.0", "@types/d3-interpolate": "^3.0.1", "@types/d3-scale": "^4.0.2", "@types/d3-shape": "^3.1.0", "@types/d3-time": "^3.0.0", "@types/d3-timer": "^3.0.0", "d3-array": "^3.1.6", "d3-ease": "^3.0.1", "d3-interpolate": "^3.0.1", "d3-scale": "^4.0.2", "d3-shape": "^3.1.0", "d3-time": "^3.0.0", "d3-timer": "^3.0.1" } }, "sha512-SbPDPdDBYp+5MJHhBCAyI7wKM3d5ivekigc2Dk2s7pgbZ9wIgIBYGVw4zGHBml/qTFbexrofXW6Gu4noGxrOwQ=="],
 

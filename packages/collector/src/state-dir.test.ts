@@ -25,13 +25,13 @@ test('Linux falls back to ~/.local/state without XDG_STATE_HOME', () => {
 });
 
 test('a state directory that is named wins over the default', () => {
-  expect(resolveStateDir({ env: { HOME: '/home/operator' }, option: '/srv/state' })).toBe(
+  expect(resolveStateDir({ env: {}, home: '/home/operator', option: '/srv/state' })).toBe(
     '/srv/state',
   );
 });
 
 test('without one, the default is under the account home', () => {
   expect(
-    resolveStateDir({ env: { HOME: '/home/operator' }, option: undefined, platform: 'linux' }),
+    resolveStateDir({ env: {}, home: '/home/operator', option: undefined, platform: 'linux' }),
   ).toBe('/home/operator/.local/state/heimdall');
 });

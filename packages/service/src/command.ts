@@ -10,7 +10,7 @@ import { integer } from '@loomcli/validators';
 import { runsCompiled } from './compiled.ts';
 import { httpGet } from './http-get.ts';
 import type { HttpGet } from './http-get.ts';
-import { TITLE, displayPath, homeOf, serviceDefinition, servicePaths } from './names.ts';
+import { TITLE, displayPath, serviceDefinition, servicePaths } from './names.ts';
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
 import { setPort } from './settings.ts';
@@ -113,7 +113,7 @@ const originOf = (value: unknown) => {
 
 // The parts of a Loom action context the commands use.
 type Context = {
-  host: { env: Env };
+  host: { env: Env; home: string };
   out: { fatal: (message: string) => never; print: (message: string) => Promise<void> };
   style: { escape: (text: string) => string };
 };
@@ -129,7 +129,7 @@ const io = ({ host, out, style }: Context) => {
   return {
     env: host.env,
     fail: (message: string) => out.fatal(clean(message)),
-    home: homeOf(host.env),
+    home: host.home,
     print: (message: string) => out.print(clean(message)),
   };
 };

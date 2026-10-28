@@ -5,9 +5,11 @@ import { join } from 'node:path';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
+import { assertAssembles } from '@loomcli/testing';
 import type { SQL } from 'bun';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { app } from './application.ts';
 import { raise } from './conditions.ts';
 import { storeReport } from './store.ts';
 import { configArgs, configFile, hubConfig, invoke } from './testing/cli.ts';
@@ -15,6 +17,10 @@ import { gzip } from './testing/hub.ts';
 import { migratedDatabase, testDatabase } from './testing/postgres.ts';
 import { storeToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
+
+test('the application assembles', () => {
+  assertAssembles(app);
+});
 
 test('--version names the Hub release and the Report schema it accepts, and exits 0', async () => {
   const { code, stderr, stdout } = await invoke(['--version']);

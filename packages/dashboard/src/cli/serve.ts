@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 
-import { homeOf, keepLogRotated, listenOrFail, runtimeLog, servicePaths } from '@heimdall/service';
+import { keepLogRotated, listenOrFail, runtimeLog, servicePaths } from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { Command, escapeControlCharacters } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
@@ -62,7 +62,7 @@ export const serveCommand = (loadServer: () => Promise<BuiltServer>, idleTimeout
         onError: (error) => {
           void log.warn(clean(`Could not rotate the log: ${describeError(error)}`));
         },
-        path: servicePaths('dashboard', homeOf(host.env)).log,
+        path: servicePaths('dashboard', host.home).log,
       });
       try {
         const app = await loadServer().catch((error: unknown) =>

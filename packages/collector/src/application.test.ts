@@ -3,11 +3,17 @@ import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
+import { assertAssembles } from '@loomcli/testing';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { app } from './application.ts';
 import { givenIdentity, invoke, TOKEN } from './testing/cli.ts';
 import { fakeHub } from './testing/fake-hub.ts';
 import { tempStateDir } from './testing/fixtures.ts';
+
+test('the application assembles', () => {
+  assertAssembles(app);
+});
 
 test('--version names the Collector release and the Report schema it speaks, and exits 0', async () => {
   const { code, stderr, stdout } = await invoke(['--version']);

@@ -22,8 +22,9 @@ const execWord = (value: string) =>
 
 // The systemd user unit for a Service. It restarts the binary 10 seconds after
 // any exit and never gives up, starts with the user manager, and appends both
-// output streams to the log, which the binary rotates itself. Loom exits 143
-// after SIGTERM and 130 after SIGINT, so those count as a clean stop.
+// output streams to the log, which the binary rotates itself. Loom ends the
+// process by the signal itself, which systemd counts as a clean stop; 143 and
+// 130, the codes for SIGTERM and SIGINT, count as one too.
 export const renderSystemdUnit = (definition: ServiceDefinition): string => {
   const log = plain(definition.log);
   // The arguments are fixed command names, so only the executable needs quoting.

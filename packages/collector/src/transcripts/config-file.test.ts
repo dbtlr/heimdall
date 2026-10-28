@@ -1,15 +1,15 @@
 import { expect, test } from 'bun:test';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
-import { configHome, readSessionsSection } from './config-file.ts';
+import { readSessionsSection } from './config-file.ts';
 
 const TOML_PATH = '.config/heimdall/collector.toml';
 const JSON_PATH = '.config/heimdall/collector.json';
 
-const put = async (root: string, relative: string, content: string) => {
-  const path = join(root, relative);
+const put = async (root: string, subpath: string, content: string) => {
+  const path = join(root, subpath);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content);
   return path;
@@ -144,16 +144,23 @@ test('a JSON file that holds an array rather than an object yields no section', 
   ).toBeUndefined();
 });
 
-test('the home directory is HOME only when HOME is an absolute path, as Loom takes it', () => {
-  expect(configHome({ HOME: '/home/operator' })).toBe('/home/operator');
-  expect(configHome({ HOME: 'relative/home' })).toBeUndefined();
-  expect(configHome({})).toBeUndefined();
+test('a home that is not an absolute path is not searched, as Loom takes it', async () => {
+  await using cwd = await tempStateDir();
+  await using home = await tempStateDir();
+  await put(home.path, TOML_PATH, tomlWith('codex'));
+  expect(
+    await readSessionsSection({
+      cwd: cwd.path,
+      home: relative(process.cwd(), home.path),
+      named: undefined,
+    }),
+  ).toBeUndefined();
 });
 
 test('without a home directory, only the working directory is searched', async () => {
   await using cwd = await tempStateDir();
   await put(cwd.path, TOML_PATH, tomlWith('codex'));
-  expect(await readSessionsSection({ cwd: cwd.path, home: undefined, named: undefined })).toEqual(
+  expect(await readSessionsSection({ cwd: cwd.path, home: '', named: undefined })).toEqual(
     sourcesOf('codex'),
   );
 });

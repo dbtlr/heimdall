@@ -16,9 +16,9 @@
     "@fontsource/barlow-semi-condensed": "^5.3.0",
     "@heimdall/schema": "workspace:*",
     "@heimdall/service": "workspace:*",
-    "@loomcli/core": "0.10.0",
-    "@loomcli/plugins": "0.10.0",
-    "@loomcli/validators": "0.10.0",
+    "@loomcli/core": "0.16.0",
+    "@loomcli/plugins": "0.16.0",
+    "@loomcli/validators": "0.16.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-router": "^1.170.44",
     "@tanstack/react-start": "^1.169.1",
@@ -37,7 +37,8 @@
   },
   "devDependencies": {
     "@heimdall/hub": "workspace:*",
-    "@loomcli/loom": "0.10.0",
+    "@loomcli/loom": "0.16.0",
+    "@loomcli/testing": "0.16.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0"
   }

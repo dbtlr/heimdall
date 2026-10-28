@@ -21,9 +21,12 @@ export const deliveryTestAction: ActionHandler<typeof deliveryTest> = async ({
 }) => {
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
   const channel =
-    (await readDeliveryChannel({ cwd: host.cwd, env: host.env, named: configName(options) }).catch(
-      (error: unknown) =>
-        out.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
+    (await readDeliveryChannel({
+      cwd: host.cwd,
+      home: host.home,
+      named: configName(options),
+    }).catch((error: unknown) =>
+      out.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
     )) ??
     out.fatal('The Hub configuration has no [delivery] section, so alerts are not delivered.');
   await ntfySender(channel)({

@@ -49,7 +49,7 @@ const io = ({ host, options, out, style }: Context) => {
   return {
     fail,
     print: (message: string) => out.print(clean(message)),
-    stateDir: resolveStateDir({ env: host.env, option: options['state-dir'] }),
+    stateDir: resolveStateDir({ env: host.env, home: host.home, option: options['state-dir'] }),
   };
 };
 

@@ -1,7 +1,7 @@
 import { arch } from 'node:os';
 
 import { SAMPLE_INTERVAL_MS } from '@heimdall/schema';
-import { homeOf, keepLogRotated, runtimeLog, servicePaths } from '@heimdall/service';
+import { keepLogRotated, runtimeLog, servicePaths } from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
@@ -29,7 +29,7 @@ import { createSectionsReporter } from './sections-report.ts';
 import { resolveStateDir } from './state-dir.ts';
 import { systemTimeZone } from './time-zone.ts';
 import { createCapture } from './transcripts/capture.ts';
-import { configHome, readSessionsSection } from './transcripts/config-file.ts';
+import { readSessionsSection } from './transcripts/config-file.ts';
 import { transcriptHub } from './transcripts/hub-client.ts';
 import { startCapture } from './transcripts/loop.ts';
 import { findSharedDirectory, parseSources } from './transcripts/sources.ts';
@@ -133,7 +133,7 @@ export const runAction: ActionHandler<typeof run> = async ({
   signal,
   style,
 }) => {
-  const home = homeOf(host.env);
+  const { home } = host;
   const clean = (message: string) => style.escape(escapeControlCharacters(message));
   const log = runtimeLog({ fatal: (line) => out.fatal(line), print: (line) => out.print(line) });
   const stopRotating = await keepLogRotated({
@@ -146,18 +146,23 @@ export const runAction: ActionHandler<typeof run> = async ({
     const platform =
       reportPlatform(process.platform) ??
       log.fatal(`The Collector runs on macOS and Linux, not ${process.platform}.`);
-    const stateDir = resolveStateDir({ env: host.env, option: options['state-dir'], platform });
+    const stateDir = resolveStateDir({
+      env: host.env,
+      home,
+      option: options['state-dir'],
+      platform,
+    });
     // The config plugin's `--config` reaches every action, though `run`'s
     // declared options do not name it.
     const named =
       'config' in options && typeof options.config === 'string' ? options.config : undefined;
     const updatesConfig = await readUpdatesConfig({
       cwd: host.cwd,
-      home: configHome(host.env),
+      home,
       named,
     });
     const configured = parseSources(
-      await readSessionsSection({ cwd: host.cwd, home: configHome(host.env), named }),
+      await readSessionsSection({ cwd: host.cwd, home, named }),
       home,
     );
     const sources =

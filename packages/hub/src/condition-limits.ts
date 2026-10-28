@@ -1,6 +1,6 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
 import type { ConditionLevel, ConditionLimitSet } from '@heimdall/schema';
-import { configHome, readConfigSection } from '@heimdall/service';
+import { readConfigSection } from '@heimdall/service';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
@@ -229,18 +229,18 @@ export type ConditionLimits = ReturnType<typeof parseConditionLimits>;
 
 export const readConditionLimits = async ({
   cwd,
-  env,
+  home,
   named,
 }: {
   cwd: string;
-  env: Readonly<Record<string, string | undefined>>;
+  home: string;
   named: string | undefined;
 }) =>
   parseConditionLimits(
     await readConfigSection({
       binary: 'hub',
       cwd,
-      home: configHome(env),
+      home,
       named,
       section: 'conditions',
     }),

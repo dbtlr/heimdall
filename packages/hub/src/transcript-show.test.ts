@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import type { Host } from '@loomcli/core';
+import type { MockTerminal } from '@loomcli/testing';
 
 import { claudeCodeParser } from './claude-code-parser.ts';
 import { projectTranscripts } from './projection.ts';
@@ -29,15 +29,8 @@ const MAIN_LINES = [
 const MAIN = jsonl(MAIN_LINES);
 const SUBAGENT = jsonl([user({ agent: 's1', at: at(4) })]);
 
-const NOT_A_TERMINAL: Host['terminal'] = {
-  stderr: { columns: undefined, isTTY: false, rows: undefined },
-  stdin: { isTTY: false },
-  stdout: { columns: undefined, isTTY: false, rows: undefined },
-};
-const A_TERMINAL: Host['terminal'] = {
-  ...NOT_A_TERMINAL,
-  stdout: { columns: 80, isTTY: true, rows: 24 },
-};
+// Standard output is a terminal 80 columns wide; standard error and input are not.
+const A_TERMINAL: MockTerminal = { columns: 80, rows: 24, streams: ['stdout'] };
 
 type Db = Awaited<ReturnType<typeof testDatabase>>;
 
@@ -106,7 +99,7 @@ const archive = async ({ deleted, rewritten }: { deleted?: string; rewritten?: s
   };
 };
 
-const show = (config: { path: string }, args: string[], terminal = NOT_A_TERMINAL) =>
+const show = (config: { path: string }, args: string[], terminal?: MockTerminal) =>
   invoke(['transcripts', 'show', ...args, ...configArgs(config)], { terminal });
 
 // The lines `bytes` holds, each with its newline, in order.

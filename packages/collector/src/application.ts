@@ -1,5 +1,5 @@
 import { serviceCommand } from '@heimdall/service';
-import { Application, Command, plugin } from '@loomcli/core';
+import { Application, Command } from '@loomcli/core';
 import { config } from '@loomcli/plugins/config';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
@@ -16,9 +16,10 @@ import { defaultStateDir } from './state-dir.ts';
 import { readSpoolSummary } from './transcripts/spool.ts';
 import { versionPostfix } from './version.ts';
 
-// SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, so
-// `run` stops between samples with its queue closed cleanly.
-const signals = () => plugin('@heimdall/collector/signals', { signals: ['SIGINT', 'SIGTERM'] });
+// SIGTERM from launchd or systemd and SIGINT from a terminal cancel the run, and
+// `run` gets this long to stop between samples and close its queue before the
+// signal ends the process. Loom's default of 500 ms can cut that short.
+const shutdown = { timeout: 10_000 };
 
 // `run` reports as the System `pair` stored in the state directory.
 export const run = new Command('run', {
@@ -62,8 +63,8 @@ export const app = new Application('heimdall-collector', {
     help(),
     version({ postfix: versionPostfix }),
     config({ file: '.config/heimdall/collector.{toml,json}' }),
-    signals(),
   ],
+  shutdown,
   version: packageJson.version,
 })
   .command(run)

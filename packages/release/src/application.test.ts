@@ -2,8 +2,8 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { text } from 'node:stream/consumers';
+
+import { assertAssembles, mockProcess } from '@loomcli/testing';
 
 import { app } from './application.ts';
 
@@ -85,25 +85,21 @@ const fixture = async ({
   }
 };
 
+// `repo` is unset until a test builds a fixture.
 afterEach(async () => {
-  await rm(repo, { force: true, recursive: true });
+  if (repo !== undefined) {
+    await rm(repo, { force: true, recursive: true });
+  }
+});
+
+test('the application assembles', () => {
+  assertAssembles(app);
 });
 
 const invoke = async (argv: string[]) => {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  // Loom sets process.exitCode even for an injected host; keep it off the test runner.
-  // Bun ignores assigning undefined, so an unset code is restored as 0.
-  const runnerExitCode = process.exitCode;
-  let code: number;
-  try {
-    code = await app.run({ host: { argv, cwd: repo, env: {}, stderr, stdout } });
-  } finally {
-    process.exitCode = runnerExitCode ?? 0;
-  }
-  stdout.end();
-  stderr.end();
-  return { code, stderr: await text(stderr), stdout: await text(stdout) };
+  const mock = mockProcess({ argv, cwd: repo });
+  const code = await app.run({ process: mock });
+  return { code, stderr: mock.stderr.text, stdout: mock.stdout.text };
 };
 
 test('version prints the release version the Collector and Hub share', async () => {

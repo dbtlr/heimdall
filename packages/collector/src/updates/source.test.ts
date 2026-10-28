@@ -294,7 +294,7 @@ test('update configuration follows the selected collector.toml and rejects unusa
     '[updates]\nintervalHours = 12\naptListsDir = "/mock/apt/lists"\n',
   );
   expect(
-    await readUpdatesConfig({ cwd: dir.path, home: undefined, named: 'collector.toml' }),
+    await readUpdatesConfig({ cwd: dir.path, home: '', named: 'collector.toml' }),
   ).toMatchObject({ aptListsDir: '/mock/apt/lists', intervalHours: 12 });
   expect(parseUpdatesConfig(undefined).intervalHours).toBe(6);
   expect(() => parseUpdatesConfig({ intervalHours: 0 })).toThrow();
