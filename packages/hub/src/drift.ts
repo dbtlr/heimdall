@@ -149,8 +149,9 @@ export type DriftFacts = {
 // Judges one System's Drift, one Condition per path. A path is left as it is
 // when the checks did not judge its record as the Hub mirrors it. A files part
 // over budget judges no record, so only a path no record names is cleared.
-// Records over budget judge nothing. An unreadable files record may name any
-// path, so nothing is cleared while one exists; a path can still be raised.
+// Records over budget judge nothing, since they do not say what the files are
+// now. An unreadable files record may name any path, so nothing is cleared
+// while one exists; a path can still be raised.
 export const judgeDrift = (facts: DriftFacts): Map<string, Exclude<Verdict, 'unknown'>> => {
   const judged = new Map<string, Exclude<Verdict, 'unknown'>>();
   if (facts.recordsOverBudget) {
@@ -175,7 +176,8 @@ export const judgeDrift = (facts: DriftFacts): Map<string, Exclude<Verdict, 'unk
 // Raises and clears one System's Drift under the System's row lock, so it
 // orders with its Reports (ADR-0005), at the time `clock` reads once the lock
 // is held. Nothing is judged while the System has no checks or records stored,
-// or the Hub cannot read the stored checks.
+// or the Hub cannot read the stored checks, since then nothing says what the
+// files are now.
 const evaluateSystem = (sql: SQL, system: string, clock: () => number) =>
   sql.begin(async (tx) => {
     const [held]: { name: string }[] = await tx`
