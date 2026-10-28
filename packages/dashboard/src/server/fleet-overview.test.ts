@@ -189,18 +189,6 @@ describe('status', () => {
     expect(laptop.sleeps).toBe(true);
   });
 
-  test('is needs_you for a System with an open Condition, even one that sleeps and is silent', async () => {
-    await using h = await startHub();
-    await hear(h, 'laptop-1', { receivedAt: NOW - 3 * MINUTE, sleeps: true });
-    await addCondition(h.db.sql, {
-      kind: 'low_disk',
-      raisedAt: seconds(-HOUR),
-      system: 'laptop-1',
-    });
-
-    expect((await lane(h, 'laptop-1')).status).toBe('needs_you');
-  });
-
   test('is not needs_you for a System whose Conditions are all cleared', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
@@ -222,6 +210,26 @@ describe('laneStatus', () => {
     expect(laneStatus({ ...base, lastSeenAt: NOW - 2 * MINUTE, sleeps: true })).toBe('up');
     expect(laneStatus({ ...base, lastSeenAt: NOW - 2 * MINUTE - 1, sleeps: true })).toBe('asleep');
     expect(laneStatus({ ...base, lastSeenAt: NOW - 3 * MINUTE })).toBe('up');
+  });
+
+  test('reads an unpaired System as unpaired, even one never seen or with an open Condition', () => {
+    expect(laneStatus({ ...base, paired: false })).toBe('unpaired');
+    expect(laneStatus({ ...base, lastSeenAt: undefined, paired: false })).toBe('unpaired');
+    expect(laneStatus({ ...base, hasOpenCondition: true, paired: false })).toBe('unpaired');
+  });
+
+  test('reads a paired System never seen as never_seen, even with an open Condition', () => {
+    expect(laneStatus({ ...base, lastSeenAt: undefined })).toBe('never_seen');
+    expect(laneStatus({ ...base, hasOpenCondition: true, lastSeenAt: undefined })).toBe(
+      'never_seen',
+    );
+  });
+
+  test('reads an open Condition as needs_you over asleep and up', () => {
+    expect(laneStatus({ ...base, hasOpenCondition: true })).toBe('needs_you');
+    expect(
+      laneStatus({ ...base, hasOpenCondition: true, lastSeenAt: NOW - 3 * MINUTE, sleeps: true }),
+    ).toBe('needs_you');
   });
 });
 

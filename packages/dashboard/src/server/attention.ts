@@ -34,7 +34,7 @@ import {
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import type { Disk } from './system-detail-types.ts';
 
-type ConditionRow = {
+export type ConditionRow = {
   id: string;
   kind: string;
   level: string;
@@ -75,7 +75,7 @@ type SampleRow = {
 };
 
 // Everything the Hub holds about one System that bears on what needs the operator.
-type Held = {
+export type Held = {
   checks: ChecksSetRow | undefined;
   clockOffsetAt: number | undefined;
   conditions: ConditionRow[];
@@ -245,7 +245,7 @@ const lowDiskFacts = (held: Held, row: ConditionRow, now: number): Found => ({
 });
 
 // Update evidence uses the package query and repository metadata, never Vitals.
-const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
+export const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
   const kind = conditionKind(row.kind);
   if (kind === 'reboot_required') {
     const observation = held.reboot;
@@ -280,6 +280,18 @@ const updateFacts = (held: Held, row: ConditionRow, now: number): Found => {
     }
   }
   return { checkedAt, evidence, facts: { kind: 'pending_update', reason: row.latest_reason } };
+};
+
+// A hot process is judged on the newest sample only when the Hub's last
+// evaluation covered that process; otherwise the evidence is unknown.
+export const hotProcessFacts = (held: Held, row: ConditionRow, now: number): Found => {
+  const checkedAt = held.sample?.t.getTime();
+  const known = field(held.sample?.process_coverage, row.subject) === true;
+  return {
+    checkedAt,
+    evidence: evidenceAt(checkedAt, now, known ? 'current' : 'unknown'),
+    facts: { kind: 'hot_process', reason: row.latest_reason },
+  };
 };
 
 // The facts and evidence behind an open Condition, by its kind.
@@ -329,13 +341,7 @@ const conditionFound = (
     };
   }
   if (kind === 'hot_process') {
-    const checkedAt = held.sample?.t.getTime();
-    const known = field(held.sample?.process_coverage, row.subject) === true;
-    return {
-      checkedAt,
-      evidence: evidenceAt(checkedAt, now, known ? 'current' : 'unknown'),
-      facts: { kind, reason: row.latest_reason },
-    };
+    return hotProcessFacts(held, row, now);
   }
   if (kind === 'clock_skew') {
     // The Hub judges only an offset it recorded within CLOCK_OFFSET_FRESH_MS.
