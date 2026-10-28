@@ -8,6 +8,28 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.10.0 - 2026-10-28
+
+### Added
+
+- **Services can name their Application, and Docker checks report their image** (HMD-176). A Service record can name an Application on the same System, recorded in either order. The Collector reads each Docker Service's image reference from its existing inspect request and reports image changes; the Hub mirrors it and the records read API returns it. Upgrade the Hub, then its Collectors, before a provisioner records `application`: an older Collector refuses a record with the field.
+- **Services tab** (HMD-174). Every recorded Service on a paired System, plus forgotten Services with an open Service Condition, appears in one list, with down, restarted, up, or unknown status. Status and System filters stay in the URL, and a navigation badge counts Services that are down or restarted.
+- **Services show their installed version** (HMD-177). The Hub derives each Service's installed version and upstream: a Docker Service's image tag, or the version and `source` of the Application it names, with a fresh APT or Homebrew census superseding the recorded version. It keeps each change from this release on. The Services table gains a Version column, and a Service page shows what is installed, or why its version is unknown.
+- **The Hub checks upstreams for newer releases** (HMD-178). Every six hours, the Hub asks each GitHub, npm, and OCI upstream that a Service runs from for its releases, over HTTPS and without credentials, and keeps the newest release on each channel, when it first found each one, and when its last check succeeded or why it failed. A rate-limited check waits for the reset time the upstream gives. The dashboard shows available updates in a later release.
+- **Services show available updates** (HMD-179). The Services list shows newer releases beside installed versions, with an Updates filter. Each Service page shows its available update, when it was first found, and any upstream check failure. APT and Homebrew updates name the check that found them. Update rows stay in the history after an upgrade or a release is withdrawn. Available updates do not change Service status or raise Conditions.
+- **Fleet Timeline filters** (HMD-189). The Timeline filters by level, System, and open or cleared at every width, using the same Filter sheet and removable pills as the Services page. The selections live in the URL, so bookmarks and history keep them.
+
+### Changed
+
+- **Service restarted notes move to Services** (HMD-174). On paired Systems, they leave System Open Conditions and Fleet Can wait. Service pages link back to Services and keep a link to their System.
+- **Wide-screen sidebar** (HMD-185). From 1024 px up, a left sidebar holds the navigation and every System with its status, worst problem, and CPU, memory, and disk meters, and all pages share one wider content frame. Narrower screens keep the tab bar and header links.
+- **Service page history** (HMD-175). Under the 90-day strip, a Service page lists its Service stops and its Service down raises and clears in one history, newest first, each row led by its date and time. The newest 6 show and Show older opens the rest; a Service down row opens its Condition.
+- **Fleet lanes on wide screens** (HMD-186). From 1024 px up, the Fleet page shows each System as a lane on one time axis, with the range picker and Open now, as Compare does. Narrower screens keep the tiles and read none of the lane data.
+- **Wide-screen Fleet Timeline** (HMD-188). From 1024 px up, the Timeline page is a table with one row per occurrence, grouped under Today, Yesterday, and dated day headings, showing each occurrence's transitions and how long it was or has been open. Narrower screens keep the cards.
+- **Wide-screen Service page** (HMD-190). From 1024 px up, a Service's checks, record, installed version, and update sit in a panel on the right, level with the top of the page, beside the stops strip and history. Narrower screens keep the lines under the title.
+- **Wide-screen Now tab** (HMD-187). From 1024 px up, a System's Now tab shows four cards for CPU busy, memory, disk, and load, with CPU and memory lines over the loaded range, and lists each open Condition as one table-like row that still opens to its evidence and next step. Narrower screens keep the Vitals glance and the stacked Conditions.
+- **Command lines run on Loom 0.16** (HMD-198). On SIGTERM or SIGINT, `serve` and `run` get up to 10 seconds to finish their running work and close their databases, then the process ends by the signal, where it used to exit with 143 or 130; systemd still counts it as a clean stop. Every binary finds its home as Loom does, from an absolute `HOME`, else the account's home, for its log and configuration alike. A closed stdout pipe now ends a command silently with exit code 141.
+
 ## v0.9.0 - 2026-10-24
 
 ### Added
