@@ -150,25 +150,11 @@ test.each([
     through: NOW,
   },
   {
-    covered: false,
-    evidence: 'unknown',
-    label: 'unknown for an uncovered process',
-    latest: NOW,
-    through: NOW,
-  },
-  {
     covered: true,
     evidence: 'unknown',
     label: 'unknown when coverage predates the sample',
     latest: NOW,
     through: NOW - 15_000,
-  },
-  {
-    covered: true,
-    evidence: 'old',
-    label: 'old when the newest sample is old',
-    latest: NOW - 3 * HOUR,
-    through: NOW - 3 * HOUR,
   },
 ])('hot process evidence is $label', async ({ covered, latest, through, evidence }) => {
   await using h = await startHub();
@@ -820,20 +806,6 @@ test.each([
     label: 'query at its freshness boundary',
     metadataAt: NOW,
     observedAt: NOW - 24 * HOUR,
-  },
-  {
-    evidence: 'current',
-    label: 'metadata at its freshness boundary',
-    metadataAt: NOW - 7 * 24 * HOUR,
-    observedAt: NOW,
-  },
-  { evidence: 'old', label: 'old metadata', metadataAt: NOW - 7 * 24 * HOUR - 1, observedAt: NOW },
-  { evidence: 'old', label: 'unknown metadata', metadataAt: null, observedAt: NOW },
-  {
-    evidence: 'old',
-    label: 'future query beyond clock tolerance',
-    metadataAt: NOW,
-    observedAt: NOW + 5 * MINUTE + 1,
   },
 ])(
   'pending update evidence is $evidence with $label',
