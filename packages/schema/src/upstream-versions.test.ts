@@ -61,9 +61,13 @@ test('each channel keeps its newest readable release and skips moving tags', () 
   expect(newestPerChannel(['latest', 'stable'])).toEqual({});
 });
 
-test('equal precedence preserves the first release string', () => {
-  expect(newestPerChannel(['v1.2+first', '1.2.0+second'])).toEqual({ '': 'v1.2+first' });
-  expect(newestPerChannel(['1', '1.0', '1.0.0'])).toEqual({ '': '1' });
+test('equal precedence keeps the release that names more numbers, then the first', () => {
+  expect(newestPerChannel(['v2.34', 'v2.34.0', 'v2.34.0-amd64'])).toEqual({
+    '': 'v2.34.0',
+    'amd#': 'v2.34.0-amd64',
+  });
+  expect(newestPerChannel(['1.0.0', '1.0', '1'])).toEqual({ '': '1.0.0' });
+  expect(newestPerChannel(['v1.2+first', '1.2+second'])).toEqual({ '': 'v1.2+first' });
 });
 
 test.each([
