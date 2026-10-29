@@ -234,9 +234,10 @@ export const createUpdatesSource = ({
           if (metadata.some((file) => !file.isFile() || file.size === 0)) {
             throw new Error('APT package index is unusable');
           }
-          // apt stamps each index with its server's Last-Modified time, so an index
-          // that rarely changes stays old. The lists directory changes when apt
-          // commits a refresh that changed an index. Future timestamps are unknown.
+          // The indexes are read only to prove they are usable: apt stamps each with
+          // its server's Last-Modified time, so one that rarely changes stays old.
+          // The lists directory changes when apt commits any list file it
+          // downloaded. Future timestamps are unknown.
           const refreshedAt = Math.trunc((await stat(config.aptListsDir)).mtimeMs);
           const output = await query([
             config.apt,
