@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
@@ -91,6 +91,41 @@ test('APT reports architecture-stable identities and explicit security from loca
       metadataAt: expect.any(Number),
       updates: [{ available: '2.0', installed: '1.0', name: 'libfoo:amd64', security: true }],
     },
+  });
+});
+
+// APT stamps each index with its server's Last-Modified time, so an index that
+// rarely changes stays old; the lists directory changes when apt commits a refresh.
+test('APT metadata is dated by when apt last changed its lists, not by its oldest index', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  const lists = join(dir.path, 'lists');
+  await writeFile(osRelease, 'ID=debian\n');
+  await mkdir(lists);
+  await writeFile(join(lists, 'repo_Packages'), 'local index');
+  const refreshedAt = new Date('2026-10-28T20:34:06Z');
+  await utimes(
+    join(lists, 'repo_Packages'),
+    new Date('2025-10-22T16:35:19Z'),
+    new Date('2025-10-22T16:35:19Z'),
+  );
+  await utimes(lists, refreshedAt, refreshedAt);
+  const source = createUpdatesSource({
+    command: async (cmd) => ({
+      exitCode: 0,
+      kind: 'exited',
+      stderr: '',
+      stdout: cmd[0] === '/usr/bin/dpkg-query' ? 'installed\tlibfoo\tamd64\t1.0\n' : 'Listing...\n',
+    }),
+    config: parseUpdatesConfig({ aptListsDir: lists, homebrewPrefixes: [], osRelease }),
+    now: () => refreshedAt.getTime() + 60_000,
+    platform: 'linux',
+  });
+  await source.tick();
+  expect(source.latest()?.managers[0]?.result).toEqual({
+    kind: 'available',
+    metadataAt: refreshedAt.getTime(),
+    updates: [],
   });
 });
 

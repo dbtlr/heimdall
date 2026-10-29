@@ -276,7 +276,7 @@ On Debian-family Linux, APT lists upgradable packages using existing local packa
 APT identities include package architecture.
 A security suite explicitly named by APT establishes security status. Other packages retain unknown security status.
 Missing indexes, malformed output, command failure, or inaccessible metadata produce unavailable coverage, never an empty successful list.
-The metadata timestamp is the oldest local package-index modification time, not the time Heimdall queried it or proof of a recent refresh.
+The metadata timestamp is the modification time of the package-index directory, which changes when APT commits a refresh that changed an index. Index files are not used, because APT stamps each with its server's last-modified time. The timestamp is not the time Heimdall queried APT, and a refresh that changed no index leaves it older.
 The Debian-family reboot-required marker reports an already required reboot. Its absence on another operating system establishes nothing.
 
 Homebrew coverage requires the Collector account to own the installation.
