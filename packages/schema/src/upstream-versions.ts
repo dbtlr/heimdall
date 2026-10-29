@@ -63,7 +63,9 @@ const compareVersions = (left: ParsedVersion, right: ParsedVersion) => {
   return 0;
 };
 
-// Keeps the first original release string at the highest precedence per channel.
+// Keeps the release string at the highest precedence per channel. Among equal
+// releases, the one naming more numbers wins, since an image's shorter tag,
+// such as `v2.34` beside `v2.34.0`, floats to its newest patch; then the first.
 export const newestPerChannel = (releases: Iterable<string>): Record<string, string> => {
   const newest = new Map<string, { parsed: ParsedVersion; text: string }>();
   for (const text of releases) {
@@ -73,7 +75,12 @@ export const newestPerChannel = (releases: Iterable<string>): Record<string, str
     }
     const channel = parsed.channel ?? '';
     const previous = newest.get(channel);
-    if (previous === undefined || compareVersions(parsed, previous.parsed) > 0) {
+    const order =
+      previous === undefined
+        ? 1
+        : compareVersions(parsed, previous.parsed) ||
+          Math.sign(parsed.core.length - previous.parsed.core.length);
+    if (order > 0) {
       newest.set(channel, { parsed, text });
     }
   }

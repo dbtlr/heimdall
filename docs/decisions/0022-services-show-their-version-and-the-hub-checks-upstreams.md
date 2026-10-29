@@ -54,6 +54,7 @@ Where that System's coverage is unavailable, as for a Homebrew installation the 
 
 **An update is a newer release on the installed version's channel.**
 Versions compare as semver read loosely: a leading `v` is ignored, a missing minor or patch reads as 0, and build metadata after `+` is ignored.
+Of two releases that compare equal, the update names the one that writes more numbers, so an image listing `v2.34` and `v2.34.0` updates to `v2.34.0`, since the shorter tag moves to each new patch.
 A version's channel is the part after its first `-`, with each run of digits standing for any number: `0.26.0-next.32` and `0.26.0-next.35` share a channel, and so do `1.27-alpine3.20` and `1.27-alpine3.21`, while `1.27-alpine3.20-perl` is on another.
 On one channel, the numbers in that part count as steps after the version's own numbers, so `next.35` is newer than `next.32` and `alpine3.21` than `alpine3.20`.
 An update keeps the installed version's kind: a version without a `-` compares only with releases without one, so `1.7.2` never counts `1.8.0-alpha.1`.
