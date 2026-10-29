@@ -234,9 +234,11 @@ export const createUpdatesSource = ({
           if (metadata.some((file) => !file.isFile() || file.size === 0)) {
             throw new Error('APT package index is unusable');
           }
-          // Index mtime is the available local metadata timestamp, not proof of
-          // a successful recent repository refresh. Future timestamps are unknown.
-          const oldest = Math.trunc(Math.min(...metadata.map((file) => file.mtimeMs)));
+          // The indexes are read only to prove they are usable: apt stamps each with
+          // its server's Last-Modified time, so one that rarely changes stays old.
+          // The lists directory changes when apt commits any list file it
+          // downloaded. Future timestamps are unknown.
+          const refreshedAt = Math.trunc((await stat(config.aptListsDir)).mtimeMs);
           const output = await query([
             config.apt,
             '-o',
@@ -268,7 +270,7 @@ export const createUpdatesSource = ({
           }
           manager.result = {
             kind: 'available',
-            metadataAt: oldest >= 0 && oldest <= observedAt ? oldest : null,
+            metadataAt: refreshedAt >= 0 && refreshedAt <= observedAt ? refreshedAt : null,
             updates,
           };
         } catch (error) {
