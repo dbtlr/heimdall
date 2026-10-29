@@ -8,6 +8,13 @@ Notable changes to the Collector and the Hub, in the format of [Keep a Changelog
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.10.1 - 2026-10-29
+
+### Fixed
+
+- **APT metadata reads as fresh after a refresh** (HMD-203). The Collector dates APT's package metadata by when APT last wrote its package lists, not by the oldest index file, which carries its server's last-modified time. An apt-sourced Service's available update now shows, and a pending update Condition can clear once APT reports no pending packages. A refresh that downloads nothing new leaves the date unchanged.
+- **A container image's update names its full release tag** (HMD-202). When an image publishes a floating tag beside a release, such as `v2.34` beside `v2.34.0`, the available update now reads `v2.34.0`. The Hub picks this up at its next check of each upstream.
+
 ## v0.10.0 - 2026-10-28
 
 ### Added
