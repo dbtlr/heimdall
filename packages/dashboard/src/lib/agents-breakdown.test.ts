@@ -14,7 +14,7 @@ const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   requests: 1,
   sessionId: 'one',
   source: 'default',
-  system: 'asgard',
+  system: 'server-1',
   unpricedRequests: 0,
   ...overrides,
 });

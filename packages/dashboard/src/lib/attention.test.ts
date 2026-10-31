@@ -53,7 +53,7 @@ function attention(facts: AttentionFacts, over: AttentionOverrides = {}): Attent
     evidence: 'current',
     firstDetected: NOW - HOUR,
     subject: '',
-    system: 'valhalla',
+    system: 'laptop-1',
     unpaired: false,
     ...overrides,
   };
@@ -83,7 +83,7 @@ test('hot process attention names the process and offers investigation without a
     steps: [{ commands: [] }],
   });
   expect(nextSteps(item).steps[0]?.text).toContain('compiler (PID 42)');
-  expect(nextSteps(item).steps[0]?.text).toContain('valhalla');
+  expect(nextSteps(item).steps[0]?.text).toContain('laptop-1');
   expect(utc(evidenceNote({ ...item, evidence: 'old' }, NOW) ?? [])).toContain('Vitals sample');
 });
 
@@ -668,7 +668,7 @@ describe('nextSteps: drift', () => {
       'Accept the new content',
     ]);
     expect(steps[0]?.text).toBe(
-      'Re-apply the provisioner that recorded dotfiles on valhalla. The file goes back to the recorded content and the next file check clears this.',
+      'Re-apply the provisioner that recorded dotfiles on laptop-1. The file goes back to the recorded content and the next file check clears this.',
     );
     expect(steps[1]?.text).toBe(
       "Change the provisioner's source so it installs this content, then re-apply. It records the new hash and the Condition clears.",
@@ -685,7 +685,7 @@ describe('nextSteps: drift', () => {
 
   test('copes with an unknown record', () => {
     const { steps } = nextSteps(drift({ record: undefined }));
-    expect(steps[0]?.text).toContain('the provisioner that recorded this file on valhalla');
+    expect(steps[0]?.text).toContain('the provisioner that recorded this file on laptop-1');
   });
 });
 
@@ -838,7 +838,7 @@ describe('nextSteps: System and file kinds', () => {
   test('system_stale asks to check the System and its Collector', () => {
     const { steps } = nextSteps(stale(NOW));
     expect(steps[0]?.text).toBe(
-      'Check that valhalla is on and online and that its Collector runs.',
+      'Check that laptop-1 is on and online and that its Collector runs.',
     );
   });
 
@@ -864,7 +864,7 @@ describe('nextSteps: System and file kinds', () => {
   test('checks_missing sends the operator to the Collector log', () => {
     const { steps } = nextSteps(missing('checks'));
     expect(steps[0]?.title).toBe('Check the Collector');
-    expect(steps[0]?.text).toContain('On valhalla');
+    expect(steps[0]?.text).toContain('On laptop-1');
   });
 
   test('every short is terse and has no trailing full stop', () => {
@@ -999,7 +999,7 @@ test('Service restarted names the Service, shows the Hub reason, and offers its 
     steps: [{ commands: ['journalctl -u web.service -n 50'] }],
   });
   expect(nextSteps(item).steps[0]?.text).toContain(
-    "On valhalla, read web's log to see why it stopped.",
+    "On laptop-1, read web's log to see why it stopped.",
   );
 });
 
@@ -1011,7 +1011,7 @@ test('Service restarted still offers plain log advice when its Service record is
 
   expect(nextSteps(item).steps[0]).toMatchObject({
     commands: [],
-    text: "On valhalla, read web's log to see why it stopped.",
+    text: "On laptop-1, read web's log to see why it stopped.",
   });
 });
 

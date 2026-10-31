@@ -35,7 +35,7 @@ const overview: AgentsOverview = {
       requests: 3,
       sessionId: 'one',
       source: 'default',
-      system: 'asgard',
+      system: 'server-1',
       unpricedRequests: 1,
     },
     {
@@ -49,7 +49,7 @@ const overview: AgentsOverview = {
       requests: 2,
       sessionId: 'two',
       source: 'default',
-      system: 'asgard',
+      system: 'server-1',
       unpricedRequests: 0,
     },
   ],
@@ -155,13 +155,13 @@ const jumpLine = /<div[^>]*lg:hidden[^>]*>.*?<\/div>/u;
 test('below the wide layout, the picked row counts its Sessions and links down to them', async () => {
   const system = await renderSummary({
     by: 'system',
-    entry: '/agents?range=7d&by=system&pick=asgard',
-    pick: 'asgard',
+    entry: '/agents?range=7d&by=system&pick=server-1',
+    pick: 'server-1',
   });
   const line = jumpLine.exec(system)?.[0];
   expect(line).toContain('2 Sessions');
   // The link keeps the pick and lands on the list's heading.
-  expect(line).toMatch(/href="[^"]*pick=asgard[^"]*#agents-sessions-heading"/u);
+  expect(line).toMatch(/href="[^"]*pick=server-1[^"]*#agents-sessions-heading"/u);
   const model = await renderSummary({
     by: 'model',
     entry: '/agents?range=7d&by=model&pick=small-model',
