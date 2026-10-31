@@ -47,7 +47,7 @@ test('period Session rows link with every identity field and describe observed r
       requests: 3,
       sessionId: 'one',
       source: 'work',
-      system: 'asgard',
+      system: 'server-1',
       unpricedRequests: 1,
     },
     {
@@ -65,7 +65,7 @@ test('period Session rows link with every identity field and describe observed r
       unpricedRequests: 0,
     },
   ]);
-  expect(html).toContain('href="/systems/asgard/sessions/codex/work/one"');
+  expect(html).toContain('href="/systems/server-1/sessions/codex/work/one"');
   expect(html).toContain('href="/systems/unpaired-system/sessions/aider/home/two"');
   expect(html).toContain('heimdall');
   expect(html).toContain('topic/agents');
