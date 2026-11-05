@@ -152,7 +152,15 @@ export const runAction: ActionHandler<typeof run> = async ({
       option: options['state-dir'],
       platform,
     });
-    const updatesConfig = parseUpdatesConfig(provided.config.updates);
+    // A bad [updates] value stops the run with the setting it names, as a bad
+    // [sessions] value does, instead of surfacing as an unhandled defect.
+    const updatesConfig = (() => {
+      try {
+        return parseUpdatesConfig(provided.config.updates);
+      } catch (error) {
+        return log.fatal(clean(`collector.toml is not valid: ${describeError(error)}`));
+      }
+    })();
     const configured = parseSources(provided.config.sessions, home);
     const sources =
       configured.kind === 'refused'

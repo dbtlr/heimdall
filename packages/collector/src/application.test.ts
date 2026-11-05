@@ -125,8 +125,8 @@ test('run refuses an invalid updates section in the collector.toml the lookup fi
   const { code, stderr, stdout } = await invoke(['run'], { env: { HOME: home.path } });
 
   expect(stdout).not.toContain('Sampling');
-  expect(stderr).toContain('updates');
-  expect(code).not.toBe(0);
+  expect(stderr).toContain('collector.toml is not valid: updates.intervalHours');
+  expect(code).toBe(1);
 });
 
 test('run settings from the environment override the configuration file', async () => {
