@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
 
 import { mockProcess } from '@loomcli/testing';
 import type { MockTerminal } from '@loomcli/testing';
@@ -9,6 +9,16 @@ import { app } from '../application.ts';
 
 const LISTENING = /Listening on (?<url>http:\/\/\S+)/u;
 const POLL_MS = 10;
+
+// Throws unless `cwd` is `home` or inside it: Loom walks up from the working
+// directory, and outside HOME it walks to `/`, where a real configuration file
+// could be found.
+const assertInside = (cwd: string, home: string) => {
+  const path = relative(home, cwd);
+  if (path.startsWith('..') || isAbsolute(path)) {
+    throw new Error(`Test working directory ${cwd} is outside HOME ${home}`);
+  }
+};
 
 // Runs the Hub command line in-process and captures what it prints, stdout as
 // text and as the bytes written. Once `serve` logs the address it listens on,
@@ -36,9 +46,12 @@ export const invoke = async (
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
+  const effectiveHome = env.HOME ?? home;
+  const effectiveCwd = cwd ?? effectiveHome;
+  assertInside(effectiveCwd, effectiveHome);
   const mock = mockProcess({
     argv,
-    cwd: cwd ?? env.HOME ?? home,
+    cwd: effectiveCwd,
     env: { HOME: home, ...env },
     ...(terminal === undefined ? {} : { terminal }),
   });

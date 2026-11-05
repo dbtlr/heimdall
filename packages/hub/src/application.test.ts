@@ -635,33 +635,39 @@ test("service status reports this binary's unit and exits 0", async () => {
   expect(code).toBe(0);
 });
 
-test('serve finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
-  await using db = await migratedDatabase();
-  const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
-  const elsewhere = await mkdtemp(join(tmpdir(), 'heimdall-hub-cwd-'));
-  try {
-    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
-    await writeFile(
-      join(home, '.config', 'heimdall', 'hub.toml'),
-      ['host = "127.0.0.1"', 'port = 0', '[database]', `url = "${db.url.href}"`].join('\n'),
-    );
-    let health = 0;
+test.each([
+  ['a number', '0'],
+  ['a string of digits', '"0"'],
+])(
+  'serve finds the configuration file under ~/.config/heimdall/ when --config is absent, with a port written as %s',
+  async (_, port) => {
+    await using db = await migratedDatabase();
+    const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
+    const elsewhere = join(home, 'elsewhere');
+    try {
+      await mkdir(elsewhere, { recursive: true });
+      await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+      await writeFile(
+        join(home, '.config', 'heimdall', 'hub.toml'),
+        ['host = "127.0.0.1"', `port = ${port}`, '[database]', `url = "${db.url.href}"`].join('\n'),
+      );
+      let health = 0;
 
-    const { code } = await invoke(['serve'], {
-      cwd: elsewhere,
-      env: { HOME: home },
-      whileServing: async (hub) => {
-        health = (await fetch(new URL('api/health', hub))).status;
-      },
-    });
+      const { code } = await invoke(['serve'], {
+        cwd: elsewhere,
+        env: { HOME: home },
+        whileServing: async (hub) => {
+          health = (await fetch(new URL('api/health', hub))).status;
+        },
+      });
 
-    expect(health).toBe(200);
-    expect(code).toBe(130);
-  } finally {
-    await rm(home, { force: true, recursive: true });
-    await rm(elsewhere, { force: true, recursive: true });
-  }
-});
+      expect(health).toBe(200);
+      expect(code).toBe(130);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  },
+);
 
 test('serve without a database is a usage error that names the option', async () => {
   const { code, stderr } = await invoke(['serve']);

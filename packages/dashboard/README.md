@@ -28,7 +28,7 @@ Run these from the repository root, after `bun install`.
 
 ## Settings
 
-`heimdall-dashboard serve` serves the pages, the server functions, `GET /api/health`, and the records read, `GET /api/v1/records` ([Reading the records back](../../docs/spec.md#reading-the-records-back)). Both API routes answer any method but GET and HEAD with 405. Each setting comes from its flag, then its environment variable, then `~/.config/heimdall/dashboard.toml`:
+`heimdall-dashboard serve` serves the pages, the server functions, `GET /api/health`, and the records read, `GET /api/v1/records` ([Reading the records back](../../docs/spec.md#reading-the-records-back)). Both API routes answer any method but GET and HEAD with 405. Each setting comes from its flag, then its environment variable, then the configuration file: the one `--config` names, or else the first of `.config/heimdall/dashboard.toml` and `.config/heimdall/dashboard.json` found in the working directory and each directory above it below home, then in the home directory (`~/.config/heimdall/dashboard.toml`), then `config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall-dashboard` (`~/.config/heimdall-dashboard` by default). `--no-config` reads no file, and a file that cannot be parsed is skipped with a warning. The database URL comes from `HEIMDALL_DATABASE_URL` or else the home `~/.config/heimdall/hub.toml` alone:
 
 | Flag     | Variable                  | File key | Default     |
 | -------- | ------------------------- | -------- | ----------- |

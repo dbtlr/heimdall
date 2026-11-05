@@ -179,7 +179,7 @@ export const serviceCommand = (
     const paths = servicePaths(binary, place.home);
     const shown = (path: string) => displayPath(path, place.home);
     try {
-      if (port !== undefined && (await setPort(paths.config, port))) {
+      if (port !== undefined && (await setPort(paths.config, port, place))) {
         await place.print(`Set port = ${String(port)} in ${shown(paths.config)}.`);
       }
       await mkdir(dirname(paths.log), { recursive: true });

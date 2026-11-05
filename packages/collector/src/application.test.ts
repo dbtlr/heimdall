@@ -61,7 +61,8 @@ test('run reads its settings from the configuration file and its identity from t
 
 test('run finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
   await using home = await tempStateDir();
-  await using elsewhere = await tempStateDir();
+  const elsewhere = join(home.path, 'elsewhere');
+  await mkdir(elsewhere, { recursive: true });
   await givenIdentity(join(home.path, 'state'), { hub: 'http://heimdall.example:8080' });
   await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
   await writeFile(
@@ -72,7 +73,7 @@ test('run finds the configuration file under ~/.config/heimdall/ when --config i
   );
 
   const { code, stdout } = await invoke(['run'], {
-    cwd: elsewhere.path,
+    cwd: elsewhere,
     env: { HOME: home.path },
   });
 

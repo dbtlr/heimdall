@@ -64,6 +64,8 @@ const invoke = async (
     description: `The ${spec.binary} service command under test.`,
     plugins: [
       configuration({
+        // A copy of the binaries' schemas: a test-only import from hub, collector,
+        // or dashboard would point this package at packages that depend on it.
         file: `.config/heimdall/${spec.binary}.{toml,json}`,
         schema: z.object({
           host: z.string().optional(),
@@ -555,6 +557,44 @@ test('install --port refuses to create hub.toml beside a hub.json, and writes no
   expect(result.calls).toEqual([]);
   expect(await Bun.file(join(dir, 'hub.toml')).exists()).toBe(false);
   expect(await Bun.file(join(home.path, '.local')).exists()).toBe(false);
+});
+
+test.each([
+  ['an XDG_CONFIG_HOME under home', undefined],
+  ['an absolute XDG_CONFIG_HOME elsewhere in home', 'xdg'],
+])(
+  'install --port refuses to create hub.toml above the XDG config file with %s',
+  async (_, xdg) => {
+    await using home = await tempHome();
+    const base = xdg === undefined ? join(home.path, '.config') : join(home.path, xdg);
+    await mkdir(join(base, 'heimdall-hub'), { recursive: true });
+    await writeFile(
+      join(base, 'heimdall-hub', 'config.toml'),
+      '[database]\nurl = "postgres://x"\n',
+    );
+    const env = xdg === undefined ? {} : { XDG_CONFIG_HOME: base };
+
+    const result = await invoke(HUB, ['service', 'install', '--port', '9090'], {
+      env,
+      home: home.path,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(join(base, 'heimdall-hub', 'config.toml'));
+    expect(result.calls).toEqual([]);
+    expect(await Bun.file(join(home.path, '.config', 'heimdall', 'hub.toml')).exists()).toBe(false);
+  },
+);
+
+test('install --port still creates hub.toml when no XDG config file exists', async () => {
+  await using home = await tempHome();
+
+  const result = await invoke(HUB, ['service', 'install', '--port', '9090'], { home: home.path });
+
+  expect(result.code).toBe(0);
+  expect(await Bun.file(join(home.path, '.config', 'heimdall', 'hub.toml')).text()).toBe(
+    'port = 9090\n',
+  );
 });
 
 // A home whose hub.toml holds `lines`.

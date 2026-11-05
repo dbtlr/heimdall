@@ -2,8 +2,9 @@ import { join } from 'node:path';
 
 type Env = Record<string, string | undefined>;
 
-// Where the Hub's config file lives, the same place the Hub reads it from
-// (ADR-0007): ~/.config/heimdall/hub.toml.
+// The home hub.toml, ~/.config/heimdall/hub.toml: the file the supervised Hub
+// reads (ADR-0007). It is the only place the dashboard looks, not the Hub's
+// full lookup.
 const hubConfigPath = (env: Env) => join(env.HOME ?? '', '.config', 'heimdall', 'hub.toml');
 
 // The URL of the Hub's database: HEIMDALL_DATABASE_URL when set, else
