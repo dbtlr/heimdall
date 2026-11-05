@@ -218,3 +218,117 @@ test('changelog guard passes the release cut that loom changelog write prepares'
   expect(stdout).toContain('The release cut');
   expect(code).toBe(0);
 });
+
+const guardAgainst = async (base: string, ...flags: string[]) =>
+  invoke(['changelog', 'guard', '--base', base, ...flags]);
+
+// Fragments hold plain text with LF line endings, which Loom's grammar alone
+// does not enforce.
+test.each([
+  ['an escape sequence', '- \u001b[31mred\n'],
+  ['a NUL', '- a\u0000b\n'],
+  ['a CRLF line ending', '- ok\r\n'],
+  ['a right-to-left override', '- a\u202eb\n'],
+  ['a zero-width space', '- a\u200bb\n'],
+])('changelog guard fails a fragment holding %s', async (_name, content) => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/feature.hmd-1-thing.md': content });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/feature.hmd-1-thing.md');
+  expect(stderr).toContain('control character or invisible mark');
+  expect(code).toBe(1);
+});
+
+test('changelog guard fails a fragment that is not valid UTF-8', async () => {
+  await fixture();
+  const base = (await gitOutput(['rev-parse', 'HEAD'])).trim();
+  await writeFile(join(repo, '.changes/feature.hmd-1-thing.md'), Buffer.from([45, 32, 255, 10]));
+  await commitAll('pr');
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/feature.hmd-1-thing.md');
+  expect(stderr).toContain('not valid UTF-8');
+  expect(code).toBe(1);
+});
+
+test('changelog guard scans fragments the PR did not touch', async () => {
+  await fixture({ fragments: [['feature.hmd-1-old.md', '- a\u202eb\n']] });
+  const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x' });
+  expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+});
+
+test('changelog guard fails when Loom cannot read its configuration', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    'packages/collector/loom.config.json': '{',
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('checked 0');
+  expect(code).toBe(1);
+});
+
+test('changelog guard fails when Loom is pointed away from .changes', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    '.changes/feature.hmd-3-more.md': FEATURE,
+    'other/feature.hmd-2-other.md': FEATURE,
+    'packages/collector/loom.config.json': JSON.stringify({
+      paths: { changelog: '../../CHANGELOG.md', changes: '../../other' },
+      sharedVersion: ['../hub/package.json', '../dashboard/package.json'],
+    }),
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('checked 1 fragments, but 2 are pending');
+  expect(code).toBe(1);
+});
+
+test('changelog guard prints Loom failures one per line, without bun or ../../ noise', async () => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/bad.md': 'Just prose\n' });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/bad.md');
+  expect(stderr).not.toContain('../../');
+  expect(stderr).not.toContain('exited with code');
+  expect(stderr).not.toContain(String.raw`\u000a`);
+  expect(code).toBe(1);
+});
+
+test('changelog guard checks the fragments even with the skip label', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    'packages/collector/src/a.ts': 'x',
+  });
+  expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+});
+
+test.each(['.changes/sub/x.md', '.changes/x.txt'])(
+  'changelog guard fails a stray %s even when the PR changed no fragment',
+  async (path) => {
+    await fixture();
+    const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x', [path]: 'stray\n' });
+    expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+  },
+);
+
+test('changelog guard fails cut-shaped files without a version bump', async () => {
+  await fixture({ fragments: [['feature.hmd-1-thing.md', FEATURE]] });
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': null,
+    'CHANGELOG.md': `${HEADER}\n## v9.9.9\n`,
+    'bun.lock': 'lock\n',
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('adds no fragment');
+  expect(code).toBe(1);
+});
+
+test('changelog guard reports that Loom cannot run', async () => {
+  await fixture();
+  const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x' });
+  await rm(join(repo, 'packages/collector/node_modules'));
+  const { code, stderr } = await guardAgainst(base, '--skip-label');
+  expect(stderr).toContain('Could not run loom changelog check');
+  expect(code).toBe(1);
+});

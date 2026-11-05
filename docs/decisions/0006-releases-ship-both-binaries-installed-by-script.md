@@ -4,7 +4,7 @@ title: ADR-0006 - Releases ship both binaries per platform, installed by one scr
 description: "A tagged release publishes the Collector and Hub binaries for every platform with SHA256SUMS; Fleet installs and updates each through its own install script, and reads the release from the second word of the version line."
 status: accepted
 created: 2026-10-06
-modified: 2026-10-13
+modified: 2026-11-06
 ---
 
 # Releases ship both binaries per platform, installed by one script each
@@ -37,3 +37,4 @@ Renaming an asset, a script, or `HEIMDALL_VERSION`, or changing the position of 
 ## Changelog
 
 - 2026-10-13: Addendum. The dashboard, the third deliverable [ADR-0015](0015-dashboard-is-its-own-app-reading-the-hubs-database.md) adds to a release, ships in the same shape: a `heimdall-dashboard-<os>-<arch>` binary for each platform in `SHA256SUMS`, `install-dashboard.sh` held identical to the other two scripts but for the binary name, the version in `packages/dashboard/package.json` shared with the other two, and the same version line. The decision is unchanged.
+- 2026-11-06: Addendum. Releases are cut by hand with `loom changelog write`, run through `bun run release:cut`. `packages/release` keeps the pull request changelog guard and `version`. The decision is unchanged.

@@ -86,18 +86,49 @@ export const releaseVersionAt = async (root: string, ref: string): Promise<strin
 // repository's fragments and changelog and lists the other released packages.
 const LOOM_PACKAGE = join('packages', RELEASED_PACKAGES[0]);
 
+// What `loom changelog check` found: whether it ran, the lines it reported, and
+// how many fragments it says it checked.
+export type FragmentCheck =
+  | { kind: 'failed'; lines: string[] }
+  | { kind: 'passed'; checked: number | undefined; warnings: string[] }
+  | { kind: 'unrunnable'; reason: string };
+
+const CHECKED = /^Checked (?<count>\d+) fragments?\.$/mu;
+
+// Loom names paths from the Collector's directory; the guard names them from the root.
+const lines = (text: string) =>
+  text
+    .split('\n')
+    .map((line) => line.trim().replaceAll('../../', ''))
+    .filter((line) => line !== '');
+
 // Validates every pending fragment with `loom changelog check`, the grammar the
-// cut compiles. Answers Loom's own report of the invalid ones, or undefined.
-export const checkFragments = async (root: string): Promise<string | undefined> => {
-  const child = Bun.spawn([process.execPath, 'run', 'loom', 'changelog', 'check'], {
-    cwd: join(root, LOOM_PACKAGE),
-    stderr: 'pipe',
-    stdout: 'pipe',
-  });
-  const [code, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-    new Response(child.stdout).text(),
-  ]);
-  return code === 0 ? undefined : stderr.trim();
+// cut compiles. Bun's own script-failure line is silenced so only Loom's report shows.
+export const checkFragments = async (root: string): Promise<FragmentCheck> => {
+  try {
+    const child = Bun.spawn([process.execPath, 'run', '--silent', 'loom', 'changelog', 'check'], {
+      cwd: join(root, LOOM_PACKAGE),
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    if (code === 0) {
+      const count = CHECKED.exec(stdout)?.groups?.count;
+      return {
+        checked: count === undefined ? undefined : Number(count),
+        kind: 'passed',
+        warnings: lines(stderr),
+      };
+    }
+    // Bun reports a script it cannot find on its own, without running Loom.
+    return /Script not found|command not found/iu.test(stderr)
+      ? { kind: 'unrunnable', reason: lines(stderr).join(' ') }
+      : { kind: 'failed', lines: lines(stderr) };
+  } catch (error) {
+    return { kind: 'unrunnable', reason: error instanceof Error ? error.message : String(error) };
+  }
 };

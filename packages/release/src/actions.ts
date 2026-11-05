@@ -2,10 +2,32 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { guard, version } from './application.ts';
+import { pendingFragments, plainTextProblems } from './fragments.ts';
 import { judgeChanges } from './guard.ts';
 import { changesSince, checkFragments, releaseVersion, releaseVersionAt } from './repository.ts';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// Every reason the pending fragments fail the guard, one per line: Loom's own
+// check, whether it checked as many fragments as are pending, and plain text.
+const fragmentProblems = async (root: string): Promise<string[]> => {
+  const pending = await pendingFragments(root);
+  const check = await checkFragments(root);
+  const plain = await plainTextProblems(root, pending);
+  if (check.kind === 'unrunnable') {
+    return [`Could not run loom changelog check: ${check.reason}`, ...plain];
+  }
+  if (check.kind === 'failed') {
+    return [...check.lines, ...plain];
+  }
+  const unchecked =
+    check.checked === pending.length
+      ? []
+      : [
+          `loom changelog check checked ${String(check.checked ?? 'an unknown number of')} fragments, but ${String(pending.length)} are pending in .changes/; check packages/collector/loom.config.json.`,
+        ];
+  return [...check.warnings, ...unchecked, ...plain];
+};
 
 // `heimdall-release changelog guard`: the changelog guard workflow. It parses
 // every pending fragment with `loom changelog check`, the grammar the cut uses.
@@ -27,10 +49,14 @@ export const guardAction: ActionHandler<typeof guard> = async ({ host, options, 
   } catch (error) {
     return out.fatal(clean(describeError(error)));
   }
-  const invalid = await checkFragments(root);
-  if (invalid !== undefined) {
-    await out.error(clean(invalid));
-    return out.fatal('A changelog fragment is invalid.');
+  const problems = await fragmentProblems(root);
+  if (problems.length > 0) {
+    // One line each, in order.
+    await problems.reduce(async (previous, problem) => {
+      await previous;
+      await out.error(clean(problem));
+    }, Promise.resolve());
+    return out.fatal('The pending changelog fragments are not valid.');
   }
   if (judgement.verdict === 'fail') {
     return out.fatal(clean(judgement.reason));

@@ -1,12 +1,12 @@
 // The changelog guard's rule. A pull request that changes what a release builds
 // adds or edits a fragment, unless it carries the skip-changelog label or is a
-// release cut. Every fragment it adds or edits is named for parsing, whatever
-// else it changes, so a malformed one never waits for the cut to be found.
+// release cut. Loom checks every pending fragment whatever the PR changes, so a
+// malformed one never waits for the cut to be found.
 
 export type Change = { path: string; status: 'added' | 'deleted' | 'modified' };
 
 export type Judgement = {
-  // Fragments the PR adds or edits, which the guard parses.
+  // Fragments the PR adds or edits, which the guard names and requires.
   fragments: string[];
   reason: string;
   verdict: 'fail' | 'pass';
