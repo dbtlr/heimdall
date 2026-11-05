@@ -34,7 +34,7 @@ Each setting comes from its flag, then its environment variable, then the config
 | `--state-dir` | `HEIMDALL_STATE_DIR` | `stateDir` | `~/Library/Application Support/heimdall` on macOS, `$XDG_STATE_HOME/heimdall` on Linux |
 | `--sleeps`    | `HEIMDALL_SLEEPS`    | `sleeps`   | `false`                                                                 |
 
-The configuration file is the one `--config` names, or else the first of `.config/heimdall/collector.toml` and `.config/heimdall/collector.json` found in the working directory and each directory above it below home, then in the home directory, which is `~/.config/heimdall/collector.toml`, then `config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall`. `--no-config` reads no file. A file that cannot be parsed is skipped with a warning and the run uses no file. It holds no secret:
+The configuration file is the one `--config` names, or else the first of `.config/heimdall/collector.toml` and `.config/heimdall/collector.json` found in the working directory and each directory above it below home, then in the home directory, which is `~/.config/heimdall/collector.toml`, then `config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall-collector` (`~/.config/heimdall-collector` by default). `--no-config` reads no file. A file that cannot be parsed is skipped with a warning and the run uses no file. It holds no secret:
 
 ```toml
 hub = "http://hub-host.example.ts.net:8080"
@@ -97,7 +97,7 @@ About once an hour, `serve` deletes raw Vitals samples older than 14 days and ro
 
 `--insight-reader` names a read-only PostgreSQL role, which the provisioner creates, that `serve` lets read the `insight` views and nothing else. [Querying the insight views](docs/insight-reader.md) describes it.
 
-`--price-overrides` names a JSON file of model prices that add to or replace the Hub's bundled API list prices, which `serve` loads as it starts; a relative path resolves from the working directory, not from the configuration file. See [Cost](docs/spec.md#cost) for the file's format. `pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else the first of `.config/heimdall/hub.toml` and `.config/heimdall/hub.json` found in the working directory and each directory above it below home, then in the home directory, which is `~/.config/heimdall/hub.toml`, then `config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall`. `--no-config` reads no file. A file that cannot be parsed is skipped with a warning and the run uses no file. Top-level keys come before the `[database]` table:
+`--price-overrides` names a JSON file of model prices that add to or replace the Hub's bundled API list prices, which `serve` loads as it starts; a relative path resolves from the working directory, not from the configuration file. See [Cost](docs/spec.md#cost) for the file's format. `pair` and `unpair` read `--database` the same way and ignore the host and port. The configuration file is the one `--config` names, or else the first of `.config/heimdall/hub.toml` and `.config/heimdall/hub.json` found in the working directory and each directory above it below home, then in the home directory, which is `~/.config/heimdall/hub.toml`, then `config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall-hub` (`~/.config/heimdall-hub` by default). `--no-config` reads no file. A file that cannot be parsed is skipped with a warning and the run uses no file. Top-level keys come before the `[database]` table:
 
 ```toml
 host = "127.0.0.1"
