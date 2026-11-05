@@ -1,0 +1,4 @@
+{
+  "paths": { "changes": "../../.changes", "changelog": "../../CHANGELOG.md" },
+  "sharedVersion": ["../hub/package.json", "../dashboard/package.json"]
+}

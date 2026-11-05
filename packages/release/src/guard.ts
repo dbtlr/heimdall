@@ -17,8 +17,9 @@ const SHIPS =
   /^(?:packages\/|package\.json$|bun\.lock$|bunfig\.toml$|mise\.toml$|install-[^/]+\.sh$|\.github\/workflows\/release\.yml$)/u;
 
 const FRAGMENT = /^\.changes\/[^/]+\.md$/u;
-// A name the cut and the workflow handle without quoting.
-const FRAGMENT_NAME = /^\.changes\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/u;
+// A name `loom changelog` accepts as `<slug>.md`, `feature.<slug>.md`, or
+// `breaking.<slug>.md`, in characters the workflow handles without quoting.
+const FRAGMENT_NAME = /^\.changes\/(?!(?:breaking|feature)\.md$)[A-Za-z0-9][A-Za-z0-9._-]*\.md$/u;
 const GUIDE = '.changes/README.md';
 
 // The files a release cut changes, besides the fragments it deletes.
@@ -55,7 +56,7 @@ export const judgeChanges = ({
   if (misnamed.length > 0) {
     return judged(
       'fail',
-      `Rename ${misnamed.join(', ')} to letters, digits, dots, dashes, and underscores, such as .changes/hmd-11.md.`,
+      `Rename ${misnamed.join(', ')} to <slug>.md, feature.<slug>.md, or breaking.<slug>.md, with a slug of letters, digits, dots, dashes, and underscores, such as .changes/feature.hmd-11-tags.md.`,
     );
   }
   if (!changes.some(({ path }) => SHIPS.test(path))) {
@@ -75,6 +76,6 @@ export const judgeChanges = ({
   }
   return judged(
     'fail',
-    'This PR changes what ships but adds no fragment. Add .changes/<task-id>.md (see .changes/README.md), or apply the skip-changelog label when no entry is due.',
+    'This PR changes what ships but adds no fragment. Add .changes/<slug>.md, feature.<slug>.md, or breaking.<slug>.md (see .changes/README.md), or apply the skip-changelog label when no entry is due.',
   );
 };

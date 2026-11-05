@@ -2,7 +2,7 @@ name: Release
 
 # A `vX.Y.Z` tag builds the Collector, Hub, and dashboard binaries on each
 # platform's native runner and publishes them on a GitHub Release with SHA256SUMS and the notes
-# from CHANGELOG.md. A tag with a hyphen (`v0.2.0-rc.1`) publishes a
+# from CHANGELOG.md, read by `loom changelog notes`. A tag with a hyphen (`v0.2.0-rc.1`) publishes a
 # prerelease, which Fleet's stable channel skips. Pull requests that touch the
 # build run the same build without publishing, so the release path is proven
 # before a tag is cut. docs/releasing.md describes the cut.
@@ -134,7 +134,7 @@ jobs:
           test "$(wc -l < SHA256SUMS)" -eq 9
 
       - name: Release notes
-        run: bun run --silent release changelog notes --version "${TAG#v}" > release-notes.md
+        run: bun run --cwd packages/collector --silent loom changelog notes "${TAG#v}" > release-notes.md
 
       # Fleet ignores drafts, so the release stays a draft until every asset is
       # uploaded and verified. A failed run leaves the draft, and a re-run

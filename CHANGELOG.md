@@ -6,6 +6,8 @@ description: "Released Heimdall changes, compiled from changelog fragments at ea
 
 Notable changes to the Collector and the Hub, in the format of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Heimdall is pre-1.0, so a minor release can break compatibility.
 
+From the release after v0.10.1, sections group entries as Breaking Changes, Features, and Fixes, and earlier sections use Keep a Changelog's categories.
+
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
 ## v0.10.1 - 2026-10-29

@@ -55,7 +55,21 @@ describe('judgeChanges', () => {
     expect(judge([modified('package.json'), added('.changes/old/x.md')]).verdict).toBe('fail');
   });
 
-  test('fails a fragment whose name the cut would not compile safely', () => {
+  test.each(['.changes/feature.md', '.changes/breaking.md'])(
+    'fails the bare kind %s as a fragment name',
+    (path) => {
+      expect(judge([modified('package.json'), added(path)]).verdict).toBe('fail');
+    },
+  );
+
+  test.each(['.changes/feature.hmd-1.md', '.changes/breaking.hmd-1.md', '.changes/hmd-1.md'])(
+    'accepts %s as a fragment name',
+    (path) => {
+      expect(judge([modified('package.json'), added(path)]).verdict).toBe('pass');
+    },
+  );
+
+  test('fails a fragment whose name Loom or the workflow would not take', () => {
     const verdict = judge([modified('package.json'), added('.changes/bäd name.md')]);
     expect(verdict.verdict).toBe('fail');
     expect(verdict.reason).toContain('.changes/bäd name.md');
