@@ -2,31 +2,20 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { guard, version } from './application.ts';
-import { pendingFragments, plainTextProblems } from './fragments.ts';
+import { fragmentCheckProblems, pendingFragments, plainTextProblems } from './fragments.ts';
 import { judgeChanges } from './guard.ts';
 import { changesSince, checkFragments, releaseVersion, releaseVersionAt } from './repository.ts';
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// Every reason the pending fragments fail the guard, one per line: Loom's own
-// check, whether it checked as many fragments as are pending, and plain text.
+// Every reason the pending fragments fail the guard, one per line.
 const fragmentProblems = async (root: string): Promise<string[]> => {
   const pending = await pendingFragments(root);
-  const check = await checkFragments(root);
-  const plain = await plainTextProblems(root, pending);
-  if (check.kind === 'unrunnable') {
-    return [`Could not run loom changelog check: ${check.reason}`, ...plain];
-  }
-  if (check.kind === 'failed') {
-    return [...check.lines, ...plain];
-  }
-  const unchecked =
-    check.checked === pending.length
-      ? []
-      : [
-          `loom changelog check checked ${String(check.checked ?? 'an unknown number of')} fragments, but ${String(pending.length)} are pending in .changes/; check packages/collector/loom.config.json.`,
-        ];
-  return [...check.warnings, ...unchecked, ...plain];
+  const [check, plain] = await Promise.all([
+    checkFragments(root),
+    plainTextProblems(root, pending),
+  ]);
+  return fragmentCheckProblems(check, pending.length, plain);
 };
 
 // `heimdall-release changelog guard`: the changelog guard workflow. It parses

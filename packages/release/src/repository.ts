@@ -99,7 +99,12 @@ const CHECKED = /^Checked (?<count>\d+) fragments?\.$/mu;
 const lines = (text: string) =>
   text
     .split('\n')
-    .map((line) => line.trim().replaceAll('../../', ''))
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^[⚠✘]\s*/u, '')
+        .replaceAll('../../', ''),
+    )
     .filter((line) => line !== '');
 
 // Validates every pending fragment with `loom changelog check`, the grammar the
