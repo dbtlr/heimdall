@@ -1,4 +1,3 @@
-export { readConfigSection } from './config-file.ts';
 export { serviceCommand } from './command.ts';
 export type { ServiceEnvironment, ServiceSpec } from './command.ts';
 export { every } from './every.ts';

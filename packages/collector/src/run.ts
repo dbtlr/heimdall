@@ -29,13 +29,12 @@ import { createSectionsReporter } from './sections-report.ts';
 import { resolveStateDir } from './state-dir.ts';
 import { systemTimeZone } from './time-zone.ts';
 import { createCapture } from './transcripts/capture.ts';
-import { readSessionsSection } from './transcripts/config-file.ts';
 import { transcriptHub } from './transcripts/hub-client.ts';
 import { startCapture } from './transcripts/loop.ts';
 import { findSharedDirectory, parseSources } from './transcripts/sources.ts';
 import type { Source } from './transcripts/sources.ts';
 import { openSpool } from './transcripts/spool.ts';
-import { readUpdatesConfig, startUpdates } from './updates/source.ts';
+import { parseUpdatesConfig, startUpdates } from './updates/source.ts';
 import { hostProbe } from './vitals/host.ts';
 import { createSampler } from './vitals/sampler.ts';
 
@@ -130,6 +129,7 @@ export const runAction: ActionHandler<typeof run> = async ({
   host,
   options,
   out,
+  provided,
   signal,
   style,
 }) => {
@@ -152,19 +152,16 @@ export const runAction: ActionHandler<typeof run> = async ({
       option: options['state-dir'],
       platform,
     });
-    // The config plugin's `--config` reaches every action, though `run`'s
-    // declared options do not name it.
-    const named =
-      'config' in options && typeof options.config === 'string' ? options.config : undefined;
-    const updatesConfig = await readUpdatesConfig({
-      cwd: host.cwd,
-      home,
-      named,
-    });
-    const configured = parseSources(
-      await readSessionsSection({ cwd: host.cwd, home, named }),
-      home,
-    );
+    // A bad [updates] value stops the run with the setting it names, as a bad
+    // [sessions] value does, instead of surfacing as an unhandled defect.
+    const updatesConfig = (() => {
+      try {
+        return parseUpdatesConfig(provided.config.updates);
+      } catch (error) {
+        return log.fatal(clean(`collector.toml is not valid: ${describeError(error)}`));
+      }
+    })();
+    const configured = parseSources(provided.config.sessions, home);
     const sources =
       configured.kind === 'refused'
         ? log.fatal(clean(`collector.toml is not valid: ${configured.problem}`))

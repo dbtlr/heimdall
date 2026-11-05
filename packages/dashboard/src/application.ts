@@ -1,11 +1,11 @@
 import { serviceCommand } from '@heimdall/service';
 import { Application } from '@loomcli/core';
-import { config } from '@loomcli/plugins/config';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 
 import { serveCommand } from './cli/serve.ts';
 import type { BuiltServer } from './cli/serve.ts';
+import { configPlugin } from './configuration.ts';
 import { DASHBOARD_VERSION, versionPostfix } from './version.ts';
 
 export type { BuiltServer } from './cli/serve.ts';
@@ -26,11 +26,7 @@ export const createApp = ({
 }) =>
   new Application('heimdall-dashboard', {
     description: "Serve the dashboard of every System, read from the Hub's database.",
-    plugins: [
-      help(),
-      version({ postfix: versionPostfix }),
-      config({ file: '.config/heimdall/dashboard.{toml,json}' }),
-    ],
+    plugins: [help(), version({ postfix: versionPostfix }), configPlugin],
     shutdown,
     version: DASHBOARD_VERSION,
   })

@@ -8,6 +8,7 @@ import type { StopRun } from './service-stop-conditions.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
+import { plainRows } from './testing/postgres.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -88,7 +89,9 @@ test('a second stop updates the count and times without another Timeline transit
     },
   ]);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT action, level FROM condition_transitions`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT action, level FROM condition_transitions`,
+    ),
   ).toEqual([{ action: 'raised', level: 'note' }]);
 });
 
@@ -98,10 +101,12 @@ test('a stop delivered more than 24 hours after it stopped is stored but raises 
 
   expect(await evaluate(h)).toEqual([]);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT count(*)::integer AS count FROM service_stops`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT count(*)::integer AS count FROM service_stops`,
+    ),
   ).toEqual([{ count: 1 }]);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions`,
+    await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions`),
   ).toEqual([]);
 });
 
@@ -112,7 +117,9 @@ test('a System with only old stops clears its open note and raises nothing', asy
 
   expect(await evaluate(h, NOW + DAY)).toEqual([]);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions ORDER BY id`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions ORDER BY id`,
+    ),
   ).toEqual([{ action: 'raised' }, { action: 'cleared' }]);
 });
 
@@ -143,7 +150,7 @@ test('an ended update changes the reason without another transition and remains 
     { level: 'note', reason: expect.not.stringContaining('still stopped') },
   ]);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions`,
+    await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT action FROM condition_transitions`),
   ).toEqual([{ action: 'raised' }]);
 });
 
@@ -154,9 +161,11 @@ test('the minute pass evaluates Service restarted after Service down', async () 
   await evaluateConditions(h.db.sql, () => NOW, SYSTEM_CONDITION_THRESHOLDS);
 
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT level FROM conditions WHERE kind = 'service_restarted'`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT level FROM conditions WHERE kind = 'service_restarted'`,
+    ),
   ).toEqual([{ level: 'note' }]);
 });
 

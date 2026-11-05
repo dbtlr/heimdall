@@ -26,7 +26,7 @@ const pauseAfter = async (sql: SQL, event: 'DELETE' | 'UPDATE', table: string) =
   return {
     release: async () => {
       await holder`SELECT pg_advisory_unlock(${PAUSE_KEY})`;
-      holder.release();
+      await holder.release();
     },
   };
 };

@@ -96,34 +96,40 @@ test('--version names the dashboard release in the form every Heimdall binary pr
   });
 });
 
-test('serve listens on the port in dashboard.toml and answers with the built app', async () => {
-  await withHome(async (home) => {
-    const port = await freePort();
-    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
-    await writeFile(
-      join(home, '.config', 'heimdall', 'dashboard.toml'),
-      `port = ${String(port)}\n`,
-    );
-    let body = '';
+test.each([
+  ['a number', (port: number | undefined) => String(port)],
+  ['a string of digits', (port: number | undefined) => `"${String(port)}"`],
+] as const)(
+  'serve listens on the port in dashboard.toml written as %s and answers with the built app',
+  async (_, written) => {
+    await withHome(async (home) => {
+      const port = await freePort();
+      await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+      await writeFile(
+        join(home, '.config', 'heimdall', 'dashboard.toml'),
+        `port = ${written(port)}\n`,
+      );
+      let body = '';
 
-    const { code, stdout } = await invoke(['serve'], {
-      home,
-      whileServing: async (url) => {
-        body = await (await fetch(new URL('/systems/laptop-1', url))).text();
-      },
+      const { code, stdout } = await invoke(['serve'], {
+        home,
+        whileServing: async (url) => {
+          body = await (await fetch(new URL('/systems/laptop-1', url))).text();
+        },
+      });
+
+      expect(stdout).toMatch(
+        new RegExp(
+          `^\\d{4}-\\d\\d-\\d\\dT\\S+Z Listening on http://127\\.0\\.0\\.1:${String(port)}/`,
+          'mu',
+        ),
+      );
+      expect(body).toBe('served /systems/laptop-1');
+      // Cancelled, as a signal would.
+      expect(code).toBe(130);
     });
-
-    expect(stdout).toMatch(
-      new RegExp(
-        `^\\d{4}-\\d\\d-\\d\\dT\\S+Z Listening on http://127\\.0\\.0\\.1:${String(port)}/`,
-        'mu',
-      ),
-    );
-    expect(body).toBe('served /systems/laptop-1');
-    // Cancelled, as a signal would.
-    expect(code).toBe(130);
-  });
-});
+  },
+);
 
 // Bun checks idle sockets about every 4 seconds, so a 1 second timeout cuts a
 // request that has waited 6 seconds off after about 4.

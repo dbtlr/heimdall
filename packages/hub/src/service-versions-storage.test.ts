@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import type { ApplicationRecord, ChecksSection, ServiceRecord } from '@heimdall/schema';
 
 import { NOW, push, report, startHub } from './testing/hub.ts';
+import { plainRows } from './testing/postgres.ts';
 
 const APPLICATION: ApplicationRecord = { name: 'nginx', source: 'apt:nginx', version: '1.26' };
 const SERVICE: ServiceRecord = { application: 'nginx', name: 'web', supervisor: 'none' };
@@ -44,7 +45,9 @@ test.each([
         )
       ).status,
     ).toBe(200);
-    expect(await h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_versions`).toEqual([]);
+    expect(
+      await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_versions`),
+    ).toEqual([]);
   },
 );
 
@@ -75,7 +78,9 @@ test('checks alone record Docker tag changes and explicit unknowns, but missing 
       .status,
   ).toBe(200);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT version, upstream FROM service_versions`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT version, upstream FROM service_versions`,
+    ),
   ).toEqual([{ upstream: 'oci:docker.io/library/nginx', version: '1.27' }]);
 
   h.clock.now += 1000;
@@ -92,9 +97,11 @@ test('checks alone record Docker tag changes and explicit unknowns, but missing 
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version, upstream, first_seen_at FROM service_versions ORDER BY first_seen_at`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version, upstream, first_seen_at FROM service_versions ORDER BY first_seen_at`,
+    ),
   ).toEqual([
     { first_seen_at: new Date(NOW), upstream: 'oci:docker.io/library/nginx', version: '1.27' },
     { first_seen_at: new Date(NOW + 2000), upstream: null, version: null },
@@ -141,9 +148,11 @@ test('updates alone supersede the recorded version using this System census', as
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version, upstream FROM service_versions ORDER BY first_seen_at`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version, upstream FROM service_versions ORDER BY first_seen_at`,
+    ),
   ).toEqual([
     { upstream: 'apt:nginx', version: '1.26' },
     { upstream: 'apt:nginx', version: '1.28' },
@@ -164,7 +173,9 @@ test('upstream changes at the same instant keep the later value in one row', asy
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT version, upstream FROM service_versions`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT version, upstream FROM service_versions`,
+    ),
   ).toEqual([{ upstream: 'custom:nginx', version: '1.26' }]);
 });
 
@@ -188,9 +199,11 @@ test('an unknown version is stored once, and forgotten Services retain their his
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version, upstream, first_seen_at FROM service_versions`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version, upstream, first_seen_at FROM service_versions`,
+    ),
   ).toEqual([{ first_seen_at: new Date(NOW), upstream: null, version: null }]);
 });
 
@@ -218,9 +231,11 @@ test('an Application on another System cannot supply a Service version', async (
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version, upstream FROM service_versions WHERE system = 'laptop-1'`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version, upstream FROM service_versions WHERE system = 'laptop-1'`,
+    ),
   ).toEqual([{ upstream: null, version: null }]);
 });
 
@@ -228,7 +243,9 @@ test('Reports store the first installed version, ignore repeats, and keep Applic
   await using h = await startHub();
   const body = { ...report('laptop-1', [NOW]), records: records() };
   expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
-  expect(await h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_versions`).toEqual([
+  expect(
+    await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_versions`),
+  ).toEqual([
     {
       first_seen_at: new Date(NOW),
       service: 'web',
@@ -241,7 +258,9 @@ test('Reports store the first installed version, ignore repeats, and keep Applic
   h.clock.now += 1000;
   expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT count(*)::int AS n FROM service_versions`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT count(*)::int AS n FROM service_versions`,
+    ),
   ).toEqual([{ n: 1 }]);
 
   h.clock.now += 1000;
@@ -255,9 +274,11 @@ test('Reports store the first installed version, ignore repeats, and keep Applic
     ).status,
   ).toBe(200);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version, upstream, first_seen_at FROM service_versions ORDER BY first_seen_at`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version, upstream, first_seen_at FROM service_versions ORDER BY first_seen_at`,
+    ),
   ).toEqual([
     { first_seen_at: new Date(NOW), upstream: 'apt:nginx', version: '1.26' },
     { first_seen_at: new Date(NOW + 2000), upstream: 'apt:nginx', version: '1.27' },
@@ -299,9 +320,9 @@ test('a gap in the package census keeps the installed version rather than record
   await send(NOW, true);
   await send(NOW + 60_000, false);
   await send(NOW + 120_000, true);
-  expect(await h.db.sql<Record<string, unknown>[]>`SELECT version FROM service_versions`).toEqual([
-    { version: '1.26-1ubuntu2' },
-  ]);
+  expect(
+    await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT version FROM service_versions`),
+  ).toEqual([{ version: '1.26-1ubuntu2' }]);
 });
 
 test('a Hub clock that steps back still puts the newest version last', async () => {
@@ -318,8 +339,10 @@ test('a Hub clock that steps back still puts the newest version last', async () 
   await send(NOW + 5000, '1.27');
   await send(NOW + 6000, '1.27');
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+    ),
   ).toEqual([{ version: '1.26' }, { version: '1.27' }]);
 });

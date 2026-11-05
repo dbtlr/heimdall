@@ -22,7 +22,7 @@ const runUntil = async (argv: string[], { abortWhen = WAITING } = {}) => {
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const mock = mockProcess({
     argv,
-    cwd: process.cwd(),
+    cwd: home,
     env: { HEIMDALL_MIGRATION_LOCK_TIMEOUT_MS: LOCK_TIMEOUT_MS, HOME: home },
   });
   // The mock records output without events, so check it after each write: the
@@ -62,7 +62,7 @@ const lockedDatabase = async () => {
     db,
     [Symbol.asyncDispose]: async () => {
       await session.unsafe('ROLLBACK');
-      session.release();
+      await session.release();
       await db[Symbol.asyncDispose]();
     },
   };

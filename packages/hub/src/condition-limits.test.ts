@@ -1,15 +1,8 @@
 import { expect, test } from 'bun:test';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
-import { tempHome } from '@heimdall/service/testing';
 import type { SQL } from 'bun';
 
-import {
-  parseConditionLimits,
-  readConditionLimits,
-  storeConditionLimits,
-} from './condition-limits.ts';
+import { parseConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import { configArgs, configFile, invoke } from './testing/cli.ts';
 import { report, storeReport, storeToken } from './testing/hub.ts';
 import { migratedDatabase } from './testing/postgres.ts';
@@ -122,70 +115,41 @@ test('load limits inherit fleet values and validate the complete System override
   ).toThrow();
 });
 
-test.each(['toml', 'json'])(
-  'disk limits read the selected %s file and inherit fields per System',
-  async (extension) => {
-    await using home = await tempHome();
-    const named = `settings.${extension}`;
-    await writeFile(
-      join(home.path, named),
-      extension === 'toml'
-        ? `
-[conditions.disk]
-note = 60
-warning = 75
-[conditions.cpu]
-percent = 85
-[conditions.memory]
-warningMinutes = 20
-[conditions.systems.laptop-1.disk]
-alert = 95
-hysteresis = 3
-[conditions.systems.laptop-1.cpu]
-noteMinutes = 15
-[conditions.systems.laptop-1.memory]
-percent = 95
-`
-        : JSON.stringify({
-            conditions: {
-              cpu: { percent: 85 },
-              disk: { note: 60, warning: 75 },
-              memory: { warningMinutes: 20 },
-              systems: {
-                'laptop-1': {
-                  cpu: { noteMinutes: 15 },
-                  disk: { alert: 95, hysteresis: 3 },
-                  memory: { percent: 95 },
-                },
-              },
-            },
-          }),
-    );
+test('disk limits inherit fields per System', () => {
+  const limits = parseConditionLimits({
+    cpu: { percent: 85 },
+    disk: { note: 60, warning: 75 },
+    memory: { warningMinutes: 20 },
+    systems: {
+      'laptop-1': {
+        cpu: { noteMinutes: 15 },
+        disk: { alert: 95, hysteresis: 3 },
+        memory: { percent: 95 },
+      },
+    },
+  });
 
-    const limits = await readConditionLimits({ cwd: home.path, home: '', named });
-
-    expect(limits.disk).toEqual({ alert: 90, hysteresis: 5, note: 60, warning: 75 });
-    expect(limits.systems.get('laptop-1')?.disk).toEqual({
-      alert: 95,
-      hysteresis: 3,
-      note: 60,
-      warning: 75,
-    });
-    expect(limits.systems.has('server-1')).toBe(false);
-    expect(limits.systems.get('laptop-1')?.cpu).toEqual({
-      noteMinutes: 15,
-      noteWindowMinutes: 60,
-      percent: 85,
-      warningMinutes: 120,
-      warningWindowMinutes: 240,
-    });
-    expect(limits.systems.get('laptop-1')?.memory).toEqual({
-      percent: 95,
-      warningMinutes: 20,
-      warningWindowMinutes: 60,
-    });
-  },
-);
+  expect(limits.disk).toEqual({ alert: 90, hysteresis: 5, note: 60, warning: 75 });
+  expect(limits.systems.get('laptop-1')?.disk).toEqual({
+    alert: 95,
+    hysteresis: 3,
+    note: 60,
+    warning: 75,
+  });
+  expect(limits.systems.has('server-1')).toBe(false);
+  expect(limits.systems.get('laptop-1')?.cpu).toEqual({
+    noteMinutes: 15,
+    noteWindowMinutes: 60,
+    percent: 85,
+    warningMinutes: 120,
+    warningWindowMinutes: 240,
+  });
+  expect(limits.systems.get('laptop-1')?.memory).toEqual({
+    percent: 95,
+    warningMinutes: 20,
+    warningWindowMinutes: 60,
+  });
+});
 
 test.each([
   { disk: { note: 80 } },

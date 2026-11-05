@@ -29,7 +29,7 @@ const holdSystems = async (db: Awaited<ReturnType<typeof testDatabase>>) => {
     pid: row?.pid ?? 0,
     release: async () => {
       await session.unsafe('COMMIT');
-      session.release();
+      await session.release();
     },
   };
 };

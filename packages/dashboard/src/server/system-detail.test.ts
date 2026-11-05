@@ -123,7 +123,7 @@ test('a System page keeps health, history, and attention in one snapshot during 
     if (writing) {
       await writer.unsafe('ROLLBACK');
     }
-    writer.release();
+    await writer.release();
     await pending;
   }
 });

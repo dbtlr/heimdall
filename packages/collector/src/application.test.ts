@@ -61,7 +61,8 @@ test('run reads its settings from the configuration file and its identity from t
 
 test('run finds the configuration file under ~/.config/heimdall/ when --config is absent', async () => {
   await using home = await tempStateDir();
-  await using elsewhere = await tempStateDir();
+  const elsewhere = join(home.path, 'elsewhere');
+  await mkdir(elsewhere, { recursive: true });
   await givenIdentity(join(home.path, 'state'), { hub: 'http://heimdall.example:8080' });
   await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
   await writeFile(
@@ -72,12 +73,60 @@ test('run finds the configuration file under ~/.config/heimdall/ when --config i
   );
 
   const { code, stdout } = await invoke(['run'], {
-    cwd: elsewhere.path,
+    cwd: elsewhere,
     env: { HOME: home.path },
   });
 
   expect(stdout).toContain('Sampling server-1 every 15 seconds for http://heimdall.example:8080/');
   expect(code).toBe(130);
+});
+
+// A home directory whose ~/.config/heimdall/collector.toml holds `lines`, beside
+// a paired state directory it names, for a run that gives no --config.
+const homeWithCollectorConfig = async (extra: string[]) => {
+  const home = await tempStateDir();
+  const stateDir = join(home.path, 'state');
+  await givenIdentity(stateDir, { hub: 'http://heimdall.example:8080' });
+  await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+  await writeFile(
+    join(home.path, '.config', 'heimdall', 'collector.toml'),
+    ['hub = "http://heimdall.example:8080/"', `stateDir = "${stateDir}"`, ...extra].join('\n'),
+  );
+  return home;
+};
+
+test('run reads the sessions section of the collector.toml the lookup finds in home', async () => {
+  await using home = await homeWithCollectorConfig(['[[sessions.sources]]', 'harness = "codex"']);
+
+  const { stdout } = await invoke(['run'], { env: { HOME: home.path } });
+
+  expect(stdout).toContain('Capturing transcripts from codex (');
+});
+
+test('run refuses an invalid sessions section in the collector.toml the lookup finds in home', async () => {
+  await using home = await homeWithCollectorConfig([
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    '[[sessions.sources]]',
+    'harness = "claude-code"',
+    'dir = "/mock/work"',
+  ]);
+
+  const { code, stderr, stdout } = await invoke(['run'], { env: { HOME: home.path } });
+
+  expect(stdout).not.toContain('Sampling');
+  expect(stderr).toContain('collector.toml is not valid: ');
+  expect(code).toBe(1);
+});
+
+test('run refuses an invalid updates section in the collector.toml the lookup finds in home', async () => {
+  await using home = await homeWithCollectorConfig(['[updates]', 'intervalHours = 0']);
+
+  const { code, stderr, stdout } = await invoke(['run'], { env: { HOME: home.path } });
+
+  expect(stdout).not.toContain('Sampling');
+  expect(stderr).toContain('collector.toml is not valid: updates.intervalHours');
+  expect(code).toBe(1);
 });
 
 test('run settings from the environment override the configuration file', async () => {
@@ -128,15 +177,13 @@ test.each([
   expect(code).toBe(130);
 });
 
-test('run refuses a sleeps setting that is not a boolean', async () => {
+test('run ignores a sleeps setting that is not a boolean and uses the default', async () => {
   await using dir = await tempStateDir();
   const { configFile: file } = await configWith(dir.path, ['sleeps = "sometimes"']);
 
-  const { code, stderr, stdout } = await startAndStop(['run', '--config', file]);
+  const { stdout } = await startAndStop(['run', '--config', file]);
 
-  expect(stdout).not.toContain('Sampling');
-  expect(stderr).toContain('sleeps');
-  expect(code).toBe(2);
+  expect(stdout).toContain('This System is always on');
 });
 
 test('run captures transcripts from the sources collector.toml lists', async () => {

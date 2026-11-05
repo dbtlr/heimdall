@@ -218,7 +218,7 @@ test('a silence waits out a delivery pass in progress, so that pass cannot send 
   await waitForLockWait(s.db.sql);
   const duringPass = await s.silences();
   await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
-  pass.release();
+  await pass.release();
   await silenced;
 
   expect(duringPass).toEqual([]);
@@ -234,7 +234,7 @@ test('a silence outlasts the statement timeout while it waits for a slow deliver
   const silenced = setSilence(impatient, { forMs: 3_600_000, now: Date.now(), system: 'laptop-1' });
   await Bun.sleep(300);
   await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
-  pass.release();
+  await pass.release();
 
   expect(await silenced).toBeInstanceOf(Date);
   await impatient.close();

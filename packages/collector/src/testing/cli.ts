@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { mockProcess } from '@loomcli/testing';
@@ -9,21 +9,33 @@ import { tempStateDir } from './fixtures.ts';
 
 const POLL_MS = 10;
 
+// Throws unless `cwd` is `home` or inside it: Loom walks up from the working
+// directory, and outside HOME it walks to `/`, where a real configuration file
+// could be found.
+const assertInside = (cwd: string, home: string) => {
+  const path = relative(home, cwd);
+  if (path.startsWith('..') || isAbsolute(path)) {
+    throw new Error(`Test working directory ${cwd} is outside HOME ${home}`);
+  }
+};
+
 // Runs the Collector command line in-process and captures what it prints. A run
 // that starts collecting is cancelled once its log shows it started, or after a
 // few seconds, so a `run` test ends either way. HOME is a fresh directory unless
-// `env` names one, so `run` never rotates a real log. `stdin` is what a pipe
+// `env` names one, so `run` never rotates a real log, and the working
+// directory is that HOME unless `cwd` names one, so the lookup never finds a
+// configuration file above this checkout. `stdin` is what a pipe
 // delivers (empty when omitted), and `stdinIsTerminal` makes standard input a
 // terminal.
 export const invoke = async (
   argv: string[],
   {
-    cwd = process.cwd(),
+    cwd,
     env = {},
     stdin,
     stdinIsTerminal = false,
   }: {
-    cwd?: string;
+    cwd?: string | undefined;
     env?: Record<string, string>;
     stdin?: string | Uint8Array;
     stdinIsTerminal?: boolean;
@@ -32,9 +44,12 @@ export const invoke = async (
   const controller = new AbortController();
   const safety = setTimeout(() => controller.abort(), 5000);
   await using home = await tempStateDir();
+  const effectiveHome = env.HOME ?? home.path;
+  const effectiveCwd = cwd ?? effectiveHome;
+  assertInside(effectiveCwd, effectiveHome);
   const mock = mockProcess({
     argv,
-    cwd,
+    cwd: effectiveCwd,
     env: { HOME: home.path, ...env },
     ...(stdinIsTerminal
       ? { terminal: { columns: 80, keys: [], rows: 24, streams: [] } }

@@ -159,7 +159,7 @@ test('migrate fails with lock_not_available, not a statement timeout, when a loc
   expect(failure).toMatchObject({ errno: '55P03' });
   expect(Date.now() - started).toBeLessThan(5000);
   await session.unsafe('ROLLBACK');
-  session.release();
+  await session.release();
   expect(await migrate(db.sql, pending)).toEqual([9999]);
 });
 

@@ -62,11 +62,14 @@ test('a file that is not TOML is refused rather than edited', () => {
   expect(() => withPort('port = = 1\n', 9090)).toThrow('not valid TOML');
 });
 
+// Where setPort runs: `home` as home, with no environment.
+const place = (home: string) => ({ env: {}, home });
+
 test('setPort creates the file and its directories when they are missing', async () => {
   await using home = await tempHome();
   const file = join(home.path, '.config', 'heimdall', 'hub.toml');
 
-  expect(await setPort(file, 9090)).toBe(true);
+  expect(await setPort(file, 9090, place(home.path))).toBe(true);
 
   expect(await readFile(file, 'utf8')).toBe('port = 9090\n');
   expect((await stat(file)).mode & 0o777).toBe(0o600);
@@ -81,7 +84,7 @@ test('setPort leaves a file that already holds the value untouched, byte for byt
   await writeFile(file, rendered);
   const before = await stat(file);
 
-  expect(await setPort(file, 9090)).toBe(false);
+  expect(await setPort(file, 9090, place(home.path))).toBe(false);
 
   expect(await readFile(file, 'utf8')).toBe(rendered);
   expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
@@ -93,7 +96,7 @@ test('setPort rewrites a file whose port differs', async () => {
   const file = join(home.path, 'sub', 'hub.toml');
   await writeFile(file, 'port = 8080\n');
 
-  expect(await setPort(file, 9090)).toBe(true);
+  expect(await setPort(file, 9090, place(home.path))).toBe(true);
 
   expect(await readFile(file, 'utf8')).toBe('port = 9090\n');
 });
@@ -103,7 +106,7 @@ test('setPort refuses to create hub.toml beside a hub.json, which it would shado
   const json = join(home.path, 'hub.json');
   await writeFile(json, '{"database":{"url":"postgres://db/heimdall"}}');
 
-  const error = await setPort(join(home.path, 'hub.toml'), 9090).then(
+  const error = await setPort(join(home.path, 'hub.toml'), 9090, place(home.path)).then(
     () => undefined,
     (failure: unknown) => failure,
   );
