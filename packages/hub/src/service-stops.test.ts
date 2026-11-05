@@ -4,6 +4,7 @@ import type { SentServiceStop } from '@heimdall/schema';
 
 import { storeReport } from './store.ts';
 import { NOW, report, startHub } from './testing/hub.ts';
+import { plainRows } from './testing/postgres.ts';
 
 const STOP: SentServiceStop = {
   exitStatus: 0,
@@ -22,20 +23,22 @@ test('a Report stores its Service stops with the sent and received times', async
     report: { ...report('laptop-1', []), serviceStops: { stops: [STOP] } },
   });
 
-  expect(await h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_stops`).toEqual([
-    {
-      exit_status: 0,
-      ongoing: false,
-      received_at: new Date(NOW + 1000),
-      restarts: 0,
-      result: 'success',
-      sent_at: new Date(NOW),
-      service: 'web',
-      started_at: new Date(NOW - 30_000),
-      stopped_at: new Date(NOW - 60_000),
-      system: 'laptop-1',
-    },
-  ]);
+  expect(await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT * FROM service_stops`)).toEqual(
+    [
+      {
+        exit_status: 0,
+        ongoing: false,
+        received_at: new Date(NOW + 1000),
+        restarts: 0,
+        result: 'success',
+        sent_at: new Date(NOW),
+        service: 'web',
+        started_at: new Date(NOW - 30_000),
+        stopped_at: new Date(NOW - 60_000),
+        system: 'laptop-1',
+      },
+    ],
+  );
 });
 
 test('an ended stop replaces its ongoing view, including null results and an unknown end', async () => {
@@ -49,9 +52,11 @@ test('an ended stop replaces its ongoing view, including null results and an unk
   await send({ ...STOP, exitStatus: null, restarts: 3, result: null, startedAt: null }, NOW + 1000);
 
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT ongoing, started_at, restarts, result, exit_status FROM service_stops`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT ongoing, started_at, restarts, result, exit_status FROM service_stops`,
+    ),
   ).toEqual([{ exit_status: null, ongoing: false, restarts: 3, result: null, started_at: null }]);
 });
 
@@ -70,9 +75,11 @@ test('an older Report cannot replace a newer view of the same stop', async () =>
   });
 
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT ongoing, started_at, sent_at, received_at FROM service_stops`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT ongoing, started_at, sent_at, received_at FROM service_stops`,
+    ),
   ).toEqual([
     {
       ongoing: false,
@@ -107,12 +114,16 @@ test('a corrected clock replaces a future-dated view, and a full batch stores ev
   });
 
   expect(
-    await h.db.sql<Record<string, unknown>[]>`SELECT count(*)::integer AS count FROM service_stops`,
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT count(*)::integer AS count FROM service_stops`,
+    ),
   ).toEqual([{ count: 1000 }]);
   expect(
-    await h.db.sql<
-      Record<string, unknown>[]
-    >`SELECT ongoing FROM service_stops WHERE stopped_at = ${new Date(STOP.stoppedAt)}`,
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT ongoing FROM service_stops WHERE stopped_at = ${new Date(STOP.stoppedAt)}`,
+    ),
   ).toEqual([{ ongoing: false }]);
 });
 

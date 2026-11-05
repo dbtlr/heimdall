@@ -528,7 +528,7 @@ describe('keepInsightReaderGranted', () => {
     try {
       expect(lines.some((line) => line.startsWith('warning: Could not grant'))).toBe(true);
       await holder`ROLLBACK`;
-      holder.release();
+      await holder.release();
       await eventually(() => lines.some((line) => line.startsWith('info: Granted')));
     } finally {
       await stop();
@@ -637,13 +637,25 @@ describe('serve', () => {
     );
   });
 
-  test('refuses a reader name that is not a plain role name', async () => {
+  test('refuses a reader name from the environment that is not a plain role name', async () => {
     await using db = await testDatabase();
-    await using config = await hubConfig(db, ['insight_reader = "public"']);
+    await using config = await hubConfig(db);
 
-    const { code, stderr } = await invoke(['serve', ...configArgs(config)]);
+    const { code, stderr } = await invoke(['serve', ...configArgs(config)], {
+      env: { HEIMDALL_INSIGHT_READER: 'public' },
+    });
 
     expect(stderr).toContain('insight-reader');
     expect(code).toBe(2);
+  });
+
+  test('ignores a reader name in the configuration file that is not a plain role name, and grants no role', async () => {
+    await using db = await testDatabase();
+    await using config = await hubConfig(db, ['insight_reader = "public"']);
+
+    const { stdout } = await invoke(['serve', ...configArgs(config)]);
+
+    expect(stdout).toContain('Listening on');
+    expect(stdout).not.toContain('insight views');
   });
 });

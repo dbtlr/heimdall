@@ -6,11 +6,10 @@ import { escapeControlCharacters } from '@loomcli/core';
 import type { ActionHandler } from '@loomcli/core';
 
 import type { serve } from './application.ts';
-import { configName } from './commands.ts';
-import { readConditionLimits, storeConditionLimits } from './condition-limits.ts';
+import { parseConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits } from './condition-limits.ts';
 import { openDatabase } from './database.ts';
-import { readDeliveryChannel } from './delivery-config.ts';
+import { parseDeliveryChannel } from './delivery-config.ts';
 import type { DeliveryChannel } from './delivery-config.ts';
 import { clearFailingRun, deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
@@ -58,6 +57,7 @@ export const serveAction: ActionHandler<typeof serve> = async ({
   host,
   options,
   out,
+  provided,
   signal,
   style,
 }) => {
@@ -71,14 +71,17 @@ export const serveAction: ActionHandler<typeof serve> = async ({
     path: servicePaths('hub', host.home).log,
   });
   try {
-    const named = configName(options);
-    const limits = await readConditionLimits({ cwd: host.cwd, home: host.home, named }).catch(
-      (error: unknown) => log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
-    );
-    const delivery = await readDeliveryChannel({ cwd: host.cwd, home: host.home, named }).catch(
-      (error: unknown) =>
+    // A section that does not parse is fatal; Loom does not look inside them.
+    const limits = await Promise.resolve(provided.config.conditions)
+      .then(parseConditionLimits)
+      .catch((error: unknown) =>
+        log.fatal(clean(`Invalid Hub Condition limits: ${describeError(error)}`)),
+      );
+    const delivery = await Promise.resolve(provided.config.delivery)
+      .then(parseDeliveryChannel)
+      .catch((error: unknown) =>
         log.fatal(clean(`Invalid Hub delivery settings: ${describeError(error)}`)),
-    );
+      );
     await serveUntilStopped({
       clean,
       delivery,

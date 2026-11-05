@@ -6,3 +6,5 @@ CLAUDE.local.md
 
 # Playwright MCP screenshots and snapshots
 .playwright-mcp/
+
+.scratch/

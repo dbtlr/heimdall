@@ -7,7 +7,7 @@ import { issueCode } from './pairing.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
 import { waitersOnLocks } from './testing/lock-waiters.ts';
-import { migratedDatabase } from './testing/postgres.ts';
+import { migratedDatabase, plainRows } from './testing/postgres.ts';
 import { timeline } from './testing/timeline.ts';
 import { storeToken } from './tokens.ts';
 
@@ -584,17 +584,21 @@ test("purge service deletes a forgotten Service's Conditions, Timeline, and deli
 
   expect(stdout).toBe('Purged the Service old-web from laptop-1.\n');
   expect(
-    await s.db.sql<
-      Record<string, unknown>[]
-    >`SELECT system, service FROM service_stops ORDER BY system, service`,
+    await plainRows(
+      s.db.sql<
+        Record<string, unknown>[]
+      >`SELECT system, service FROM service_stops ORDER BY system, service`,
+    ),
   ).toEqual([
     { service: 'web', system: 'laptop-1' },
     { service: 'old-web', system: 'server-1' },
   ]);
   expect(
-    await s.db.sql<
-      Record<string, unknown>[]
-    >`SELECT system, service FROM service_versions ORDER BY system, service`,
+    await plainRows(
+      s.db.sql<
+        Record<string, unknown>[]
+      >`SELECT system, service FROM service_versions ORDER BY system, service`,
+    ),
   ).toEqual([
     { service: 'web', system: 'laptop-1' },
     { service: 'old-web', system: 'server-1' },
@@ -663,7 +667,7 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
   await waitersOnLocks(s.db.sql, 1);
   const duringPass = await conditionRows(s.db.sql);
   await pass`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
-  pass.release();
+  await pass.release();
   const { code } = await purged;
 
   expect(duringPass.conditions).toContainEqual(
@@ -696,16 +700,20 @@ test('purge service succeeds when only Service stops, a restarted note, or versi
   }
 
   expect(
-    await s.db.sql<
-      Record<string, unknown>[]
-    >`SELECT service FROM service_stops WHERE service = 'db'`,
+    await plainRows(
+      s.db.sql<Record<string, unknown>[]>`SELECT service FROM service_stops WHERE service = 'db'`,
+    ),
   ).toEqual([]);
   expect(
-    await s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'cache'`,
+    await plainRows(
+      s.db.sql<Record<string, unknown>[]>`SELECT id FROM conditions WHERE subject = 'cache'`,
+    ),
   ).toEqual([]);
   expect(
-    await s.db.sql<
-      Record<string, unknown>[]
-    >`SELECT service FROM service_versions WHERE service = 'cron'`,
+    await plainRows(
+      s.db.sql<
+        Record<string, unknown>[]
+      >`SELECT service FROM service_versions WHERE service = 'cron'`,
+    ),
   ).toEqual([]);
 });

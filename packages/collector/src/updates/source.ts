@@ -4,7 +4,7 @@ import { isAbsolute, join } from 'node:path';
 
 import { MAX_UPDATES_SECTION_BYTES, UpdatesSectionSchema } from '@heimdall/schema';
 import type { PendingUpdate, UpdateManager, UpdatesSection } from '@heimdall/schema';
-import { every, readConfigSection } from '@heimdall/service';
+import { every } from '@heimdall/service';
 
 import type { Log } from '../collector.ts';
 import { describeError } from '../errors.ts';
@@ -90,14 +90,6 @@ export const parseUpdatesConfig = (value: unknown) => {
 };
 export type UpdatesConfig = ReturnType<typeof parseUpdatesConfig>;
 export type UpdatesSource = { latest: () => UpdatesSection | undefined };
-export const readUpdatesConfig = async (options: {
-  cwd: string;
-  home: string;
-  named: string | undefined;
-}) =>
-  parseUpdatesConfig(
-    await readConfigSection({ ...options, binary: 'collector', section: 'updates' }),
-  );
 
 const readSmall = async (path: string) => {
   const file = await open(path, 'r');

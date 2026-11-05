@@ -1,11 +1,11 @@
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command } from '@loomcli/core';
-import { config } from '@loomcli/plugins/config';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { text } from '@loomcli/validators';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { configPlugin, configValues } from './configuration.ts';
 import { readIdentity } from './identity.ts';
 import { hub, sleeps, stateDir } from './options.ts';
 import { pairAction } from './pair.ts';
@@ -24,6 +24,7 @@ const shutdown = { timeout: 10_000 };
 // `run` reports as the System `pair` stored in the state directory.
 export const run = new Command('run', {
   description: 'Sample this System every 15 seconds and push queued Reports to the Hub.',
+  uses: [configValues],
 })
   .option('hub', hub)
   .option('sleeps', sleeps)
@@ -59,11 +60,7 @@ const pairedSystem = async (dir: string) => {
 // The `heimdall-collector` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-collector', {
   description: 'Sample this System and push Reports to the Hub.',
-  plugins: [
-    help(),
-    version({ postfix: versionPostfix }),
-    config({ file: '.config/heimdall/collector.{toml,json}' }),
-  ],
+  plugins: [help(), version({ postfix: versionPostfix }), configPlugin],
   shutdown,
   version: packageJson.version,
 })

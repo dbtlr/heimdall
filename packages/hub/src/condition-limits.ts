@@ -1,6 +1,5 @@
 import { SYSTEM_NAME } from '@heimdall/schema';
 import type { ConditionLevel, ConditionLimitSet } from '@heimdall/schema';
-import { readConfigSection } from '@heimdall/service';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
@@ -226,25 +225,6 @@ export const parseConditionLimits = (value: unknown) => {
 };
 
 export type ConditionLimits = ReturnType<typeof parseConditionLimits>;
-
-export const readConditionLimits = async ({
-  cwd,
-  home,
-  named,
-}: {
-  cwd: string;
-  home: string;
-  named: string | undefined;
-}) =>
-  parseConditionLimits(
-    await readConfigSection({
-      binary: 'hub',
-      cwd,
-      home,
-      named,
-      section: 'conditions',
-    }),
-  );
 
 // Replaces the stored limits with these, so the dashboard draws the limits
 // the Hub judges by. Takes the migration lock, as loading prices does.

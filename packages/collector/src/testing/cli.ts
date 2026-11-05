@@ -12,18 +12,20 @@ const POLL_MS = 10;
 // Runs the Collector command line in-process and captures what it prints. A run
 // that starts collecting is cancelled once its log shows it started, or after a
 // few seconds, so a `run` test ends either way. HOME is a fresh directory unless
-// `env` names one, so `run` never rotates a real log. `stdin` is what a pipe
+// `env` names one, so `run` never rotates a real log, and the working
+// directory is that HOME unless `cwd` names one, so the lookup never finds a
+// configuration file above this checkout. `stdin` is what a pipe
 // delivers (empty when omitted), and `stdinIsTerminal` makes standard input a
 // terminal.
 export const invoke = async (
   argv: string[],
   {
-    cwd = process.cwd(),
+    cwd,
     env = {},
     stdin,
     stdinIsTerminal = false,
   }: {
-    cwd?: string;
+    cwd?: string | undefined;
     env?: Record<string, string>;
     stdin?: string | Uint8Array;
     stdinIsTerminal?: boolean;
@@ -34,7 +36,7 @@ export const invoke = async (
   await using home = await tempStateDir();
   const mock = mockProcess({
     argv,
-    cwd,
+    cwd: cwd ?? env.HOME ?? home.path,
     env: { HOME: home.path, ...env },
     ...(stdinIsTerminal
       ? { terminal: { columns: 80, keys: [], rows: 24, streams: [] } }

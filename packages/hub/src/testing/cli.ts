@@ -14,18 +14,20 @@ const POLL_MS = 10;
 // text and as the bytes written. Once `serve` logs the address it listens on,
 // `whileServing` runs against that address and the run is cancelled; a safety
 // timeout cancels it after a few seconds anyway. HOME is a fresh directory
-// unless `env` names one, so `serve` never rotates a real log. `terminal`
+// unless `env` names one, so `serve` never rotates a real log, and the working
+// directory is that HOME unless `cwd` names one, so the lookup never finds a
+// configuration file above this checkout. `terminal`
 // stands in for the process's own, so output does not depend on where the
 // tests run; without it, no stream is a terminal.
 export const invoke = async (
   argv: string[],
   {
-    cwd = process.cwd(),
+    cwd,
     env = {},
     terminal,
     whileServing,
   }: {
-    cwd?: string;
+    cwd?: string | undefined;
     env?: Record<string, string>;
     terminal?: MockTerminal | undefined;
     whileServing?: (hub: URL) => Promise<void>;
@@ -36,7 +38,7 @@ export const invoke = async (
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const mock = mockProcess({
     argv,
-    cwd,
+    cwd: cwd ?? env.HOME ?? home,
     env: { HOME: home, ...env },
     ...(terminal === undefined ? {} : { terminal }),
   });

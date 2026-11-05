@@ -370,3 +370,9 @@ export const testDatabase = async () => {
     },
   };
 };
+
+// A query's rows as a plain array. Bun types an awaited query as its rows
+// together with the result's metadata, which a matcher's expected value lacks.
+export const plainRows = async <Row extends object>(query: PromiseLike<Row[]>): Promise<Row[]> => [
+  ...(await query),
+];

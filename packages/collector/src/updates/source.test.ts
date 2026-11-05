@@ -4,12 +4,7 @@ import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
 import { observeHomebrew } from './homebrew.ts';
-import {
-  createUpdatesSource,
-  parseUpdatesConfig,
-  readUpdatesConfig,
-  startUpdates,
-} from './source.ts';
+import { createUpdatesSource, parseUpdatesConfig, startUpdates } from './source.ts';
 
 test('a missing configured Homebrew executable reports unavailable coverage with its original identity', async () => {
   await using dir = await tempStateDir();
@@ -322,15 +317,11 @@ test('Homebrew accepts a shared prefix but requires ownership of its repository 
   expect((await observe(caskroom)).installed).toBeUndefined();
 });
 
-test('update configuration follows the selected collector.toml and rejects unusable settings', async () => {
-  await using dir = await tempStateDir();
-  await writeFile(
-    join(dir.path, 'collector.toml'),
-    '[updates]\nintervalHours = 12\naptListsDir = "/mock/apt/lists"\n',
-  );
-  expect(
-    await readUpdatesConfig({ cwd: dir.path, home: '', named: 'collector.toml' }),
-  ).toMatchObject({ aptListsDir: '/mock/apt/lists', intervalHours: 12 });
+test('update configuration reads its settings and rejects unusable ones', () => {
+  expect(parseUpdatesConfig({ aptListsDir: '/mock/apt/lists', intervalHours: 12 })).toMatchObject({
+    aptListsDir: '/mock/apt/lists',
+    intervalHours: 12,
+  });
   expect(parseUpdatesConfig(undefined).intervalHours).toBe(6);
   expect(() => parseUpdatesConfig({ intervalHours: 0 })).toThrow();
   expect(() => parseUpdatesConfig({ apt: 'apt' })).toThrow();

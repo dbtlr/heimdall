@@ -1,12 +1,12 @@
 import { RECORD_NAME, SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command } from '@loomcli/core';
-import { config } from '@loomcli/plugins/config';
 import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
 import { version } from '@loomcli/plugins/version';
 import { date, integer, text, url } from '@loomcli/validators';
 
+import { configPlugin, configValues } from './configuration.ts';
 import { deliveryTestAction } from './delivery-commands.ts';
 import { duration } from './duration.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
@@ -38,6 +38,7 @@ const database = {
 // configuration file.
 export const serve = new Command('serve', {
   description: 'Accept Reports and transcripts from Collectors.',
+  uses: [configValues],
 })
   .option('database', database)
   .option('host', {
@@ -234,6 +235,7 @@ const transcripts = new Command('transcripts', {
 export const deliveryTest = new Command('test', {
   description:
     "Send one low-priority test message through the [delivery] channel, to check that alerts can reach a phone. A message that gets through ends the dashboard's delivery failing status.",
+  uses: [configValues],
 })
   .option('database', database)
   .action(deliveryTestAction);
@@ -245,11 +247,7 @@ const delivery = new Command('delivery', {
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
-  plugins: [
-    help(),
-    version({ postfix: versionPostfix }),
-    config({ file: '.config/heimdall/hub.{toml,json}' }),
-  ],
+  plugins: [help(), version({ postfix: versionPostfix }), configPlugin],
   shutdown,
   version: HUB_VERSION,
 })

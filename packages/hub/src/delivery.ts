@@ -346,6 +346,6 @@ export const deliverAlerts = async (
       await session`SELECT pg_advisory_unlock(hashtext(${DELIVERY_LOCK}))`;
     }
   } finally {
-    session.release();
+    await session.release();
   }
 };

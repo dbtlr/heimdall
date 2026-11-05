@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
+import { tempHome } from '@heimdall/service/testing';
 import { assertAssembles } from '@loomcli/testing';
 import type { SQL } from 'bun';
 
@@ -943,4 +944,61 @@ test('serve with a [delivery] section leaves the delivery status alone', async (
   const rows: { failing_since: Date | null }[] =
     await db.sql`SELECT failing_since FROM delivery_status`;
   expect(rows).toEqual([{ failing_since: new Date('2026-10-06T12:00:00Z') }]);
+});
+
+// A home directory whose ~/.config/heimdall/hub.toml holds `lines`, for a run
+// that gives no --config, so Loom's lookup finds the file.
+const homeWithHubConfig = async (lines: string[]) => {
+  const home = await tempHome();
+  const dir = join(home.path, '.config', 'heimdall');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'hub.toml'), lines.join('\n'));
+  return home;
+};
+
+test('delivery test uses the [delivery] section of the hub.toml the lookup finds in home', async () => {
+  using ntfy = stubNtfy();
+  await using home = await homeWithHubConfig([
+    '[database]',
+    `url = "${UNREACHED_DATABASE.href}"`,
+    '[delivery]',
+    `url = "${ntfy.server.url.href}"`,
+    'topic = "heimdall-x7Qp"',
+    'dashboard = "https://dashboard.example/"',
+  ]);
+
+  const { stdout } = await invoke(['delivery', 'test'], { env: { HOME: home.path } });
+
+  expect(ntfy.received).toHaveLength(1);
+  expect(stdout).toContain(`Sent a test message through ${ntfy.server.url.host}.`);
+});
+
+test('serve refuses an invalid [delivery] section in the hub.toml the lookup finds in home', async () => {
+  await using home = await homeWithHubConfig([
+    '[database]',
+    'url = "postgres://heimdall@127.0.0.1:1/heimdall"',
+    '[delivery]',
+    'url = "https://ntfy.example"',
+    'topic = "not a topic"',
+    'dashboard = "https://dashboard.example/"',
+  ]);
+
+  const { code, stderr } = await invoke(['serve'], { env: { HOME: home.path } });
+
+  expect(stderr).toContain('Invalid Hub delivery settings: delivery.topic');
+  expect(code).toBe(1);
+});
+
+test('serve refuses invalid [conditions] in the hub.toml the lookup finds in home', async () => {
+  await using home = await homeWithHubConfig([
+    '[database]',
+    'url = "postgres://heimdall@127.0.0.1:1/heimdall"',
+    '[conditions.disk]',
+    'note = 80',
+  ]);
+
+  const { code, stderr } = await invoke(['serve'], { env: { HOME: home.path } });
+
+  expect(stderr).toContain('Invalid Hub Condition limits');
+  expect(code).toBe(1);
 });

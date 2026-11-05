@@ -3,8 +3,9 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { Application } from '@loomcli/core';
-import { config } from '@loomcli/plugins/config';
+import { configuration } from '@loomcli/plugins/config';
 import { mockProcess } from '@loomcli/testing';
+import { z } from 'zod';
 
 import { serviceCommand } from './command.ts';
 import type { ServiceEnvironment, ServiceSpec } from './command.ts';
@@ -61,7 +62,17 @@ const invoke = async (
 ) => {
   const app = new Application(`heimdall-${spec.binary}`, {
     description: `The ${spec.binary} service command under test.`,
-    plugins: [config({ file: `.config/heimdall/${spec.binary}.{toml,json}` })],
+    plugins: [
+      configuration({
+        file: `.config/heimdall/${spec.binary}.{toml,json}`,
+        schema: z.object({
+          host: z.string().optional(),
+          hub: z.string().optional(),
+          port: z.union([z.string(), z.number()]).optional(),
+          stateDir: z.string().optional(),
+        }),
+      }).plugin,
+    ],
   }).command(
     serviceCommand(spec, {
       compiled: () => true,
