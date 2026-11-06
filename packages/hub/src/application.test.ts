@@ -686,6 +686,18 @@ test('serve reads the database only from [database] url, not a top-level databas
   expect(code).toBe(2);
 });
 
+// Loom drops a file value its schema or its option rejects and runs on the
+// default; -v names each one, so an operator can see why a setting has no effect.
+test('serve -v names each hub.toml value it ignores: a wrong type, and one the option refuses', async () => {
+  await using config = await configFile(['host = 5', 'port = "eighty"']);
+
+  const { code, stderr } = await invoke([...serveArgs(config), '-v']);
+
+  expect(stderr).toMatch(/Ignored host in \S*hub\.toml: /u);
+  expect(stderr).toMatch(/Ignored option "--port" from port in \S*hub\.toml: /u);
+  expect(code).toBe(2);
+});
+
 test('serve names the database as the problem when it cannot reach it', async () => {
   const { code, stderr } = await invoke([
     'serve',

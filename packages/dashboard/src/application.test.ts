@@ -131,6 +131,28 @@ test.each([
   },
 );
 
+// Loom drops a file value its schema rejects and runs on the default; -v names
+// each one, so an operator can see why a setting has no effect.
+test('serve -v names the dashboard.toml value it ignores and serves on the default', async () => {
+  await withHome(async (home) => {
+    const port = await freePort();
+    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+    await writeFile(
+      join(home, '.config', 'heimdall', 'dashboard.toml'),
+      ['host = 5', `port = ${String(port)}`].join('\n'),
+    );
+
+    const { code, stderr, stdout } = await invoke(['serve', '-v'], {
+      home,
+      whileServing: async () => {},
+    });
+
+    expect(stderr).toMatch(/Ignored host in \S*dashboard\.toml: /u);
+    expect(stdout).toContain(`Listening on http://127.0.0.1:${String(port)}/`);
+    expect(code).toBe(130);
+  });
+});
+
 // Bun checks idle sockets about every 4 seconds, so a 1 second timeout cuts a
 // request that has waited 6 seconds off after about 4.
 test('serve gives the server its idle timeout, which cuts off a request slower than it', async () => {

@@ -63,7 +63,9 @@ export const serviceDefinition = ({
 }): ServiceDefinition => {
   const { label, log } = servicePaths(binary, home);
   return {
-    arguments: [RUN_COMMAND[binary]],
+    // -v makes every start name, in the log, each configuration value Loom
+    // ignores and replaces with its default, which a supervised run shows nowhere else.
+    arguments: [RUN_COMMAND[binary], '-v'],
     description: `Heimdall ${TITLE[binary]} (${label})`,
     executable,
     label,

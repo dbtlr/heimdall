@@ -203,11 +203,11 @@ The configuration file is the one `--config` names, or else the first of `.confi
 
 Each binary installs and supervises itself as a systemd user unit on Linux and a launchd user agent on macOS ([ADR-0007](docs/decisions/0007-binaries-own-their-service-config-file-holds-settings.md)). The commands are the same for all three binaries and both platforms, `heimdall-hub service <command>`, `heimdall-dashboard service <command>`, and `heimdall-collector service <command>`, and so is the log path.
 
-| Binary               | Unit                           | Runs    | Log                                     | Config file                         |
-| -------------------- | ------------------------------ | ------- | --------------------------------------- | ----------------------------------- |
-| `heimdall-hub`       | `com.dbtlr.heimdall.hub`       | `serve` | `~/.local/state/heimdall/hub.log`       | `~/.config/heimdall/hub.toml`       |
-| `heimdall-dashboard` | `com.dbtlr.heimdall.dashboard` | `serve` | `~/.local/state/heimdall/dashboard.log` | `~/.config/heimdall/dashboard.toml` |
-| `heimdall-collector` | `com.dbtlr.heimdall.collector` | `run`   | `~/.local/state/heimdall/collector.log` | `~/.config/heimdall/collector.toml` |
+| Binary               | Unit                           | Runs       | Log                                     | Config file                         |
+| -------------------- | ------------------------------ | ---------- | --------------------------------------- | ----------------------------------- |
+| `heimdall-hub`       | `com.dbtlr.heimdall.hub`       | `serve -v` | `~/.local/state/heimdall/hub.log`       | `~/.config/heimdall/hub.toml`       |
+| `heimdall-dashboard` | `com.dbtlr.heimdall.dashboard` | `serve -v` | `~/.local/state/heimdall/dashboard.log` | `~/.config/heimdall/dashboard.toml` |
+| `heimdall-collector` | `com.dbtlr.heimdall.collector` | `run -v`   | `~/.local/state/heimdall/collector.log` | `~/.config/heimdall/collector.toml` |
 
 - `install` creates the log directory and, on Linux, writes `~/.config/systemd/user/<unit>.service`, but only when its content changed, and then reloads the user manager. It enables the unit and always restarts it, which is how a new binary or a changed config file takes effect. Running it again with nothing changed rewrites nothing and restarts.
 - `heimdall-hub service install --port N` and `heimdall-dashboard service install --port N` first store `port = N` in the binary's config file, `hub.toml` or `dashboard.toml`, creating the file if it is missing. A file that already holds that port is left exactly as it is, and `install` refuses to create `hub.toml` beside an existing `hub.json`, or a `config.toml` or `config.json` in the binary's XDG folder, which the new file would hide, so a file Fleet rendered stays as Fleet rendered it. No other setting goes through `install`.
@@ -215,7 +215,7 @@ Each binary installs and supervises itself as a systemd user unit on Linux and a
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
 - `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's and the dashboard's add their health from `GET http://<host>:<port>/api/health`, with the host and port each reads from its own config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
-The unit runs `<absolute path of the binary> serve` or `run` from home, with no flags and no environment, so a hand run and the supervised run read the same config file. The systemd unit restarts the binary 10 seconds after any exit and never gives up; an end by SIGTERM or SIGINT, or exit status 143 or 130, counts as a clean stop.
+The unit runs `<absolute path of the binary> serve -v` or `run -v` from home, with no other flags and no environment, so a hand run and the supervised run read the same config file. `-v` makes every start write to the log each config value the binary ignores, as [A setting that has no effect](#a-setting-that-has-no-effect) describes. The systemd unit restarts the binary 10 seconds after any exit and never gives up; an end by SIGTERM or SIGINT, or exit status 143 or 130, counts as a clean stop.
 
 On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user's GUI domain, `gui/<uid>`, as Mimir's agent is. It runs only while the user is logged in and loads again at each login. The plist runs the same command from home with no environment, appends both output streams to the same log, and has launchd relaunch the binary after any exit, at most once every 10 seconds.
 
@@ -223,6 +223,19 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 - `stop` boots the agent out of the GUI domain, because launchd would relaunch a stopped process, and leaves the plist in place. `start` bootstraps it again. `restart` kills and relaunches a loaded agent and bootstraps one that is not loaded. A stopped agent loads again at the next login.
 - `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue and spool stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
+
+### A setting that has no effect
+
+A top-level config value with the wrong type, such as `port = true` or `sleeps = "sometimes"`, or one its option refuses, such as `port = "eighty"`, is ignored, and the binary runs on that option's default. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting.
+
+`-v` names each ignored value on stderr, once per run, before anything else the run prints:
+
+```text
+› Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number
+› Ignored option "--port" from port in .config/heimdall/hub.toml: Expected a whole number from 0 through 65535.
+```
+
+The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run with nothing ignored prints nothing more. A unit installed before `-v` was added runs without it until `service install` runs again.
 
 [Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run the three binaries.
 

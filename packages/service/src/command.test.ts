@@ -137,7 +137,7 @@ test('uninstall refuses from a binary that is not compiled', async () => {
   expect(result.calls).toEqual([]);
 });
 
-test('install creates the log directory and installs a unit that runs serve from home', async () => {
+test('install creates the log directory and installs a unit that runs serve -v from home', async () => {
   await using home = await tempHome();
   const fake = fakeSupervisor();
 
@@ -147,7 +147,7 @@ test('install creates the log directory and installs a unit that runs serve from
   expect((await stat(join(home.path, '.local', 'state', 'heimdall'))).isDirectory()).toBe(true);
   expect(fake.calls).toEqual(['install']);
   expect(fake.state.definition).toEqual({
-    arguments: ['serve'],
+    arguments: ['serve', '-v'],
     description: 'Heimdall Hub (com.dbtlr.heimdall.hub)',
     executable: EXECUTABLE,
     label: 'com.dbtlr.heimdall.hub',
@@ -171,13 +171,13 @@ test('install again with nothing changed says the unit is unchanged and still re
   expect(result.stdout).toContain('Restarted com.dbtlr.heimdall.hub');
 });
 
-test('the Collector unit runs run', async () => {
+test('the Collector unit runs run -v', async () => {
   await using home = await tempHome();
   const fake = fakeSupervisor();
 
   await invoke(COLLECTOR, ['service', 'install'], { fake, home: home.path });
 
-  expect(fake.state.definition?.arguments).toEqual(['run']);
+  expect(fake.state.definition?.arguments).toEqual(['run', '-v']);
   expect(fake.state.definition?.log).toBe(
     join(home.path, '.local', 'state', 'heimdall', 'collector.log'),
   );
@@ -669,7 +669,7 @@ Restarted ${AGENT}; it logs to ~/.local/state/heimdall/collector.log.
 `);
   expect((await stat(join(home.path, '.local', 'state', 'heimdall'))).isDirectory()).toBe(true);
   expect(await readFile(plist, 'utf8')).toContain(
-    '<string>/opt/heimdall/bin/heimdall-collector</string>\n    <string>run</string>',
+    '<string>/opt/heimdall/bin/heimdall-collector</string>\n    <string>run</string>\n    <string>-v</string>',
   );
   expect(launchd.calls).toEqual([
     `launchctl print gui/501/${AGENT}`,
