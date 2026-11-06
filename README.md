@@ -226,7 +226,7 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 
 ### A setting that has no effect
 
-A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored, and the binary runs on that option's default. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored without any line, even at `-v`, so check the spelling of a setting that has no effect and prints nothing.
+A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored. The binary then runs on that option's default, or, for a setting with no default such as `[database] url`, stops with a usage error naming the missing option. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored without any line, even at `-v`, so check the spelling of a setting that has no effect and prints nothing.
 
 `-v` names each ignored value on stderr, once per run, before anything else the run prints:
 
