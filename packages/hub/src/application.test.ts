@@ -605,7 +605,8 @@ test('serve keeps the earlier log copy when only untimestamped startup lines are
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const logDir = join(home, '.local', 'state', 'heimdall');
   const history = '2026-01-02T03:04:05.000Z Listening.\n';
-  const startup = '› Ignored host in .config/heimdall/hub.toml: not a key\n';
+  const startup =
+    '› Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number\n';
   try {
     await mkdir(logDir, { recursive: true });
     await writeFile(join(logDir, 'hub.log.1'), history);

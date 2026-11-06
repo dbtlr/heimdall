@@ -18,15 +18,11 @@ const LEADING_TIME = /^(?<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)(?
 
 // When the log's first timestamped line was written, or undefined when none of
 // the first HEAD_BYTES holds one. Lines without a timestamp, such as the few
-// config notes Loom prints before the runtime starts, are skipped. A last line
-// cut off by the end of the window is dropped, so a partial time is never read.
-const firstTimestampedLineTime = async (path: string, size: number) => {
+// config notes Loom prints before the runtime starts, are skipped. A time cut
+// off by the end of the window never matches, because the pattern needs it whole.
+const firstTimestampedLineTime = async (path: string) => {
   const head = await Bun.file(path).slice(0, HEAD_BYTES).text();
-  const lines = head.split('\n');
-  if (size > HEAD_BYTES) {
-    lines.pop();
-  }
-  for (const line of lines) {
+  for (const line of head.split('\n')) {
     const time = LEADING_TIME.exec(line)?.groups?.time;
     const parsed = time === undefined ? Number.NaN : Date.parse(time);
     if (!Number.isNaN(parsed)) {
@@ -72,7 +68,7 @@ export const rotateLog = async ({
     return 'kept';
   }
   if (size < maxBytes) {
-    const written = await firstTimestampedLineTime(path, size);
+    const written = await firstTimestampedLineTime(path);
     if (written === undefined || now - written < maxAgeMs) {
       return 'kept';
     }

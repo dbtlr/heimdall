@@ -58,7 +58,8 @@ test('a log just under the size limit is kept', async () => {
   expect(await rotateLog({ maxBytes: text.length + 1, now: NOW, path: log })).toBe('kept');
 });
 
-const STARTUP_LINES = '› Ignored host in .config/heimdall/hub.toml: not a key\n';
+const STARTUP_LINES =
+  '› Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number\n';
 
 test('a log holding only untimestamped lines, under the size limit, is kept', async () => {
   await using home = await tempHome();
@@ -105,11 +106,19 @@ test('untimestamped content at the size limit rotates', async () => {
 test('a timestamped line cut off by the read window is not misread', async () => {
   await using home = await tempHome();
   const log = join(home.path, 'hub.log');
-  // Only the first 9 characters of the old stamp fall inside the 64 KiB window.
+  // Only the first 10 bytes of the old stamp fall inside the 64 KiB window.
   const filler = `${'x'.repeat(65_535 - 10)}\n`;
   await writeFile(log, `${filler}${stamp(NOW - 91 * DAY_MS)} Listening.\n`);
 
   expect(await rotateLog({ now: NOW, path: log })).toBe('kept');
+});
+
+test('a first timestamped line that runs past the read window still sets the age', async () => {
+  await using home = await tempHome();
+  const log = join(home.path, 'hub.log');
+  await writeFile(log, `${STARTUP_LINES}${stamp(NOW - 91 * DAY_MS)} ${'x'.repeat(70_000)}\n`);
+
+  expect(await rotateLog({ now: NOW, path: log })).toBe('rotated');
 });
 
 test('an empty log is kept', async () => {
