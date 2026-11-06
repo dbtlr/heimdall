@@ -1,6 +1,7 @@
 import { serviceCommand } from '@heimdall/service';
 import { Application, Command } from '@loomcli/core';
 import { help } from '@loomcli/plugins/help';
+import { verbose } from '@loomcli/plugins/verbose';
 import { version } from '@loomcli/plugins/version';
 import { text } from '@loomcli/validators';
 
@@ -60,7 +61,8 @@ const pairedSystem = async (dir: string) => {
 // The `heimdall-collector` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-collector', {
   description: 'Sample this System and push Reports to the Hub.',
-  plugins: [help(), version({ postfix: versionPostfix }), configPlugin],
+  // `verbose` gives -v, at which Loom names each configuration value it ignores.
+  plugins: [help(), version({ postfix: versionPostfix }), verbose(), configPlugin],
   shutdown,
   version: packageJson.version,
 })

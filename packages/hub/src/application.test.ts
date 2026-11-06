@@ -594,7 +594,7 @@ test('serve starts every runtime line with its ISO 8601 UTC time', async () => {
   }
 });
 
-test('serve rotates a log from before timestamps as it starts', async () => {
+test('serve keeps the earlier log copy when only untimestamped startup lines are in the log', async () => {
   await using db = await migratedDatabase();
   await using config = await configFile([
     'host = "127.0.0.1"',
@@ -604,16 +604,18 @@ test('serve rotates a log from before timestamps as it starts', async () => {
   ]);
   const home = await mkdtemp(join(tmpdir(), 'heimdall-hub-home-'));
   const logDir = join(home, '.local', 'state', 'heimdall');
+  const history = '2026-01-02T03:04:05.000Z Listening.\n';
+  const startup =
+    '› Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number\n';
   try {
     await mkdir(logDir, { recursive: true });
-    await writeFile(join(logDir, 'hub.log'), 'Listening on http://127.0.0.1:8080/.\n');
+    await writeFile(join(logDir, 'hub.log.1'), history);
+    await writeFile(join(logDir, 'hub.log'), startup);
 
     const { code } = await invoke(serveArgs(config), { env: { HOME: home } });
 
-    expect(await readFile(join(logDir, 'hub.log.1'), 'utf8')).toBe(
-      'Listening on http://127.0.0.1:8080/.\n',
-    );
-    expect(await readFile(join(logDir, 'hub.log'), 'utf8')).toBe('');
+    expect(await readFile(join(logDir, 'hub.log.1'), 'utf8')).toBe(history);
+    expect(await readFile(join(logDir, 'hub.log'), 'utf8')).toBe(startup);
     expect(code).toBe(130);
   } finally {
     await rm(home, { force: true, recursive: true });
@@ -683,6 +685,18 @@ test('serve reads the database only from [database] url, not a top-level databas
   const { code, stderr } = await invoke(serveArgs(config));
 
   expect(stderr).toContain('--database');
+  expect(code).toBe(2);
+});
+
+// Loom drops a file value its schema or its option rejects and runs on the
+// default; -v names each one, so an operator can see why a setting has no effect.
+test('serve -v names each hub.toml value it ignores: a wrong type, and one the option refuses', async () => {
+  await using config = await configFile(['host = 5', 'port = "eighty"']);
+
+  const { code, stderr } = await invoke([...serveArgs(config), '-v']);
+
+  expect(stderr).toMatch(/Ignored host in \S*hub\.toml: /u);
+  expect(stderr).toMatch(/Ignored option "--port" from port in \S*hub\.toml: /u);
   expect(code).toBe(2);
 });
 

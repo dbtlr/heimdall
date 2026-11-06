@@ -24,7 +24,7 @@ test('a systemd user unit lives in the user manager search path under home', () 
   );
 });
 
-test('the Hub unit runs plain serve from home and appends its output to the log', () => {
+test('the Hub unit runs serve -v from home and appends its output to the log', () => {
   const unit = renderSystemdUnit(
     serviceDefinition({ binary: 'hub', executable: '/opt/heimdall/bin/heimdall-hub', home: HOME }),
   );
@@ -35,7 +35,7 @@ Description=Heimdall Hub (com.dbtlr.heimdall.hub)
 StartLimitIntervalSec=0
 
 [Service]
-ExecStart="/opt/heimdall/bin/heimdall-hub" serve
+ExecStart="/opt/heimdall/bin/heimdall-hub" serve -v
 WorkingDirectory=/home/operator
 StandardOutput=append:/home/operator/.local/state/heimdall/hub.log
 StandardError=append:/home/operator/.local/state/heimdall/hub.log
@@ -48,7 +48,7 @@ WantedBy=default.target
 `);
 });
 
-test('the Collector unit runs plain run and carries no environment', () => {
+test('the Collector unit runs run -v and carries no environment', () => {
   const unit = renderSystemdUnit(
     serviceDefinition({
       binary: 'collector',
@@ -58,7 +58,7 @@ test('the Collector unit runs plain run and carries no environment', () => {
   );
 
   expect(unit).toContain('Description=Heimdall Collector (com.dbtlr.heimdall.collector)\n');
-  expect(unit).toContain('ExecStart="/opt/heimdall/bin/heimdall-collector" run\n');
+  expect(unit).toContain('ExecStart="/opt/heimdall/bin/heimdall-collector" run -v\n');
   expect(unit).toContain(
     'StandardOutput=append:/home/operator/.local/state/heimdall/collector.log\n',
   );
@@ -74,7 +74,7 @@ test('unit values escape specifiers, variables, quotes, and backslashes', () => 
     }),
   );
 
-  expect(unit).toContain(String.raw`ExecStart="/opt/100%%/$$HOME/\"q\"\\b" serve`);
+  expect(unit).toContain(String.raw`ExecStart="/opt/100%%/$$HOME/\"q\"\\b" serve -v`);
   expect(unit).toContain('WorkingDirectory=/home/50%%\n');
   expect(unit).toContain('StandardOutput=append:/home/50%%/.local/state/heimdall/hub.log\n');
 });

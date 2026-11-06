@@ -186,6 +186,23 @@ test('run ignores a sleeps setting that is not a boolean and uses the default', 
   expect(stdout).toContain('This System is always on');
 });
 
+// Loom drops a file value its schema or its option rejects and runs on the
+// default; -v names each one, so an operator can see why a setting has no effect.
+test('run -v names each collector.toml value it ignores: a wrong type, and one the option refuses', async () => {
+  await using dir = await tempStateDir();
+  const configFile = join(dir.path, 'collector.toml');
+  await writeFile(
+    configFile,
+    ['hub = "ftp://heimdall.example/"', 'sleeps = "sometimes"'].join('\n'),
+  );
+
+  const { code, stderr } = await startAndStop(['run', '--config', configFile, '-v']);
+
+  expect(stderr).toMatch(/Ignored sleeps in \S*collector\.toml: /u);
+  expect(stderr).toMatch(/Ignored option "--hub" from hub in \S*collector\.toml: /u);
+  expect(code).toBe(2);
+});
+
 test('run captures transcripts from the sources collector.toml lists', async () => {
   await using dir = await tempStateDir();
   const claude = join(dir.path, 'claude');
@@ -481,17 +498,18 @@ test('run starts every runtime line with its ISO 8601 UTC time', async () => {
   }
 });
 
-test('run rotates a log from before timestamps as it starts', async () => {
+// A line without a time, such as one Loom writes before the runtime starts,
+// does not set the log's age; the first timestamped line does.
+test('run rotates a log whose first timestamped line is over 90 days old as it starts', async () => {
   await using home = await homeWithConfig();
   const logDir = join(home.path, '.local', 'state', 'heimdall');
   await mkdir(logDir, { recursive: true });
-  await writeFile(join(logDir, 'collector.log'), 'Sampling server-1 every 15 seconds.\n');
+  const old = '› Ignored sleeps in collector.toml\n2020-01-01T00:00:00.000Z Sampling server-1.\n';
+  await writeFile(join(logDir, 'collector.log'), old);
 
   const { code } = await invoke(['run'], { cwd: home.path, env: { HOME: home.path } });
 
-  expect(await readFile(join(logDir, 'collector.log.1'), 'utf8')).toBe(
-    'Sampling server-1 every 15 seconds.\n',
-  );
+  expect(await readFile(join(logDir, 'collector.log.1'), 'utf8')).toBe(old);
   expect(await readFile(join(logDir, 'collector.log'), 'utf8')).toBe('');
   expect(code).toBe(130);
 });

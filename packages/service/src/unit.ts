@@ -27,7 +27,7 @@ const execWord = (value: string) =>
 // 130, the codes for SIGTERM and SIGINT, count as one too.
 export const renderSystemdUnit = (definition: ServiceDefinition): string => {
   const log = plain(definition.log);
-  // The arguments are fixed command names, so only the executable needs quoting.
+  // The arguments are a fixed command name and flag, so only the executable needs quoting.
   const command = [execWord(definition.executable), ...definition.arguments.map(plain)].join(' ');
   return `[Unit]
 Description=${plain(definition.description)}

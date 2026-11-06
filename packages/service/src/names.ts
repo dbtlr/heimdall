@@ -3,7 +3,7 @@ import { join } from 'node:path';
 // The binaries that supervise themselves, by the name their files carry.
 export type Binary = 'collector' | 'dashboard' | 'hub';
 
-// What each binary's unit runs: the command, with no flags (ADR-0007).
+// What each binary's unit runs: the command, then only -v (ADR-0007).
 const RUN_COMMAND: Record<Binary, string> = { collector: 'run', dashboard: 'serve', hub: 'serve' };
 
 // Each binary as the glossary names it.
@@ -63,7 +63,9 @@ export const serviceDefinition = ({
 }): ServiceDefinition => {
   const { label, log } = servicePaths(binary, home);
   return {
-    arguments: [RUN_COMMAND[binary]],
+    // -v makes every start name, in the log, each configuration value Loom
+    // ignores and replaces with its default, which a supervised run shows nowhere else.
+    arguments: [RUN_COMMAND[binary], '-v'],
     description: `Heimdall ${TITLE[binary]} (${label})`,
     executable,
     label,

@@ -3,6 +3,7 @@ import { serviceCommand } from '@heimdall/service';
 import { Application, Command } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
+import { verbose } from '@loomcli/plugins/verbose';
 import { version } from '@loomcli/plugins/version';
 import { date, integer, text, url } from '@loomcli/validators';
 
@@ -247,7 +248,8 @@ const delivery = new Command('delivery', {
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
-  plugins: [help(), version({ postfix: versionPostfix }), configPlugin],
+  // `verbose` gives -v, at which Loom names each configuration value it ignores.
+  plugins: [help(), version({ postfix: versionPostfix }), verbose(), configPlugin],
   shutdown,
   version: HUB_VERSION,
 })

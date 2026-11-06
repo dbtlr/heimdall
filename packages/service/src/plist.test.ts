@@ -15,7 +15,7 @@ test('a launchd user agent lives in LaunchAgents under home, named by its label'
   );
 });
 
-test('the Collector agent runs plain run from home, keeps it alive, and appends to the log', () => {
+test('the Collector agent runs run -v from home, keeps it alive, and appends to the log', () => {
   expect(renderLaunchdPlist(collector())).toBe(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -26,6 +26,7 @@ test('the Collector agent runs plain run from home, keeps it alive, and appends 
   <array>
     <string>/opt/heimdall/bin/heimdall-collector</string>
     <string>run</string>
+    <string>-v</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/operator</string>
@@ -44,7 +45,7 @@ test('the Collector agent runs plain run from home, keeps it alive, and appends 
 `);
 });
 
-test('the Hub agent runs plain serve and sets no environment', () => {
+test('the Hub agent runs serve -v and sets no environment', () => {
   const plist = renderLaunchdPlist(
     serviceDefinition({ binary: 'hub', executable: '/opt/heimdall/bin/heimdall-hub', home: HOME }),
   );
@@ -52,6 +53,7 @@ test('the Hub agent runs plain serve and sets no environment', () => {
   expect(plist).toContain(`  <array>
     <string>/opt/heimdall/bin/heimdall-hub</string>
     <string>serve</string>
+    <string>-v</string>
   </array>`);
   expect(plist).not.toContain('EnvironmentVariables');
 });

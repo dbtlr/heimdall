@@ -5,21 +5,31 @@ import { isMissing } from './files.ts';
 
 const DAY_MS = 86_400_000;
 
-// A log rotates when its first line is this old, or it is this large,
-// whichever comes first (ADR-0007).
+// A log rotates when its first timestamped line is this old, or it is this
+// large, whichever comes first (ADR-0007).
 export const LOG_MAX_AGE_MS = 90 * DAY_MS;
 export const LOG_MAX_BYTES = 10_000_000;
+
+// How much of the log's start is read to find its first timestamped line.
+const HEAD_BYTES = 65_536;
 
 // The ISO 8601 UTC time that starts every runtime line.
 const LEADING_TIME = /^(?<time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)(?:\s|$)/u;
 
-// When the log's first line was written, or undefined when it carries no
-// timestamp, as in a log written before lines had one.
-const firstLineTime = async (path: string) => {
-  const head = await Bun.file(path).slice(0, 128).text();
-  const time = LEADING_TIME.exec(head)?.groups?.time;
-  const parsed = time === undefined ? Number.NaN : Date.parse(time);
-  return Number.isNaN(parsed) ? undefined : parsed;
+// When the log's first timestamped line was written, or undefined when none of
+// the first HEAD_BYTES holds one. Lines without a timestamp, such as the few
+// config notes Loom prints before the runtime starts, are skipped. A time cut
+// off by the end of the window never matches, because the pattern needs it whole.
+const firstTimestampedLineTime = async (path: string) => {
+  const head = await Bun.file(path).slice(0, HEAD_BYTES).text();
+  for (const line of head.split('\n')) {
+    const time = LEADING_TIME.exec(line)?.groups?.time;
+    const parsed = time === undefined ? Number.NaN : Date.parse(time);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 };
 
 const sizeOf = async (path: string) => {
@@ -36,8 +46,9 @@ const sizeOf = async (path: string) => {
 // Rotates the log at `path` when it is due: copies it to `<path>.1`, replacing
 // any earlier copy, then truncates it in place. The supervisor holds the file
 // open in append mode, so renaming it would leave the binary writing to the
-// copy. A first line with no timestamp counts as old, so such a log rotates
-// once. A missing log is not an error: a run by hand writes to the terminal.
+// copy. A log's age comes from its first timestamped line; a log with none is
+// kept until it reaches the size limit. A missing log is not an error: a run
+// by hand writes to the terminal.
 export const rotateLog = async ({
   maxAgeMs = LOG_MAX_AGE_MS,
   maxBytes = LOG_MAX_BYTES,
@@ -57,8 +68,8 @@ export const rotateLog = async ({
     return 'kept';
   }
   if (size < maxBytes) {
-    const written = await firstLineTime(path);
-    if (written !== undefined && now - written < maxAgeMs) {
+    const written = await firstTimestampedLineTime(path);
+    if (written === undefined || now - written < maxAgeMs) {
       return 'kept';
     }
   }
