@@ -498,17 +498,18 @@ test('run starts every runtime line with its ISO 8601 UTC time', async () => {
   }
 });
 
-test('run rotates a log from before timestamps as it starts', async () => {
+// A line without a time, such as one Loom writes before the runtime starts,
+// does not set the log's age; the first timestamped line does.
+test('run rotates a log whose first timestamped line is over 90 days old as it starts', async () => {
   await using home = await homeWithConfig();
   const logDir = join(home.path, '.local', 'state', 'heimdall');
   await mkdir(logDir, { recursive: true });
-  await writeFile(join(logDir, 'collector.log'), 'Sampling server-1 every 15 seconds.\n');
+  const old = '› Ignored sleeps in collector.toml\n2020-01-01T00:00:00.000Z Sampling server-1.\n';
+  await writeFile(join(logDir, 'collector.log'), old);
 
   const { code } = await invoke(['run'], { cwd: home.path, env: { HOME: home.path } });
 
-  expect(await readFile(join(logDir, 'collector.log.1'), 'utf8')).toBe(
-    'Sampling server-1 every 15 seconds.\n',
-  );
+  expect(await readFile(join(logDir, 'collector.log.1'), 'utf8')).toBe(old);
   expect(await readFile(join(logDir, 'collector.log'), 'utf8')).toBe('');
   expect(code).toBe(130);
 });

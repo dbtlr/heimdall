@@ -226,7 +226,7 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 
 ### A setting that has no effect
 
-A top-level config value with the wrong type, such as `port = true` or `sleeps = "sometimes"`, or one its option refuses, such as `port = "eighty"`, is ignored, and the binary runs on that option's default. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting.
+A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored, and the binary runs on that option's default. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored without any line, even at `-v`, so check the spelling of a setting that has no effect and prints nothing.
 
 `-v` names each ignored value on stderr, once per run, before anything else the run prints:
 
@@ -241,4 +241,4 @@ The Service runs with `-v`, so look for `Ignored` lines in its log after each st
 
 Only a compiled binary may `install` or `uninstall`, and there is no opt-in. A run from source, such as a test, refuses before it touches the user manager. To try the real supervisor during development, compile first with `bun run build:hub`, `bun run build:dashboard`, or `bun run build:collector` and run the binary from `dist/`.
 
-`serve` and `run` write their runtime lines to stdout, each starting with an ISO 8601 UTC time, and the unit appends both output streams to the log. Fatal startup lines on stderr carry the time too. The binary rotates its own log before it writes its first line and about once a day after: when the first line is 90 days old or the log reaches 10 MB, it copies the log to `<log>.1`, replacing the previous copy, and empties the log in place.
+`serve` and `run` write their runtime lines to stdout, each starting with an ISO 8601 UTC time, and the unit appends both output streams to the log. Fatal startup lines on stderr carry the time too. The binary rotates its own log before it writes its first line and about once a day after: when the first timestamped line is 90 days old or the log reaches 10 MB, it copies the log to `<log>.1`, replacing the previous copy, and empties the log in place. Lines without a time, such as the `Ignored` lines `-v` writes before the runtime starts, never make a log old.
