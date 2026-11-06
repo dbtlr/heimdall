@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { fragmentCheckProblems, pendingFragments } from './fragments.ts';
+import { fragmentCheckProblems, pendingFragments, plainTextProblems } from './fragments.ts';
 
 test('a check that passed every pending fragment, with no warning, is no problem', () => {
   expect(fragmentCheckProblems({ checked: 2, kind: 'passed', warnings: [] }, 2, [])).toEqual([]);
@@ -49,6 +49,26 @@ test('a hidden file in .changes/ is not a pending fragment, as Loom skips it', a
     await writeFile(join(root, '.changes', 'feature.x.md'), '- **X.**\n');
 
     expect(await pendingFragments(root)).toEqual(['.changes/feature.x.md']);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('a check that failed without printing a report still fails the guard', () => {
+  expect(fragmentCheckProblems({ kind: 'failed', lines: [] }, 1, [])).toEqual([
+    'loom changelog check failed without printing a report.',
+  ]);
+});
+
+test('a fragment that is a symbolic link is refused without being read', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'heimdall-fragments-'));
+  try {
+    await mkdir(join(root, '.changes'));
+    await symlink('/dev/zero', join(root, '.changes', 'feature.x.md'));
+
+    expect(await plainTextProblems(root, ['.changes/feature.x.md'])).toEqual([
+      '.changes/feature.x.md: not a regular file; fragments are regular files',
+    ]);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

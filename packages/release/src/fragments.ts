@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { FragmentCheck } from './repository.ts';
@@ -38,10 +38,14 @@ export const plainTextProblem = (bytes: Uint8Array): string | undefined => {
     : `line ${String(at + 1)}: control character or invisible mark; fragments hold plain text with LF line endings`;
 };
 
-// One problem line per pending fragment that is not plain text.
+// One problem line per pending fragment that is not plain text. A fragment that
+// is not a regular file, such as a link to a device, is refused unread.
 export const plainTextProblems = async (root: string, paths: string[]): Promise<string[]> => {
   const problems = await Promise.all(
     paths.map(async (path) => {
+      if (!(await lstat(join(root, path))).isFile()) {
+        return `${path}: not a regular file; fragments are regular files`;
+      }
       const problem = plainTextProblem(await readFile(join(root, path)));
       return problem === undefined ? undefined : `${path}: ${problem}`;
     }),
@@ -61,7 +65,12 @@ export const fragmentCheckProblems = (
     return [`Could not run loom changelog check: ${check.reason}`, ...plain];
   }
   if (check.kind === 'failed') {
-    return [...check.lines, ...plain];
+    // A failure always fails the guard, even when Loom printed nothing.
+    const reported =
+      check.lines.length > 0
+        ? check.lines
+        : ['loom changelog check failed without printing a report.'];
+    return [...reported, ...plain];
   }
   const checked = check.checked === undefined ? 'an unknown number of' : String(check.checked);
   const unchecked =
