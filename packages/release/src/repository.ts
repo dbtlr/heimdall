@@ -1,4 +1,4 @@
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Change } from './guard.ts';
@@ -6,9 +6,6 @@ import type { Change } from './guard.ts';
 // The packages a release ships as binaries. They carry one shared version,
 // which each binary prints and which the release tag must match.
 export const RELEASED_PACKAGES = ['collector', 'dashboard', 'hub'] as const;
-
-export const CHANGES_DIR = '.changes';
-export const CHANGELOG = 'CHANGELOG.md';
 
 const manifestPath = (root: string, pkg: string) => join(root, 'packages', pkg, 'package.json');
 
@@ -48,32 +45,6 @@ export const releaseVersion = async (root: string): Promise<string> => {
   return first.version;
 };
 
-export const setReleaseVersion = async (root: string, version: string): Promise<void> => {
-  await Promise.all(
-    RELEASED_PACKAGES.map(async (pkg) => {
-      const manifest = await readManifest(root, pkg);
-      manifest.version = version;
-      await writeFile(manifestPath(root, pkg), `${JSON.stringify(manifest, null, 2)}\n`);
-    }),
-  );
-};
-
-// The pending fragments' paths relative to the root, sorted by name. The guide
-// `README.md` is not a fragment. A symbolic link is listed so that parsing
-// refuses it rather than the cut skipping it unseen.
-export const pendingFragments = async (root: string): Promise<string[]> => {
-  const entries = await readdir(join(root, CHANGES_DIR), { withFileTypes: true });
-  return entries
-    .filter(
-      (entry) =>
-        (entry.isFile() || entry.isSymbolicLink()) &&
-        entry.name.endsWith('.md') &&
-        entry.name !== 'README.md',
-    )
-    .map((entry) => join(CHANGES_DIR, entry.name))
-    .toSorted();
-};
-
 // Runs a command in the root and answers its stdout, or throws with its stderr.
 const runIn = async (root: string, argv: string[]): Promise<string> => {
   const child = Bun.spawn(argv, { cwd: root, stderr: 'pipe', stdout: 'pipe' });
@@ -86,35 +57,6 @@ const runIn = async (root: string, argv: string[]): Promise<string> => {
     throw new Error(`${argv.join(' ')} failed: ${stderr.trim()}`);
   }
   return stdout;
-};
-
-// When a fragment landed: the commit time of the commit that added it, in
-// seconds. An uncommitted fragment lands last.
-const landedAt = async (root: string, path: string): Promise<number> => {
-  const stamps = (await runIn(root, ['git', 'log', '--diff-filter=A', '--format=%ct', '--', path]))
-    .split('\n')
-    .filter((stamp) => stamp.length > 0);
-  const oldest = stamps.at(-1);
-  return oldest === undefined ? Number.MAX_SAFE_INTEGER : Number(oldest);
-};
-
-// Fragments in the order they landed, with the file name breaking ties.
-export const inLandingOrder = async (root: string, paths: readonly string[]): Promise<string[]> => {
-  const landed = await Promise.all(
-    paths.map(async (path) => ({ landed: await landedAt(root, path), path })),
-  );
-  return landed
-    .toSorted((a, b) => a.landed - b.landed || a.path.localeCompare(b.path))
-    .map(({ path }) => path);
-};
-
-export const removeFragments = async (root: string, paths: readonly string[]): Promise<void> => {
-  await Promise.all(paths.map((path) => rm(join(root, path))));
-};
-
-// bun.lock records each workspace's version, so a version change rewrites it.
-export const refreshLockfile = async (root: string): Promise<void> => {
-  await runIn(root, [process.execPath, 'install', '--lockfile-only']);
 };
 
 const STATUSES: Record<string, Change['status']> = { A: 'added', D: 'deleted', M: 'modified' };
@@ -138,4 +80,60 @@ export const releaseVersionAt = async (root: string, ref: string): Promise<strin
   const [pkg] = RELEASED_PACKAGES;
   const text = await runIn(root, ['git', 'show', `${ref}:packages/${pkg}/package.json`]);
   return parseManifest(pkg, text).version;
+};
+
+// Where `loom changelog` runs: the package whose loom.config.json points at the
+// repository's fragments and changelog and lists the other released packages.
+const LOOM_PACKAGE = join('packages', RELEASED_PACKAGES[0]);
+
+// What `loom changelog check` found: whether it ran, the lines it reported, and
+// how many fragments it says it checked.
+export type FragmentCheck =
+  | { kind: 'failed'; lines: string[] }
+  | { kind: 'passed'; checked: number | undefined; warnings: string[] }
+  | { kind: 'unrunnable'; reason: string };
+
+const CHECKED = /^Checked (?<count>\d+) fragments?\.$/mu;
+
+// Loom names paths from the Collector's directory; the guard names them from the root.
+const lines = (text: string) =>
+  text
+    .split('\n')
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^[⚠✘]\s*/u, '')
+        .replaceAll('../../', ''),
+    )
+    .filter((line) => line !== '');
+
+// Validates every pending fragment with `loom changelog check`, the grammar the
+// cut compiles. Bun's own script-failure line is silenced so only Loom's report shows.
+export const checkFragments = async (root: string): Promise<FragmentCheck> => {
+  try {
+    const child = Bun.spawn([process.execPath, 'run', '--silent', 'loom', 'changelog', 'check'], {
+      cwd: join(root, LOOM_PACKAGE),
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    if (code === 0) {
+      const count = CHECKED.exec(stdout)?.groups?.count;
+      return {
+        checked: count === undefined ? undefined : Number(count),
+        kind: 'passed',
+        warnings: lines(stderr),
+      };
+    }
+    // Bun reports a script it cannot find on its own, without running Loom.
+    return /Script not found|command not found/iu.test(stderr)
+      ? { kind: 'unrunnable', reason: lines(stderr).join(' ') }
+      : { kind: 'failed', lines: lines(stderr) };
+  } catch (error) {
+    return { kind: 'unrunnable', reason: error instanceof Error ? error.message : String(error) };
+  }
 };

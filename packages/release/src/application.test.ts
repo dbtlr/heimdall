@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,21 +36,22 @@ const write = async (path: string, content: string) => {
   await writeFile(join(repo, path), content);
 };
 
-const read = (path: string) => readFile(join(repo, path), 'utf8');
-
-const versionOf = async (pkg: string) =>
-  (JSON.parse(await read(`packages/${pkg}/package.json`)) as { version: string }).version;
-
-const commitFragment = async (index: number, name: string, content: string) => {
-  await write(`.changes/${name}`, content);
-  await git(['add', '.']);
-  await git(['commit', '--quiet', '-m', name], {
-    GIT_COMMITTER_DATE: `${String(1_790_000_000 + index * 60)} +0000`,
-  });
+const commitAll = async (message: string) => {
+  await git(['add', '--all']);
+  await git(['commit', '--quiet', '-m', message]);
 };
 
+// The Collector's installed dependencies, which hold the `loom` the guard runs.
+const COLLECTOR_MODULES = join(import.meta.dir, '../../collector/node_modules');
+
+const LOOM_CONFIG = JSON.stringify({
+  paths: { changelog: '../../CHANGELOG.md', changes: '../../.changes' },
+  sharedVersion: ['../hub/package.json', '../dashboard/package.json'],
+});
+
 // A throwaway repository shaped like Heimdall's: released packages at one
-// version, a changelog, and fragments committed in the order listed.
+// version, a changelog, and the fragments listed, with Loom configured as it is
+// in the Collector's package directory.
 const fixture = async ({
   fragments = [],
   versions = { collector: '0.1.0', dashboard: '0.1.0', hub: '0.1.0' },
@@ -75,14 +76,12 @@ const fixture = async ({
     ),
     write('CHANGELOG.md', changelog),
     write('.changes/README.md', '# Changelog fragments\n'),
+    write('packages/collector/loom.config.json', LOOM_CONFIG),
+    ...fragments.map(([name, content]) => write(`.changes/${name}`, content)),
   ]);
-  await git(['add', '.']);
-  await git(['commit', '--quiet', '-m', 'init']);
-  // One commit per fragment, a minute apart, so landing order is unambiguous.
-  for (const [index, [name, content]] of fragments.entries()) {
-    // oxlint-disable-next-line no-await-in-loop -- each fragment lands in its own commit.
-    await commitFragment(index, name, content);
-  }
+  await symlink(COLLECTOR_MODULES, join(repo, 'packages/collector/node_modules'));
+  await write('.gitignore', 'node_modules\n');
+  await commitAll('init');
 };
 
 // `repo` is unset until a test builds a fixture.
@@ -116,205 +115,6 @@ test('version fails when the Collector and Hub disagree', async () => {
   expect(code).toBe(1);
 });
 
-test('changelog check accepts every pending fragment', async () => {
-  await fixture({
-    fragments: [
-      ['a.md', '### Added\n\n- A.\n'],
-      ['b.md', '### Fixed\n\n- B.\n'],
-    ],
-  });
-  const { code, stdout } = await invoke(['changelog', 'check']);
-  expect(stdout).toBe('2 fragments parse.\n');
-  expect(code).toBe(0);
-});
-
-test('changelog check names each malformed fragment and its line', async () => {
-  await fixture({
-    fragments: [
-      ['bad.md', '### Added\n\nProse.\n'],
-      ['good.md', '### Added\n\n- A.\n'],
-    ],
-  });
-  const { code, stderr } = await invoke(['changelog', 'check']);
-  expect(stderr).toContain('.changes/bad.md:3: prose outside a bullet');
-  expect(stderr).not.toContain('good.md');
-  expect(code).toBe(1);
-});
-
-test('changelog check reads only the fragments it is given', async () => {
-  await fixture({
-    fragments: [
-      ['bad.md', '- Prose.\n'],
-      ['good.md', '### Added\n\n- A.\n'],
-    ],
-  });
-  const { code, stdout } = await invoke(['changelog', 'check', '.changes/good.md']);
-  expect(stdout).toBe('1 fragment parses.\n');
-  expect(code).toBe(0);
-});
-
-test('changelog write cuts a release from the pending fragments in landing order', async () => {
-  await fixture({
-    changelog: `${HEADER}\n## v0.1.0 - 2026-10-01\n\n### Added\n\n- First.\n`,
-    // Committed z first, so z lands before a despite sorting after it.
-    fragments: [
-      ['z.md', '### Fixed\n\n- Z.\n'],
-      ['a.md', '### Fixed\n\n- A.\n\n### Added\n\n- New.\n'],
-    ],
-  });
-
-  const { code, stdout } = await invoke([
-    'changelog',
-    'write',
-    '--version',
-    '0.2.0',
-    '--date',
-    '2026-10-06',
-  ]);
-
-  expect(await read('CHANGELOG.md')).toBe(
-    `${HEADER}\n## v0.2.0 - 2026-10-06\n\n### Added\n\n- New.\n\n### Fixed\n\n- Z.\n- A.\n\n## v0.1.0 - 2026-10-01\n\n### Added\n\n- First.\n`,
-  );
-  expect(await versionOf('collector')).toBe('0.2.0');
-  expect(await versionOf('dashboard')).toBe('0.2.0');
-  expect(await versionOf('hub')).toBe('0.2.0');
-  expect(await read('bun.lock')).toContain('"version": "0.2.0"');
-  expect(await Bun.file(join(repo, '.changes/z.md')).exists()).toBe(false);
-  expect(await Bun.file(join(repo, '.changes/a.md')).exists()).toBe(false);
-  expect(await Bun.file(join(repo, '.changes/README.md')).exists()).toBe(true);
-  expect(stdout).toBe('Wrote v0.2.0 from 2 fragments.\n');
-  expect(code).toBe(0);
-});
-
-test('changelog write refuses a release with no pending fragments', async () => {
-  await fixture();
-  const { code, stderr } = await invoke(['changelog', 'write', '--version', '0.2.0']);
-  expect(stderr).toContain('No pending fragments');
-  expect(code).toBe(1);
-});
-
-test('changelog write refuses a release the changelog already holds and changes nothing', async () => {
-  const changelog = `${HEADER}\n## v0.2.0 - 2026-10-01\n\n### Added\n\n- First.\n`;
-  await fixture({ changelog, fragments: [['a.md', '### Fixed\n\n- A.\n']] });
-  const { code, stderr } = await invoke(['changelog', 'write', '--version', '0.2.0']);
-  expect(stderr).toContain('already holds v0.2.0');
-  expect(await read('CHANGELOG.md')).toBe(changelog);
-  expect(await Bun.file(join(repo, '.changes/a.md')).exists()).toBe(true);
-  expect(code).toBe(1);
-});
-
-test('changelog write changes nothing when a fragment is malformed', async () => {
-  await fixture({
-    fragments: [
-      ['a.md', '### Fixed\n\n- A.\n'],
-      ['bad.md', 'Prose.\n'],
-    ],
-  });
-  const { code, stderr } = await invoke(['changelog', 'write', '--version', '0.2.0']);
-  expect(stderr).toContain('.changes/bad.md:1');
-  expect(await read('CHANGELOG.md')).toBe(HEADER);
-  expect(await versionOf('hub')).toBe('0.1.0');
-  expect(code).toBe(1);
-});
-
-test.each(['v0.2.0', '0.2', '0.2.0-', '0.2.0-01', '02.0.0'])(
-  'changelog write rejects the version %j',
-  async (version) => {
-    await fixture({ fragments: [['a.md', '### Fixed\n\n- A.\n']] });
-    const { code, stderr } = await invoke(['changelog', 'write', '--version', version]);
-    expect(stderr).toContain('--version');
-    expect(code).toBe(2);
-  },
-);
-
-test('changelog write refuses a cut when a released package has no version and changes nothing', async () => {
-  await fixture({ fragments: [['a.md', '### Fixed\n\n- A.\n']] });
-  await write('packages/hub/package.json', '{ "name": "@heimdall/hub" }\n');
-
-  const { code, stderr } = await invoke(['changelog', 'write', '--version', '0.2.0']);
-
-  expect(stderr).toContain('packages/hub/package.json has no version');
-  expect(await read('CHANGELOG.md')).toBe(HEADER);
-  expect(await versionOf('collector')).toBe('0.1.0');
-  expect(await Bun.file(join(repo, '.changes/a.md')).exists()).toBe(true);
-  expect(code).toBe(1);
-});
-
-test('changelog write for a prerelease sets the version and leaves the fragments pending', async () => {
-  await fixture({ fragments: [['a.md', '### Fixed\n\n- A.\n']] });
-
-  const { code, stdout } = await invoke(['changelog', 'write', '--version', '0.2.0-rc.1']);
-
-  expect(stdout).toBe('Set v0.2.0-rc.1; 1 fragment stays pending for the release.\n');
-  expect(await versionOf('collector')).toBe('0.2.0-rc.1');
-  expect(await versionOf('dashboard')).toBe('0.2.0-rc.1');
-  expect(await versionOf('hub')).toBe('0.2.0-rc.1');
-  expect(await read('CHANGELOG.md')).toBe(HEADER);
-  expect(await Bun.file(join(repo, '.changes/a.md')).exists()).toBe(true);
-  expect(code).toBe(0);
-});
-
-test('a release after its prerelease compiles the fragments the prerelease left', async () => {
-  await fixture({
-    fragments: [['a.md', '### Fixed\n\n- A.\n']],
-    versions: { collector: '0.2.0-rc.1', dashboard: '0.2.0-rc.1', hub: '0.2.0-rc.1' },
-  });
-
-  const { code } = await invoke([
-    'changelog',
-    'write',
-    '--version',
-    '0.2.0',
-    '--date',
-    '2026-10-06',
-  ]);
-
-  expect(await read('CHANGELOG.md')).toBe(
-    `${HEADER}\n## v0.2.0 - 2026-10-06\n\n### Fixed\n\n- A.\n`,
-  );
-  expect(await versionOf('hub')).toBe('0.2.0');
-  expect(code).toBe(0);
-});
-
-test("changelog notes for a prerelease prints the pending fragments' entries", async () => {
-  await fixture({
-    fragments: [
-      ['z.md', '### Fixed\n\n- Z.\n'],
-      ['a.md', '### Added\n\n- A.\n'],
-    ],
-  });
-  expect(await invoke(['changelog', 'notes', '--version', '0.2.0-rc.1'])).toEqual({
-    code: 0,
-    stderr: '',
-    stdout: '### Added\n\n- A.\n\n### Fixed\n\n- Z.\n',
-  });
-});
-
-test('changelog notes for a prerelease fails when no fragment is pending', async () => {
-  await fixture();
-  const { code, stderr } = await invoke(['changelog', 'notes', '--version', '0.2.0-rc.1']);
-  expect(stderr).toContain('No pending fragments');
-  expect(code).toBe(1);
-});
-
-test("changelog notes prints one release's entries", async () => {
-  await fixture({
-    changelog: `${HEADER}\n## v0.2.0 - 2026-10-06\n\n### Fixed\n\n- Z.\n- A.\n\n## v0.1.0 - 2026-10-01\n\n### Added\n\n- First.\n`,
-  });
-  expect(await invoke(['changelog', 'notes', '--version', '0.2.0'])).toEqual({
-    code: 0,
-    stderr: '',
-    stdout: '### Fixed\n\n- Z.\n- A.\n',
-  });
-});
-
-test('changelog notes fails for a release the changelog does not hold', async () => {
-  await fixture();
-  const { code, stderr } = await invoke(['changelog', 'notes', '--version', '0.9.0']);
-  expect(stderr).toContain('CHANGELOG.md has no v0.9.0 section');
-  expect(code).toBe(1);
-});
-
 // The PR under guard: the fixture's last commit is its base, and the files
 // given are committed on top as the PR's head.
 const openPullRequest = async (files: Record<string, string | null>) => {
@@ -328,6 +128,8 @@ const openPullRequest = async (files: Record<string, string | null>) => {
   await git(['commit', '--quiet', '-m', 'pr']);
   return base;
 };
+
+const FEATURE = '- Add a thing.\n';
 
 test('changelog guard fails a shipped change without a fragment', async () => {
   await fixture();
@@ -345,31 +147,71 @@ test('changelog guard passes a shipped change with the skip label', async () => 
   expect(code).toBe(0);
 });
 
-test('changelog guard parses an added fragment even when nothing that ships changed', async () => {
-  await fixture();
-  const base = await openPullRequest({ '.changes/bad.md': 'Just prose\n' });
-  const { code, stderr } = await invoke(['changelog', 'guard', '--base', base]);
-  expect(stderr).toContain('.changes/bad.md:1: prose outside a bullet');
-  expect(code).toBe(1);
-});
-
-test('changelog guard passes a shipped change with a fragment that parses', async () => {
+test('changelog guard passes a shipped change with a valid feature fragment', async () => {
   await fixture();
   const base = await openPullRequest({
-    '.changes/hmd-1.md': '### Added\n\n- A.\n',
+    '.changes/feature.hmd-1-thing.md': FEATURE,
     'packages/collector/src/a.ts': 'x',
   });
   const { code, stdout } = await invoke(['changelog', 'guard', '--base', base]);
-  expect(stdout).toContain('Fragments present: .changes/hmd-1.md.');
+  expect(stdout).toContain('Fragments present: .changes/feature.hmd-1-thing.md.');
   expect(code).toBe(0);
 });
 
-test('changelog guard passes the release cut that changelog write prepares', async () => {
-  await fixture({ fragments: [['hmd-1.md', '### Added\n\n- A.\n']] });
+test('changelog guard passes a fix fragment with no kind prefix', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/hmd-1-thing.md': FEATURE,
+    'packages/collector/src/a.ts': 'x',
+  });
+  expect((await invoke(['changelog', 'guard', '--base', base])).code).toBe(0);
+});
+
+test('changelog guard fails a fragment written with Keep a Changelog headings', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': '### Added\n\n- Add a thing.\n',
+    'packages/collector/src/a.ts': 'x',
+  });
+  const { code, stderr } = await invoke(['changelog', 'guard', '--base', base]);
+  expect(stderr).toContain('.changes/feature.hmd-1-thing.md');
+  expect(code).toBe(1);
+});
+
+test('changelog guard fails a breaking fragment without a migration section', async () => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/breaking.hmd-1-thing.md': FEATURE });
+  const { code, stderr } = await invoke(['changelog', 'guard', '--base', base]);
+  expect(stderr).toContain('Migration');
+  expect(code).toBe(1);
+});
+
+test('changelog guard fails a bare kind as a fragment name', async () => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/feature.md': FEATURE });
+  const { code, stderr } = await invoke(['changelog', 'guard', '--base', base]);
+  expect(stderr).toContain('.changes/feature.md');
+  expect(code).toBe(1);
+});
+
+test('changelog guard checks an added fragment even when nothing that ships changed', async () => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/bad.md': 'Just prose\n' });
+  const { code } = await invoke(['changelog', 'guard', '--base', base]);
+  expect(code).toBe(1);
+});
+
+test('changelog guard passes the release cut that loom changelog write prepares', async () => {
+  await fixture({ fragments: [['feature.hmd-1-thing.md', FEATURE]] });
   const base = (await gitOutput(['rev-parse', 'HEAD'])).trim();
-  expect((await invoke(['changelog', 'write', '--version', '0.2.0'])).code).toBe(0);
-  await git(['add', '--all']);
-  await git(['commit', '--quiet', '-m', 'cut']);
+  // The cut: Loom's own write, then the lockfile it leaves to the package manager.
+  const cut = Bun.spawn(
+    [process.execPath, 'run', 'loom', 'changelog', 'write', '--target', '0.2.0'],
+    { cwd: join(repo, 'packages/collector'), stderr: 'pipe', stdout: 'pipe' },
+  );
+  expect(await cut.exited).toBe(0);
+  await write('bun.lock', 'lock\n');
+  await commitAll('cut');
 
   const { code, stdout } = await invoke(['changelog', 'guard', '--base', base]);
 
@@ -377,19 +219,116 @@ test('changelog guard passes the release cut that changelog write prepares', asy
   expect(code).toBe(0);
 });
 
-test('a symlinked fragment is refused by check, write, and the guard', async () => {
+const guardAgainst = async (base: string, ...flags: string[]) =>
+  invoke(['changelog', 'guard', '--base', base, ...flags]);
+
+// Fragments hold plain text with LF line endings, which Loom's grammar alone
+// does not enforce.
+test.each([
+  ['an escape sequence', '- \u001b[31mred\n'],
+  ['a NUL', '- a\u0000b\n'],
+  ['a CRLF line ending', '- ok\r\n'],
+  ['a right-to-left override', '- a\u202eb\n'],
+  ['a zero-width space', '- a\u200bb\n'],
+])('changelog guard fails a fragment holding %s', async (_name, content) => {
   await fixture();
-  await write('notes/real.md', '### Added\n\n- Linked.\n');
-  await symlink('../notes/real.md', join(repo, '.changes/linked.md'));
+  const base = await openPullRequest({ '.changes/feature.hmd-1-thing.md': content });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/feature.hmd-1-thing.md');
+  expect(stderr).toContain('control character or invisible mark');
+  expect(code).toBe(1);
+});
+
+test('changelog guard fails a fragment that is not valid UTF-8', async () => {
+  await fixture();
+  const base = (await gitOutput(['rev-parse', 'HEAD'])).trim();
+  await writeFile(join(repo, '.changes/feature.hmd-1-thing.md'), Buffer.from([45, 32, 255, 10]));
+  await commitAll('pr');
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/feature.hmd-1-thing.md');
+  expect(stderr).toContain('not valid UTF-8');
+  expect(code).toBe(1);
+});
+
+test('changelog guard scans fragments the PR did not touch', async () => {
+  await fixture({ fragments: [['feature.hmd-1-old.md', '- a\u202eb\n']] });
   const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x' });
+  expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+});
 
-  const checked = await invoke(['changelog', 'check']);
-  const written = await invoke(['changelog', 'write', '--version', '0.2.0']);
-  const guarded = await invoke(['changelog', 'guard', '--base', base]);
+test('changelog guard fails when Loom cannot read its configuration', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    'packages/collector/loom.config.json': '{',
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('checked 0');
+  expect(code).toBe(1);
+});
 
-  for (const { code, stderr } of [checked, written, guarded]) {
-    expect(stderr).toContain('.changes/linked.md: not a regular file');
-    expect(code).toBe(1);
-  }
-  expect(await read('CHANGELOG.md')).toBe(HEADER);
+test('changelog guard fails when Loom is pointed away from .changes', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    '.changes/feature.hmd-3-more.md': FEATURE,
+    'other/feature.hmd-2-other.md': FEATURE,
+    'packages/collector/loom.config.json': JSON.stringify({
+      paths: { changelog: '../../CHANGELOG.md', changes: '../../other' },
+      sharedVersion: ['../hub/package.json', '../dashboard/package.json'],
+    }),
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('checked 1 fragments, but 2 are pending');
+  expect(code).toBe(1);
+});
+
+test('changelog guard prints Loom failures one per line, without bun or ../../ noise', async () => {
+  await fixture();
+  const base = await openPullRequest({ '.changes/bad.md': 'Just prose\n' });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('.changes/bad.md');
+  expect(stderr).not.toContain('../../');
+  expect(stderr).not.toContain('exited with code');
+  expect(stderr).not.toContain(String.raw`\u000a`);
+  expect(code).toBe(1);
+});
+
+test('changelog guard checks the fragments even with the skip label', async () => {
+  await fixture();
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': 'Just prose\n',
+    'packages/collector/src/a.ts': 'x',
+  });
+  expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+});
+
+test.each(['.changes/sub/x.md', '.changes/x.txt'])(
+  'changelog guard fails a stray %s even when the PR changed no fragment',
+  async (path) => {
+    await fixture();
+    const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x', [path]: 'stray\n' });
+    expect((await guardAgainst(base, '--skip-label')).code).toBe(1);
+  },
+);
+
+test('changelog guard fails cut-shaped files without a version bump', async () => {
+  await fixture({ fragments: [['feature.hmd-1-thing.md', FEATURE]] });
+  const base = await openPullRequest({
+    '.changes/feature.hmd-1-thing.md': null,
+    'CHANGELOG.md': `${HEADER}\n## v9.9.9\n`,
+    'bun.lock': 'lock\n',
+  });
+  const { code, stderr } = await guardAgainst(base);
+  expect(stderr).toContain('adds no fragment');
+  expect(code).toBe(1);
+});
+
+test('changelog guard reports that Loom cannot run', async () => {
+  await fixture();
+  const base = await openPullRequest({ 'packages/collector/src/a.ts': 'x' });
+  await rm(join(repo, 'packages/collector/node_modules'));
+  const { code, stderr } = await guardAgainst(base, '--skip-label');
+  expect(stderr).toContain('Could not run loom changelog check');
+  expect(code).toBe(1);
 });

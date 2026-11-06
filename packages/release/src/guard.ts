@@ -1,12 +1,12 @@
 // The changelog guard's rule. A pull request that changes what a release builds
 // adds or edits a fragment, unless it carries the skip-changelog label or is a
-// release cut. Every fragment it adds or edits is named for parsing, whatever
-// else it changes, so a malformed one never waits for the cut to be found.
+// release cut. Loom checks every pending fragment whatever the PR changes, so a
+// malformed one never waits for the cut to be found.
 
 export type Change = { path: string; status: 'added' | 'deleted' | 'modified' };
 
 export type Judgement = {
-  // Fragments the PR adds or edits, which the guard parses.
+  // Fragments the PR adds or edits, which the guard names and requires.
   fragments: string[];
   reason: string;
   verdict: 'fail' | 'pass';
@@ -17,8 +17,9 @@ const SHIPS =
   /^(?:packages\/|package\.json$|bun\.lock$|bunfig\.toml$|mise\.toml$|install-[^/]+\.sh$|\.github\/workflows\/release\.yml$)/u;
 
 const FRAGMENT = /^\.changes\/[^/]+\.md$/u;
-// A name the cut and the workflow handle without quoting.
-const FRAGMENT_NAME = /^\.changes\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/u;
+// A name `loom changelog` accepts as `<slug>.md`, `feature.<slug>.md`, or
+// `breaking.<slug>.md`, in characters the workflow handles without quoting.
+const FRAGMENT_NAME = /^\.changes\/(?!(?:breaking|feature)\.md$)[A-Za-z0-9][A-Za-z0-9._-]*\.md$/u;
 const GUIDE = '.changes/README.md';
 
 // The files a release cut changes, besides the fragments it deletes.
@@ -55,7 +56,7 @@ export const judgeChanges = ({
   if (misnamed.length > 0) {
     return judged(
       'fail',
-      `Rename ${misnamed.join(', ')} to letters, digits, dots, dashes, and underscores, such as .changes/hmd-11.md.`,
+      `Rename ${misnamed.join(', ')} to <slug>.md, feature.<slug>.md, or breaking.<slug>.md, with a slug of letters, digits, dots, dashes, and underscores, such as .changes/feature.hmd-11-tags.md.`,
     );
   }
   if (!changes.some(({ path }) => SHIPS.test(path))) {
@@ -75,6 +76,6 @@ export const judgeChanges = ({
   }
   return judged(
     'fail',
-    'This PR changes what ships but adds no fragment. Add .changes/<task-id>.md (see .changes/README.md), or apply the skip-changelog label when no entry is due.',
+    'This PR changes what ships but adds no fragment. Add .changes/<slug>.md, feature.<slug>.md, or breaking.<slug>.md (see .changes/README.md), or apply the skip-changelog label when no entry is due.',
   );
 };
