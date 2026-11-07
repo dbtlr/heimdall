@@ -283,6 +283,8 @@ const migrateShared = async () => {
 type Shared = Awaited<ReturnType<typeof migrateShared>>;
 let shared: Promise<Shared> | undefined;
 let sharedInUse = false;
+// The pool the test holding the shared database was given.
+let sharedSql: SQL | undefined;
 
 // Closes and drops the shared migrated database, if one was made and is reachable.
 const dropShared = async () => {
@@ -316,12 +318,17 @@ export const migratedDatabase = async () => {
       current = await shared;
     }
     const sql = new SQL(current.db.url.href);
+    sharedSql = sql;
     return {
       sql,
       url: current.db.url,
       [Symbol.asyncDispose]: async () => {
         await sql.close();
-        sharedInUse = false;
+        // A test released after it timed out no longer holds it.
+        if (sharedSql === sql) {
+          sharedSql = undefined;
+          sharedInUse = false;
+        }
       },
     };
   } catch (error) {
@@ -330,6 +337,19 @@ export const migratedDatabase = async () => {
     sharedInUse = false;
     throw error;
   }
+};
+
+// Gives the shared database back when the test that held it has ended
+// without disposing it, as a test that timed out does: Bun runs no
+// `await using` dispose for it. Otherwise every later test gets a fresh
+// database, and no reset ends the backend the timed-out test left running
+// (HMD-199). Its pool closes at once, failing whatever it still runs, and the
+// next reset ends its backends. The preload runs this after every test.
+export const releaseSharedDatabase = async () => {
+  const sql = sharedSql;
+  sharedSql = undefined;
+  sharedInUse = false;
+  await sql?.close({ timeout: 0 });
 };
 
 // Stops the throwaway cluster, if this run started one, after dropping the

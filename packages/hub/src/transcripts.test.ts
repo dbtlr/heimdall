@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { gunzip as gunzipCallback } from 'node:zlib';
 
 import { MAX_TRANSCRIPT_CHUNK_BYTES, MAX_TRANSCRIPT_REQUEST_BYTES } from '@heimdall/schema';
-import type { SQL } from 'bun';
+import { SQL } from 'bun';
 
 import { storeReport } from './store.ts';
 import {
@@ -18,6 +18,7 @@ import {
 } from './testing/hub.ts';
 import type { Hub } from './testing/hub.ts';
 import { waitersOnLocks } from './testing/lock-waiters.ts';
+import { diagnoseIfSlow } from './testing/slow-statements.ts';
 import {
   deleteTranscripts,
   openGeneration as openStored,
@@ -431,6 +432,20 @@ const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
   );
 };
 
+// Inserts `count` generations for laptop-1, with ids from 1, holding nothing.
+const insertGenerations = (sql: SQL, count: number) => sql`
+  INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
+  SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
+  FROM generate_series(1, ${count}::int) AS n
+`;
+
+// Deletes laptop-1's transcripts, logging what the database is doing if that
+// takes far longer than the second or two it should.
+const deleteMany = (h: Hub) =>
+  diagnoseIfSlow(h.db.url, deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' }), {
+    tables: ['transcript_generations', 'transcript_chunks', 'parse_progress'],
+  });
+
 describe('deleting transcripts', () => {
   test('retries its transaction with a backoff when PostgreSQL aborts it for a deadlock', async () => {
     await using h = await startHub();
@@ -670,19 +685,35 @@ describe('deleting transcripts', () => {
     await using h = await startHub();
     await upload(h, NOW);
     // Generations alone cross the limit. The uploaded one has the only chunks.
-    await h.db.sql`
-      INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
-      SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
-      FROM generate_series(1, 70000) AS n
-    `;
+    await insertGenerations(h.db.sql, 70_000);
 
-    const removed = await deleteTranscripts(h.db.sql, { now: NOW, system: 'laptop-1' });
+    const removed = await deleteMany(h);
 
     expect(removed.generations).toBe(70_001);
     const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
     expect(left).toEqual({ n: 0 });
     // Inserting and then marking 70,000 generations takes seconds on
     // its own, too close to the default 5 for a loaded machine.
+  }, 30_000);
+
+  // An ANALYZE that runs while generations are being inserted, as autovacuum
+  // may, counts almost none of them. A delete planned on that once took
+  // minutes here, rescanning every generation it locked once per generation.
+  test('removes many generations in seconds when statistics count almost none of them', async () => {
+    await using h = await startHub();
+    const analyzer = new SQL(h.db.url.href, { max: 1 });
+    try {
+      await h.db.sql.begin(async (tx) => {
+        await insertGenerations(tx, 70_000);
+        await analyzer`ANALYZE transcript_generations`;
+      });
+    } finally {
+      await analyzer.close();
+    }
+
+    const removed = await deleteMany(h);
+
+    expect(removed.generations).toBe(70_000);
   }, 30_000);
 
   test('refuses to run without a filter', async () => {

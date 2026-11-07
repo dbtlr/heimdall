@@ -1,6 +1,8 @@
-import { afterAll } from 'bun:test';
+import { afterAll, afterEach } from 'bun:test';
 
-import { stopTestServer } from './postgres.ts';
+import { releaseSharedDatabase, stopTestServer } from './postgres.ts';
 
-// A preload's hooks are global, so this runs once after the last test file.
+// A preload's hooks are global: this runs after every test of every file,
+afterEach(releaseSharedDatabase);
+// and this once after the last test file.
 afterAll(stopTestServer);
