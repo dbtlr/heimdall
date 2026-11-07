@@ -336,6 +336,7 @@ export const migratedDatabase = async () => {
       await current.own.unsafe(current.reset);
     } else {
       await dropShared();
+      holds();
       shared = migrateShared();
       current = await shared;
     }
