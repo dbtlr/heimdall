@@ -283,6 +283,12 @@ const migrateShared = async () => {
 type Shared = Awaited<ReturnType<typeof migrateShared>>;
 let shared: Promise<Shared> | undefined;
 let sharedInUse = false;
+// Counts the holders of the shared database: a call to `migratedDatabase` keeps
+// the count it took, and `releaseSharedDatabase` moves it on, so a call still
+// setting up when its test ended can tell that it no longer holds the database.
+let sharedClaim = 0;
+// The pool the test holding the shared database was given.
+let sharedSql: SQL | undefined;
 
 // Closes and drops the shared migrated database, if one was made and is reachable.
 const dropShared = async () => {
@@ -292,6 +298,13 @@ const dropShared = async () => {
   await current?.own.close();
   await current?.db[Symbol.asyncDispose]().catch(() => undefined);
 };
+
+class ReleasedDuringSetupError extends Error {
+  constructor() {
+    super('The test ended before its migrated database was ready.');
+    this.name = 'ReleasedDuringSetupError';
+  }
+}
 
 // A database migrated to the current schema, holding only what migrating seeds:
 // `await using db = await migratedDatabase()`. Tests reuse one such database,
@@ -305,31 +318,72 @@ export const migratedDatabase = async () => {
     return db;
   }
   sharedInUse = true;
+  const claim = ++sharedClaim;
+  // A call released while it set up has lost the database to the next test. It
+  // must neither take the database nor drop it, and its test already ended.
+  const holds = () => {
+    if (sharedClaim !== claim) {
+      throw new ReleasedDuringSetupError();
+    }
+  };
   try {
     shared ??= migrateShared();
     let current = await shared;
-    if ((await fingerprint(current.own)) === current.schema) {
+    holds();
+    const unchanged = (await fingerprint(current.own)) === current.schema;
+    holds();
+    if (unchanged) {
       await current.own.unsafe(current.reset);
     } else {
       await dropShared();
+      holds();
       shared = migrateShared();
       current = await shared;
     }
+    holds();
     const sql = new SQL(current.db.url.href);
+    sharedSql = sql;
     return {
       sql,
       url: current.db.url,
       [Symbol.asyncDispose]: async () => {
         await sql.close();
-        sharedInUse = false;
+        // A test released after it timed out no longer holds it.
+        if (sharedSql === sql) {
+          sharedSql = undefined;
+          sharedInUse = false;
+        }
       },
     };
   } catch (error) {
+    // A released call fails without touching the database, whatever failed it:
+    // another test may hold the database by now.
+    if (sharedClaim !== claim) {
+      throw error;
+    }
     // The next test starts from a newly migrated database rather than a failed one.
     await dropShared();
     sharedInUse = false;
     throw error;
   }
+};
+
+// Gives the shared database back when the test that held it has ended
+// without disposing it, as a test that timed out does: Bun keeps running that
+// test's body, and its dispose runs late if the body ever finishes. Otherwise
+// every later test gets a fresh database, and no reset ends the backend the
+// timed-out test left running (HMD-199). Its pool closes at once, failing
+// whatever it still runs, and the next reset ends its backends. A call still
+// setting up fails instead of taking the database. A second pool the timed-out
+// test opened itself, such as a `new SQL(url)`, stays open and may reconnect,
+// which costs only confusing failures in a run that has already failed. The
+// preload runs this after every test.
+export const releaseSharedDatabase = async () => {
+  sharedClaim += 1;
+  const sql = sharedSql;
+  sharedSql = undefined;
+  sharedInUse = false;
+  await sql?.close({ timeout: 0 });
 };
 
 // Stops the throwaway cluster, if this run started one, after dropping the

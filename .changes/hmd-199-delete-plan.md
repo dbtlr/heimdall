@@ -1,0 +1,1 @@
+- **Deleting many transcripts no longer stalls when statistics count almost none of them** (HMD-199). A `heimdall-hub transcripts delete` of tens of thousands of generations, planned while PostgreSQL's statistics counted almost none of them, could rescan every generation once per generation and run for minutes. It now takes seconds in that case.

@@ -238,19 +238,26 @@ const deleteOnce = (
     // pass's snapshot, so passes repeat until one finds nothing. Each pass
     // removes its generations' chunks in the same statement, so no list of
     // generations, however long, is sent back as parameters.
+    // The locked ids are gathered once into an array the update and the
+    // chunk delete look up by index. Joined as `IN (SELECT ...)` instead,
+    // `transcript_generations` statistics that count almost none of its rows,
+    // as an ANALYZE during a bulk insert leaves them, let the planner rescan
+    // the locking subquery once per generation: minutes for 70,000 of them,
+    // seconds now (HMD-199). Stale `transcript_chunks` statistics may still
+    // slow the chunk delete; that is tracked separately.
     const marked: Matched[] = [];
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.
       const pass: Matched[] = await tx`
         WITH marked AS (
           UPDATE transcript_generations SET deleted_at = ${new Date(now)}
-          WHERE id IN (
+          WHERE id = ANY (ARRAY(
             SELECT id FROM transcript_generations WHERE ${matching} ORDER BY id FOR UPDATE
-          )
+          ))
           RETURNING id, stored_bytes
         ),
         removed AS (
-          DELETE FROM transcript_chunks WHERE generation IN (SELECT id FROM marked)
+          DELETE FROM transcript_chunks WHERE generation = ANY (ARRAY(SELECT id FROM marked))
         )
         SELECT id, stored_bytes FROM marked
       `;

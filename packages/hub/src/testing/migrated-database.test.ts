@@ -4,7 +4,7 @@ import type { SQL } from 'bun';
 
 import { migrate } from '../migrations.ts';
 import { storeToken } from '../tokens.ts';
-import { migratedDatabase, testDatabase } from './postgres.ts';
+import { migratedDatabase, releaseSharedDatabase, testDatabase } from './postgres.ts';
 
 // Each table's row count, for every table that has rows.
 const rowCounts = async (sql: SQL) => {
@@ -73,4 +73,48 @@ test('two migrated databases in use at once are separate', async () => {
   await storeToken(first.sql, { pairedAt: 0, system: 'server-1', token: 'server-token' });
   expect(await pairedCount(second.sql)).toBe(0);
   expect(await pairedCount(first.sql)).toBe(1);
+});
+
+// As a test that timed out before its dispose ran leaves it (HMD-199).
+test('a migrated database a finished test still held goes to the next test, its pool closed', async () => {
+  const abandoned = await migratedDatabase();
+  // What the abandoned pool's query fails with.
+  const running = (async () => {
+    try {
+      await abandoned.sql`SELECT pg_sleep(60)`;
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  })();
+
+  await releaseSharedDatabase();
+
+  await using db = await migratedDatabase();
+  expect(db.url.href).toBe(abandoned.url.href);
+  expect(await running).toMatchObject({ code: 'ERR_POSTGRES_CONNECTION_CLOSED' });
+});
+
+// A test that timed out while its setup still ran, whose setup then finishes
+// after the next test took the database.
+test('a migrated database call released during its setup cannot take the database from the next test', async () => {
+  const outcome = (async () => {
+    try {
+      return { database: await migratedDatabase() };
+    } catch (error) {
+      return { error };
+    }
+  })();
+
+  await releaseSharedDatabase();
+
+  await using next = await migratedDatabase();
+  await storeToken(next.sql, { pairedAt: 0, system: 'server-1', token: 'server-token' });
+  const settled = await outcome;
+  if ('database' in settled) {
+    await settled.database[Symbol.asyncDispose]();
+  }
+
+  expect('error' in settled).toBe(true);
+  expect(await pairedCount(next.sql)).toBe(1);
 });
