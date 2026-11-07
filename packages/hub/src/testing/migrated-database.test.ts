@@ -94,3 +94,27 @@ test('a migrated database a finished test still held goes to the next test, its 
   expect(db.url.href).toBe(abandoned.url.href);
   expect(await running).toMatchObject({ code: 'ERR_POSTGRES_CONNECTION_CLOSED' });
 });
+
+// A test that timed out while its setup still ran, whose setup then finishes
+// after the next test took the database.
+test('a migrated database call released during its setup cannot take the database from the next test', async () => {
+  const outcome = (async () => {
+    try {
+      return { database: await migratedDatabase() };
+    } catch (error) {
+      return { error };
+    }
+  })();
+
+  await releaseSharedDatabase();
+
+  await using next = await migratedDatabase();
+  await storeToken(next.sql, { pairedAt: 0, system: 'server-1', token: 'server-token' });
+  const settled = await outcome;
+  if ('database' in settled) {
+    await settled.database[Symbol.asyncDispose]();
+  }
+
+  expect('error' in settled).toBe(true);
+  expect(await pairedCount(next.sql)).toBe(1);
+});

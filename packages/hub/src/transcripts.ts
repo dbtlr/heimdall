@@ -240,9 +240,11 @@ const deleteOnce = (
     // generations, however long, is sent back as parameters.
     // The locked ids are gathered once into an array the update and the
     // chunk delete look up by index. Joined as `IN (SELECT ...)` instead,
-    // statistics that count almost none of the rows, as an ANALYZE during a
-    // bulk insert leaves them, let the planner rescan the locking subquery
-    // once per generation: minutes for 70,000 of them (HMD-199).
+    // `transcript_generations` statistics that count almost none of its rows,
+    // as an ANALYZE during a bulk insert leaves them, let the planner rescan
+    // the locking subquery once per generation: minutes for 70,000 of them,
+    // seconds now (HMD-199). Stale `transcript_chunks` statistics may still
+    // slow the chunk delete; that is tracked separately.
     const marked: Matched[] = [];
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.
