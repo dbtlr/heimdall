@@ -614,9 +614,9 @@ describe('the bundled table', () => {
   });
 
   test('prices Claude Sonnet 5.5 cache reads at 0.05 times input', () => {
-    expect(BUNDLED_PRICES.find((entry) => entry.model === 'claude-sonnet-5-5')?.cacheRead).toBe(
-      0.1,
-    );
+    const sonnet = BUNDLED_PRICES.find((entry) => entry.model === 'claude-sonnet-5-5');
+
+    expect((sonnet?.cacheRead ?? 0) / (sonnet?.input ?? 1)).toBeCloseTo(0.05, 6);
   });
 
   test('names each model without a date suffix, so a dated id can match it', () => {
