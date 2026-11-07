@@ -356,7 +356,9 @@ export const migratedDatabase = async () => {
       },
     };
   } catch (error) {
-    if (error instanceof ReleasedDuringSetupError) {
+    // A released call fails without touching the database, whatever failed it:
+    // another test may hold the database by now.
+    if (sharedClaim !== claim) {
       throw error;
     }
     // The next test starts from a newly migrated database rather than a failed one.

@@ -701,19 +701,31 @@ describe('deleting transcripts', () => {
   // minutes here, rescanning every generation it locked once per generation.
   test('removes many generations in seconds when statistics count almost none of them', async () => {
     await using h = await startHub();
-    const analyzer = new SQL(h.db.url.href, { max: 1 });
+    // Autovacuum stays off for the table, so no ANALYZE after the insert commits
+    // freshens the statistics this test depends on. The reset between tests
+    // keeps a table's storage options, so the test restores the setting itself.
+    await h.db.sql`ALTER TABLE transcript_generations SET (autovacuum_enabled = false)`;
     try {
-      await h.db.sql.begin(async (tx) => {
-        await insertGenerations(tx, 70_000);
-        await analyzer`ANALYZE transcript_generations`;
-      });
+      const analyzer = new SQL(h.db.url.href, { max: 1 });
+      try {
+        await h.db.sql.begin(async (tx) => {
+          await insertGenerations(tx, 70_000);
+          await analyzer`ANALYZE transcript_generations`;
+        });
+      } finally {
+        await analyzer.close();
+      }
+      const [stats]: { reltuples: number }[] = await h.db.sql`
+        SELECT reltuples FROM pg_class WHERE relname = 'transcript_generations'
+      `;
+      expect(stats?.reltuples).toBeLessThan(1000);
+
+      const removed = await deleteMany(h);
+
+      expect(removed.generations).toBe(70_000);
     } finally {
-      await analyzer.close();
+      await h.db.sql`ALTER TABLE transcript_generations RESET (autovacuum_enabled)`;
     }
-
-    const removed = await deleteMany(h);
-
-    expect(removed.generations).toBe(70_000);
   }, 30_000);
 
   test('refuses to run without a filter', async () => {
