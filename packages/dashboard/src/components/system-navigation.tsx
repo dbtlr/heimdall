@@ -127,7 +127,7 @@ export function SystemNavigationHeader({
               aria-current={tab === item ? 'page' : undefined}
               className={cn(
                 'flex min-h-11 shrink-0 items-center border-b-2 border-transparent px-1.5 text-base text-muted-foreground sm:px-4',
-                tab === item && 'border-foreground font-semibold text-foreground',
+                tab === item && 'border-select font-semibold text-foreground',
               )}
               from="/systems/$name"
               hash=""

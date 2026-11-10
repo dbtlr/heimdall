@@ -5,51 +5,57 @@
 /* The dashboard is dark only. */
 @custom-variant dark (&:is(.dark *));
 
-/* The Slate visual system's tokens, as shadcn's CSS variables. Components take
-   colors from these through the Tailwind theme below, never as literals. */
+/* The Slate visual system's tokens, as shadcn's CSS variables. Each color is
+   written once; a token that shares it refers to the one that holds it.
+   Components take colors from these through the Tailwind theme below, never as
+   literals. */
 :root {
-  /* Three surface steps: the page, the bars and sidebar, and cards. */
+  /* Three surface steps: the page, the bars and sidebar, and cards. A card's
+     gradient runs from its top to its bottom color. */
   --background: #0a0f18;
   --bar: #0e1420;
   --card: #131a27;
-  --card-gradient: linear-gradient(180deg, #161d2b, #111723);
+  --card-top: #161d2b;
+  --card-bottom: #111723;
+  --card-gradient: linear-gradient(180deg, var(--card-top), var(--card-bottom));
   --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 10px 24px -14px rgb(0 0 0 / 0.8);
 
   --foreground: #e8edf6;
-  --card-foreground: #e8edf6;
-  --popover: #161d2b;
-  --popover-foreground: #e8edf6;
+  --card-foreground: var(--foreground);
+  --popover: var(--card-top);
+  --popover-foreground: var(--foreground);
   /* Links and the current page: the link blue, which is no Harness's color. */
   --link: #7fb0ff;
   --primary: var(--link);
-  --primary-foreground: #0a0f18;
+  --primary-foreground: var(--background);
   /* Chips, pills, and the current choice in a picker. */
   --secondary: #1d2638;
-  --secondary-foreground: #e8edf6;
-  --muted: #1d2638;
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
   --muted-foreground: #9aa6bd;
   /* Text quieter than muted: units, scale labels, times beside a value. */
   --dim: #66738c;
-  --accent: #1d2638;
-  --accent-foreground: #e8edf6;
-  --destructive: #ff5d5d;
+  --accent: var(--secondary);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--status-critical);
   --border: #222c40;
-  --input: #222c40;
-  --ring: #7fb0ff;
+  --input: var(--border);
+  --ring: var(--link);
   /* What is selected: a sample, a request, a tab, a breakdown row, a filter. */
   --select: #9d8cff;
-  /* Lines and meters that carry no level or Harness: CPU, memory, disk. */
+  /* Data that carries no level, Harness, or series: CPU and memory lines,
+     meters, and the neutral marks of a trace, a timeline, or a breakdown. */
   --plot: #8fa3c8;
   --radius: 0.5rem;
 
   /* One color per Harness, used for nothing else: Claude Code, Codex, any other. */
   --chart-1: #5b9dff;
   --chart-2: #f0763a;
-  --chart-3: #9aa6bd;
-  /* Series for breakdowns that are not by Harness, and for model families. */
+  --chart-3: var(--muted-foreground);
+  /* Series for breakdowns that are not by Harness, and for models. */
   --series-1: #2bb3a6;
   --series-2: #e07bc0;
-  --series-3: #8fa3c8;
+  --series-3: #4cc9e0;
   --series-4: #b9c86a;
   --series-5: #c8a98a;
   /* The rest of a breakdown, past the five series: a neutral that is no series. */
@@ -120,14 +126,9 @@
     color-scheme: dark;
   }
 
-  /* Text keeps Inter's proportional figures, because its tabular set widens
-     the hyphen and the 1 in names such as server-1. Figures that line up take
-     `tabular-nums`, and every time does. */
+  /* Every figure is tabular, so numbers that stack or update line up. */
   body {
     @apply bg-background font-sans text-foreground antialiased;
-  }
-
-  time {
     font-variant-numeric: tabular-nums;
   }
 

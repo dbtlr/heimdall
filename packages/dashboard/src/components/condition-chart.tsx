@@ -11,8 +11,9 @@ const HEIGHT = 168;
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
 const CONFIG = { value: { color: PLOT_COLOR, label: 'Reading' } } satisfies ChartConfig;
 
-// A scale label: whole numbers as they are, cores to one decimal.
-const scaleLabel = (value: number): string => String(Math.round(value * 10) / 10);
+// A scale label: whole numbers as they are, and cores and the middle of a
+// percentage scale to two decimals, so a label states its position exactly.
+const scaleLabel = (value: number): string => String(Math.round(value * 100) / 100);
 
 // One reading over the window as a line over a gradient fill, its scale on the
 // left, and a dashed line across it at each limit that sets a level, in that

@@ -1,6 +1,6 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
-import type { Domain } from '../lib/chart-scale.ts';
+import { niceDomain } from '../lib/chart-scale.ts';
 import { processRows } from '../lib/detail.ts';
 import { harnessColor } from '../lib/lane.ts';
 import type { Window } from '../lib/time.ts';
@@ -21,7 +21,9 @@ const coresLabel =
 
 // The CPU cores each Harness process tree kept busy per bucket, 5 minutes
 // unless `bucketMs` says otherwise, one line per process in its Harness's
-// color over a gradient fill, on a scale from 0 to the busiest.
+// color over a gradient fill, on a scale from 0 to the busiest, widened to a
+// tenth of a core so every label states its position. With no reading, the
+// scale goes unlabelled.
 export function ProcessPlot({
   bucketMs,
   processes,
@@ -32,13 +34,17 @@ export function ProcessPlot({
   window: Window;
 }) {
   const fill = usePlotGradientId();
-  const busiest = Math.max(
-    1,
-    ...processes.flatMap((process) => process.points.map((point) => point.cores ?? 0)),
+  const readings = processes.flatMap((process) =>
+    process.points.flatMap((point) => (point.cores === null ? [] : [point.cores])),
   );
-  const domain: Domain = [0, busiest];
+  const domain = niceDomain([0, Math.max(1, ...readings)], 0.1);
   return (
-    <ScaledPlot domain={domain} format={coresLabel(busiest)} height={HEIGHT}>
+    <ScaledPlot
+      domain={domain}
+      format={coresLabel(domain[1])}
+      height={HEIGHT}
+      labelled={readings.length > 0}
+    >
       {processes.map((process) => (
         <PlotGradient
           color={harnessColor(process.harness)}

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { harnessColor } from './lane.ts';
 import {
   formatTokens,
   modelColor,
@@ -41,6 +42,21 @@ describe('modelColor', () => {
     expect(new Set(colors).size).toBe(5);
     expect(modelColor('claude-opus-4-1')).toBe(modelColor('claude-opus-5-5'));
     expect(modelColor('o4-mini')).toBe(modelColor('gpt-6.1-sol'));
+  });
+
+  test('never gives a model a Harness color', () => {
+    const harnessColors = ['claude-code', 'codex', 'other'].map(harnessColor);
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5-1',
+      'claude-3-5-sonnet-20241022',
+      '<synthetic>',
+      'gpt-6.1-sol',
+    ]) {
+      expect(harnessColors).not.toContain(modelColor(model));
+    }
   });
 });
 

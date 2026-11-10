@@ -102,28 +102,10 @@ function LimitLines({ domain, limits }: { domain: Domain; limits: readonly PlotL
   );
 }
 
-// A plot's value scale and its limits, drawn over the plot so the plot keeps
-// the full width of its time axis.
-export function PlotScale({
-  domain,
-  format = percentLabel,
-  limits = [],
-}: {
-  domain: Domain;
-  format?: (value: number) => string;
-  limits?: readonly PlotLimit[];
-}) {
-  return (
-    <>
-      <ScaleTicks domain={domain} format={format} />
-      <LimitLines domain={domain} limits={limits} />
-    </>
-  );
-}
-
 // A plot with its value scale and limits, `height` pixels tall. A plot on a
 // shared time axis carries its scale over its left end; one standing alone
-// takes a `gutter` for it, left of the plot.
+// takes a `gutter` for it, left of the plot. A plot whose domain is a stand-in,
+// because it has no reading to scale, is not `labelled`.
 export function ScaledPlot({
   children,
   className,
@@ -131,6 +113,7 @@ export function ScaledPlot({
   format = percentLabel,
   gutter = false,
   height,
+  labelled = true,
   limits = [],
 }: {
   children: ReactNode;
@@ -139,20 +122,22 @@ export function ScaledPlot({
   format?: (value: number) => string;
   gutter?: boolean;
   height: number;
+  labelled?: boolean;
   limits?: readonly PlotLimit[];
 }) {
   if (!gutter) {
     return (
       <div className={cn('relative w-full', className)} style={{ height }}>
         {children}
-        <PlotScale domain={domain} format={format} limits={limits} />
+        {labelled && <ScaleTicks domain={domain} format={format} />}
+        <LimitLines domain={domain} limits={limits} />
       </div>
     );
   }
   return (
     <div className={cn('relative w-full pl-8', className)} style={{ height }}>
       <div className="absolute inset-y-0 left-0 w-8">
-        <ScaleTicks domain={domain} format={format} />
+        {labelled && <ScaleTicks domain={domain} format={format} />}
       </div>
       <div className="relative h-full">
         {children}

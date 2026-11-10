@@ -1,6 +1,6 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
-import type { Domain } from '../lib/chart-scale.ts';
+import { niceDomain } from '../lib/chart-scale.ts';
 import { memoryRows } from '../lib/detail.ts';
 import type { Window } from '../lib/time.ts';
 import type { MemoryBucket } from '../server/system-detail-types.ts';
@@ -24,8 +24,10 @@ const gibLabel =
     return value === top ? `${figure} GiB` : figure;
   };
 
-// Memory used per 5-minute bucket, on a scale up to the memory the System has,
-// as a line over a gradient fill.
+// Memory used per 5-minute bucket, as a line over a gradient fill, on a scale
+// from 0 to the memory the System has, widened to a whole GiB from 10 GiB up
+// and a tenth of one below, so every label states its position. With no
+// bucket, the System's memory is unknown and the scale goes unlabelled.
 export function MemoryPlot({
   buckets,
   window,
@@ -35,9 +37,14 @@ export function MemoryPlot({
 }) {
   const fill = usePlotGradientId();
   const total = Math.max(1, ...buckets.map((bucket) => bucket.totalBytes / GIB));
-  const domain: Domain = [0, total];
+  const domain = niceDomain([0, total], total >= 10 ? 1 : 0.1);
   return (
-    <ScaledPlot domain={domain} format={gibLabel(total)} height={HEIGHT}>
+    <ScaledPlot
+      domain={domain}
+      format={gibLabel(domain[1])}
+      height={HEIGHT}
+      labelled={buckets.length > 0}
+    >
       <PlotGradient color={PLOT_COLOR} id={fill} />
       <ChartContainer
         aria-label="Memory used"

@@ -33,9 +33,10 @@ const FAMILY_COLORS: Record<string, string> = {
   Sonnet: 'var(--series-4)',
 };
 
-// One color per Claude family, and the Codex Harness's color for any other model.
+// One series color per Claude family, and one more for any other model. No
+// model takes a Harness's color.
 export const modelColor = (model: string): string =>
-  FAMILY_COLORS[claude(model)?.family ?? ''] ?? 'var(--chart-2)';
+  FAMILY_COLORS[claude(model)?.family ?? ''] ?? 'var(--series-3)';
 
 // "512", "1.9 k", "29.6 M".
 export const formatTokens = (tokens: number): string => {

@@ -15,6 +15,18 @@ export const yPercent = (value: number, [low, high]: Domain): number => {
   return Math.min(Math.max(share, 0), 1) * 100;
 };
 
+// A count of steps, rid of the floating-point error that division leaves.
+const steps = (value: number, step: number): number => Number((value / step).toPrecision(12));
+
+// The domain widened out to whole multiples of two steps, so its top, middle,
+// and bottom are each a whole step and a label rounded to the step states
+// exactly the value drawn at its position.
+export const niceDomain = ([low, high]: Domain, step: number): Domain => {
+  const span = 2 * step;
+  const snap = (count: number) => Number((count * span).toPrecision(12));
+  return [snap(Math.floor(steps(low, span))), snap(Math.ceil(steps(high, span)))];
+};
+
 // The labels a plot's value scale shows: its top, its middle, and its bottom.
 export const scaleTicks = (domain: Domain): ScaleTick[] => {
   const [low, high] = domain;
