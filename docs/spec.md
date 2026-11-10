@@ -224,9 +224,12 @@ An optional `processes` field carries the five hottest measured processes, each 
 It never carries arguments or environment variables.
 On at most one sample in any minute, `processes` also carries `topByMemory`: the five processes with the most resident memory, largest first and tied by PID, each with its executable name, PID, lifetime identifier, and resident bytes.
 The Collector attaches it to its first sample with process evidence and then to the first such sample at least 60 seconds, on its monotonic clock, after the last one that carried it.
-The Collector takes them from the same table pass and names and validates them as it does the hottest processes.
-It skips a holder with no lifetime identifier, an empty or invalid name, or an executable that changed from its recorded confirmed name, and takes the next largest in its place.
-The list therefore names the largest holders the Collector could identify. It can hold fewer than five, can leave out a larger holder it could not name, and skipping a holder never changes the census.
+The Collector takes them from the same table pass and validates their names as the hottest processes' names are validated.
+It names them only after it has named the hottest processes, and it only reads recorded names: the list records no name and marks no PID unknown, so it never changes a hot process's name, the census, or hot-process evidence.
+A holder takes its recorded name, so a process on both lists carries one name. A holder whose executable changed from its recorded confirmed name takes its current executable, because the list shows what runs now and only the hottest processes' path records the change.
+A holder with no recorded name takes its executable, or the platform's accounting name when the executable is unreadable.
+It skips a holder with no lifetime identifier or with an empty or invalid name or executable, and takes the next largest in its place.
+The list therefore names the largest holders the Collector could identify. It can hold fewer than five and can leave out a larger holder it could not name.
 The list needs no CPU baseline and makes no census claim, so it is valid with a partial census or a zero interval, and it never establishes a process's absence or exit.
 Resident memory counts shared pages in every process that maps them, so the rows overlap and are never summed.
 A sample without `topByMemory` has not reported it. The Hub and dashboard treat its absence as not reported, never as no processes; older Collectors never send it, and other samples omit it.

@@ -20,7 +20,8 @@ const ProcessReadingSchema = ProcessIdentitySchema.omit({ bootId: true }).extend
 
 // A process named for the memory it holds: its executable name and lifetime,
 // validated as the CPU readings' are, and its resident bytes, which count
-// shared pages in every process that maps them.
+// shared pages in every process that maps them. The Collector only reads its
+// recorded names for this list, so the list never changes CPU evidence.
 const MemoryReadingSchema = ProcessIdentitySchema.omit({ bootId: true }).extend({
   rssBytes: bytes,
 });
