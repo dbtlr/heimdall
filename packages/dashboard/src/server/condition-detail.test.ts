@@ -352,6 +352,58 @@ describe('System load', () => {
   });
 });
 
+// A sample `seconds` after NOW naming `rssBytes` as postgres's resident memory.
+const holdingSample = (seconds: number, rssBytes?: number): Sample => ({
+  ...sample(at(seconds)),
+  ...(rssBytes !== undefined && {
+    processes: {
+      bootId: BOOT,
+      census: { kind: 'partial' },
+      intervalMs: 15_000,
+      top: [],
+      topByMemory: [{ name: 'postgres', pid: 7, rssBytes, start: '1' }],
+    },
+  }),
+});
+
+describe('the processes holding the most memory', () => {
+  test('an open high memory Condition names them at the newest sample, a cleared one at its clearing', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', [
+      holdingSample(-20 * MINUTE, 1000),
+      holdingSample(-20 * MINUTE + 15),
+      holdingSample(-2 * MINUTE, 2000),
+      holdingSample(-MINUTE),
+    ]);
+    const open = await addCondition(h.db.sql, {
+      kind: 'high_memory',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+    const cleared = await addCondition(h.db.sql, {
+      clearedAt: -20 * MINUTE + 20,
+      kind: 'high_memory',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+    const cpu = await addCondition(h.db.sql, {
+      kind: 'high_cpu',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+
+    expect((await read(h, { id: open, name: 'server-1' }))?.memoryHolders).toEqual({
+      processes: [{ name: 'postgres', pid: 7, rssBytes: 2000 }],
+      t: at(-2 * MINUTE),
+    });
+    expect((await read(h, { id: cleared, name: 'server-1' }))?.memoryHolders).toEqual({
+      processes: [{ name: 'postgres', pid: 7, rssBytes: 1000 }],
+      t: at(-20 * MINUTE),
+    });
+    expect((await read(h, { id: cpu, name: 'server-1' }))?.memoryHolders).toBeUndefined();
+  });
+});
+
 describe('a kind with nothing to chart', () => {
   test('has no series but keeps its 24-hour window', async () => {
     await using h = await startHub();

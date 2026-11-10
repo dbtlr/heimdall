@@ -9,6 +9,7 @@ import type {
 } from '@heimdall/schema';
 
 import type { Attention } from './attention-types.ts';
+import type { MemoryHolders } from './system-detail-types.ts';
 
 // The culprit's readings over the chart's window, oldest first, by what the
 // kind measures: a mount's used and total bytes (5-minute maxima from
@@ -49,6 +50,10 @@ export type ConditionDetail = {
   // Undefined when the Hub has stored none, as before it first starts on a
   // version that stores them.
   limits: ConditionLimitSet | undefined;
+  // For high_memory, the processes holding the most memory at the newest
+  // sample of the chart's window; undefined for other kinds, or when no sample
+  // close enough carries a list, or its list is empty.
+  memoryHolders: MemoryHolders | undefined;
   // The packages an open pending_update Condition's source has pending, security
   // updates first; undefined for any other Condition and once cleared.
   packages: PendingPackage[] | undefined;

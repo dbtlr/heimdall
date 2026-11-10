@@ -5,6 +5,7 @@ import {
   costPlacement,
   formatGiB,
   headerLine,
+  memoryHoldersView,
   memoryRows,
   processRows,
   sampleProcessLine,
@@ -199,6 +200,27 @@ describe('the inspector', () => {
     expect(unlinkedLine({ ...session, candidates: 1, link: 'unmatched', requests: 0 }).detail).toBe(
       'dotfiles on main, unmatched: one process may have run it, but the link is unconfirmed.',
     );
+  });
+});
+
+describe('the processes holding the most memory', () => {
+  test('read as name, PID, and resident memory, largest first, and as nothing when none are named', () => {
+    const holders = {
+      processes: [
+        { name: 'postgres', pid: 7, rssBytes: 4.25 * GIB },
+        { name: 'bun', pid: 42, rssBytes: 300 * 1024 ** 2 },
+      ],
+      t: NOW,
+    };
+    expect(memoryHoldersView(holders)).toEqual({
+      at: NOW,
+      rows: [
+        { name: 'postgres', pid: 7, resident: '4.3 GiB' },
+        { name: 'bun', pid: 42, resident: '300 MiB' },
+      ],
+    });
+    expect(memoryHoldersView({ processes: [], t: NOW })).toBeUndefined();
+    expect(memoryHoldersView(undefined)).toBeUndefined();
   });
 });
 

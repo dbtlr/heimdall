@@ -1,6 +1,7 @@
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type {
   MemoryBucket,
+  MemoryHolders,
   ProcessSeries,
   SampleProcess,
   SessionRow,
@@ -15,6 +16,7 @@ import { formatSpan, spanBox } from './time.ts';
 import type { Window } from './time.ts';
 
 const GIB = 1024 ** 3;
+const MIB = 1024 ** 2;
 const DAY_MS = 24 * 60 * 60_000;
 const BUCKET_MS = 5 * 60_000;
 
@@ -120,6 +122,34 @@ export const unlinkedLine = (session: UnlinkedSession): { detail: string; title:
     title: `${harnessName(session.harness)} Session`,
   };
 };
+
+// The processes holding the most memory at the sample taken `at`, largest
+// first, each with its resident memory, which overlaps the others' and is never
+// summed with them.
+export type MemoryHoldersView = {
+  at: number;
+  rows: { name: string; pid: number; resident: string }[];
+};
+
+// Resident memory in GiB to one decimal, or in whole MiB below a GiB.
+const residentMemory = (bytes: number) =>
+  bytes >= GIB ? `${formatGiB(bytes)} GiB` : `${String(Math.round(bytes / MIB))} MiB`;
+
+// The holders as the inspector and a high memory Condition show them;
+// undefined when no list is named or the list is empty.
+export const memoryHoldersView = (
+  holders: MemoryHolders | undefined,
+): MemoryHoldersView | undefined =>
+  holders === undefined || holders.processes.length === 0
+    ? undefined
+    : {
+        at: holders.t,
+        rows: holders.processes.map(({ name, pid, rssBytes }) => ({
+          name,
+          pid,
+          resident: residentMemory(rssBytes),
+        })),
+      };
 
 // The start of every bucket the window touches, 5 minutes unless `bucketMs`
 // says otherwise, aligned as the Hub aligns its rollups.

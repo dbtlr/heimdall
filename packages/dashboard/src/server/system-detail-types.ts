@@ -116,12 +116,24 @@ export type UnlinkedSession = {
   sessionId: string;
 };
 
+// The processes holding the most memory, largest first, as the newest sample
+// carrying them at or before an inspected one named them. Resident memory
+// counts shared pages in every process that maps them, so the rows overlap and
+// are never summed.
+export type MemoryHolders = {
+  processes: { name: string; pid: number; rssBytes: number }[];
+  // The time of the sample that carried them.
+  t: number;
+};
+
 // The raw Vitals sample nearest the time asked for, as the inspector shows it.
 export type SampleInspection = {
   // The 5-minute bucket that holds the sample: CPU busy average and high.
   bucket: { average: number; high: number } | undefined;
   cpuBusyPercent: number;
   load1: number;
+  // Undefined when no sample close enough carries a list, or its list is empty.
+  memoryHolders: MemoryHolders | undefined;
   memoryTotalBytes: number;
   memoryUsedBytes: number;
   processes: SampleProcess[];

@@ -4,6 +4,7 @@ import { MARK_COLOR } from './attention-status.tsx';
 import { ConditionChart } from './condition-chart.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { DateTime, PhraseText } from './date-time.tsx';
+import { MemoryHolders } from './memory-holders.tsx';
 
 const CHIP =
   'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-semibold';
@@ -162,6 +163,11 @@ export function ConditionDetailPanel({ now, view }: { now: number; view: Conditi
       <Hero view={view} />
       {view.chart !== undefined && <ChartSection chart={view.chart} />}
       {view.packages !== undefined && <PackageTable packages={view.packages} />}
+      {view.memoryHolders !== undefined && (
+        <div className="mt-6 min-w-0">
+          <MemoryHolders holders={view.memoryHolders} />
+        </div>
+      )}
       <section className="mt-6 min-w-0">
         <h2 className="mb-1 text-[12.5px] font-normal text-muted-foreground">How it got here</h2>
         <ol className="border-l-2 pl-3">

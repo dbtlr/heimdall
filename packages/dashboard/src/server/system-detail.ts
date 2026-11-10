@@ -26,6 +26,7 @@ import {
   toRun,
 } from './hub-rows.ts';
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
+import { readMemoryHolders } from './memory-holders.ts';
 import { readSilencedUntil } from './silences.ts';
 import type {
   Disk,
@@ -384,30 +385,36 @@ type RequestCountRow = {
 
 // The raw Vitals sample of System `name` nearest `at`, or its newest when `at`
 // is undefined, with the Harness processes running then, the Sessions they ran,
-// and the requests answered in it. Undefined when the System has no sample.
+// the requests answered in it, and the processes holding the most memory. Undefined when the System has no sample.
 // Read-only.
 export const readSample = async (
   sql: SQL,
   { at, name }: { at: number | undefined; name: string },
 ): Promise<SampleInspection | undefined> => {
-  const near: { t: Date }[] =
+  const near: { t: Date; uptime_seconds: number }[] =
     at === undefined
-      ? await sql`SELECT t FROM vitals_samples WHERE system = ${name} ORDER BY t DESC LIMIT 1`
+      ? await sql`
+          SELECT t, uptime_seconds FROM vitals_samples WHERE system = ${name}
+          ORDER BY t DESC LIMIT 1
+        `
       : await sql`
-          SELECT t FROM (
-            (SELECT t FROM vitals_samples WHERE system = ${name} AND t <= ${new Date(at)}
+          SELECT t, uptime_seconds FROM (
+            (SELECT t, uptime_seconds FROM vitals_samples
+             WHERE system = ${name} AND t <= ${new Date(at)}
              ORDER BY t DESC LIMIT 1)
             UNION ALL
-            (SELECT t FROM vitals_samples WHERE system = ${name} AND t > ${new Date(at)}
+            (SELECT t, uptime_seconds FROM vitals_samples
+             WHERE system = ${name} AND t > ${new Date(at)}
              ORDER BY t LIMIT 1)
           ) near
           ORDER BY abs(extract(epoch FROM t - ${new Date(at)}::timestamptz)), t
           LIMIT 1
         `;
-  const t = near[0]?.t;
-  if (t === undefined) {
+  const [nearest] = near;
+  if (nearest === undefined) {
     return undefined;
   }
+  const { t } = nearest;
   // `since` is the sample before: the sample covers the time after it.
   const [sample]: SampleRow[] = await sql`
     SELECT t, since, cpu_busy_percent, memory_total_bytes::float8 AS memory_total_bytes,
@@ -417,12 +424,13 @@ export const readSample = async (
   if (sample === undefined) {
     return undefined;
   }
-  const [buckets, processes, sessions, unlinked, requests]: [
+  const [buckets, processes, sessions, unlinked, requests, memoryHolders]: [
     BucketRow[],
     SampleProcessRow[],
     SampleSessionRow[],
     UnlinkedRow[],
     RequestCountRow[],
+    SampleInspection['memoryHolders'],
   ] = await Promise.all([
     sql`
       SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
@@ -487,6 +495,7 @@ export const readSample = async (
       WHERE system = ${name} AND t = ${t}
       GROUP BY process_id, harness, source, session_id
     `,
+    readMemoryHolders(sql, { system: name, t, uptimeSeconds: nearest.uptime_seconds }),
   ]);
   const bucket = buckets[0];
   const sessionsOf = (processId: number) =>
@@ -500,6 +509,7 @@ export const readSample = async (
         : { average: bucket.cpu_busy_sum / bucket.samples, high: bucket.cpu_busy_max },
     cpuBusyPercent: sample.cpu_busy_percent,
     load1: sample.load_1,
+    memoryHolders,
     memoryTotalBytes: sample.memory_total_bytes,
     memoryUsedBytes: sample.memory_used_bytes,
     processes: processes.map((row): SampleProcess => ({

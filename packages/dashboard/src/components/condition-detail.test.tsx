@@ -48,6 +48,7 @@ const diskView: ConditionDetailView = {
     },
   ],
   level: 'warning',
+  memoryHolders: undefined,
   nextStep: {
     clears: 'The warning eases below 78%, and the Condition clears below 68%.',
     steps: [
@@ -197,4 +198,17 @@ test('says when a source has no update pending, and draws no table for other Con
   expect(html({ ...updateView, packages: [] })).not.toContain('<table');
   expect(html({ ...updateView, packages: undefined })).not.toContain('<table');
   expect(html({ ...updateView, packages: undefined })).not.toContain('No updates pending.');
+});
+
+test('a high memory Condition names the processes holding the most memory, and others show no heading', () => {
+  const memoryHolders = {
+    at: NOW,
+    rows: [{ name: 'postgres', pid: 7, resident: '4.3 GiB' }],
+  };
+  const page = html({ ...diskView, memoryHolders });
+  for (const text of ['Processes holding the most memory', 'postgres', 'pid 7', '4.3 GiB']) {
+    expect(page).toContain(text);
+  }
+  expect(page).toContain('Resident memory, sampled at');
+  expect(html(diskView)).not.toContain('Processes holding the most memory');
 });

@@ -12,6 +12,7 @@ import type { ConditionDetail, ConditionSeries, PendingPackage } from './conditi
 import { readConditionTransitions } from './condition-transitions.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
+import { readMemoryHoldersAsOf } from './memory-holders.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -231,8 +232,8 @@ const readOpenAttention = async (
 };
 
 // One Condition occurrence of a System, with its Timeline of transitions, the
-// evidence and next steps while it is open, the limits the Hub judges by now, and
-// the readings around it. Undefined when the System has no such occurrence.
+// evidence and next steps while it is open, the limits the Hub judges by now,
+// the readings around it, and for high memory the processes holding the most. Undefined when the System has no such occurrence.
 // Read-only.
 export const readConditionDetail = async (
   sql: SQL,
@@ -249,16 +250,21 @@ export const readConditionDetail = async (
   const kind = conditionKind(row.kind);
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
-  const [transitions, limits, series, attention, packages, platform] = await Promise.all([
-    readConditionTransitions(sql, [row]),
-    readLimits(sql, name),
-    readSeries(sql, { kind, subject: row.subject, system: name, window }),
-    clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
-    clearedAt === undefined && kind === 'pending_update'
-      ? readPackages(sql, { subject: row.subject, system: name })
-      : undefined,
-    readPlatform(sql, name),
-  ]);
+  const [transitions, limits, series, attention, packages, platform, memoryHolders] =
+    await Promise.all([
+      readConditionTransitions(sql, [row]),
+      readLimits(sql, name),
+      readSeries(sql, { kind, subject: row.subject, system: name, window }),
+      clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
+      clearedAt === undefined && kind === 'pending_update'
+        ? readPackages(sql, { subject: row.subject, system: name })
+        : undefined,
+      readPlatform(sql, name),
+      // The chart's newest sample: the System's newest while open.
+      kind === 'high_memory'
+        ? readMemoryHoldersAsOf(sql, { at: clearedAt, system: name })
+        : undefined,
+    ]);
   return {
     attention,
     clearedAt,
@@ -269,6 +275,7 @@ export const readConditionDetail = async (
     latestReason: row.latest_reason,
     level: ConditionLevelSchema.parse(row.level),
     limits,
+    memoryHolders,
     packages,
     platform,
     raisedAt: row.raised_at.getTime(),
