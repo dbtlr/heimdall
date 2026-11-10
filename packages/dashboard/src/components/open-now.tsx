@@ -29,7 +29,7 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
   const unconfirmed = attentionMark(item) === 'unknown';
   return (
     <tr className={cn(ROW, unconfirmed && 'border-dashed text-muted-foreground')}>
-      <td className={cn(CELL, 'whitespace-nowrap max-sm:font-semibold')}>
+      <td className={cn(CELL, 'max-sm:font-semibold')}>
         {item.system}
         {item.unpaired && (
           <em className="ml-1 rounded border px-[5px] text-xs font-normal text-muted-foreground not-italic">

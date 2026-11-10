@@ -18,10 +18,24 @@ export type Tick = {
   minor: boolean;
 };
 
+// Whether a round tick sits close enough to either end of `window` to crowd
+// that end's label on a narrow screen, which then drops it. The end labels
+// themselves always stay.
+export const crowdsAnEndWhenNarrow = (tick: Tick, window: Window): boolean => {
+  if (tick.edge !== 'middle') {
+    return false;
+  }
+  const percent = xPercent(tick.at, window);
+  return percent < NARROW_EDGE_CLEARANCE_PERCENT || percent > 100 - NARROW_EDGE_CLEARANCE_PERCENT;
+};
+
 const QUARTER_HOUR_MS = 15 * 60_000;
 // A round tick this close to either end, in percent of the window, would
 // crowd the first label or "now".
 const EDGE_CLEARANCE_PERCENT = 10;
+// On a narrow screen a percent is a few pixels, so a round tick needs this
+// much room before it clears the first label's clock time or "now".
+const NARROW_EDGE_CLEARANCE_PERCENT = 20;
 
 // Round local hours that get a tick, and the multiple of them that is major.
 const HOUR_STEPS: Record<Exclude<Range, '7d'>, { major: number; step: number }> = {

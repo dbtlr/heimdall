@@ -44,7 +44,9 @@ const tickShift = (y: number): string => {
   return y >= 100 ? '-translate-y-full' : '-translate-y-1/2';
 };
 
-const HALO = '[text-shadow:0_0_3px_var(--background)]';
+// A label laid over a plot sits on a backing in the card's color, so the line
+// passes behind it instead of through it.
+const BACKING = 'rounded-sm bg-card/85 px-0.5';
 
 // The labels of a plot's value scale, each `y` percent down the layer, the
 // same place the plot draws that value.
@@ -55,7 +57,7 @@ function ScaleTicks({ domain, format }: { domain: Domain; format: (value: number
         <span
           className={cn(
             'absolute left-1 text-xs leading-none text-dim tabular-nums',
-            HALO,
+            BACKING,
             tickShift(y),
           )}
           data-scale-tick={value}
@@ -86,7 +88,7 @@ function LimitLines({ domain, limits }: { domain: Domain; limits: readonly PlotL
             <span
               className={cn(
                 'absolute right-1 text-xs leading-none font-medium',
-                HALO,
+                BACKING,
                 // Below its line, so stacked limits keep their labels apart,
                 // unless that would leave the plot.
                 y > 85 ? 'bottom-1' : 'top-1',

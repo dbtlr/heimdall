@@ -69,6 +69,14 @@ for (const gutter of [false, true]) {
   });
 }
 
+test('a scale label laid over the plot sits on a card-colored backing, so the line does not run through it', () => {
+  const html = scaleOf([0, 100]);
+  for (const value of [0, 50, 100]) {
+    expect(classOf(html, `data-scale-tick="${String(value)}"`)).toContain('bg-card/');
+  }
+  expect(limitLabelClass(50)).toContain('bg-card/');
+});
+
 test('a scaled plot with no reading to scale draws no labels, so it states no scale', () => {
   const html = renderToStaticMarkup(
     <ScaledPlot domain={[0, 1]} height={40} labelled={false}>
