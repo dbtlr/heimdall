@@ -2,7 +2,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 
-import { jumpMatches, jumpTarget, moveActive, opensJump } from '../lib/jump.ts';
+import { jumpIndexDue, jumpMatches, jumpTarget, moveActive, opensJump } from '../lib/jump.ts';
 import type { JumpItem } from '../lib/jump.ts';
 import { cn } from '../lib/utils.ts';
 import type { JumpIndex } from '../server/jump-index-types.ts';
@@ -38,8 +38,9 @@ const statusText = (index: JumpIndex | undefined, unread: boolean, query: string
 };
 
 // The jump box: a combobox over Systems, Services, projects, and Sessions by id
-// prefix. The index of names is read each time it gains focus. Arrow keys
-// move through the results, Enter opens the active one, and Escape closes.
+// prefix. The index of names is read when it gains focus, at most once a
+// minute. Arrow keys move through the results, Enter opens the active one, and
+// Escape closes.
 // With `shortcut`, a bare `/` anywhere outside an editable field focuses it
 // while it is visible.
 // `wide` fills its container, with type sized for a phone.
@@ -55,6 +56,7 @@ export function JumpBox({
   const navigate = useNavigate();
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
+  const readAt = useRef<number>(undefined);
   const [index, setIndex] = useState<JumpIndex>();
   const [unread, setUnread] = useState(false);
   const [query, setQuery] = useState('');
@@ -88,8 +90,12 @@ export function JumpBox({
   }, [shortcut]);
 
   const readIndex = async () => {
+    if (!jumpIndexDue(readAt.current, Date.now())) {
+      return;
+    }
     try {
       setIndex(await loadIndex());
+      readAt.current = Date.now();
       setUnread(false);
     } catch {
       setUnread(true);

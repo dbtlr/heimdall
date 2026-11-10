@@ -1,7 +1,15 @@
 import { expect, test } from 'bun:test';
 
 import type { JumpIndex } from '../server/jump-index-types.ts';
-import { JUMP_LIMIT, jumpMatches, jumpTarget, moveActive, opensJump } from './jump.ts';
+import {
+  JUMP_INDEX_FRESH_MS,
+  JUMP_LIMIT,
+  jumpIndexDue,
+  jumpMatches,
+  jumpTarget,
+  moveActive,
+  opensJump,
+} from './jump.ts';
 
 const session = (sessionId: string, system = 'server-1') => ({
   harness: 'claude-code',
@@ -127,4 +135,10 @@ test('slash opens the jump box unless a modifier is held or something editable h
   }
   expect(opensJump(key({ target: { isContentEditable: true, tagName: 'DIV' } }))).toBe(false);
   expect(opensJump(key({ target: null }))).toBe(true);
+});
+
+test('the jump index is read again only once the held one is a minute old', () => {
+  expect(jumpIndexDue(undefined, 1000)).toBe(true);
+  expect(jumpIndexDue(1000, 1000 + JUMP_INDEX_FRESH_MS - 1)).toBe(false);
+  expect(jumpIndexDue(1000, 1000 + JUMP_INDEX_FRESH_MS)).toBe(true);
 });

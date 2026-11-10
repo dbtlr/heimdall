@@ -121,3 +121,11 @@ export const opensJump = ({ altKey, ctrlKey, key, metaKey, target }: KeyPress): 
   !ctrlKey &&
   !metaKey &&
   (target === null || (!target.isContentEditable && !EDITABLE_TAGS.has(target.tagName)));
+
+// How long the jump box keeps the index it read before reading it again.
+export const JUMP_INDEX_FRESH_MS = 60_000;
+
+// Whether the jump box should read its index on gaining focus at `now`: when it
+// holds none, or the one it holds was read JUMP_INDEX_FRESH_MS or longer ago.
+export const jumpIndexDue = (readAt: number | undefined, now: number): boolean =>
+  readAt === undefined || now - readAt >= JUMP_INDEX_FRESH_MS;
