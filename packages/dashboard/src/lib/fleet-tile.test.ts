@@ -60,8 +60,11 @@ const lane = (name: string, over: Partial<SystemGlance> = {}): SystemGlance => (
 describe('meterLevels', () => {
   test('a Condition colors the meter of the resource it holds on', () => {
     expect(meterLevels([condition({ level: 'note' })])).toEqual({ disk: 'note' });
-    expect(meterLevels([cpu('warning')])).toEqual({ cpu: 'warning' });
     expect(meterLevels([cpu('alert', 'high_memory')])).toEqual({ memory: 'alert' });
+  });
+
+  test('High CPU colors no meter, because a tile draws its CPU as a sparkline', () => {
+    expect(meterLevels([cpu('warning')])).toEqual({});
   });
 
   test('a meter takes the worst level among the Conditions on it', () => {

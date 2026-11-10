@@ -8,11 +8,11 @@ import { diskUsage, fullestDisk } from './facts.ts';
 import { fleetAttention, isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
 import { formatSpanShort } from './time.ts';
 
-// The resources a System tile draws a meter for.
-export type Meter = 'cpu' | 'disk' | 'memory';
+// The resources a System tile draws a meter for. CPU has no meter: a tile
+// draws it as a sparkline.
+export type Meter = 'disk' | 'memory';
 
 const METER_OF: Partial<Record<AttentionKind, Meter>> = {
-  high_cpu: 'cpu',
   high_memory: 'memory',
   low_disk: 'disk',
 };
