@@ -4,6 +4,7 @@ import { projectOf } from './fleet-overview.ts';
 import type { JumpIndex } from './jump-index-types.ts';
 import { JUMP_SESSION_DAYS } from './jump-index-types.ts';
 import { serviceSubjects } from './services.ts';
+import { sessionSpans } from './session-spans.ts';
 
 type PlaceRow = {
   first_cwd: string | null;
@@ -51,12 +52,7 @@ export const readJumpIndex = async (sql: SQL, { now }: { now: number }): Promise
       ORDER BY ended_at DESC, system, harness, source, session_id
     `,
     sql`
-      WITH spans AS MATERIALIZED (
-        SELECT harness, system, source, session_id
-        FROM insight.session_stretches
-        GROUP BY harness, system, source, session_id
-        HAVING max(ended_at) >= ${since} AND min(started_at) <= ${to}
-      )
+      WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: since, to })})
       SELECT s.first_cwd, s.last_cwd, s.repository
       FROM spans k
       JOIN insight.sessions s USING (harness, system, source, session_id)

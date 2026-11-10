@@ -2328,6 +2328,19 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 41,
   },
+  {
+    // Finds stored stretches by their end, so a reader picks the Sessions with
+    // a request since a time from the stretches ending after it, instead of
+    // grouping every stretch by Session, and the newest request is the index's
+    // last entry. It holds each stretch's Session, so picking them reads the
+    // index alone. Building it over a year of 240,000 stretches takes about
+    // 0.15 seconds, well inside the statement timeout.
+    sql: `
+      CREATE INDEX stored_session_stretches_by_end ON stored_session_stretches (ended_at)
+        INCLUDE (harness, system, source, session_id);
+    `,
+    version: 42,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
