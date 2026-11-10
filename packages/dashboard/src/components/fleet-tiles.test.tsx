@@ -64,7 +64,55 @@ const meter = (html: string, label: string) =>
 const sparkline = (html: string) =>
   html.split('<div aria-label="').find((part) => part.startsWith('CPU over')) ?? '';
 
+// A running Session's key.
+const running = (system: string, harness: string, sessionId: string) => ({
+  harness,
+  sessionId,
+  source: harness,
+  system,
+});
+
 describe('a System tile', () => {
+  test("shows its running Sessions in their Harness's color only when they share one", async () => {
+    const html = await renderRouted(
+      <FleetTiles
+        from={NOW - DAY}
+        now={NOW}
+        running={[
+          running('gateway-1', 'claude-code', 'a'),
+          running('gateway-1', 'claude-code', 'b'),
+          running('server-1', 'claude-code', 'c'),
+          running('server-1', 'codex', 'd'),
+        ]}
+        tiles={tileOrder([lane('gateway-1'), lane('server-1'), lane('edge-1')], [], NOW)}
+      />,
+    );
+    const tile = (name: string) =>
+      html.split('<a ').find((part) => part.includes(`href="/systems/${name}"`)) ?? '';
+
+    expect(tile('gateway-1')).toContain(
+      'style="background:color-mix(in srgb, var(--chart-1) 16%, transparent);color:var(--chart-1)">2 running<',
+    );
+    expect(tile('server-1')).toContain('bg-secondary text-muted-foreground');
+    expect(tile('server-1')).toContain('>2 running<');
+    expect(tile('edge-1')).not.toContain('running');
+  });
+
+  test('shows Sessions sharing a Harness with no color of its own in the neutral chip color', async () => {
+    const html = await renderRouted(
+      <FleetTiles
+        from={NOW - DAY}
+        now={NOW}
+        running={[running('gateway-1', 'aider', 'a'), running('gateway-1', 'aider', 'b')]}
+        tiles={tileOrder([lane('gateway-1')], [], NOW)}
+      />,
+    );
+
+    expect(html).toContain('bg-secondary text-muted-foreground');
+    expect(html).toContain('>2 running<');
+    expect(html).not.toContain('color-mix');
+  });
+
   test('links to its System and shows Mem and the fullest Disk with rounded percents, and its Services up', async () => {
     const html = await render([lane('gateway-1')]);
 

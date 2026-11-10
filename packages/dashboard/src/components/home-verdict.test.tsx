@@ -27,6 +27,21 @@ test('the card takes the worst level on its edge and shows the figures beside th
   expect(html).toContain('>21<span');
 });
 
+test("with agent work read, the Sessions running and today's cost in whole dollars follow Services up", () => {
+  const html = renderToStaticMarkup(
+    <HomeVerdictCard
+      agents={{ running: 3, today: { pricedCostUsd: 148.3, requests: 9, unpricedRequests: 1 } }}
+      figures={figures}
+      verdict={{ level: 'healthy', sentence: 'Everything is healthy.', support: [] }}
+    />,
+  );
+  const labels = [...html.matchAll(/<dt[^>]*>([^<]+)<\/dt>/gu)].map(([, label]) => label);
+
+  expect(labels).toEqual(['Systems awake', 'Services up', 'Sessions running', 'agents today']);
+  expect(html).toContain('>3</dd>');
+  expect(html.replaceAll(/<[^>]+>/gu, '')).toContain('at least $148');
+});
+
 test('with no System paired, the card shows no figures', () => {
   const html = renderToStaticMarkup(
     <HomeVerdictCard

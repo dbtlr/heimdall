@@ -16,7 +16,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-const { addCondition } = timeline(NOW);
+const { addCondition, addSession } = timeline(NOW);
 
 const check = (service: string, state: string) => ({
   check: 'supervisor',
@@ -241,16 +241,26 @@ describe('readHome', () => {
     });
   });
 
-  test('sends as many statements for six Systems as for two', async () => {
+  test('sends as many statements for six Systems and their Sessions as for two and one', async () => {
     await using h = await startHub();
     const statementsFor = async () => {
       const counted = counting(h.db.sql);
-      await readHome(counted.sql, { now: NOW, unpaired: false });
+      await readHome(counted.sql, { now: NOW, timeZone: 'Europe/Berlin', unpaired: false });
       return counted.statements();
+    };
+    // A running Session and one from yesterday on `system`.
+    const work = async (system: string) => {
+      await addSession(h.db.sql, { id: `${system}-now`, requests: [-DAY / 1000, -30], system });
+      await addSession(h.db.sql, {
+        id: `${system}-before`,
+        requests: [-1.5 * (DAY / 1000)],
+        system,
+      });
     };
     await hear(h, 'server-1', { down: ['api'], up: ['web'] });
     await hear(h, 'laptop-1', { up: ['web'] });
     await warning(h, 'server-1', -3600);
+    await work('server-1');
     const two = await statementsFor();
     for (const system of ['edge-1', 'db-1', 'build-1', 'mini-1']) {
       // oxlint-disable-next-line no-await-in-loop -- each System pairs before it reports.
@@ -259,9 +269,13 @@ describe('readHome', () => {
       await hear(h, system, { down: ['api'], up: ['web'] });
       // oxlint-disable-next-line no-await-in-loop -- one Condition each, older than the lead.
       await warning(h, system, -7200);
+      // oxlint-disable-next-line no-await-in-loop -- two Sessions each.
+      await work(system);
     }
+    const read = await readHome(h.db.sql, { now: NOW, timeZone: 'Europe/Berlin', unpaired: false });
 
-    expect((await home(h)).lanes).toHaveLength(6);
+    expect(read.lanes).toHaveLength(6);
+    expect(read.agents?.running).toHaveLength(5);
     expect(await statementsFor()).toBe(two);
     expect(two).toBeGreaterThan(0);
   });

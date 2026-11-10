@@ -1,6 +1,7 @@
 import { AGENTS_BREAKDOWNS, AGENTS_RANGES } from '../server/agents-overview-types.ts';
 
-const validZone = (zone: unknown): string | undefined => {
+// The IANA zone named, as Intl resolves it, or undefined for anything else.
+export const validZone = (zone: unknown): string | undefined => {
   if (
     typeof zone !== 'string' ||
     zone.length > 100 ||

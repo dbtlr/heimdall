@@ -23,10 +23,15 @@ export type AgentsSession = SessionKey &
   PeriodTotals & {
     activeRecently: boolean;
     branch: string | undefined;
+    // The Session's first request, in the period or before it.
+    firstRequestAt: number;
     lastRequestAt: number;
     // The models with a request in the period; NO_KEY for an empty model.
     models: string[];
     project: string | undefined;
+    // The model with the most requests in the period, the first in code unit
+    // order on a tie; NO_KEY for an empty model.
+    topModel: string | undefined;
   };
 
 // `model` is NO_KEY for requests with an empty model.
