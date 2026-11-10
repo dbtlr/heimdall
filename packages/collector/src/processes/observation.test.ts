@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import { ProcessObservationSchema } from '@heimdall/schema';
 
+import { memoryProcessNames } from './names.ts';
 import { createProcessObserver } from './observation.ts';
 import type { ProcessEntry } from './table.ts';
 
@@ -264,4 +265,101 @@ test('exact observation identities preserve all uint64 digits and take precedenc
   });
   expect((await observe(130_000, '18446744073709551615', 200)).top).toEqual([]);
   expect((await observe(145_000, null, 200)).top).toEqual([]);
+});
+
+test('names the processes holding the most memory on the first sample and then at most once a minute', async () => {
+  const observer = createProcessObserver();
+  const observe = (monotonicMs: number) =>
+    observer.observe({
+      at: 100_000 + monotonicMs,
+      bootId: 'boot-a',
+      entries: [entry(1, 0)],
+      monotonicMs,
+      presentPids: [1],
+      uptimeSeconds: 100 + monotonicMs / 1000,
+    });
+  const carried: number[] = [];
+  for (const at of [0, 15_000, 59_999, 60_000, 75_000, 130_000, 175_000, 190_000]) {
+    // oxlint-disable-next-line no-await-in-loop -- the cadence depends on order.
+    if ((await observe(at)).topByMemory !== undefined) {
+      carried.push(at);
+    }
+  }
+  expect(carried).toEqual([0, 60_000, 130_000, 190_000]);
+  observer.reset();
+  expect((await observe(200_000)).topByMemory).toBeUndefined();
+});
+
+test('the largest identifiable holders come largest first, ties by PID, without a CPU baseline', async () => {
+  const observer = createProcessObserver();
+  const holders = [
+    entry(9, 0, { rssBytes: 100 }),
+    entry(8, 0, { rssBytes: 900 }),
+    entry(7, 0, { kernelStart: null, rssBytes: 5000 }),
+    entry(6, 0, { name: '', rssBytes: 4000 }),
+    entry(5, 0, { rssBytes: 500 }),
+    entry(4, 0, { rssBytes: 900 }),
+    entry(3, 0, { rssBytes: 700 }),
+    entry(2, 0, { rssBytes: 300 }),
+    entry(1, 0, { rssBytes: 50 }),
+  ];
+  const observed = await observer.observe({
+    at: 100_000,
+    bootId: 'boot-a',
+    entries: holders,
+    monotonicMs: 1000,
+    nameOf: async () => null,
+    presentPids: holders.map((p) => p.pid),
+    uptimeSeconds: 100,
+  });
+  expect(observed.intervalMs).toBe(0);
+  expect(observed.topByMemory?.map((p) => [p.pid, p.rssBytes, p.start])).toEqual([
+    [4, 900, '400'],
+    [8, 900, '800'],
+    [3, 700, '300'],
+    [5, 500, '500'],
+    [2, 300, '200'],
+  ]);
+  expect(ProcessObservationSchema.parse(observed)).toEqual(observed);
+});
+
+test('holders take their recorded names and record none, unless the executable has changed since', async () => {
+  const names = memoryProcessNames();
+  const observer = createProcessObserver({ names });
+  const executables: Record<number, string | null> = { 1: 'api-server', 2: 'postgres', 3: null };
+  let accounting = 'kworker';
+  const observe = (at: number) =>
+    observer.observe({
+      at,
+      bootId: 'boot-a',
+      entries: [
+        entry(1, (at - 100_000) * 1000, { name: 'api', rssBytes: 1000 }),
+        entry(2, 0, { rssBytes: 3000 }),
+        entry(3, 0, { name: accounting, rssBytes: 2000 }),
+      ],
+      monotonicMs: at,
+      nameOf: async (pid) => executables[pid] ?? null,
+      presentPids: [1, 2, 3],
+      uptimeSeconds: at / 1000,
+    });
+  const unnamed = await observe(100_000);
+  expect(unnamed.topByMemory?.map((p) => p.name)).toEqual(['postgres', 'kworker', 'api-server']);
+  expect(names.list()).toEqual([]);
+  expect((await observe(115_000)).top.map((p) => p.name)).toEqual([
+    'api-server',
+    'postgres',
+    'kworker',
+  ]);
+  const recorded = names.list();
+  executables[1] = 'replacement';
+  accounting = 'kworker/2';
+  observer.reset();
+  const changed = await observe(160_000);
+  expect(changed.top).toEqual([]);
+  expect(changed.topByMemory?.map((p) => [p.pid, p.name])).toEqual([
+    [2, 'postgres'],
+    [3, 'kworker'],
+    [1, 'replacement'],
+  ]);
+  expect(names.list()).toEqual(recorded);
 });

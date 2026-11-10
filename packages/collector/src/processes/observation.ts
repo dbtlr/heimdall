@@ -1,4 +1,9 @@
-import { MAX_PROCESS_CENSUS, MAX_TOP_PROCESSES, SAMPLE_INTERVAL_MS } from '@heimdall/schema';
+import {
+  MAX_PROCESS_CENSUS,
+  MAX_TOP_MEMORY_PROCESSES,
+  MAX_TOP_PROCESSES,
+  SAMPLE_INTERVAL_MS,
+} from '@heimdall/schema';
 import type { ProcessObservation } from '@heimdall/schema';
 
 import { memoryProcessNames, processNameKey } from './names.ts';
@@ -15,8 +20,27 @@ type Reading = {
   nameOf?: (pid: number) => Promise<string | null>;
 };
 
+// The memory list rides on at most one sample in this long, on the monotonic clock.
+const MEMORY_LIST_INTERVAL_MS = 60_000;
+
+type Holders = NonNullable<ProcessObservation['topByMemory']>;
+
 const ownCpu = (entry: ProcessEntry) => entry.cpuMicros - entry.reapedCpuMicros;
 const validName = (name: string) => name.length > 0 && name.length <= 1024;
+const nameable = (name: string, executable: string | null) =>
+  validName(name) && (executable === null || validName(executable));
+
+// The name a lifetime goes by now: its recorded name, unless the executable
+// changed from a confirmed one, then its executable, then its accounting name.
+const currentName = (
+  held: ProcessName | undefined,
+  executable: string | null,
+  accounting: string,
+) => {
+  const changed =
+    held?.kind === 'confirmed' && executable !== null && held.executable !== executable;
+  return { changed, name: changed ? executable : (held?.label ?? executable ?? accounting) };
+};
 const startOf = (entry: ProcessEntry) => {
   if (entry.observationStart !== undefined) {
     return entry.observationStart;
@@ -26,10 +50,14 @@ const startOf = (entry: ProcessEntry) => {
 
 // Keeps one table baseline. Unmeasured processes remain explicitly unknown;
 // a complete PID census can still prove that a formerly observed process exited.
+// The first observation, and then the first at least a minute after the last
+// that did, also names the processes holding the most memory. A reset keeps
+// that cadence, since it discards only the CPU baseline.
 export const createProcessObserver = ({
   names = memoryProcessNames(),
 }: { names?: ProcessNameStore } = {}) => {
   let previous: Reading | undefined;
+  let memoryListAt: number | undefined;
   const resolved = new Map(names.list().map((name) => [processNameKey(name), name]));
   return {
     observe: async (reading: Reading): Promise<ProcessObservation> => {
@@ -37,6 +65,30 @@ export const createProcessObserver = ({
       previous = reading;
       const identityOf = (entry: { pid: number; start: string }) =>
         processNameKey({ bootId: reading.bootId, ...entry });
+      // The largest holders the recorded names can identify. Reading names only,
+      // the list never changes a hot process's name, the census, or its evidence.
+      const holdersOf = async (): Promise<Holders> => {
+        const holders: Holders = [];
+        const largest = reading.entries.toSorted(
+          (a, b) => b.rssBytes - a.rssBytes || a.pid - b.pid,
+        );
+        for (const entry of largest) {
+          if (holders.length === MAX_TOP_MEMORY_PROCESSES) {
+            break;
+          }
+          const start = startOf(entry);
+          if (start !== null) {
+            // oxlint-disable-next-line no-await-in-loop -- a skipped holder's place goes to the next largest.
+            const executable = (await reading.nameOf?.(entry.pid)) ?? null;
+            const held = resolved.get(identityOf({ pid: entry.pid, start }));
+            const { name } = currentName(held, executable, entry.name);
+            if (nameable(name, executable)) {
+              holders.push({ name, pid: entry.pid, rssBytes: entry.rssBytes, start });
+            }
+          }
+        }
+        return holders;
+      };
       const presentPids = [...new Set(reading.presentPids)].toSorted((a, b) => a - b);
       const present = new Set(presentPids);
       const live = new Map(
@@ -101,12 +153,8 @@ export const createProcessObserver = ({
           const identity = identityOf(entry);
           const executable = (await reading.nameOf?.(entry.pid)) ?? null;
           const heldName = resolved.get(identity);
-          const changed =
-            heldName?.kind === 'confirmed' &&
-            executable !== null &&
-            heldName.executable !== executable;
-          const name = changed ? executable : (heldName?.label ?? executable ?? entry.name);
-          if (!validName(name) || (executable !== null && !validName(executable))) {
+          const { changed, name } = currentName(heldName, executable, entry.name);
+          if (!nameable(name, executable)) {
             unknown.add(entry.pid);
             return [];
           }
@@ -134,6 +182,12 @@ export const createProcessObserver = ({
       );
       const top = candidates.flat();
       const unknownPids = [...unknown].toSorted((a, b) => a - b);
+      const memoryDue =
+        memoryListAt === undefined || reading.monotonicMs - memoryListAt >= MEMORY_LIST_INTERVAL_MS;
+      const topByMemory = memoryDue ? await holdersOf() : undefined;
+      if (memoryDue) {
+        memoryListAt = reading.monotonicMs;
+      }
       return {
         bootId: reading.bootId,
         census:
@@ -147,6 +201,7 @@ export const createProcessObserver = ({
               },
         intervalMs,
         top,
+        ...(topByMemory && { topByMemory }),
       };
     },
     reset: () => {
