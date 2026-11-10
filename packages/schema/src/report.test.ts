@@ -21,8 +21,15 @@ test('process evidence preserves bounded CPU readings and discards malformed evi
     top: [{ cpuCores: 1.5, name: 'bun', pid: 42, rssBytes: 1024, start: '1234' }],
   } satisfies ProcessObservation;
   expect(VitalsSampleSchema.parse({ ...sample(0), processes }).processes).toEqual(processes);
+  const holder = { name: 'postgres', pid: 7, rssBytes: 4096, start: '99' };
+  const withMemory = { ...processes, topByMemory: [holder] };
+  expect(VitalsSampleSchema.parse({ ...sample(0), processes: withMemory }).processes).toEqual(
+    withMemory,
+  );
   for (const invalid of [
     { ...processes, intervalMs: 15_001 },
+    { ...processes, topByMemory: Array.from({ length: 6 }, (_, i) => ({ ...holder, pid: i + 1 })) },
+    { ...processes, topByMemory: [holder, holder] },
     { ...processes, top: Array.from({ length: 6 }, () => processes.top[0]) },
     { ...processes, top: [processes.top[0], processes.top[0]] },
     { ...processes, census: { ...processes.census, presentPids: [] } },
@@ -37,6 +44,21 @@ test('process evidence preserves bounded CPU readings and discards malformed evi
     expect(parsed.processes).toBeUndefined();
     expect(parsed.cpu).toEqual(sample(0).cpu);
   }
+});
+
+test('a field the schema does not know inside process evidence is dropped, keeping the evidence', () => {
+  // An older Hub reads a newer Collector's `topByMemory` this way (ADR-0004).
+  const processes = {
+    bootId: 'boot-a',
+    census: { kind: 'partial' },
+    intervalMs: 15_000,
+    top: [],
+  } satisfies ProcessObservation;
+  const parsed = VitalsSampleSchema.parse({
+    ...sample(0),
+    processes: { ...processes, laterField: [{ name: 'postgres', pid: 7 }] },
+  });
+  expect(parsed.processes).toEqual(processes);
 });
 
 test('optional memory pressure survives a v1 Report without costing older or unknown readings', () => {

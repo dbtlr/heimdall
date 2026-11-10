@@ -11,6 +11,7 @@ export type { ConditionKind } from './condition-names.ts';
 export { storableText } from './values.ts';
 export {
   MAX_PROCESS_CENSUS,
+  MAX_TOP_MEMORY_PROCESSES,
   MAX_TOP_PROCESSES,
   ProcessObservationSchema,
   processSubject,
