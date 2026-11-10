@@ -105,16 +105,40 @@ test('running Sessions have a request in the last 5 minutes, the latest first, e
   expect(agents.latestRequestAt).toBeUndefined();
 });
 
+test('a Session whose latest request is stamped ahead of the clock is running, priced over all its requests', async () => {
+  await using h = await start();
+  // The Session's System runs its clock 20 s ahead of the dashboard's.
+  await addSession(h.db.sql, { ...dollar, id: 'ahead', requests: [-600, 20], system: 'server-1' });
+
+  const agents = await agentsOf(h, 'UTC');
+
+  expect(agents.running.map(({ sessionId }) => sessionId)).toEqual(['ahead']);
+  expect(agents.running[0]).toMatchObject({ lastRequestAt: NOW + 20_000, pricedCostUsd: 2 });
+  expect(agents.latestRequestAt).toBeUndefined();
+});
+
 test('the bars hold the 6 days before today and today, and usually by now is the median of the 7 days before', async () => {
   await using h = await start();
-  // NOW is 12:00 UTC. Each day's requests, as hours before NOW: 5 October
-  // spent $1 by 12:00 of $2, 4 October $1 of $1, 3 October $0 of $1, and 29
-  // September, a day too old for the bars, $3 of $3.
+  // NOW is 12:00 UTC, so each earlier day's cutoff is its 12:00. Each
+  // Session's requests, as hours before NOW, and what each day spent by its
+  // cutoff of its whole cost:
+  // - 5 October, $2 of $4: one request exactly at its midnight, of a Session
+  //   that began on 4 October; one exactly at its cutoff and one after, of
+  //   one Session; and one after its cutoff.
+  // - 4 October, $0 of $1: the request before that midnight.
+  // - 3 October, $1 of $1.
+  // - 29 September, the 7th day back and too old for the bars, $4 of $4, the
+  //   last request exactly at its cutoff.
+  // - 28 September, the 8th day back, $1 of $1, which does not count.
+  // The median of $0, $1, $2, and $4 is $1.5; over 6 days back it would be
+  // $1, and over 8 days $2.
   const days: [string, number[]][] = [
-    ['oct-5', [26, 22]],
-    ['oct-4', [51]],
-    ['oct-3', [71]],
-    ['sep-29', [172, 169, 168.5]],
+    ['over-midnight', [37, 36]],
+    ['at-cutoff', [24, 22]],
+    ['oct-5-evening', [14]],
+    ['oct-3', [75]],
+    ['sep-29', [170, 169, 168.5, 168]],
+    ['sep-28', [200]],
     ['today', [1]],
   ];
   for (const [id, hours] of days) {
@@ -137,12 +161,49 @@ test('the bars hold the 6 days before today and today, and usually by now is the
     [Date.UTC(2026, 9, 2), 0],
     [Date.UTC(2026, 9, 3), 1],
     [Date.UTC(2026, 9, 4), 1],
-    [Date.UTC(2026, 9, 5), 2],
+    [Date.UTC(2026, 9, 5), 4],
     [Date.UTC(2026, 9, 6), 1],
   ]);
-  expect(agents.usualByNow).toBe(1);
+  expect(agents.usualByNow).toBe(1.5);
   expect(agents.running).toEqual([]);
   expect(agents.latestRequestAt).toBe(NOW - HOUR_S * 1000);
+});
+
+test("an earlier day takes a Session's stored total when the Session lies within the day, and prices requests only for one crossing its midnight or cutoff", async () => {
+  await using h = await start();
+  // Hours before NOW, 12:00 UTC on 6 October: two Sessions within 5
+  // October, one before its 12:00 cutoff and one after, and one crossing
+  // into it from 4 October and past its cutoff.
+  const sessions: [string, number[]][] = [
+    ['before-cutoff', [30]],
+    ['after-cutoff', [20]],
+    ['crossing', [40, 34, 22]],
+  ];
+  for (const [id, hours] of sessions) {
+    // oxlint-disable-next-line no-await-in-loop -- a handful of fixture Sessions.
+    await addSession(h.db.sql, {
+      ...dollar,
+      id,
+      requests: hours.map((hour) => -hour * HOUR_S),
+      system: 'server-1',
+    });
+  }
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'oct-3',
+    requests: [-75 * HOUR_S],
+    system: 'laptop-1',
+  });
+  // A price change the Hub has not refreshed yet: stored totals keep $1 a
+  // request, and requests priced on read cost $10.
+  await h.db.sql`UPDATE model_prices SET input_per_mtok = 10 WHERE model = 'test-model'`;
+
+  const agents = await agentsOf(h, 'UTC');
+
+  expect(agents.days.slice(-4, -1).map(({ pricedCostUsd }) => pricedCostUsd)).toEqual([1, 10, 22]);
+  // By their cutoffs 3 October spent $1, 4 October $0, and 5 October $1
+  // stored and $10 priced on read.
+  expect(agents.usualByNow).toBe(1);
 });
 
 test('with no Session ever recorded, Home reads no cost, nothing running, and no latest request', async () => {
