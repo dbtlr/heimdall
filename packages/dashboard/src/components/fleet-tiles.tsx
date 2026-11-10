@@ -3,12 +3,15 @@ import { Link } from '@tanstack/react-router';
 import { BellOff, Moon } from 'lucide-react';
 
 import { laneSummary } from '../lib/attention.ts';
-import { diskReading, meterLevels } from '../lib/fleet-tile.ts';
+import { LEVEL_STROKE } from '../lib/conditions.ts';
+import { diskReading, meterLevels, tileStatusWords } from '../lib/fleet-tile.ts';
 import type { SystemTile } from '../lib/fleet-tile.ts';
-import { formatSpanShort } from '../lib/time.ts';
+import { sparklineAreaPath, sparklinePath } from '../lib/sparkline.ts';
+import { formatSpanShort, silenceLeft } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
+import type { TileGlance } from '../server/home-types.ts';
 import {
   AttentionStatus,
   MARK_COLOR,
@@ -17,7 +20,7 @@ import {
   UnconfirmedPill,
 } from './attention-status.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
-import { silenceLeft } from './silence-line.tsx';
+import { PLOT_COLOR, PlotGradient, usePlotGradientId } from './plot-scale.tsx';
 
 // A meter's bar fill: the glyph color of the level, else a neutral blue-grey.
 const FILL_COLOR: Record<ConditionLevel, string> = {
@@ -91,9 +94,9 @@ function Meter({
   );
 }
 
-// The CPU, Mem, and Disk meters from the newest Vitals sample, or a short line
-// when none has arrived. A sample older than QUIET_AFTER_MS is muted and dated
-// for screen readers, so its values do not read as current.
+// The Mem and Disk meters from the newest Vitals sample, or a short line when
+// none has arrived. A sample older than QUIET_AFTER_MS is muted and dated for
+// screen readers, so its values do not read as current.
 function TileMeters({ now, tile }: { now: number; tile: SystemTile }) {
   const { latest } = tile.lane;
   if (latest === undefined) {
@@ -105,30 +108,88 @@ function TileMeters({ now, tile }: { now: number; tile: SystemTile }) {
   return (
     <div className={cn('flex flex-col gap-1', stale && 'opacity-50')}>
       {stale && <span className="sr-only">Vitals as of {formatSpanShort(now - latest.t)} ago</span>}
-      <Meter label="CPU" level={levels.cpu} percent={latest.cpuBusyPercent} />
       <Meter label="Mem" level={levels.memory} percent={latest.memoryUsedPercent} />
       <Meter label="Disk" level={levels.disk} mount={disk?.mount} percent={disk?.percent} />
     </div>
   );
 }
 
-// The System's worst alert or warning with its subject and the count of the
-// others, then the dashed pill for evidence that does not confirm a failure.
-// Nothing for a System with neither; an unpaired one lists its items in Open now.
-function TileCondition({ tile }: { tile: SystemTile }) {
+const SPARK_WIDTH = 100;
+const SPARK_HEIGHT = 26;
+
+// The System's CPU busy over the last day, one point per 5-minute bucket, its
+// line and fill from the shared plot primitives in its worst level's color, a
+// gap in the Vitals breaking the line. No scale at this size: the label says
+// what it is, with the newest reading.
+function TileSparkline({
+  from,
+  now,
+  tile,
+}: {
+  from: number;
+  now: number;
+  tile: SystemTile<TileGlance>;
+}) {
+  const fill = usePlotGradientId();
+  const { cpu, gaps, latest } = tile.lane;
+  const color = tile.level === undefined ? PLOT_COLOR : LEVEL_STROKE[tile.level];
+  const points = cpu.map(({ average, t }) => ({ t, value: average }));
+  const box = { ceiling: 100, from, height: SPARK_HEIGHT, to: now, width: SPARK_WIDTH };
+  const label = `CPU over the last 24 h${latest === undefined ? '' : `, ${String(Math.round(latest.cpuBusyPercent))}% at the newest sample`}`;
+  return (
+    <div
+      aria-label={label}
+      className={cn('relative my-1 h-[26px] w-full', tile.asleep && 'opacity-60')}
+      role="img"
+    >
+      <PlotGradient color={color} id={fill} />
+      <svg
+        aria-hidden="true"
+        className="block size-full overflow-visible"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${String(SPARK_WIDTH)} ${String(SPARK_HEIGHT)}`}
+      >
+        <path d={sparklineAreaPath(points, gaps, box)} fill={`url(#${fill})`} />
+        <path
+          d={sparklinePath(points, gaps, box)}
+          fill="none"
+          stroke={color}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.25}
+          style={{ vectorEffect: 'non-scaling-stroke' }}
+        />
+      </svg>
+    </div>
+  );
+}
+
+// What the System's state is in words: its worst alert or warning with its
+// subject and the count of the others, else "Healthy", "Asleep 20 h", "No
+// Report yet", or "Unpaired", then the dashed pill for evidence that does not
+// confirm a failure. An unpaired System lists its items on Compare instead.
+function TileStatus({ now, tile }: { now: number; tile: SystemTile }) {
   const { items, lane } = tile;
-  const named = namedItem(items, lane.status);
-  const { unconfirmed } = laneSummary(items);
-  if (named !== undefined) {
+  if (namedItem(items, lane.status) !== undefined) {
     return (
-      <p className="text-[13.5px] leading-tight wrap-anywhere">
+      <p className="text-[13px] leading-tight wrap-anywhere">
         <AttentionStatus items={items} showSubject status={lane.status} />
       </p>
     );
   }
-  return unconfirmed === 0 || lane.status === 'unpaired' ? null : (
-    <p className="text-[13.5px] leading-tight">
-      <UnconfirmedPill count={unconfirmed} plus={false} />
+  const { unconfirmed } = laneSummary(items);
+  const unpaired = lane.status === 'unpaired';
+  return (
+    <p className="text-[13px] leading-tight">
+      <span
+        className={cn(
+          unpaired ? STATUS_COLOR.unpaired : 'text-muted-foreground',
+          unpaired && 'text-xs',
+        )}
+      >
+        {tileStatusWords(tile, now)}
+      </span>
+      {unconfirmed > 0 && !unpaired && <UnconfirmedPill count={unconfirmed} plus={false} />}
     </p>
   );
 }
@@ -195,15 +256,24 @@ function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
   );
 }
 
-// The Systems as tiles, in the order given: each links to its System and shows
-// its health, Vitals meters, and worst open Condition.
-export function FleetTiles({ now, tiles }: { now: number; tiles: readonly SystemTile[] }) {
+// The Systems as tiles, in the order given, two across on a phone and as many
+// as fit from `sm`, seven at 1440 px: each links to its System and shows its
+// health, its CPU since `from`, its Mem and Disk meters, and its Services up.
+export function FleetTiles({
+  from,
+  now,
+  tiles,
+}: {
+  from: number;
+  now: number;
+  tiles: readonly SystemTile<TileGlance>[];
+}) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] sm:gap-3">
       {tiles.map((tile) => (
         <Link
           className={cn(
-            'flex min-w-0 flex-col gap-1 rounded-xl border px-2.5 py-2 hover:border-muted-foreground',
+            'flex min-w-0 flex-col gap-1 rounded-xl border px-3 py-2.5 hover:border-muted-foreground',
             tile.level === 'alert' && 'border-status-critical/75',
             tile.level === 'warning' && 'border-status-serious/60',
             tile.asleep || tile.lane.status === 'unpaired' ? 'bg-muted/30' : 'card-surface',
@@ -224,11 +294,16 @@ export function FleetTiles({ now, tiles }: { now: number; tiles: readonly System
             </h3>
             <TileCorner lane={tile.lane} now={now} />
           </div>
-          {tile.lane.status === 'unpaired' && (
-            <span className={cn('self-start text-xs', STATUS_COLOR.unpaired)}>Unpaired</span>
+          <TileStatus now={now} tile={tile} />
+          {tile.lane.lastSeenAt !== undefined && (
+            <TileSparkline from={from} now={now} tile={tile} />
           )}
           <TileMeters now={now} tile={tile} />
-          <TileCondition tile={tile} />
+          {tile.lane.services.total > 0 && (
+            <p className="mt-1 text-xs text-muted-foreground tabular-nums">
+              Services {tile.lane.services.up}/{tile.lane.services.total}
+            </p>
+          )}
         </Link>
       ))}
     </div>

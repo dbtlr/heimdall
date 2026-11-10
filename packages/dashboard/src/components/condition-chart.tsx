@@ -18,28 +18,38 @@ const scaleLabel = (value: number): string => String(Math.round(value * 100) / 1
 // One reading over the window as a line over a gradient fill, its scale on the
 // left, and a dashed line across it at each limit that sets a level, in that
 // level's colour. The x axis is the window, so a gap in the readings is a
-// break in the line, and a reading alone between gaps is a dot.
-export function ConditionChart({ chart }: { chart: ChartView }) {
+// break in the line, and a reading alone between gaps is a dot. `height` is
+// the plot's in pixels; `color` the line's and fill's, the plot color unless
+// the chart stands for a level.
+export function ConditionChart({
+  chart,
+  color = PLOT_COLOR,
+  height = HEIGHT,
+}: {
+  chart: ChartView;
+  color?: string | undefined;
+  height?: number | undefined;
+}) {
   const fill = usePlotGradientId();
   return (
     <ScaledPlot
       domain={chart.domain}
       format={scaleLabel}
-      height={HEIGHT}
+      height={height}
       limits={chart.lines.map((line) => ({
         color: LEVEL_STROKE[line.level],
         label: line.label,
         value: line.value,
       }))}
     >
-      <PlotGradient color={PLOT_COLOR} id={fill} />
+      <PlotGradient color={color} id={fill} />
       <ChartContainer
         aria-label={chart.label}
         className="aspect-auto w-full"
         config={CONFIG}
-        initialDimension={{ height: HEIGHT, width: 1000 }}
+        initialDimension={{ height, width: 1000 }}
         role="img"
-        style={{ height: HEIGHT }}
+        style={{ height }}
       >
         <ComposedChart data={chart.points} margin={NO_MARGIN}>
           <XAxis
@@ -62,13 +72,13 @@ export function ConditionChart({ chart }: { chart: ChartView }) {
             dataKey="value"
             dot={({ cx, cy, index }: { cx?: number; cy?: number; index: number }) =>
               isLone(chart.points, index) && cx !== undefined && cy !== undefined ? (
-                <circle cx={cx} cy={cy} fill={PLOT_COLOR} key={index} r={2} />
+                <circle cx={cx} cy={cy} fill={color} key={index} r={2} />
               ) : (
                 <g key={index} />
               )
             }
             isAnimationActive={false}
-            stroke={PLOT_COLOR}
+            stroke={color}
             strokeWidth={1.5}
           />
         </ComposedChart>

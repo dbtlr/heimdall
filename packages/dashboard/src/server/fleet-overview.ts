@@ -243,6 +243,21 @@ export const readStretches = (
   ORDER BY st.system, st.started_at
 `;
 
+// The 5-minute CPU rollup buckets of the Systems `names` from the bucket
+// holding `from` up to `to`, by System and time, in one statement however
+// many Systems it names.
+export const readCpuBuckets = (
+  sql: SQL,
+  { from, names, to }: { from: number; names: readonly string[]; to: number },
+): Promise<BucketRow[]> => sql`
+  SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
+  FROM vitals_rollups
+  WHERE system IN ${sql(names)}
+    AND bucket >= date_bin('5 minutes', ${new Date(from)}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
+    AND bucket < ${new Date(to)}
+  ORDER BY system, bucket
+`;
+
 // When the Hub's current run of failed alert deliveries began, none while
 // delivery works or is off.
 const readDeliveryFailingSince = async (sql: SQL): Promise<number | undefined> => {
@@ -258,8 +273,9 @@ const isHubCondition = ({ kind }: Attention) =>
 
 // What the Fleet tiles draw of every paired System at `now`, and what needs
 // the operator now. The Systems no longer paired are counted, and get a glance
-// and attention of their own only when `unpaired` asks for them. Read-only.
-const readGlanceSnapshot = async (
+// and attention of their own only when `unpaired` asks for them. Read-only;
+// call it inside a snapshot, as readFleetGlance does.
+export const readGlanceSnapshot = async (
   sql: SQL,
   { now, unpaired = false }: { now: number; unpaired?: boolean },
 ): Promise<FleetGlance> => {
@@ -365,14 +381,7 @@ const readFleetOverviewSnapshot = async (
   }
   const [buckets, stretches, marks]: [BucketRow[], StretchRow[], ConditionRow[]] =
     await Promise.all([
-      sql`
-        SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
-        FROM vitals_rollups
-        WHERE system IN ${sql(names)}
-          AND bucket >= date_bin('5 minutes', ${fromAt}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
-          AND bucket < ${toAt}
-        ORDER BY system, bucket
-      `,
+      readCpuBuckets(sql, { from, names, to: now }),
       readStretches(sql, { from, systems: names, to: now }),
       sql`
         SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
@@ -413,7 +422,7 @@ const readFleetOverviewSnapshot = async (
 
 // Each read sees one snapshot, so a System's status agrees with the attention
 // beside it, and current levels with their transitions.
-const inSnapshot =
+export const inSnapshot =
   <I, O>(read: (sql: SQL, input: I) => Promise<O>) =>
   (sql: SQL, input: I) =>
     sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => read(tx, input));

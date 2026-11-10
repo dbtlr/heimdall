@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  countsAsUp,
   filterServices,
   serviceFilterCounts,
   servicesSearch,
@@ -8,6 +9,28 @@ import {
   sortServices,
 } from './services.ts';
 import type { ServiceSummary } from './services.ts';
+
+describe('a Service counted as up', () => {
+  const up = [{ state: 'up' }];
+
+  test('is one whose current checks all pass, a Service restarted note or not', () => {
+    expect(countsAsUp({ asleep: false, current: true, down: false, held: up })).toBe(true);
+    expect(
+      countsAsUp({ asleep: false, current: true, down: false, held: [{ state: 'down' }] }),
+    ).toBe(false);
+    expect(countsAsUp({ asleep: false, current: true, down: false, held: [] })).toBe(false);
+  });
+
+  test('on a System asleep, keeps the checks it last held, however old', () => {
+    expect(countsAsUp({ asleep: true, current: false, down: false, held: up })).toBe(true);
+    expect(countsAsUp({ asleep: false, current: false, down: false, held: up })).toBe(false);
+  });
+
+  test('is never one with an open Service down', () => {
+    expect(countsAsUp({ asleep: false, current: true, down: true, held: up })).toBe(false);
+    expect(countsAsUp({ asleep: true, current: false, down: true, held: up })).toBe(false);
+  });
+});
 
 describe('Service status', () => {
   test('an open Service down wins over a restart note and passing checks', () => {

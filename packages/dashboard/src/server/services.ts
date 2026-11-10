@@ -1,7 +1,8 @@
 import type { SQL } from 'bun';
 
+import { isAsleep } from '../lib/fleet.ts';
 import { serviceUpdate } from '../lib/service-updates.ts';
-import { serviceStatus, sortServices } from '../lib/services.ts';
+import { countsAsUp, serviceStatus, sortServices } from '../lib/services.ts';
 import type { ServiceSummary } from '../lib/services.ts';
 import { OLD_EVIDENCE_MS } from './attention-types.ts';
 import { QUIET_AFTER_MS } from './fleet-overview-types.ts';
@@ -29,6 +30,7 @@ type ServiceRow = UpstreamCheckRow & {
   name: string;
   restarted: boolean;
   services: ChecksRow['services'];
+  sleeps: boolean | null;
   system: string;
   version: string | null;
   upstream: string | null;
@@ -44,10 +46,10 @@ const currentChecks = (row: ServiceRow, now: number): boolean =>
   row.last_seen_at.getTime() - row.checks_received_at.getTime() <= OLD_EVIDENCE_MS;
 
 // Recorded Services and open Service Conditions on paired Systems, with checks and latest
-// stop, installed version, and available update read in one statement from one snapshot.
-export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
-  const rows: ServiceRow[] = await sql`
-    SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, down.raised_at AS down_since,
+// stop, installed version, and available update, in one statement.
+const readServiceRows = (sql: SQL): Promise<ServiceRow[]> => sql`
+    SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, s.sleeps,
+           down.raised_at AS down_since,
            EXISTS (
              SELECT 1 FROM conditions n
              WHERE n.system = r.system AND n.subject = r.name
@@ -86,6 +88,15 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
         END
     ) managers ON true
   `;
+
+// A row's checks of its own Service, however old.
+const heldChecks = (row: ServiceRow) =>
+  (row.services ?? []).filter(({ service }) => service === row.name);
+
+// Each Service's status, latest stop, installed version, and available update,
+// read in one statement from one snapshot.
+export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
+  const rows = await readServiceRows(sql);
   return sortServices(
     rows.map((row) => {
       const downSince = row.down_since?.getTime();
@@ -101,9 +112,7 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
         latestStopAt: row.latest_stop_at?.getTime(),
         name: row.name,
         status: serviceStatus({
-          checks: currentChecks(row, now)
-            ? (row.services ?? []).filter(({ service }) => service === row.name)
-            : [],
+          checks: currentChecks(row, now) ? heldChecks(row) : [],
           downSince,
           restarted: row.restarted,
         }),
@@ -113,6 +122,29 @@ export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceS
       };
     }),
   );
+};
+
+// How many of each paired System's Services are up, out of all it has, by
+// `countsAsUp`, in one statement.
+export const readServiceCounts = async (
+  sql: SQL,
+  now: number,
+): Promise<Map<string, { total: number; up: number }>> => {
+  const counts = new Map<string, { total: number; up: number }>();
+  for (const row of await readServiceRows(sql)) {
+    const up = countsAsUp({
+      asleep: isAsleep(
+        { lastSeenAt: row.last_seen_at?.getTime(), sleeps: row.sleeps === true },
+        now,
+      ),
+      current: currentChecks(row, now),
+      down: row.down_since !== null,
+      held: heldChecks(row),
+    });
+    const held = counts.get(row.system) ?? { total: 0, up: 0 };
+    counts.set(row.system, { total: held.total + 1, up: held.up + (up ? 1 : 0) });
+  }
+  return counts;
 };
 
 // Count Services once even when both Service down and Service restarted are open.

@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { SilenceBanner, silenceLeft } from './silence-line.tsx';
+import { silenceLeft } from '../lib/time.ts';
+import { SilenceBanner } from './silence-line.tsx';
 
 const NOW = Date.UTC(2026, 9, 13, 22, 30, 0);
 const UNTIL = NOW + 2 * 3_600_000;

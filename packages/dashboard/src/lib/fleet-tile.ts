@@ -6,12 +6,13 @@ import type { Disk } from '../server/system-detail-types.ts';
 import { ATTENTION_NAMES, subjectText } from './attention.ts';
 import { diskUsage, fullestDisk } from './facts.ts';
 import { fleetAttention, isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
+import { formatSpanShort } from './time.ts';
 
-// The resources a System tile draws a meter for.
-export type Meter = 'cpu' | 'disk' | 'memory';
+// The resources a System tile draws a meter for. CPU has no meter: a tile
+// draws it as a sparkline.
+export type Meter = 'disk' | 'memory';
 
 const METER_OF: Partial<Record<AttentionKind, Meter>> = {
-  high_cpu: 'cpu',
   high_memory: 'memory',
   low_disk: 'disk',
 };
@@ -60,20 +61,33 @@ export const canWaitRows = (
 
 // One System's tile: its lane, its own items, its worst level that calls for
 // action, and whether it is asleep.
-export type SystemTile = {
+export type SystemTile<L extends SystemGlance = SystemGlance> = {
   asleep: boolean;
   items: Attention[];
-  lane: SystemGlance;
+  lane: L;
   level: 'alert' | 'warning' | undefined;
+};
+
+// What a tile says of a System no alert or warning names: "Healthy", "Asleep
+// 20 h" with how long it has been quiet, "No Report yet", or "Unpaired".
+export const tileStatusWords = (tile: SystemTile, now: number): string => {
+  const { lastSeenAt, status } = tile.lane;
+  if (tile.asleep && lastSeenAt !== undefined) {
+    return `Asleep ${formatSpanShort(now - lastSeenAt)}`;
+  }
+  if (status === 'never_seen') {
+    return 'No Report yet';
+  }
+  return status === 'unpaired' ? 'Unpaired' : 'Healthy';
 };
 
 // The tiles in reading order: Systems with alerts, then warnings, awake before
 // asleep, then by name.
-export const tileOrder = (
-  lanes: readonly SystemGlance[],
+export const tileOrder = <L extends SystemGlance>(
+  lanes: readonly L[],
   attention: readonly Attention[],
   now: number,
-): SystemTile[] =>
+): SystemTile<L>[] =>
   lanes
     .map((lane) => {
       const items = attention.filter((item) => item.system === lane.name);

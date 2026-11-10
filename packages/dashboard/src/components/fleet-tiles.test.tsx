@@ -2,14 +2,21 @@ import { describe, expect, test } from 'bun:test';
 
 import { tileOrder } from '../lib/fleet-tile.ts';
 import type { Attention } from '../server/attention-types.ts';
-import type { SystemGlance } from '../server/fleet-overview-types.ts';
+import type { TileGlance } from '../server/home-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { FleetTiles } from './fleet-tiles.tsx';
 import { renderRouted } from './render-routed.tsx';
 
-const NOW = 10_000_000;
+const NOW = 100_000_000;
+const DAY = 24 * 3_600_000;
+const BUCKET = 5 * 60_000;
 
-const lane = (name: string, over: Partial<SystemGlance> = {}): SystemGlance => ({
+const lane = (name: string, over: Partial<TileGlance> = {}): TileGlance => ({
+  cpu: [
+    { average: 20, high: 30, low: 10, t: NOW - 2 * BUCKET },
+    { average: 40, high: 50, low: 30, t: NOW - BUCKET },
+  ],
+  gaps: [{ from: NOW - DAY, to: NOW - 2 * BUCKET }],
   lastSeenAt: NOW - 20_000,
   latest: {
     cpuBusyPercent: 12.4,
@@ -21,6 +28,7 @@ const lane = (name: string, over: Partial<SystemGlance> = {}): SystemGlance => (
     t: NOW - 20_000,
   },
   name,
+  services: { total: 4, up: 3 },
   silencedUntil: undefined,
   sleeps: false,
   status: 'up',
@@ -42,8 +50,8 @@ const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Att
   ...over,
 });
 
-const render = (lanes: SystemGlance[], items: Attention[] = []) =>
-  renderRouted(<FleetTiles now={NOW} tiles={tileOrder(lanes, items, NOW)} />);
+const render = (lanes: TileGlance[], items: Attention[] = []) =>
+  renderRouted(<FleetTiles from={NOW - DAY} now={NOW} tiles={tileOrder(lanes, items, NOW)} />);
 
 // The markup from the meter named `label` up to the next meter. A meter with an
 // unknown percent is labelled "<label> unknown".
@@ -52,23 +60,50 @@ const meter = (html: string, label: string) =>
     .split('<div aria-label="')
     .find((part) => part.startsWith(`${label}"`) || part.startsWith(`${label} unknown"`)) ?? '';
 
+// The markup of the tile's CPU sparkline, up to its end.
+const sparkline = (html: string) =>
+  html.split('<div aria-label="').find((part) => part.startsWith('CPU over')) ?? '';
+
 describe('a System tile', () => {
-  test('links to its System and shows CPU, Mem, and the fullest Disk with rounded percents', async () => {
+  test('links to its System and shows Mem and the fullest Disk with rounded percents, and its Services up', async () => {
     const html = await render([lane('gateway-1')]);
 
     expect(html).toContain('href="/systems/gateway-1"');
-    expect(meter(html, 'CPU')).toContain('aria-valuetext="CPU 12%"');
     expect(meter(html, 'Mem')).toContain('aria-valuetext="Mem 41%"');
     expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk /data 74%"');
     expect(meter(html, 'Disk')).toContain('>74%<');
     expect(meter(html, 'Disk')).toContain('width:74%');
+    expect(html).toContain('>Services 3/4<');
+  });
+
+  test('draws the last day of CPU as a filled line, labelled with the newest reading', async () => {
+    const html = await render([lane('gateway-1')]);
+
+    expect(sparkline(html)).toStartWith('CPU over the last 24 h, 12% at the newest sample"');
+    expect(sparkline(html)).toContain('stroke="var(--plot)"');
+    expect(sparkline(html)).toMatch(/<path d="M[\d.]+,26 L/u);
+    expect(sparkline(html)).not.toContain('data-scale-tick');
+  });
+
+  test('a tile with an alert or warning draws its CPU in that level color', async () => {
+    const html = await render([lane('gateway-1')], [disk({ level: 'warning' })]);
+
+    expect(sparkline(html)).toContain('stroke="var(--status-serious)"');
+  });
+
+  test('a System with no samples in the day draws an empty sparkline without error', async () => {
+    const html = await render([
+      lane('gateway-1', { cpu: [], gaps: [{ from: NOW - DAY, to: NOW }] }),
+    ]);
+
+    expect(sparkline(html)).toContain('<path d="" fill="none"');
   });
 
   test('a meter says its level in words as well as color', async () => {
     const html = await render([lane('gateway-1')], [disk({ level: 'warning' })]);
 
     expect(meter(html, 'Disk')).toContain('aria-valuetext="Disk /data 74%, warning"');
-    expect(meter(html, 'CPU')).not.toContain('warning');
+    expect(meter(html, 'Mem')).not.toContain('warning');
   });
 
   test('an up, fresh, unsilenced System reads as healthy, with its Last seen age, and says nothing of old Vitals or silence', async () => {
@@ -150,6 +185,8 @@ describe('asleep and silenced Systems', () => {
     expect(html).toContain('aria-label="Asleep"');
     expect(html).not.toContain('aria-label="Healthy"');
     expect(html).toContain('Last seen 7 h ago');
+    expect(html).toContain('>Asleep 7 h<');
+    expect(html).toContain('opacity-60');
   });
 
   test('a silenced System keeps its health glyph and shows the time left', async () => {
@@ -170,7 +207,6 @@ describe('meter levels and the worst Condition', () => {
 
     expect(meter(html, 'Disk')).toContain(MARK_COLOR.note);
     expect(meter(html, 'Disk')).toContain('bg-status-warning');
-    expect(meter(html, 'CPU')).not.toContain(MARK_COLOR.note);
     expect(meter(html, 'Mem')).not.toContain('bg-status-warning');
   });
 

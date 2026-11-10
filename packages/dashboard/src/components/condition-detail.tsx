@@ -60,11 +60,24 @@ function Hero({ view }: { view: ConditionDetailView }) {
   );
 }
 
-function ChartSection({ chart }: { chart: NonNullable<ConditionDetailView['chart']> }) {
+// A Condition's chart with the captions under it: the series and window, the
+// scale and limits, and the rule behind a load limit. Home's attention card
+// draws it shorter and in the Condition's level `color`.
+export function ChartSection({
+  chart,
+  className = 'mt-5',
+  color,
+  height,
+}: {
+  chart: NonNullable<ConditionDetailView['chart']>;
+  className?: string;
+  color?: string | undefined;
+  height?: number | undefined;
+}) {
   const { left, right, rule } = chart.captions;
   return (
-    <section className="mt-5 min-w-0">
-      <ConditionChart chart={chart} />
+    <section className={cn('min-w-0', className)}>
+      <ConditionChart chart={chart} color={color} height={height} />
       <p className="mt-1 flex min-w-0 flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
         <span className="min-w-0 wrap-anywhere">{left}</span>
         <span className="min-w-0 wrap-anywhere">{right}</span>
