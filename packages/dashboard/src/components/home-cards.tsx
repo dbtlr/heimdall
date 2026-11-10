@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-import { changeLink, changeWords } from '../lib/home-changes.ts';
+import { changeGroupId, changeLink, changeWords } from '../lib/home-changes.ts';
 import type { ChangeLink } from '../lib/home-changes.ts';
 import { JOBS_SHOWN, jobWords } from '../lib/home-jobs.ts';
 import type { MaintenanceCard } from '../lib/home-maintenance.ts';
@@ -216,7 +216,7 @@ export function ChangesCard({ changes, now }: { changes: readonly ChangeGroup[];
           {changes.map((group) => {
             const { detail, mono, title } = changeWords(group);
             return (
-              <li className={ROW} key={`${title}-${String(group.at)}`}>
+              <li className={ROW} key={changeGroupId(group)}>
                 <ChangeTarget className="block py-1.5 hover:underline" link={changeLink(group)}>
                   <span className={ROW_LINE}>
                     <span className="min-w-0 truncate">{title}</span>

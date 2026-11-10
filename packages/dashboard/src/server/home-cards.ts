@@ -2,32 +2,30 @@
 // statement over every paired System, so the count of statements does not
 // grow with Systems, Services, jobs, or changes.
 
-import { UpdateManagerSchema } from '@heimdall/schema';
-import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { homeJob, orderJobs } from '../lib/home-jobs.ts';
 import type { Attention } from './attention-types.ts';
-import type { Change, HomeJob } from './home-types.ts';
+import type { Change, HeldPackages, HomeJob } from './home-types.ts';
 import { conditionKind, scheduleOf, toRun } from './hub-rows.ts';
 import type { RunRow } from './hub-rows.ts';
 import { nextScheduledTime } from './next-run.ts';
 import { readServiceStops } from './service-stops.ts';
 
-// Each paired System's latest observation of each package manager it has.
-export const readPackageObservations = async (
-  sql: SQL,
-): Promise<{ observation: UpdateManager; system: string }[]> => {
-  const rows: { observation: unknown; system: string }[] = await sql`
-    SELECT m.system, m.observation FROM update_managers m
-    JOIN paired_systems p ON p.system = m.system
-    WHERE NOT m.withdrawn
+// The packages the Hub holds as pending in each package source of each paired
+// System, which a failed or stale check leaves in place, and the security
+// updates among them: a package the latest check calls one, or one the Hub has
+// held as one since an earlier check.
+export const readHeldPackages = async (sql: SQL): Promise<HeldPackages[]> =>
+  sql`
+    SELECT u.system, u.manager, u.installation, count(*)::int AS packages,
+      count(*) FILTER (
+        WHERE u.security_since IS NOT NULL OR u.pending_update->>'security' = 'true'
+      )::int AS security
+    FROM update_subjects u
+    JOIN paired_systems p ON p.system = u.system
+    GROUP BY u.system, u.manager, u.installation
   `;
-  return rows.flatMap(({ observation, system }) => {
-    const parsed = UpdateManagerSchema.safeParse(observation);
-    return parsed.success ? [{ observation: parsed.data, system }] : [];
-  });
-};
 
 type JobRow = {
   latest_run: RunRow['latest_run'] | null;
@@ -81,7 +79,8 @@ export const readHomeJobs = async (
 // Each change on a paired System between `since` and `now`: every installed
 // version that replaced another, every Service stop, and every Condition
 // raised or cleared at warning or alert. A version first seen, or one now
-// unknown, is no change.
+// unknown, is no change, and one read as unknown in between is passed over, so
+// the change is from the last version known.
 export const readChanges = async (
   sql: SQL,
   { now, since }: { now: number; since: number },
@@ -113,6 +112,7 @@ export const readChanges = async (
       JOIN LATERAL (
         SELECT version FROM service_versions w
         WHERE w.system = v.system AND w.service = v.service AND w.first_seen_at < v.first_seen_at
+          AND w.version IS NOT NULL
         ORDER BY w.first_seen_at DESC LIMIT 1
       ) previous ON true
       WHERE v.first_seen_at >= ${from} AND v.first_seen_at <= ${to}
@@ -143,9 +143,9 @@ export const readChanges = async (
             },
           ],
     ),
-    ...stops.flatMap(({ service, stoppedAt, system }): Change[] => {
+    ...stops.flatMap(({ ongoing, service, stoppedAt, system }): Change[] => {
       const at = Date.parse(stoppedAt);
-      return at > now ? [] : [{ at, kind: 'stop', service, system }];
+      return at > now ? [] : [{ at, kind: 'stop', ongoing, service, system }];
     }),
     ...transitions.map(({ action, at, id, kind, subject, system }): Change => ({
       action,

@@ -3,10 +3,9 @@
 // with an update. All of it can wait; the card names none of it as a problem.
 
 import { parseUpdateSubject } from '@heimdall/schema';
-import type { UpdateManager } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
-import type { AvailableUpdate, PendingPackages } from '../server/home-types.ts';
+import type { AvailableUpdate, HeldPackages, PendingPackages } from '../server/home-types.ts';
 import { formatSpanShort } from './time.ts';
 
 // An open Condition of `kind` on a paired System.
@@ -15,23 +14,13 @@ const isOpenOnPaired = (
   kind: 'pending_update' | 'reboot_required',
 ): item is Attention & { conditionId: string } => item.kind === kind && !item.unpaired;
 
-// The packages pending in a manager's latest observation, and how many it
-// reports as security updates.
-const pendingIn = (observation: UpdateManager) =>
-  observation.result.kind === 'available'
-    ? {
-        packages: observation.result.updates.length,
-        security: observation.result.updates.filter(({ security }) => security === true).length,
-      }
-    : { packages: 0, security: 0 };
-
 // For each paired System with an open Pending update Condition, at any level,
-// the packages pending in the sources those Conditions name, by the System's
-// latest package observations; its row links to the Condition whose source
-// holds the most. The most packages first, then by name.
+// the packages the Hub holds as pending in the sources those Conditions name,
+// as their Condition pages list them; its row links to the Condition whose
+// source holds the most. The most packages first, then by name.
 export const pendingPackages = (
   attention: readonly Attention[],
-  observations: readonly { observation: UpdateManager; system: string }[],
+  held: readonly HeldPackages[],
 ): PendingPackages[] => {
   const bySystem = new Map<string, PendingPackages & { most: number }>();
   for (const item of attention) {
@@ -39,21 +28,21 @@ export const pendingPackages = (
       continue;
     }
     const source = parseUpdateSubject(item.subject);
-    const found = observations.find(
-      ({ observation, system }) =>
+    const pending = held.find(
+      ({ installation, manager, system }) =>
         system === item.system &&
-        observation.manager === source?.manager &&
-        observation.installation === source.installation,
-    );
-    const pending =
-      found === undefined ? { packages: 0, security: 0 } : pendingIn(found.observation);
-    const held = bySystem.get(item.system);
+        manager === source?.manager &&
+        installation === source.installation,
+    ) ?? { packages: 0, security: 0 };
+    const before = bySystem.get(item.system);
     bySystem.set(item.system, {
       conditionId:
-        held === undefined || pending.packages > held.most ? item.conditionId : held.conditionId,
-      most: Math.max(held?.most ?? -1, pending.packages),
-      packages: (held?.packages ?? 0) + pending.packages,
-      security: (held?.security ?? 0) + pending.security,
+        before === undefined || pending.packages > before.most
+          ? item.conditionId
+          : before.conditionId,
+      most: Math.max(before?.most ?? -1, pending.packages),
+      packages: (before?.packages ?? 0) + pending.packages,
+      security: (before?.security ?? 0) + pending.security,
       system: item.system,
     });
   }

@@ -84,3 +84,4 @@ Those runtime interfaces are not implemented by this ADR.
 ## Changelog
 
 - 2026-10-27: Clarification. The Collector's observations still compare nothing with Application records. The Hub reads them to give a Service whose Application names an `apt:` or `brew:` upstream its installed and available versions ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The decision is unchanged.
+- 2026-11-10: Clarification. The dashboard shows an open Pending update or Reboot required note on Home's Maintenance card and in its System's Maintenance section, not among the open Conditions; at warning or alert either stays with them ([ADR-0017](0017-the-hub-sets-condition-levels.md)). The card counts the packages the Hub holds as pending, so a failed check does not lower the count, as it does not lower the Condition. The decision is unchanged.

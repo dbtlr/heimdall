@@ -16,14 +16,15 @@ type Version = Extract<Change, { kind: 'version' }>;
 type Folded = { change: Change; stops: number };
 
 // What changes must share to group: their kind, their Service or Condition
-// and subject, and their version transition or action.
+// and subject, and their version transition, action, or whether the stop is
+// ongoing.
 const groupKey = (change: Change): string => {
   switch (change.kind) {
     case 'version': {
       return JSON.stringify([change.kind, change.service, change.from, change.to]);
     }
     case 'stop': {
-      return JSON.stringify([change.kind, change.service]);
+      return JSON.stringify([change.kind, change.service, change.ongoing]);
     }
     default: {
       return JSON.stringify([change.kind, change.condition, change.subject, change.action]);
@@ -44,14 +45,15 @@ const versionFor = (stop: Stop, versions: readonly Version[]): Version | undefin
     .toSorted((a, b) => Math.abs(a.at - stop.at) - Math.abs(b.at - stop.at))[0];
 
 // Each change, a version change carrying the stops of its own Service on its
-// own System within the window, and only the stops no version change took.
+// own System within the window, and only the stops no version change took. A
+// stop still ongoing is no restart, so no version change takes it.
 const foldStops = (changes: readonly Change[]): Folded[] => {
   const versions = changes.filter((change): change is Version => change.kind === 'version');
   const folded = new Map<Change, number>(versions.map((version) => [version, 0]));
   const rest: Folded[] = [];
   for (const change of changes) {
     if (change.kind === 'stop') {
-      const version = versionFor(change, versions);
+      const version = change.ongoing ? undefined : versionFor(change, versions);
       if (version === undefined) {
         rest.push({ change, stops: 1 });
       } else {
@@ -106,6 +108,11 @@ export const groupChanges = (changes: readonly Change[], limit = CHANGES_SHOWN):
     .slice(0, limit);
 };
 
+// A group's id among those groupChanges returns: its key and its time. Runs of
+// one key never overlap, so no two of them end at the same change.
+export const changeGroupId = (group: ChangeGroup): string =>
+  `${groupKey(group.change)}@${String(group.at)}`;
+
 // "server-1", "server-1 and server-2", or "6 Systems".
 const systemsWords = (systems: readonly string[]): string => {
   const [first, second] = systems;
@@ -147,6 +154,13 @@ export const changeWords = (
       };
     }
     case 'stop': {
+      if (change.ongoing) {
+        return {
+          detail: `${where}, still stopped`,
+          mono: false,
+          title: `${change.service} stopped`,
+        };
+      }
       const stops = total(group);
       return {
         detail: where,

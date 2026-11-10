@@ -16,7 +16,7 @@ import {
 } from './fleet-overview.ts';
 import type { BucketRow } from './fleet-overview.ts';
 import { readHomeAgents } from './home-agents.ts';
-import { readChanges, readHomeJobs, readPackageObservations } from './home-cards.ts';
+import { readChanges, readHeldPackages, readHomeJobs } from './home-cards.ts';
 import { CHANGES_SINCE_MS, STOPS_WINDOW_MS, TILE_HISTORY_MS } from './home-types.ts';
 import type {
   AvailableUpdate,
@@ -152,11 +152,11 @@ const readHomeSnapshot = async (
   const { attention } = tiles;
   const { lead } = pickAttention(attention);
   const { now, timeZone } = input;
-  const [evidence, lastCleared, agents, observations, jobs, changes] = await Promise.all([
+  const [evidence, lastCleared, agents, held, jobs, changes] = await Promise.all([
     readLeadEvidence(sql, lead, now),
     lead === undefined ? readLastCleared(sql) : undefined,
     timeZone === undefined ? undefined : readHomeAgents(sql, { now, timeZone }),
-    readPackageObservations(sql),
+    readHeldPackages(sql),
     readHomeJobs(sql, { attention, now }),
     readChanges(sql, { now, since: now - CHANGES_SINCE_MS }),
   ]);
@@ -167,7 +167,7 @@ const readHomeSnapshot = async (
     jobs,
     lastCleared,
     lead: evidence,
-    maintenance: { packages: pendingPackages(attention, observations), updates },
+    maintenance: { packages: pendingPackages(attention, held), updates },
   };
 };
 

@@ -88,17 +88,28 @@ export type PendingPackages = {
   system: string;
 };
 
+// The packages the Hub holds as pending in one package source on a paired
+// System, and how many of them are security updates by its latest evidence or
+// earlier, the way the source's Pending update Condition page lists them.
+export type HeldPackages = {
+  installation: string;
+  manager: string;
+  packages: number;
+  security: number;
+  system: string;
+};
+
 // What Home's Maintenance card reads besides the open Conditions: the packages
 // pending on each paired System with an open Pending update, and each Service
 // on a paired System with an available update.
 export type HomeMaintenance = { packages: PendingPackages[]; updates: AvailableUpdate[] };
 
 // One change Home's What changed card reads, on a paired System: a Service's
-// installed version changing, a Service stopping, or a Condition at warning or
-// alert being raised or cleared.
+// installed version changing, a Service stopping, `ongoing` while it has not
+// run again, or a Condition at warning or alert being raised or cleared.
 export type Change =
   | { at: number; from: string; kind: 'version'; service: string; system: string; to: string }
-  | { at: number; kind: 'stop'; service: string; system: string }
+  | { at: number; kind: 'stop'; ongoing: boolean; service: string; system: string }
   | {
       action: 'cleared' | 'raised';
       at: number;
@@ -110,7 +121,7 @@ export type Change =
     };
 
 // Changes of one kind, about one Service or Condition, with one version
-// transition, that fell within CHANGE_WINDOW_MS of the first: `change` is the
+// transition, or stops all ongoing or all over, that fell within CHANGE_WINDOW_MS of the first: `change` is the
 // newest, `at` its time, `systems` each System by name, and `stops` how many
 // times the Service stopped on each System: the stops a version change folded
 // in, or the stops themselves.

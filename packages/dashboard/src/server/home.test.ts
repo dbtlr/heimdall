@@ -102,24 +102,21 @@ const counting = (sql: SQL) => {
 
 const at = (ms: number) => new Date(ms);
 
-// A package manager's observation with one pending package per flag, each a
-// security update when its flag is true.
-const observation = (security: boolean[]) =>
-  JSON.stringify({
-    installation: 'system',
-    manager: 'apt',
-    observedAt: NOW,
-    result: {
-      kind: 'available',
-      metadataAt: NOW,
-      updates: security.map((flag, index) => ({
-        available: '2',
-        installed: '1',
-        name: `package-${String(index)}`,
-        security: flag,
-      })),
-    },
-  });
+// The packages the Hub holds as pending in `system`'s APT source, one per
+// flag, each held as a security update since a day ago when its flag is true.
+const holdPackages = async (h: Hub, system: string, security: (boolean | null)[]) => {
+  for (const [index, flag] of security.entries()) {
+    const name = `package-${String(index)}`;
+    const update = JSON.stringify({ available: '2', installed: '1', name, security: flag });
+    // oxlint-disable-next-line no-await-in-loop -- one row per package.
+    await h.db.sql`
+      INSERT INTO update_subjects (system, subject, manager, installation, name, first_seen_at,
+        security_since, observed_at, pending_update)
+      VALUES (${system}, ${JSON.stringify(['apt', 'system', name])}, 'apt', 'system', ${name},
+        ${at(NOW - DAY)}, ${flag === true ? at(NOW - DAY) : null}, ${at(NOW)}, ${update}::text::jsonb)
+    `;
+  }
+};
 
 // A job `name` recorded on `system` daily at 03:00, with its latest run when
 // `exitStatus` is given.
@@ -284,14 +281,27 @@ describe('readHome', () => {
     });
   });
 
-  test('reads the packages pending on each System with an open Pending update, at any level, and each Service with an update, dated by its upstream', async () => {
+  test('reads the packages the Hub holds on each System with an open Pending update, at any level, after a failed check too, and each Service with an update, dated by its upstream', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { up: ['web'] });
     await hear(h, 'laptop-1');
+    await holdPackages(h, 'server-1', [true, null, false]);
+    await holdPackages(h, 'laptop-1', [false]);
+    // The Hub held server-1's second package as security when an earlier check
+    // said so, and its latest check failed: neither lowers what it holds.
     await h.db.sql`
-      INSERT INTO update_managers (system, manager, installation, observed_at, observation) VALUES
-        ('server-1', 'apt', 'system', ${at(NOW)}, ${observation([true, true, false])}::text::jsonb),
-        ('laptop-1', 'apt', 'system', ${at(NOW)}, ${observation([false])}::text::jsonb)
+      UPDATE update_subjects SET security_since = ${at(NOW - HOUR)}
+      WHERE system = 'server-1' AND name = 'package-1'
+    `;
+    const failed = JSON.stringify({
+      installation: 'system',
+      manager: 'apt',
+      observedAt: NOW,
+      result: { kind: 'unavailable', reason: 'APT timed out' },
+    });
+    await h.db.sql`
+      INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+      VALUES ('server-1', 'apt', 'system', ${at(NOW)}, ${failed}::text::jsonb)
     `;
     const subject = JSON.stringify(['apt', 'system']);
     const server = await addCondition(h.db.sql, {
@@ -351,7 +361,8 @@ describe('readHome', () => {
         ('server-1', 'collector', ${at(NOW - 2 * HOUR + MINUTE)}, false, 0, ${at(NOW)}, ${at(NOW)}),
         ('laptop-1', 'collector', ${at(NOW - 2 * HOUR + 4 * MINUTE)}, false, 0, ${at(NOW)}, ${at(NOW)}),
         ('server-1', 't3code', ${at(NOW - HOUR)}, false, 0, ${at(NOW)}, ${at(NOW)}),
-        ('server-1', 't3code', ${at(NOW - 2 * DAY)}, false, 0, ${at(NOW)}, ${at(NOW)})
+        ('server-1', 't3code', ${at(NOW - 2 * DAY)}, false, 0, ${at(NOW)}, ${at(NOW)}),
+        ('server-1', 'dev-db', ${at(NOW - 20 * MINUTE)}, true, 0, ${at(NOW)}, ${at(NOW)})
     `;
     await addCondition(h.db.sql, {
       clearedAt: -1.5 * 3600,
@@ -372,14 +383,37 @@ describe('readHome', () => {
     const { changes } = await home(h);
 
     expect(changes.map((group) => changeWords(group).title)).toEqual([
+      'dev-db stopped',
       't3code restarted',
       'Drift cleared on server-1',
       'collector 0.10.0 → 0.10.1',
       'Drift raised on server-1',
     ]);
-    expect(changes[2] === undefined ? undefined : changeWords(changes[2]).detail).toBe(
+    expect(changes[0] === undefined ? undefined : changeWords(changes[0]).detail).toBe(
+      'server-1, still stopped',
+    );
+    expect(changes[3] === undefined ? undefined : changeWords(changes[3]).detail).toBe(
       'laptop-1 and server-1, restarted once each',
     );
+  });
+
+  test('passes over a version read as unknown between two others: an upgrade across it is a change, a return to the same version is none', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'api', '1.0', null, ${at(NOW - 2 * DAY)}),
+        ('server-1', 'api', null, null, ${at(NOW - 2 * HOUR)}),
+        ('server-1', 'api', '1.1', null, ${at(NOW - 2 * HOUR + 2 * MINUTE)}),
+        ('server-1', 'cache', '2.0', null, ${at(NOW - 2 * DAY)}),
+        ('server-1', 'cache', null, null, ${at(NOW - 3 * HOUR)}),
+        ('server-1', 'cache', '2.0', null, ${at(NOW - 3 * HOUR + 2 * MINUTE)})
+    `;
+
+    const { changes } = await home(h);
+
+    expect(changes.map((group) => changeWords(group).title)).toEqual(['api 1.0 → 1.1']);
   });
 
   test('reads every recorded job: failing first, then overdue, then by latest run, and one never run due at its next time', async () => {
@@ -444,10 +478,7 @@ describe('readHome', () => {
     // A job, a pending update, a reboot, a version change, and a stop on `system`.
     const cards = async (system: string) => {
       await recordJob(h, system, 'backup', 0);
-      await h.db.sql`
-        INSERT INTO update_managers (system, manager, installation, observed_at, observation)
-        VALUES (${system}, 'apt', 'system', ${at(NOW)}, ${observation([true])}::text::jsonb)
-      `;
+      await holdPackages(h, system, [true, false]);
       await addCondition(h.db.sql, {
         kind: 'pending_update',
         level: 'note',

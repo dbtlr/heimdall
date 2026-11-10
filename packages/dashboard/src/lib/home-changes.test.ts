@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { Change } from '../server/home-types.ts';
-import { changeLink, changeWords, groupChanges } from './home-changes.ts';
+import { changeGroupId, changeLink, changeWords, groupChanges } from './home-changes.ts';
 
 const MINUTE = 60_000;
 const NOW = 1_800_000_000_000;
@@ -15,20 +15,31 @@ const version = (system: string, at: number, from = '0.10.0', to = '0.10.1'): Ch
   to,
 });
 
-const stop = (system: string, at: number, service = 'heimdall-collector'): Change => ({
+const stop = (
+  system: string,
+  at: number,
+  service = 'heimdall-collector',
+  ongoing = false,
+): Change => ({
   at,
   kind: 'stop',
+  ongoing,
   service,
   system,
 });
 
-const condition = (action: 'cleared' | 'raised', at: number, system = 'server-1'): Change => ({
+const condition = (
+  action: 'cleared' | 'raised',
+  at: number,
+  system = 'server-1',
+  subject = '/etc/hosts',
+): Change => ({
   action,
   at,
   condition: 'drift',
-  conditionId: `${action}-${String(at)}`,
+  conditionId: `${action}-${String(at)}-${subject}`,
   kind: 'condition',
-  subject: '/etc/hosts',
+  subject,
   system,
 });
 
@@ -109,6 +120,26 @@ describe('groupChanges', () => {
     ).toBe('t3code restarted 2 times');
   });
 
+  test('a stop still ongoing says its Service stopped, not restarted, and no version change folds it', () => {
+    expect(words([stop('server-1', NOW, 'dev-db', true)])).toEqual([
+      { detail: 'server-1, still stopped', mono: false, title: 'dev-db stopped' },
+    ]);
+    expect(
+      words([
+        version('server-1', NOW),
+        stop('server-1', NOW - MINUTE),
+        stop('server-1', NOW + MINUTE, 'heimdall-collector', true),
+      ]),
+    ).toEqual([
+      { detail: 'server-1, still stopped', mono: false, title: 'heimdall-collector stopped' },
+      {
+        detail: 'server-1, restarted once',
+        mono: false,
+        title: 'heimdall-collector 0.10.0 → 0.10.1',
+      },
+    ]);
+  });
+
   test('a Condition raised then cleared is two changes, the clear first', () => {
     const groups = groupChanges([condition('raised', NOW), condition('cleared', NOW + 5 * MINUTE)]);
 
@@ -117,8 +148,12 @@ describe('groupChanges', () => {
       { detail: '/etc/hosts', mono: true, title: 'Drift raised on server-1' },
     ]);
     expect(groups.map(changeLink)).toEqual([
-      { id: `cleared-${String(NOW + 5 * MINUTE)}`, system: 'server-1', to: 'condition' },
-      { id: `raised-${String(NOW)}`, system: 'server-1', to: 'condition' },
+      {
+        id: `cleared-${String(NOW + 5 * MINUTE)}-/etc/hosts`,
+        system: 'server-1',
+        to: 'condition',
+      },
+      { id: `raised-${String(NOW)}-/etc/hosts`, system: 'server-1', to: 'condition' },
     ]);
   });
 
@@ -143,6 +178,24 @@ describe('groupChanges', () => {
 
     expect(changeLink(one!)).toEqual({ service: 't3code', system: 'server-1', to: 'service' });
     expect(changeLink(several!)).toEqual({ systems: ['db-1', 'server-1'], to: 'services' });
+  });
+
+  test('each group has its own id, even two changes of one kind on one System at one time', () => {
+    const groups = groupChanges([
+      condition('raised', NOW, 'server-1', '/etc/hosts'),
+      condition('raised', NOW, 'server-1', '/etc/fstab'),
+      version('server-1', NOW),
+      version('server-1', NOW + 20 * MINUTE),
+    ]);
+    const ids = groups.map(changeGroupId);
+
+    expect(
+      groups
+        .map(changeWords)
+        .slice(1, 3)
+        .map(({ title }) => title),
+    ).toEqual(['Drift raised on server-1', 'Drift raised on server-1']);
+    expect(new Set(ids).size).toBe(4);
   });
 
   test('groups come newest first, at most 5', () => {

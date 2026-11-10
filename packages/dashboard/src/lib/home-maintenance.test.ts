@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { UpdateManager } from '@heimdall/schema';
-
 import type { Attention } from '../server/attention-types.ts';
 import { maintenanceCard, pendingPackages } from './home-maintenance.ts';
 
@@ -27,24 +25,19 @@ const condition = (
     ...over,
   }) as Attention;
 
-const observation = (
-  manager: UpdateManager['manager'],
+// The packages the Hub holds as pending in one source on `system`.
+const held = (
+  system: string,
+  manager: string,
   installation: string,
-  security: (boolean | null)[],
-): UpdateManager => ({
+  packages: number,
+  security: number,
+) => ({
   installation,
   manager,
-  observedAt: NOW,
-  result: {
-    kind: 'available',
-    metadataAt: NOW,
-    updates: security.map((flag, index) => ({
-      available: '2',
-      installed: '1',
-      name: `package-${String(index)}`,
-      security: flag,
-    })),
-  },
+  packages,
+  security,
+  system,
 });
 
 describe('pendingPackages', () => {
@@ -57,11 +50,11 @@ describe('pendingPackages', () => {
     const counts = pendingPackages(
       [condition('pending_update', 'server-1'), condition('pending_update', 'laptop-1'), brew],
       [
-        { observation: observation('apt', 'system', [true, false, null]), system: 'server-1' },
-        { observation: observation('apt', 'system', [false]), system: 'laptop-1' },
-        { observation: observation('homebrew', '/opt/homebrew', [true, true]), system: 'laptop-1' },
+        held('server-1', 'apt', 'system', 3, 1),
+        held('laptop-1', 'apt', 'system', 1, 0),
+        held('laptop-1', 'homebrew', '/opt/homebrew', 2, 2),
         // A source no open Condition names is not counted.
-        { observation: observation('homebrew', '/usr/local', [true]), system: 'server-1' },
+        held('server-1', 'homebrew', '/usr/local', 1, 1),
       ],
     );
 
@@ -72,7 +65,7 @@ describe('pendingPackages', () => {
   });
 
   test('an unpaired System, and a System whose Condition is not open, are not counted', () => {
-    const apt = { observation: observation('apt', 'system', [true]), system: 'server-1' };
+    const apt = held('server-1', 'apt', 'system', 1, 1);
 
     expect(pendingPackages([], [apt])).toEqual([]);
     expect(
