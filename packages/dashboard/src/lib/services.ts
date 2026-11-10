@@ -16,6 +16,9 @@ export type ServiceSummary = {
   update: string | undefined;
 };
 
+const allUp = (checks: readonly { state: string }[]) =>
+  checks.length > 0 && checks.every(({ state }) => state === 'up');
+
 // Stored Conditions take precedence; checks alone establish up only when all pass.
 export const serviceStatus = ({
   checks,
@@ -32,8 +35,25 @@ export const serviceStatus = ({
   if (restarted) {
     return 'restarted';
   }
-  return checks.length > 0 && checks.every(({ state }) => state === 'up') ? 'up' : 'unknown';
+  return allUp(checks) ? 'up' : 'unknown';
 };
+
+// Whether a Service counts as up in its System's figures: never while Service
+// down is open, otherwise when its checks all pass. A Service restarted note
+// leaves it up, as notes never make a System look unhealthy (ADR-0017). A
+// System asleep is judged by the checks it last held, however old, as its
+// tile keeps the Vitals it last sent; any other System by its current checks.
+export const countsAsUp = ({
+  asleep,
+  current,
+  down,
+  held,
+}: {
+  asleep: boolean;
+  current: boolean;
+  down: boolean;
+  held: readonly { state: string }[];
+}): boolean => !down && (current || asleep) && allUp(held);
 
 export type ServiceFilters = { status: ServiceStatusFilter[]; system: string[] };
 

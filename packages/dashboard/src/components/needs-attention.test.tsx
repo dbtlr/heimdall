@@ -171,6 +171,16 @@ describe('the attention card', () => {
     expect(html).not.toContain('Processes holding the most memory');
   });
 
+  test('evidence read for another Condition than the lead is not shown under it', async () => {
+    const html = await render({
+      attention: [memory],
+      lead: { conditionId: '99', detail: memoryDetail(undefined), stops: undefined },
+    });
+
+    expect(html).toContain('High memory on vm-host-1');
+    expect(html).not.toContain('data-limit="90"');
+  });
+
   test("a Service down lead shows its latest checks and the week's stops", async () => {
     const html = await render({
       attention: [down],

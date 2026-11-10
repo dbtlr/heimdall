@@ -143,11 +143,17 @@ const joined = (parts: readonly (Phrase | string | undefined)[]): Phrase =>
 // edge takes, and a supporting line of facts the glance already holds: the
 // worst item and how long it has been open, whether anything is down, Systems
 // asleep, a silence, failing alert delivery (ADR-0020), and notes that can wait.
+// With no System to judge, it says so, and still states failing delivery.
 export const homeVerdict = (glance: VerdictInput): HomeVerdict => {
   const { attention, lanes, now } = glance;
+  const failingSince = deliveryFailingShown(glance);
+  const delivery =
+    failingSince === undefined
+      ? undefined
+      : ['Alert delivery has failed since ', whenAt(failingSince, now), '.'];
   const empty = emptyFleetText(lanes);
   if (empty !== undefined) {
-    return { level: 'empty', sentence: empty.text, support: [] };
+    return { level: 'empty', sentence: empty.text, support: joined([delivery]) };
   }
   const { counts, notes } = fleetAttention(attention);
   const { lead } = pickAttention(attention);
@@ -164,7 +170,6 @@ export const homeVerdict = (glance: VerdictInput): HomeVerdict => {
       ({ lastSeenAt }) => lastSeenAt !== undefined && now - lastSeenAt <= QUIET_AFTER_MS,
     ) &&
     lanes.every(({ services }) => services.up === services.total);
-  const failingSince = deliveryFailingShown(glance);
   return {
     level: lead?.level ?? 'healthy',
     sentence,
@@ -177,9 +182,7 @@ export const homeVerdict = (glance: VerdictInput): HomeVerdict => {
       ),
       asleepWords(asleep, lanes.length),
       silenceWords(lanes, now),
-      failingSince === undefined
-        ? undefined
-        : ['Alert delivery has failed since ', whenAt(failingSince, now), '.'],
+      delivery,
       notes.length === 0 ? undefined : `${count(notes.length, 'One note', 'notes')} can wait.`,
     ]),
   };

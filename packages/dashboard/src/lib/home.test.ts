@@ -177,8 +177,40 @@ describe('homeVerdict', () => {
     expect(result).toEqual({ level: 'empty', sentence: 'No System is paired.', support: [] });
   });
 
+  test('with no System paired or none reported yet, a failing alert delivery is still stated', () => {
+    for (const lanes of [[], [lane('server-1', { lastSeenAt: undefined, status: 'never_seen' })]]) {
+      const result = verdict([], lanes, { deliveryFailingSince: NOW - HOUR });
+
+      expect(result.level).toBe('empty');
+      expect(result.support).toContainEqual({ at: NOW - HOUR, format: 'when', now: NOW });
+    }
+  });
+
+  test('a lone Service down alert never adds that nothing is down', () => {
+    expect(support([down()])).toBe('Down for 4 min.');
+    expect(support([down(), down({ conditionId: '4', level: 'warning', subject: 'db' })])).toBe(
+      'Down for 4 min. One other Service is down.',
+    );
+  });
+
   test('unpaired Systems and their items never change the verdict', () => {
     expect(verdict([down({ unpaired: true })]).sentence).toBe('Everything is healthy.');
+    expect(verdict([memory({ unpaired: true })]).sentence).toBe('Everything is healthy.');
+    expect(support([memory(), down({ level: 'warning', unpaired: true })])).toBe(
+      'High memory on server-1 has been open for 1 d 1 h. Nothing is down.',
+    );
+  });
+
+  test('a silence that has ended is not mentioned', () => {
+    const lanes = [lane('server-1'), lane('edge-1', { silencedUntil: NOW - MINUTE })];
+
+    expect(support([], lanes)).toBe('Every System reports and every Service is up.');
+  });
+
+  test('a fleet of one asleep System names it', () => {
+    const asleep = { lastSeenAt: NOW - 3 * HOUR, sleeps: true, status: 'asleep' as const };
+
+    expect(support([], [lane('laptop-1', asleep)])).toBe('Nothing is down. laptop-1 is asleep.');
   });
 });
 
@@ -192,6 +224,21 @@ describe('pickAttention', () => {
 
     expect(lead?.conditionId).toBe('b');
     expect(rest.map(({ conditionId }) => conditionId)).toEqual(['a', 'c']);
+  });
+
+  test('breaks a tie in age by System, then Condition, then subject', () => {
+    const at = NOW - HOUR;
+    const items = [
+      memory({ conditionId: 'd', firstDetected: at, kind: 'high_cpu', system: 'edge-1' }),
+      memory({ conditionId: 'c', firstDetected: at, system: 'server-1' }),
+      memory({ conditionId: 'b', firstDetected: at, system: 'edge-1' }),
+      note({ conditionId: 'a', firstDetected: at, level: 'warning', subject: '/var' }),
+      note({ conditionId: 'e', firstDetected: at, level: 'warning', subject: '/' }),
+    ];
+
+    const { lead, rest } = pickAttention(items);
+
+    expect([lead, ...rest].map((item) => item?.conditionId)).toEqual(['d', 'b', 'c', 'e', 'a']);
   });
 
   test('leaves out notes, unpaired items, and paired Service restarted notes', () => {

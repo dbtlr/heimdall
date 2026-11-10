@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, storeToken, timeline } from '@heimdall/hub/testing';
+import { NOW, push, report, startHub, storeToken, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import type { SQL } from 'bun';
 
@@ -123,6 +123,45 @@ describe('readHome', () => {
     });
   });
 
+  test('counts a Service with a Service restarted note as up, and an asleep System by the checks it last held', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web', 'db'] });
+    await hear(h, 'laptop-1', { up: ['web', 'db'] });
+    await addCondition(h.db.sql, {
+      kind: 'service_restarted',
+      level: 'note',
+      raisedAt: -60,
+      subject: 'web',
+      system: 'server-1',
+    });
+    await h.db.sql`
+      UPDATE systems SET sleeps = true, last_seen_at = ${new Date(NOW - 3 * HOUR)}
+      WHERE name = 'laptop-1'
+    `;
+
+    const { lanes } = await home(h);
+    const [laptop, server] = ['laptop-1', 'server-1'].map((name) =>
+      lanes.find((lane) => lane.name === name),
+    );
+
+    expect(server?.services).toEqual({ total: 2, up: 2 });
+    expect(laptop?.status).toBe('asleep');
+    expect(laptop?.services).toEqual({ total: 2, up: 2 });
+  });
+
+  test('counts a quiet System that does not sleep as having no Service up', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web'] });
+    await h.db.sql`
+      UPDATE systems SET sleeps = false, last_seen_at = ${new Date(NOW - 3 * HOUR)}
+      WHERE name = 'server-1'
+    `;
+
+    const server = (await home(h)).lanes.find(({ name }) => name === 'server-1');
+
+    expect(server?.services).toEqual({ total: 1, up: 0 });
+  });
+
   test('reads the chart and memory holders behind a High memory lead, the newest of the worst', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { times: [NOW - HOUR, NOW] });
@@ -180,6 +219,17 @@ describe('readHome', () => {
         system: 'server-1',
       });
     }
+    // A newer clear on a System no longer paired is not Home's to name.
+    await hear(h, 'laptop-1');
+    await addCondition(h.db.sql, {
+      clearedAt: -60,
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -600,
+      subject: '/',
+      system: 'laptop-1',
+    });
+    await unpair(h.db.sql, 'laptop-1');
     const read = await home(h);
 
     expect(read.lead).toBeUndefined();

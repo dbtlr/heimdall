@@ -23,19 +23,9 @@ import type {
 } from './home-types.ts';
 import { bySystem, conditionKind } from './hub-rows.ts';
 import { readServiceStops } from './service-stops.ts';
-import { readServices } from './services.ts';
+import { readServiceCounts } from './services.ts';
 
 type Input = { now: number; unpaired: boolean };
-
-// How many of each System's Services are up, out of all it has.
-const serviceCounts = (services: readonly { status: string; system: string }[]) => {
-  const counts = new Map<string, { total: number; up: number }>();
-  for (const { status, system } of services) {
-    const held = counts.get(system) ?? { total: 0, up: 0 };
-    counts.set(system, { total: held.total + 1, up: held.up + (status === 'up' ? 1 : 0) });
-  }
-  return counts;
-};
 
 // The glance with each System's tile: its CPU over the last day, the gaps in
 // it, and its Services. Each part is one statement over every System shown,
@@ -45,12 +35,14 @@ const readTilesSnapshot = async (sql: SQL, { now, unpaired }: Input): Promise<Sy
   const glance = await readGlanceSnapshot(sql, { now, unpaired });
   const from = now - TILE_HISTORY_MS;
   const names = [...glance.lanes, ...glance.unpairedLanes].map(({ name }) => name);
-  const [buckets, services]: [BucketRow[], { status: string; system: string }[]] =
+  const [buckets, countsOf]: [BucketRow[], Map<string, { total: number; up: number }>] =
     names.length === 0
-      ? [[], []]
-      : await Promise.all([readCpuBuckets(sql, { from, names, to: now }), readServices(sql, now)]);
+      ? [[], new Map()]
+      : await Promise.all([
+          readCpuBuckets(sql, { from, names, to: now }),
+          readServiceCounts(sql, now),
+        ]);
   const bucketsOf = bySystem(buckets);
-  const countsOf = serviceCounts(services);
   const tileOf = (lane: SystemGlance): TileGlance => {
     const cpu = (bucketsOf.get(lane.name) ?? []).map(toBucket);
     return {
@@ -99,7 +91,10 @@ const readLeadEvidence = async (
   return { conditionId, detail: undefined, stops: undefined };
 };
 
-// The Condition on a paired System that cleared last, if any ever did.
+// The Condition on a paired System that cleared last, if any ever did: the
+// latest clear the Hub recorded. Walking the transitions newest first by their
+// key stops at the first such clear, so the read does not grow with history,
+// as an order by `cleared_at`, which no index covers, would.
 const readLastCleared = async (sql: SQL): Promise<ClearedCondition | undefined> => {
   const [row]: {
     cleared_at: Date;
@@ -111,10 +106,11 @@ const readLastCleared = async (sql: SQL): Promise<ClearedCondition | undefined> 
     system: string;
   }[] = await sql`
     SELECT c.id::text AS id, c.system, c.kind, c.level, c.subject, c.raised_at, c.cleared_at
-    FROM conditions c
+    FROM condition_transitions t
+    JOIN conditions c ON c.id = t.condition
     JOIN paired_systems p ON p.system = c.system
-    WHERE c.cleared_at IS NOT NULL
-    ORDER BY c.cleared_at DESC, c.id DESC
+    WHERE t.action = 'cleared' AND c.cleared_at IS NOT NULL
+    ORDER BY t.id DESC
     LIMIT 1
   `;
   return row === undefined
