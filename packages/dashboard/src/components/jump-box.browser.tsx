@@ -111,9 +111,11 @@ async function run() {
     assert(document.activeElement === other, 'A slash typed in another field stays there');
 
     other.blur();
-    press(document.body, '/');
+    const shortcut = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: '/' });
+    flushSync(() => document.body.dispatchEvent(shortcut));
     await settle();
     assert(document.activeElement === box, 'A slash elsewhere focuses the jump box');
+    assert(shortcut.defaultPrevented, 'The slash that focuses the box is not typed into it');
     assert(options().length === 0, 'An empty query lists nothing');
 
     type(box, 'serv');

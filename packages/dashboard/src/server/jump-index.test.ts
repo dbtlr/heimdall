@@ -36,14 +36,16 @@ test('the jump index names every System, each paired Service with its System, an
     id: 'older',
     lastCwd: '/home/someone/work/norn',
     requests: [-2 * DAY_S],
-    system: 'server-1',
+    system: 'laptop-1',
   });
+  // The newer Session's System sorts after the older one's, so only the time
+  // puts it first.
   await addSession(h.db.sql, {
     firstCwd: '/home/someone/work/fleet',
     harness: 'codex',
     id: 'newer',
     requests: [-60],
-    system: 'laptop-1',
+    system: 'server-1',
   });
   await addSession(h.db.sql, {
     firstCwd: '/home/someone/work/ancient',
@@ -66,14 +68,14 @@ test('the jump index names every System, each paired Service with its System, an
         project: 'fleet',
         sessionId: 'newer',
         source: 'codex',
-        system: 'laptop-1',
+        system: 'server-1',
       },
       {
         harness: 'claude-code',
         project: 'norn',
         sessionId: 'older',
         source: 'claude-code',
-        system: 'server-1',
+        system: 'laptop-1',
       },
     ],
     systems: ['edge-1', 'laptop-1', 'retired-1', 'server-1'],

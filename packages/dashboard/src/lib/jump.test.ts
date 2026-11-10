@@ -53,6 +53,15 @@ test('spaces around a query are ignored', () => {
   expect(labels(' 5e7a ')).toEqual(['session 5e7a0c']);
 });
 
+test('names match ignoring case, the name and the query alike', () => {
+  const mixed = { ...index, projects: ['MyApp'], services: [{ name: 'Caddy', system: 'Edge-1' }] };
+  const found = (query: string) =>
+    jumpMatches(mixed, query).map((item) => (item.kind === 'session' ? item.sessionId : item.name));
+  expect(found('myapp')).toEqual(['MyApp']);
+  expect(found('app')).toEqual(['MyApp']);
+  expect(found('caddy')).toEqual(['Caddy']);
+});
+
 test('no match is an empty list', () => {
   expect(labels('zzz')).toEqual([]);
 });
