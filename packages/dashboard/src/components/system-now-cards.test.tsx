@@ -70,7 +70,7 @@ test('the four cards show CPU with its range high, memory, the disk, and load', 
   expect(html).toContain('Sample time');
   expect(html).toContain('1.50');
   expect(html).toContain('5-min 1.25 · 15-min 0.50');
-  expect((html.match(/<path /gu) ?? []).length).toBe(2);
+  expect((html.match(/<path [^>]*fill="none"/gu) ?? []).length).toBe(2);
 });
 
 test('the disk card names the low-disk mount and takes its Condition level color', () => {
