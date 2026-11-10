@@ -29,7 +29,7 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
   const unconfirmed = attentionMark(item) === 'unknown';
   return (
     <tr className={cn(ROW, unconfirmed && 'border-dashed text-muted-foreground')}>
-      <td className={cn(CELL, 'max-sm:font-semibold')}>
+      <td className={cn(CELL, 'max-sm:font-semibold sm:whitespace-nowrap')}>
         {item.system}
         {item.unpaired && (
           <em className="ml-1 rounded border px-[5px] text-xs font-normal text-muted-foreground not-italic">
@@ -57,11 +57,11 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
       <td className={cn(CELL, 'max-sm:col-span-full', unconfirmed && 'italic')}>
         <PhraseText phrase={evidenceWords(item, now).observedShort} />
       </td>
-      <td className={CELL}>
+      <td className={cn(CELL, 'sm:whitespace-nowrap')}>
         <PhoneLabel>First detected</PhoneLabel>
         <DateTime at={item.firstDetected} format="when" now={now} />
       </td>
-      <td className={CELL}>
+      <td className={cn(CELL, 'sm:whitespace-nowrap')}>
         <PhoneLabel>Latest check</PhoneLabel>
         {item.checkedAt === undefined ? (
           '—'
