@@ -76,3 +76,40 @@ test('the jump index names every System, each paired Service with its System, an
     systems: ['laptop-1', 'retired-1', 'server-1'],
   });
 });
+
+test('the jump index offers only projects with a request in the 30 days, the ones the Agents page can pick', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await addSession(h.db.sql, {
+    firstCwd: '/home/someone/work/fleet',
+    id: 'busy',
+    requests: [-60],
+    system: 'server-1',
+  });
+  // Its last request is older than the window; its transcript ran on into it.
+  await addSession(h.db.sql, {
+    firstCwd: '/home/someone/work/trailing',
+    id: 'trail',
+    requests: [-31 * DAY_S],
+    system: 'server-1',
+  });
+  await h.db.sql`
+    UPDATE projected_sessions SET ended_at = ${new Date(NOW - 29 * DAY_S * 1000)}
+    WHERE session_id = 'trail'
+  `;
+  // A transcript inside the window with no request at all.
+  await h.db.sql`
+    INSERT INTO projected_sessions (
+      harness, parser_version, system, source, session_id, path, started_at, ended_at,
+      first_cwd, last_cwd
+    )
+    VALUES ('claude-code', 1, 'server-1', 'claude-code', 'quiet', 'projects/p/quiet.jsonl',
+            ${new Date(NOW - DAY_S * 1000)}, ${new Date(NOW - DAY_S * 1000)},
+            '/home/someone/work/lonely', '/home/someone/work/lonely')
+  `;
+
+  const index = await readJumpIndex(h.db.sql, { now: NOW });
+
+  expect(index.projects).toEqual(['fleet']);
+  expect(index.sessions.map(({ sessionId }) => sessionId)).toEqual(['busy', 'quiet', 'trail']);
+});

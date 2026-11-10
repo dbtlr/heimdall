@@ -17,5 +17,6 @@ export type JumpIndex = {
 };
 
 // How far back the index reaches for projects and Sessions: the Agents page's
-// longest period, so a project it opens has a row to pick.
+// longest period. A project counts only with a request inside it, so the
+// Agents page it opens has a row to pick.
 export const JUMP_SESSION_DAYS = 30;

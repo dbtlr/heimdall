@@ -10,8 +10,8 @@
    Components take colors from these through the Tailwind theme below, never as
    literals. */
 :root {
-  /* Three surface steps: the page, the bars and sidebar, and cards. A card's
-     gradient runs from its top to its bottom color. */
+  /* Three surface steps: the page, the top and bottom bars, and cards. A
+     card's gradient runs from its top to its bottom color. */
   --background: #0a0f18;
   --bar: #0e1420;
   --card: #131a27;
