@@ -4,7 +4,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
-import { canWaitRows, diskReading, meterLevels, tileOrder } from './fleet-tile.ts';
+import { canWaitRows, diskReading, meterLevels, tileOrder, tileStatusWords } from './fleet-tile.ts';
 
 const condition = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
   checkedAt: 100,
@@ -160,6 +160,22 @@ describe('tileOrder', () => {
     const [tile] = tileOrder([lane('a')], items, 0);
 
     expect(tile?.items).toEqual(items.slice(0, 1));
+  });
+});
+
+describe('tileStatusWords', () => {
+  const now = 100_000_000;
+  const words = (over: Parameters<typeof lane>[1]) => {
+    const [tile] = tileOrder([lane('a', over)], [], now);
+    return tile === undefined ? undefined : tileStatusWords(tile, now);
+  };
+
+  test('an up System is healthy, an asleep one says how long it has slept, and one never seen has no Report', () => {
+    expect(words({ lastSeenAt: now - 5000 })).toBe('Healthy');
+    expect(words({ lastSeenAt: now - 20 * 3_600_000, sleeps: true, status: 'asleep' })).toBe(
+      'Asleep 20 h',
+    );
+    expect(words({ lastSeenAt: undefined, status: 'never_seen' })).toBe('No Report yet');
   });
 });
 

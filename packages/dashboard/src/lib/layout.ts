@@ -13,11 +13,3 @@ export type FrameWidth = keyof typeof FRAME_WIDTH;
 // page that never widened it.
 export const contentFrame = (width: FrameWidth, phonePaddingOnly = false): string =>
   `mx-auto ${FRAME_WIDTH[width]} px-3.5 ${phonePaddingOnly ? '' : 'sm:px-[22px] lg:px-3.5'}`.trimEnd();
-
-// Tailwind's `lg` breakpoint as a media query: from here Home shows lanes.
-export const WIDE_MEDIA = '(min-width: 1024px)';
-
-// Whether this runs in a browser at `lg` or wider, where the lanes show. False
-// on the server, which cannot tell, so a first load never reads the lanes.
-export const isWideBrowser = (): boolean =>
-  typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(WIDE_MEDIA).matches;

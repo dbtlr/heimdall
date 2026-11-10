@@ -6,11 +6,11 @@ import { UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { tileOrder } from '../lib/fleet-tile.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
-import { getFleetGlance } from '../server/fleet-overview-fn.ts';
+import { getSystemTiles } from '../server/home-fn.ts';
 
 export const Route = createFileRoute('/systems/')({
   component: Systems,
-  loader: ({ deps }: { deps: { unpaired: boolean } }) => getFleetGlance({ data: deps }),
+  loader: ({ deps }: { deps: { unpaired: boolean } }) => getSystemTiles({ data: deps }),
   loaderDeps: ({ search }) => ({ unpaired: search.unpaired === true }),
   // `unpaired` is true or absent, as on Home, so a URL without it lists the paired Systems.
   validateSearch: (search: { unpaired?: unknown } & SearchSchemaInput) => ({
@@ -18,8 +18,9 @@ export const Route = createFileRoute('/systems/')({
   }),
 });
 
-// Every paired System as a tile with its status and newest Vitals, each
-// opening its page; `?unpaired` adds the unpaired Systems below, as on Home.
+// Every paired System as the tile Home shows, with its status, its last day of
+// CPU, its newest Vitals, and its Services up, each opening its page;
+// `?unpaired` adds the unpaired Systems below, as on Home.
 function Systems() {
   const glance = Route.useLoaderData();
   const showUnpaired = Route.useSearch().unpaired === true;
@@ -34,14 +35,22 @@ function Systems() {
         </p>
       </div>
       {empty !== undefined && <p className="pb-3 text-lg font-semibold">{empty.text}</p>}
-      <FleetTiles now={now} tiles={tileOrder(glance.lanes, glance.attention, now)} />
+      <FleetTiles
+        from={glance.from}
+        now={now}
+        tiles={tileOrder(glance.lanes, glance.attention, now)}
+      />
       {showUnpaired && (
         <section className="mt-6">
           <h2 className="mb-3 text-lg font-semibold">Unpaired, history kept</h2>
           {glance.unpairedLanes.length === 0 ? (
             <p>No System is unpaired.</p>
           ) : (
-            <FleetTiles now={now} tiles={tileOrder(glance.unpairedLanes, glance.attention, now)} />
+            <FleetTiles
+              from={glance.from}
+              now={now}
+              tiles={tileOrder(glance.unpairedLanes, glance.attention, now)}
+            />
           )}
         </section>
       )}

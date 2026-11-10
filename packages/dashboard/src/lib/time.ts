@@ -149,6 +149,13 @@ export const formatSpan = (ms: number): string => {
 
 // A length of time in its largest unit only, rounded down: "20 s", "4 min", "7 h",
 // "3 d". For a corner where the two-unit form of formatSpan would not fit.
+// The time left on a silence: "2 h", "1 h 31 min", never below "1 min". Rounds up
+// to the minute, as `heimdall-hub silence` lists it, so a silence just set for
+// 2 h reads as 2 h. formatSpan then shows two units, so from a day on the
+// minutes are dropped.
+export const silenceLeft = (now: number, until: number): string =>
+  formatSpan(Math.max(1, Math.ceil((until - now) / MINUTE_MS)) * MINUTE_MS);
+
 export const formatSpanShort = (ms: number): string => {
   if (ms < MINUTE_MS) {
     return `${String(Math.max(0, Math.floor(ms / SECOND_MS)))} s`;

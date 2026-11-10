@@ -2,7 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
-import { AutoRefresh, RefreshOnWiden } from '../components/auto-refresh.tsx';
+import { AutoRefresh } from '../components/auto-refresh.tsx';
 import { TopBar } from '../components/top-bar.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
@@ -67,7 +67,6 @@ function Root() {
   return (
     <ServiceAttentionCount value={count}>
       <AutoRefresh />
-      <RefreshOnWiden />
       <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
       <Outlet />
       <div className="sm:hidden">
