@@ -1,11 +1,11 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { FleetLane } from '../components/fleet-lane.tsx';
 import { FleetLegend } from '../components/fleet-legend.tsx';
 import { OpenNow } from '../components/open-now.tsx';
+import { PageToolbar } from '../components/page-toolbar.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { TimeAxis } from '../components/time-axis.tsx';
 import { UnpairedLanes, UnpairedLink } from '../components/unpaired-lanes.tsx';
@@ -41,9 +41,9 @@ function Compare() {
   const itemsOf = (system: string) => overview.attention.filter((item) => item.system === system);
   return (
     <>
-      <AppHeader>
+      <PageToolbar>
         <RangePicker current={range} />
-      </AppHeader>
+      </PageToolbar>
       <main className={`${contentFrame('wide')} pb-8`}>
         <Link className="inline-flex min-h-11 items-center text-primary" to="/">
           ‹ Fleet

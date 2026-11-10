@@ -2,18 +2,16 @@ import { Link, createFileRoute, useRouter } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { CanWait } from '../components/can-wait.tsx';
 import { DeliveryFailing } from '../components/delivery-failing.tsx';
 import { FleetTiles } from '../components/fleet-tiles.tsx';
-import { FleetVerdict } from '../components/fleet-verdict.tsx';
 import { FleetWide } from '../components/fleet-wide.tsx';
 import { OpenNow } from '../components/open-now.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { isOverview, readFleetPage } from '../lib/fleet-data.ts';
 import type { FleetData } from '../lib/fleet-data.ts';
 import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
-import { deliveryFailingShown, fleetAttention } from '../lib/fleet.ts';
+import { deliveryFailingShown } from '../lib/fleet.ts';
 import { contentFrame, isWideBrowser } from '../lib/layout.ts';
 import { rangeFromSearch } from '../lib/range.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';
@@ -49,7 +47,6 @@ function Fleet() {
   const { range } = search;
   const { now } = overview;
   const empty = emptyFleetText(overview.lanes);
-  const { counts } = fleetAttention(overview.attention);
   const deliveryFailingSince = deliveryFailingShown(overview);
   const tiles = tileOrder(overview.lanes, overview.attention, now);
   const loadedGlance = !isOverview(overview);
@@ -62,7 +59,6 @@ function Fleet() {
   }, [loadedGlance, router]);
   return (
     <>
-      <AppHeader inline={empty === undefined ? <FleetVerdict counts={counts} /> : undefined} />
       <main className={`${contentFrame('wide')} pb-8`}>
         <h1 className="sr-only lg:hidden">Fleet</h1>
         {deliveryFailingSince !== undefined && (

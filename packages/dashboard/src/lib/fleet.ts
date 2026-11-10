@@ -4,6 +4,7 @@ import type { Attention } from '../server/attention-types.ts';
 import type { FleetGlance, SystemGlance } from '../server/fleet-overview-types.ts';
 import { DELIVERY_FAILING_SHOWN_AFTER_MS, QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import { withoutServiceRestartedNotes } from './attention.ts';
+import { emptyFleetText } from './unpaired.ts';
 
 const LEVEL_RANK: Record<ConditionLevel, number> = { alert: 0, note: 2, warning: 1 };
 
@@ -61,3 +62,19 @@ export const deliveryFailingShown = ({
   now - deliveryFailingSince >= DELIVERY_FAILING_SHOWN_AFTER_MS
     ? deliveryFailingSince
     : undefined;
+
+// What the bars say of the fleet on every page: the open count at each level,
+// the worst level that asks for action, how many Systems are paired, and
+// whether the verdict shows, which waits, as on Home, for a paired System to
+// report.
+export const fleetSummary = (glance: Pick<FleetGlance, 'attention' | 'lanes'>) => {
+  const { counts } = fleetAttention(glance.attention);
+  return {
+    counts,
+    systems: glance.lanes.length,
+    verdictShown: emptyFleetText(glance.lanes) === undefined,
+    worst: worstActionLevel(counts),
+  };
+};
+
+export type FleetSummary = ReturnType<typeof fleetSummary>;

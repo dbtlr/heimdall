@@ -5,8 +5,8 @@ import { useEffect } from 'react';
 import { AgentsRangePicker } from '../components/agents-range-picker.tsx';
 import { AgentsSessions } from '../components/agents-sessions.tsx';
 import { AgentsSummary } from '../components/agents-summary.tsx';
-import { AppHeader } from '../components/app-header.tsx';
 import { DateTime } from '../components/date-time.tsx';
+import { PageToolbar } from '../components/page-toolbar.tsx';
 import { breakdownRows, sessionsIn } from '../lib/agents-breakdown.ts';
 import { agentsSearch } from '../lib/agents-search.ts';
 import { contentFrame } from '../lib/layout.ts';
@@ -50,9 +50,9 @@ function Agents() {
     : undefined;
   return (
     <>
-      <AppHeader>
+      <PageToolbar>
         <AgentsRangePicker current={search.range} />
-      </AppHeader>
+      </PageToolbar>
       <main className={`${contentFrame('wide')} pb-8`}>
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-5 pb-4 sm:pt-6">
           <h1 className="text-[24px] font-semibold sm:text-[28px]">Agents</h1>

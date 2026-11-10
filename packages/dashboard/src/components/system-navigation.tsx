@@ -41,7 +41,9 @@ const statusColor = (system: SystemNavigation[number]) => {
   return system.status === 'up' ? 'text-status-good' : 'text-muted-foreground';
 };
 
-// The System's local navigation stays visible; switching peers drops its sample.
+// The System's local navigation stays visible: its name and status, a chip for
+// each System to switch to, and its tabs. Switching Systems keeps the tab and
+// range and drops the sample.
 export function SystemNavigationHeader({
   current,
   range,
@@ -59,14 +61,15 @@ export function SystemNavigationHeader({
     activePill.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [current]);
   return (
-    <header className="sticky top-0 z-20 border-b bg-bar pt-[env(safe-area-inset-top)] sm:bg-background">
+    // Under the top bar, it sticks below the strip that paints the status area.
+    <header className="sticky top-[max(6px,env(safe-area-inset-top))] z-20 border-b bg-bar sm:bg-background sm:pointer-fine:top-[env(safe-area-inset-top)]">
       <div className={contentFrame('wide')}>
         <div className="flex min-h-14 items-center gap-3">
           <Link
             className="flex min-h-11 shrink-0 items-center text-base text-muted-foreground lg:hidden"
-            to="/"
+            to="/systems"
           >
-            ‹ Fleet
+            ‹ Systems
           </Link>
           <h1 className="min-w-0 flex-1 truncate text-[22px] font-semibold" title={current}>
             {current}
@@ -84,14 +87,14 @@ export function SystemNavigationHeader({
         </div>
         <nav
           aria-label="Systems"
-          className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:thin] lg:hidden"
+          className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:thin] lg:gap-1.5"
         >
           {systems.map((system) => (
             <Link
               aria-current={system.name === current ? 'page' : undefined}
               aria-label={`${system.name}: ${statusLabel(system)}`}
               className={cn(
-                'flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 text-base',
+                'flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 text-base lg:min-h-8 lg:gap-1.5 lg:px-2.5 lg:text-sm',
                 system.name === current
                   ? 'border-foreground bg-foreground text-background'
                   : 'bg-secondary',

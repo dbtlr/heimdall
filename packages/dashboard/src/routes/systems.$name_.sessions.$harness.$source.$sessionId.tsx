@@ -2,7 +2,6 @@ import { createFileRoute, stripSearchParams } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useMemo } from 'react';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { SessionCost } from '../components/session-cost.tsx';
 import { SessionHeader } from '../components/session-header.tsx';
 import { SessionTabs } from '../components/session-tabs.tsx';
@@ -33,7 +32,6 @@ export const Route = createFileRoute('/systems/$name_/sessions/$harness/$source/
   }),
   notFoundComponent: () => (
     <>
-      <AppHeader />
       <main className={`${contentFrame('wide')} py-6`}>
         <p>The Hub holds no such Session.</p>
       </main>
@@ -60,7 +58,6 @@ function SessionPage() {
   };
   return (
     <>
-      <AppHeader />
       <main className={`${contentFrame('wide')} pb-8`}>
         <SessionHeader lanes={lanes} now={now} view={view} />
         <SessionTabs current={search.tab} />

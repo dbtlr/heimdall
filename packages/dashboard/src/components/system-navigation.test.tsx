@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { systemSearch } from '../lib/system-search.ts';
 import { SystemNavigationHeader } from './system-navigation.tsx';
 
-test('System navigation keeps the tab and range between Systems but drops a System-specific sample', async () => {
+test('System chips show at every width and keep the tab and range between Systems but drop a System-specific sample', async () => {
   const root = createRootRoute({ component: Outlet });
   const route = createRoute({
     component: () => (
@@ -39,7 +39,8 @@ test('System navigation keeps the tab and range between Systems but drops a Syst
   });
   await router.load();
   const html = renderToStaticMarkup(<RouterProvider router={router} />);
-  expect(html).toContain('href="/"');
+  expect(html).toContain('href="/systems"');
+  expect(html).toMatch(/<nav aria-label="Systems" class="(?![^"]*hidden)[^"]*">/u);
   expect(html).toContain('href="/systems/laptop-1?range=7d&amp;tab=sessions"');
   expect(html).toContain('aria-label="server-1: Alert"');
   expect(html).toContain('aria-label="System views"');

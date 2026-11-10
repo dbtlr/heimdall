@@ -2,7 +2,6 @@ import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
@@ -47,7 +46,6 @@ export const Route = createFileRoute('/systems/$name')({
   loaderDeps: ({ search }) => ({ range: search.range }),
   notFoundComponent: () => (
     <>
-      <AppHeader />
       <main className={`${contentFrame('wide', true)} py-6`}>
         <p>No System has that name.</p>
       </main>
