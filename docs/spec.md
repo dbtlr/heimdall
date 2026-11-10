@@ -222,8 +222,9 @@ Reasons and dashboard labels name the executable and PID.
 The Collector shares one process-table pass with Harness tracking per Vitals sample.
 An optional `processes` field carries the five hottest measured processes, each with its executable name, PID, lifetime identifier, CPU cores, and resident bytes.
 It never carries arguments or environment variables.
-On at most one sample in any minute, `processes` also carries `topByMemory`: the five processes with the most resident memory, largest first and tied by PID, each with its executable name, PID, lifetime identifier, and resident bytes.
+While a Collector runs, at most one sample in any minute also carries `topByMemory` in `processes`: the five processes with the most resident memory, largest first and tied by PID, each with its executable name, PID, lifetime identifier, and resident bytes.
 The Collector attaches it to its first sample with process evidence and then to the first such sample at least 60 seconds, on its monotonic clock, after the last one that carried it.
+The cadence lives in the running Collector, so a restart attaches the list to its first sample again, which can fall within a minute of the last list before the restart.
 The Collector takes them from the same table pass and validates their names as the hottest processes' names are validated.
 It names them only after it has named the hottest processes, and it only reads recorded names: the list records no name and marks no PID unknown, so it never changes a hot process's name, the census, or hot-process evidence.
 A holder takes its recorded name, so a process on both lists carries one name. A holder whose executable changed from its recorded confirmed name takes its current executable, because the list shows what runs now and only the hottest processes' path records the change.
@@ -233,7 +234,7 @@ The list therefore names the largest holders the Collector could identify. It ca
 The list needs no CPU baseline and makes no census claim, so it is valid with a partial census or a zero interval, and it never establishes a process's absence or exit.
 Resident memory counts shared pages in every process that maps them, so the rows overlap and are never summed.
 A sample without `topByMemory` has not reported it. The Hub and dashboard treat its absence as not reported, never as no processes; older Collectors never send it, and other samples omit it.
-More than five entries, a repeated PID, or an invalid entry drops `topByMemory` alone. The rest of the process observation stays, because a list that only feeds a display must not cost hot-process evidence.
+More than five entries, a repeated PID, or an invalid entry is a Collector bug and makes the process observation invalid, as a malformed `top` does, so the sample keeps its other Vitals without `processes`.
 An older Hub drops the unknown field and keeps the rest of the process observation.
 Executable lookup falls back to the platform's accounting name when unreadable, which can be truncated.
 The first reported fallback name stays attached to that lifetime, so changing an accounting name or losing read permission cannot clear a still-hot process.

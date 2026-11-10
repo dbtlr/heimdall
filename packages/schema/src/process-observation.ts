@@ -47,17 +47,16 @@ const CensusSchema = z.discriminatedUnion('kind', [CompleteCensusSchema, Partial
 // `topByMemory` is the processes holding the most resident memory, largest
 // first. The Collector sends it on at most one sample a minute, so its absence
 // means not reported, never no processes. It needs no CPU baseline and makes no
-// census claim, so it is valid with a partial census or a zero interval. A
-// malformed list drops only itself: it feeds a display, so it must not cost the
-// CPU evidence hot-process judgment depends on.
+// census claim, so it is valid with a partial census or a zero interval. More
+// than five entries, a repeated PID, or an invalid entry is a Collector bug and
+// rejects the observation, as a malformed `top` does (ADR-0004).
 export const ProcessObservationSchema = z
   .object({
     bootId: ProcessIdentitySchema.shape.bootId,
     census: CensusSchema,
     intervalMs: z.number().nonnegative().max(15_000),
     top: z.array(ProcessReadingSchema).max(MAX_TOP_PROCESSES),
-    // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
-    topByMemory: TopByMemorySchema.optional().catch(undefined),
+    topByMemory: TopByMemorySchema.optional(),
   })
   .refine((observation) => {
     if (!distinctPids(observation.top)) {

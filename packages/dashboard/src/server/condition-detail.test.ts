@@ -402,6 +402,26 @@ describe('the processes holding the most memory', () => {
     });
     expect((await read(h, { id: cpu, name: 'server-1' }))?.memoryHolders).toBeUndefined();
   });
+
+  test('a Condition cleared exactly at a carrying sample names that sample, not an older one', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', [
+      holdingSample(-3 * MINUTE, 1000),
+      holdingSample(-3 * MINUTE + 15),
+      holdingSample(-2 * MINUTE, 3000),
+    ]);
+    const cleared = await addCondition(h.db.sql, {
+      clearedAt: -2 * MINUTE,
+      kind: 'high_memory',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+
+    expect((await read(h, { id: cleared, name: 'server-1' }))?.memoryHolders).toEqual({
+      processes: [{ name: 'postgres', pid: 7, rssBytes: 3000 }],
+      t: at(-2 * MINUTE),
+    });
+  });
 });
 
 describe('a kind with nothing to chart', () => {

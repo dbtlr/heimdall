@@ -290,6 +290,25 @@ test('names the processes holding the most memory on the first sample and then a
   expect((await observe(200_000)).topByMemory).toBeUndefined();
 });
 
+test('the memory list keeps its minute on the monotonic clock when the wall clock steps', async () => {
+  const observer = createProcessObserver();
+  const observe = (at: number, monotonicMs: number) =>
+    observer.observe({
+      at,
+      bootId: 'boot-a',
+      entries: [entry(1, 0)],
+      monotonicMs,
+      presentPids: [1],
+      uptimeSeconds: 100 + monotonicMs / 1000,
+    });
+  expect((await observe(10_000_000, 0)).topByMemory).toBeDefined();
+  // The wall clock jumps an hour ahead: still within the minute.
+  expect((await observe(13_615_000, 15_000)).topByMemory).toBeUndefined();
+  // The wall clock steps back two hours: the minute has passed all the same.
+  expect((await observe(6_400_000, 60_000)).topByMemory).toBeDefined();
+  expect((await observe(6_415_000, 75_000)).topByMemory).toBeUndefined();
+});
+
 test('the largest identifiable holders come largest first, ties by PID, without a CPU baseline', async () => {
   const observer = createProcessObserver();
   const holders = [

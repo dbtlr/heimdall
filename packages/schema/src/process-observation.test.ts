@@ -57,7 +57,7 @@ test('processes by memory carry name, pid, start, and resident bytes with any ce
   );
 });
 
-test('a malformed list by memory is dropped alone, keeping the CPU evidence and census', () => {
+test('a malformed list by memory rejects the observation, as a malformed CPU list does', () => {
   const tooMany = Array.from({ length: MAX_TOP_MEMORY_PROCESSES + 1 }, (_, i) =>
     holder(100 + i, 1024),
   );
@@ -75,9 +75,7 @@ test('a malformed list by memory is dropped alone, keeping the CPU evidence and 
     [{ ...holder(43, 4096), rssBytes: 1.5 }],
     [{ ...holder(43, 4096), rssBytes: -1 }],
   ]) {
-    const parsed = ProcessObservationSchema.parse({ ...observation, topByMemory });
-    expect(parsed.topByMemory).toBeUndefined();
-    expect(parsed).toEqual(observation);
+    expect(ProcessObservationSchema.safeParse({ ...observation, topByMemory }).success).toBe(false);
   }
 });
 
