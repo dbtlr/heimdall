@@ -347,3 +347,34 @@ test("a Session's models are listed in code unit order, not in the order the dat
 
   expect(result.sessions[0]?.models).toEqual(['B-model', 'a-model', 'c-model']);
 });
+
+// The database orders a-model before B-model by its locale; the tie goes to
+// the model first in code unit order, B-model, wherever the Session is read.
+test("a Session's top model is the one with the most requests, the first in code unit order on a tie", async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'tied',
+    model: 'a-model',
+    requests: [
+      -500,
+      { at: -400, model: 'B-model' },
+      -300,
+      { at: -200, model: 'B-model' },
+      { at: -100, model: 'c-model' },
+    ],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'leading',
+    model: 'z-model',
+    requests: [-450, -350, { at: -250, model: 'B-model' }],
+    system: 'laptop-1',
+  });
+
+  const result = await view(h);
+
+  const topOf = Object.fromEntries(
+    result.sessions.map(({ sessionId, topModel }) => [sessionId, topModel]),
+  );
+  expect(topOf).toEqual({ leading: 'z-model', tied: 'B-model' });
+});
