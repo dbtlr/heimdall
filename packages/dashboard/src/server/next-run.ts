@@ -1,3 +1,7 @@
+// When a job that has never run is next due, for Home's Jobs card. firesOn,
+// minutesOfDay, and instantOf read a schedule as packages/hub/src/schedule.ts
+// does and must change with it; the Hub searches back for the latest time,
+// this searches forward for the next.
 import type { ScheduleEntry } from './system-detail-types.ts';
 
 // How far ahead the search looks: a little over four years, so an entry for

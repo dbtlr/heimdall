@@ -69,6 +69,12 @@ describe('groupChanges', () => {
     ).toHaveLength(2);
   });
 
+  test('changes exactly 10 minutes apart are one group', () => {
+    expect(
+      groupChanges([version('server-1', NOW), version('server-2', NOW + 10 * MINUTE)]),
+    ).toHaveLength(1);
+  });
+
   test('different version transitions are separate groups', () => {
     expect(
       groupChanges([version('server-1', NOW), version('server-2', NOW, '0.9.0', '0.10.1')]),
@@ -94,6 +100,33 @@ describe('groupChanges', () => {
       },
       { detail: 'server-1', mono: false, title: 't3code restarted' },
       { detail: 'db-1', mono: false, title: 'heimdall-collector restarted' },
+    ]);
+  });
+
+  test('a version change folds a stop exactly 10 minutes away', () => {
+    expect(words([version('server-1', NOW), stop('server-1', NOW + 10 * MINUTE)])).toEqual([
+      {
+        detail: 'server-1, restarted once',
+        mono: false,
+        title: 'heimdall-collector 0.10.0 → 0.10.1',
+      },
+    ]);
+  });
+
+  test('of two version changes of one Service on one System, the nearer folds the stop', () => {
+    expect(
+      words([
+        version('server-1', NOW),
+        version('server-1', NOW + 15 * MINUTE, '0.10.1', '0.10.2'),
+        stop('server-1', NOW + 9 * MINUTE),
+      ]),
+    ).toEqual([
+      {
+        detail: 'server-1, restarted once',
+        mono: false,
+        title: 'heimdall-collector 0.10.1 → 0.10.2',
+      },
+      { detail: 'server-1', mono: false, title: 'heimdall-collector 0.10.0 → 0.10.1' },
     ]);
   });
 
