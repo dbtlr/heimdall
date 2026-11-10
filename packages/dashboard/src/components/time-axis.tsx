@@ -22,7 +22,7 @@ export function TimeAxis({
   return (
     <div className={cn(LANE_GRID, 'pt-0.5')}>
       <div className="hidden sm:block" />
-      <div className="relative h-4 text-[11.5px] text-muted-foreground">
+      <div className="relative h-4 text-xs text-muted-foreground tabular-nums">
         {ticks.map((tick) => (
           <span
             className={cn('absolute', ALIGN[tick.edge], tick.minor && 'hidden sm:block')}

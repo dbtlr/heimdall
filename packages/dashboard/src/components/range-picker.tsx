@@ -18,7 +18,7 @@ export function RangePicker({ current }: { current: Range }) {
           aria-current={range === current ? 'page' : undefined}
           className={cn(
             'flex min-h-11 items-center px-[11px] py-1 text-muted-foreground',
-            range === current && 'bg-[#2d3a5c] text-foreground',
+            range === current && 'bg-secondary text-foreground',
           )}
           key={range}
           resetScroll={false}

@@ -8,7 +8,7 @@ import { PhraseText } from './date-time.tsx';
 
 const DOT: Record<ServiceStatus, string> = {
   down: 'bg-status-critical',
-  restarted: 'bg-primary',
+  restarted: 'bg-status-warning',
   unknown: 'border-[1.5px] border-muted-foreground',
   up: 'bg-status-good',
 };

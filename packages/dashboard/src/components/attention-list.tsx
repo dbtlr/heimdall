@@ -205,8 +205,7 @@ function Summary({
   );
 }
 
-const SUBHEADING =
-  'mb-[3px] text-[11.5px] font-normal tracking-[0.06em] text-muted-foreground uppercase';
+const SUBHEADING = 'mb-[3px] text-xs font-normal tracking-[0.06em] text-muted-foreground uppercase';
 
 // What an item rests on: what was expected, what was observed, what to make of
 // the evidence, and when the latest check arrived.
@@ -300,7 +299,7 @@ function AttentionItem({
     <details
       className={cn(
         'group scroll-mt-44 border-t first-of-type:border-t-0',
-        attentionMark(item) === 'unknown' && 'border-dashed text-[#b3bacb]',
+        attentionMark(item) === 'unknown' && 'border-dashed text-muted-foreground',
       )}
       id={anchorOf(item)}
       onToggle={(event) => {
@@ -359,7 +358,7 @@ export function AttentionList({
     <section
       aria-label="Needs you"
       className={cn(
-        'mt-1 mb-2.5 rounded-lg bg-card px-3 py-1 text-[13px]',
+        'mt-1 mb-2.5 card-surface rounded-xl border px-3 py-1 text-[13px]',
         compact && 'max-h-[65dvh] overflow-y-auto overscroll-contain',
       )}
     >

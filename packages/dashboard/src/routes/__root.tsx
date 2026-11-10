@@ -57,7 +57,7 @@ export const Route = createRootRoute({
             Touch and narrow layouts need 6px even when the top safe area is zero. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-card sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
+          className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-bar sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
         />
         {children}
         <Scripts />

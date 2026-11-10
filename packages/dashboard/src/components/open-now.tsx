@@ -28,8 +28,8 @@ function PhoneLabel({ children }: { children: string }) {
 function OpenRow({ item, now }: { item: Attention; now: number }) {
   const unconfirmed = attentionMark(item) === 'unknown';
   return (
-    <tr className={cn(ROW, unconfirmed && 'border-dashed text-[#b3bacb]')}>
-      <td className={cn(CELL, 'max-sm:font-semibold')}>
+    <tr className={cn(ROW, unconfirmed && 'border-dashed text-muted-foreground')}>
+      <td className={cn(CELL, 'whitespace-nowrap max-sm:font-semibold')}>
         {item.system}
         {item.unpaired && (
           <em className="ml-1 rounded border px-[5px] text-xs font-normal text-muted-foreground not-italic">
@@ -85,7 +85,7 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
 export function OpenNow({ items, now }: { items: readonly Attention[]; now: number }) {
   const { confirmed, unconfirmed } = rankAttention(items);
   return (
-    <section className="mt-[18px] rounded-lg bg-card p-4">
+    <section className="mt-[18px] card-surface rounded-xl border p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">
         {items.length === 0
           ? 'Open now'

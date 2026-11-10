@@ -28,7 +28,7 @@ function Total({ label, note, value }: { label: string; note: string; value: str
   return (
     <div className="border-b border-r px-3 py-2.5 sm:border-b-0 sm:last:border-r-0">
       <p className="text-[12.5px] text-muted-foreground">{label}</p>
-      <p className="text-[19px] font-semibold">{value}</p>
+      <p className="text-[19px] font-semibold tabular-nums">{value}</p>
       <p className="text-xs text-muted-foreground">{note}</p>
     </div>
   );
@@ -134,7 +134,7 @@ export function SessionHeader({
       </div>
       <section
         aria-label="Totals"
-        className="grid grid-cols-2 overflow-hidden rounded-lg border bg-card sm:grid-cols-6"
+        className="grid grid-cols-2 overflow-hidden card-surface rounded-xl border sm:grid-cols-6"
       >
         {totals(view, lanes).map((total) => (
           <Total key={total.label} {...total} />

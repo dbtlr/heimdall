@@ -31,7 +31,7 @@ export function AgentsSessions({
           <span className="text-muted-foreground">Sessions {preposition}</span>
           <Link
             aria-label={`Show all Sessions, not only those ${preposition} ${picked}`}
-            className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-chart-1 bg-accent px-3 break-all"
+            className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-select bg-select/15 px-3 break-all"
             resetScroll={false}
             search={(previous) => ({ ...previous, pick: undefined })}
             to="."
@@ -49,7 +49,7 @@ export function AgentsSessions({
         </p>
       )}
       {sessions.length === 0 ? (
-        <p className="rounded-xl border bg-card px-4 py-5 text-muted-foreground">
+        <p className="card-surface rounded-xl border px-4 py-5 text-muted-foreground">
           No requests in this period.
         </p>
       ) : (
@@ -64,7 +64,7 @@ export function AgentsSessions({
               ])}
             >
               <Link
-                className="flex min-h-20 gap-3 rounded-xl border bg-card px-3 py-3 transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-4"
+                className="flex min-h-20 gap-3 card-surface rounded-xl border px-3 py-3 transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-4"
                 params={{
                   harness: session.harness,
                   name: session.system,
@@ -92,7 +92,7 @@ export function AgentsSessions({
                   <p className="text-sm text-muted-foreground">
                     {session.activeRecently ? (
                       <span
-                        className="text-[#9fc5b0]"
+                        className="text-status-good"
                         title="A request was observed in the last 60 seconds"
                       >
                         Active recently
@@ -107,7 +107,9 @@ export function AgentsSessions({
                 <div className="max-w-[40%] shrink-0 self-center text-right">
                   <p className="text-base font-semibold tabular-nums sm:text-xl">
                     {session.unpricedRequests > 0 && (
-                      <span className="block text-xs font-normal text-[#c9b6ff]">At least </span>
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        At least{' '}
+                      </span>
                     )}
                     {formatCost(session.pricedCostUsd)}
                   </p>

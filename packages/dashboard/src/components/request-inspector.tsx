@@ -75,7 +75,7 @@ export function RequestInspector({
 }) {
   const lane = lanes.find((found) => found.agentId === request?.agentId);
   return (
-    <aside className="mt-2.5 self-start rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5">
+    <aside className="mt-2.5 self-start card-surface rounded-xl border-l-[3px] border-l-select px-4 py-3.5">
       {request === undefined || lane === undefined ? (
         <p className="text-muted-foreground">Select a request mark to inspect it.</p>
       ) : (

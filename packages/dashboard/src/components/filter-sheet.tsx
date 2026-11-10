@@ -27,7 +27,7 @@ export function ActiveFilters({ onClear, pills }: { onClear: () => void; pills: 
       {pills.map(({ key, label, remove }) => (
         <button
           aria-label={`Remove ${label} filter`}
-          className="min-h-11 max-w-full rounded-full border bg-card px-3 text-sm wrap-anywhere"
+          className="min-h-11 max-w-full rounded-full border bg-secondary px-3 text-sm wrap-anywhere"
           key={key}
           onClick={remove}
           type="button"
@@ -68,7 +68,7 @@ function FilterChip({
       aria-pressed={selected}
       className={cn(
         'min-h-11 max-w-full rounded-full border px-3 text-base wrap-anywhere',
-        selected ? 'border-primary bg-primary/15 text-primary' : 'bg-card text-foreground',
+        selected ? 'border-select bg-select/15 text-select' : 'bg-secondary text-foreground',
         count === 0 && 'opacity-40',
       )}
       onClick={onClick}
@@ -209,7 +209,7 @@ export function FilterControl<F>({
     <>
       <button
         aria-haspopup="dialog"
-        className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-card px-3 text-base"
+        className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-secondary px-3 text-base"
         onClick={() => {
           setDraft(filters);
           setOpen(true);
@@ -218,7 +218,7 @@ export function FilterControl<F>({
       >
         <SlidersHorizontal aria-hidden="true" className="size-4" /> Filter
         {activeCount > 0 && (
-          <span className="rounded-full bg-primary/15 px-1.5 text-xs text-primary">
+          <span className="rounded-full bg-select/15 px-1.5 text-xs text-select">
             {activeCount}
           </span>
         )}

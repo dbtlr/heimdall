@@ -29,7 +29,7 @@ export function ServicePanel({ detail }: { detail: ServiceDetail }) {
       ? undefined
       : (SUPERVISOR_NAMES[recorded.supervisor] ?? recorded.supervisor);
   return (
-    <section className="rounded-lg bg-card p-3 text-sm">
+    <section className="card-surface rounded-xl border p-3 text-sm">
       {checks !== undefined && (
         <>
           <h2 className={HEADING}>Checks</h2>

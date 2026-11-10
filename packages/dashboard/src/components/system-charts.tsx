@@ -109,7 +109,7 @@ export function SystemCharts({
         {sample !== null && inWindow(sample.t, window) && (
           <span
             className={cn(
-              'absolute -top-px rounded bg-[#ffd666] px-2 font-semibold text-background',
+              'absolute -top-px rounded bg-select px-2 font-semibold text-background',
               sampleX > 90 && '-translate-x-full',
               sampleX >= 10 && sampleX <= 90 && '-translate-x-1/2',
             )}

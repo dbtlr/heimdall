@@ -27,7 +27,7 @@ export const FILL_COLOR: Record<ConditionLevel, string> = {
 };
 
 const METER_LAYOUT =
-  'grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-1.5 text-xs text-muted-foreground';
+  'grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-1.5 text-xs text-muted-foreground tabular-nums';
 
 // One resource on a tile: its label, a thin bar filled to the percent, and the
 // rounded percent. A level from an open Condition on the resource colors both
@@ -56,7 +56,7 @@ function Meter({
         <span
           className={cn(
             'block h-full rounded-full',
-            level === undefined ? 'bg-[#6f8fc4]' : FILL_COLOR[level],
+            level === undefined ? 'bg-plot' : FILL_COLOR[level],
           )}
           style={{ width: `${String(Math.min(100, Math.max(0, percent ?? 0)))}%` }}
         />
@@ -203,10 +203,10 @@ export function FleetTiles({ now, tiles }: { now: number; tiles: readonly System
       {tiles.map((tile) => (
         <Link
           className={cn(
-            'flex min-w-0 flex-col gap-1 rounded-xl border bg-card px-2.5 py-2 hover:border-muted-foreground',
+            'flex min-w-0 flex-col gap-1 rounded-xl border px-2.5 py-2 hover:border-muted-foreground',
             tile.level === 'alert' && 'border-status-critical/75',
             tile.level === 'warning' && 'border-status-serious/60',
-            (tile.asleep || tile.lane.status === 'unpaired') && 'bg-muted/30',
+            tile.asleep || tile.lane.status === 'unpaired' ? 'bg-muted/30' : 'card-surface',
           )}
           key={tile.lane.name}
           params={{ name: tile.lane.name }}
@@ -215,7 +215,7 @@ export function FleetTiles({ now, tiles }: { now: number; tiles: readonly System
           <div className="flex items-center gap-1.5">
             <h3
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 text-[17px] font-semibold break-all',
+                'flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold break-all',
                 tile.asleep && 'text-muted-foreground',
               )}
             >

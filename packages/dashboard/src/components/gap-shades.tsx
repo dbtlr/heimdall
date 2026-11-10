@@ -28,7 +28,7 @@ export function GapShades({
       >
         {label !== undefined && (
           <p
-            className="flex items-center justify-center text-[11.5px] text-muted-foreground"
+            className="flex items-center justify-center text-xs text-muted-foreground"
             style={{ height: labelHeight }}
           >
             {label}

@@ -10,7 +10,7 @@ import { harnessColor, harnessName } from './lane.ts';
 // How many rows the list shows before the rest fold into "N more".
 export const VISIBLE_ROWS = 8;
 
-const SERIES_COLORS = [1, 2, 3, 4, 5].map((index) => `var(--chart-${String(index)})`);
+const SERIES_COLORS = [1, 2, 3, 4, 5].map((index) => `var(--series-${String(index)})`);
 // Rows past the fifth share one neutral, which is no series color so the
 // merged rest never reads as a row of its own.
 const NEUTRAL_COLOR = 'var(--chart-other)';

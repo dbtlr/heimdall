@@ -43,7 +43,7 @@ export function ConditionOccurrence({
     <li
       className={cn(
         '-ml-[7px] flex items-start gap-2.5 py-1.5 pl-3',
-        entry.clearedAt === undefined && 'rounded-md bg-[rgba(250,178,25,0.08)]',
+        entry.clearedAt === undefined && 'rounded-md bg-status-warning/8',
       )}
     >
       <ConditionGlyph className="mt-1" kind={entry.level} />
@@ -87,7 +87,7 @@ export function TimelineRail({
   system: string;
 }) {
   return (
-    <section className="mt-[18px] self-start rounded-lg bg-card p-4">
+    <section className="mt-[18px] self-start card-surface rounded-xl border p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">
         Timeline, last 7 days
       </h2>

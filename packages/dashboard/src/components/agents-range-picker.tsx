@@ -17,7 +17,7 @@ export function AgentsRangePicker({ current }: { current: AgentsRange }) {
           aria-current={range === current ? 'page' : undefined}
           className={cn(
             'flex min-h-11 items-center px-4 text-muted-foreground',
-            range === current && 'bg-[#2d3a5c] font-semibold text-foreground',
+            range === current && 'bg-secondary font-semibold text-foreground',
           )}
           key={range}
           resetScroll={false}

@@ -35,7 +35,7 @@ function SilenceText({ now, until }: { now: number; until: number }) {
 // pushes only: Conditions still show and count toward health.
 export function SilenceBanner({ now, until }: Silence) {
   return until === undefined ? null : (
-    <div className="mb-2 rounded-lg border border-dashed border-[#5a6690] bg-card px-3.5 py-2.5">
+    <div className="mb-2 card-surface rounded-xl border border-dashed border-dim px-3.5 py-2.5">
       <SilenceText now={now} until={until} />. Conditions still show and count toward health.
     </div>
   );

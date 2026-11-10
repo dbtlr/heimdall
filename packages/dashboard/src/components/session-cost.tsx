@@ -23,19 +23,19 @@ import { SpanLabels } from './span-labels.tsx';
 import { ChartContainer } from './ui/chart.tsx';
 
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
-const MAIN_COLOR = '#3d6fb8';
-const SUBAGENT_COLOR = '#2a7a6d';
+const MAIN_COLOR = 'var(--plot)';
+const SUBAGENT_COLOR = 'var(--series-1)';
 
 const KIND_STYLE: Record<TokenKind, { color: string; label: string }> = {
-  cacheRead: { color: '#5b6683', label: 'read from cache' },
-  cacheWrite: { color: '#8c96b0', label: 'written to cache' },
-  input: { color: '#d5dbea', label: 'input' },
-  output: { color: '#4a90ea', label: 'output' },
+  cacheRead: { color: 'var(--dim)', label: 'read from cache' },
+  cacheWrite: { color: 'var(--plot)', label: 'written to cache' },
+  input: { color: 'var(--foreground)', label: 'input' },
+  output: { color: 'var(--series-2)', label: 'output' },
 };
 
 function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={`mb-3.5 rounded-lg bg-card px-4 py-3.5 ${className ?? ''}`}>
+    <section className={`card-surface mb-3.5 rounded-xl border px-4 py-3.5 ${className ?? ''}`}>
       {children}
     </section>
   );
@@ -129,7 +129,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
           <YAxis
             axisLine={false}
             mirror
-            tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+            tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
             tickFormatter={(value: number) => `$${String(value)}`}
             tickLine={false}
           />
@@ -139,7 +139,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
               label={{
                 dy: -26 + (index % 2) * 13,
                 fill: 'var(--muted-foreground)',
-                fontSize: 11,
+                fontSize: 12,
                 position: 'insideTopLeft',
                 value: flag.label,
               }}
@@ -190,7 +190,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
               label={{
                 dy: -14,
                 fill: 'var(--muted-foreground)',
-                fontSize: 11,
+                fontSize: 12,
                 position: 'insideTopLeft',
                 value: `compacted, ${formatTokens(command.before ?? 0)} to ${formatTokens(command.after ?? 0)}`,
               }}
@@ -202,7 +202,7 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
             dataKey="tokens"
             dot={false}
             isAnimationActive={false}
-            stroke="#e7eaf3"
+            stroke="var(--foreground)"
             strokeWidth={1.25}
             type="stepAfter"
           />
@@ -257,7 +257,7 @@ function ByAgent({
               startsRun && (
                 <tr className="border-b" key={`run-${run}`}>
                   <td
-                    className="pt-3 pb-1.5 text-[11.5px] tracking-[0.06em] text-muted-foreground uppercase"
+                    className="pt-3 pb-1.5 text-xs tracking-[0.06em] text-muted-foreground uppercase"
                     colSpan={5}
                   >
                     {runName(lanes, run)}
@@ -284,9 +284,11 @@ function ByAgent({
                     </span>
                   </button>
                 </td>
-                <td className="py-2">{lane.requests.length}</td>
-                <td className="hidden py-2 sm:table-cell">{formatTokens(lane.tokens)}</td>
-                <td className="py-2">{formatCost(lane.costUsd)}</td>
+                <td className="py-2 tabular-nums">{lane.requests.length}</td>
+                <td className="hidden py-2 tabular-nums sm:table-cell">
+                  {formatTokens(lane.tokens)}
+                </td>
+                <td className="py-2 tabular-nums">{formatCost(lane.costUsd)}</td>
                 <td className="py-2 pt-3">
                   <div className="h-1.5 rounded-[2px] bg-accent">
                     <div
@@ -384,7 +386,7 @@ export function SessionCost({
           />
           <BarList
             bars={skills.map((skill) => ({
-              color: '#8c96b0',
+              color: 'var(--plot)',
               key: skill.key ?? '',
               label: skill.key ?? 'No skill',
               note: `${String(skill.requests)} requests`,
@@ -395,7 +397,7 @@ export function SessionCost({
           />
           <BarList
             bars={tools.map((tool) => ({
-              color: '#8c96b0',
+              color: 'var(--plot)',
               key: `${tool.name}-${tool.mcpServer ?? ''}`,
               label: (
                 <>

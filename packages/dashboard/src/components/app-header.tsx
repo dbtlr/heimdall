@@ -12,7 +12,7 @@ export function AppHeader({ children, inline }: { children?: ReactNode; inline?:
   return (
     <header
       className={cn(
-        'border-b bg-card pt-[env(safe-area-inset-top)] sm:bg-background',
+        'border-b bg-bar pt-[env(safe-area-inset-top)] sm:bg-background',
         children === undefined && 'lg:hidden',
       )}
     >

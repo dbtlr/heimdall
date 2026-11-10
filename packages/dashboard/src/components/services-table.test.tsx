@@ -44,7 +44,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html).toContain('restarted');
   expect(html).toContain('unknown');
   expect(html).toContain('bg-status-critical');
-  expect(html).toContain('bg-primary');
+  expect(html).toContain('bg-status-warning');
   expect(html).toContain('border-muted-foreground');
   expect(html).toContain('Service</th>');
   expect(html).toContain('System</th>');

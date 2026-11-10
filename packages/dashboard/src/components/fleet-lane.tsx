@@ -48,7 +48,7 @@ export function FleetLane({
           <AttentionStatus items={items} status={lane.status} />
         </p>
         {named !== undefined && subjectText(named) !== '' && (
-          <p className="w-full text-[12.5px] leading-[1.3] wrap-anywhere text-[#c4cad8]">
+          <p className="w-full text-[12.5px] leading-[1.3] wrap-anywhere text-foreground/85">
             <AttentionSubject item={named} />
           </p>
         )}

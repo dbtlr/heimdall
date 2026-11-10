@@ -94,7 +94,7 @@ export function RecordedPanel({
   const provenance = provenanceLine(applications);
   const empty = applications.length + files.length + jobs.length + services.length === 0;
   return (
-    <section className="mt-[18px] rounded-lg bg-card p-4">
+    <section className="mt-[18px] card-surface rounded-xl border p-4">
       <h2 className="mb-2 text-[12.5px] font-normal text-muted-foreground">Recorded</h2>
       {empty && <p>Its provisioner has recorded nothing.</p>}
       {services.length > 0 && (
