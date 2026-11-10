@@ -5,6 +5,7 @@ import type { LocalDay } from '../lib/home-agents.ts';
 import type { PeriodTotals } from './agents-overview-types.ts';
 import { periodTotals, readPeriodSessions, todayPeriod } from './agents-overview.ts';
 import type { HomeAgents } from './home-types.ts';
+import { sessionSpans } from './session-spans.ts';
 
 // How many local days the bars show, today among them.
 const BAR_DAYS = 7;
@@ -28,7 +29,8 @@ type DayRow = {
 // in one statement however many Sessions there are. As on the Agents page
 // (ADR-0016), a Session within one day, wholly before or wholly after its
 // cutoff, takes its stored total; only a Session crossing a midnight or a
-// cutoff is priced request by request.
+// cutoff is priced request by request. A Session whose first request is at
+// the last day's end is a span but joins no day, since each day ends before it.
 const readDayCosts = async (
   sql: SQL,
   days: readonly LocalDay[],
@@ -49,13 +51,7 @@ const readDayCosts = async (
       FROM jsonb_to_recordset(${windows}::text::jsonb)
         AS j (i int, start_at timestamptz, end_at timestamptz, cutoff_at timestamptz)
     ),
-    spans AS MATERIALIZED (
-      SELECT harness, system, source, session_id,
-             min(started_at) AS first_request_at, max(ended_at) AS last_request_at
-      FROM insight.session_stretches
-      GROUP BY harness, system, source, session_id
-      HAVING max(ended_at) >= ${from} AND min(started_at) < ${to}
-    ),
+    spans AS MATERIALIZED (${sessionSpans(sql, { from, to })}),
     costs AS (
       SELECT w.i, t.requests, t.priced_cost_usd, t.unpriced_requests, t.by_now_usd
       FROM windows w
@@ -97,10 +93,21 @@ const readDayCosts = async (
   }));
 };
 
-// The newest request of any Session, by its stored stretches.
+// The newest request of any Session, by its stored stretches. The planner
+// cannot read the view in the order of its index, so the newest stored end,
+// the index's last entry, bounds what the view reads. A Session being derived
+// again has no stored stretches, so that end is the view's; should the view
+// hide it anyway, every stretch is read, as before.
 const readLatestRequestAt = async (sql: SQL): Promise<number | undefined> => {
   const [row]: { at: Date | null }[] = await sql`
-    SELECT max(ended_at) AS at FROM insight.session_stretches
+    SELECT coalesce(
+      (SELECT v.at
+       FROM (SELECT max(ended_at) AS newest FROM stored_session_stretches) b
+       CROSS JOIN LATERAL (
+         SELECT max(x.ended_at) AS at FROM insight.session_stretches x WHERE x.ended_at >= b.newest
+       ) v),
+      (SELECT max(ended_at) FROM insight.session_stretches)
+    ) AS at
   `;
   return row?.at?.getTime();
 };

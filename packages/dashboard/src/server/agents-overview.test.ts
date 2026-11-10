@@ -111,6 +111,64 @@ test('boundary pricing excludes earlier unpriced and future requests, and omits 
   expect(result.sessions[0]?.lastRequestAt).toBe(NOW);
 });
 
+test("a Session resumed into the period spans from its first stretch's request, and one whose last request is the period's start is listed", async () => {
+  await using h = await start();
+  const DAY_S = 86_400;
+  // Two processes in turn run the Session, so its stretch of 10 days ago
+  // ends before the period and its second stretch lies inside it.
+  await addProcess(h.db.sql, {
+    end: -10 * DAY_S + 7200,
+    pid: 1,
+    start: -10 * DAY_S,
+    system: 'server-1',
+  });
+  await addProcess(h.db.sql, { end: -600, pid: 2, start: -7200, system: 'server-1' });
+  await addSession(h.db.sql, {
+    id: 'resumed',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-10 * DAY_S + 3600, -3600],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    id: 'at-start',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-8 * DAY_S, -7 * DAY_S],
+    system: 'laptop-1',
+  });
+  const [stretches] = await h.db.sql`
+    SELECT count(*)::int AS n FROM insight.session_stretches WHERE session_id = 'resumed'
+  `;
+  expect(stretches).toEqual({ n: 2 });
+
+  const result = await view(h);
+
+  expect(
+    result.sessions.map(({ firstRequestAt, lastRequestAt, requests, sessionId }) => ({
+      firstRequestAt,
+      lastRequestAt,
+      requests,
+      sessionId,
+    })),
+  ).toEqual([
+    {
+      firstRequestAt: NOW - 8 * DAY_S * 1000,
+      lastRequestAt: NOW - 7 * DAY_S * 1000,
+      requests: 1,
+      sessionId: 'at-start',
+    },
+    {
+      firstRequestAt: NOW - (10 * DAY_S - 3600) * 1000,
+      lastRequestAt: NOW - 3_600_000,
+      requests: 1,
+      sessionId: 'resumed',
+    },
+  ]);
+});
+
 test('an entirely unpriced period keeps its Session and a zero priced lower bound', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
