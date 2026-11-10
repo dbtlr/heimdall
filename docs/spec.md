@@ -172,7 +172,11 @@ The optional field keeps Report schema version 1.
 An unavailable probe or an unknown pressure value omits pressure and preserves the other Vitals.
 A macOS sample without pressure is unknown for this judgment. A normal pressure reading is known non-busy evidence.
 A zero memory total is unknown. Older samples without a recorded platform cannot establish high memory use.
-The High memory Condition page and the sample inspector name the processes holding the most memory, with each one's resident memory, from the newest sample at or before the inspected time that carries `topByMemory`, and show nothing when no such sample exists.
+The sample inspector and the High memory Condition page name the processes holding the most memory, with each one's resident memory and the time of the sample that carried them.
+The sample inspector inspects the selected sample. The Condition page inspects the newest sample of the window it charts: the System's newest sample while the Condition is open, or the newest sample at or before its clearing.
+They read the newest sample carrying `topByMemory` that is at or before the inspected sample, at most two minutes older than it, and within its uptime, so from the same boot.
+Two minutes covers the Collector's one-minute cadence and one sample missed by a failed process read.
+With no such sample, or an empty list, they show nothing, not even the heading.
 
 Raising and escalation require enough measured busy time.
 A new current Condition also requires a latest sample no older than two hours.
@@ -219,11 +223,15 @@ The Collector shares one process-table pass with Harness tracking per Vitals sam
 An optional `processes` field carries the five hottest measured processes, each with its executable name, PID, lifetime identifier, CPU cores, and resident bytes.
 It never carries arguments or environment variables.
 On at most one sample in any minute, `processes` also carries `topByMemory`: the five processes with the most resident memory, largest first and tied by PID, each with its executable name, PID, lifetime identifier, and resident bytes.
+The Collector attaches it to its first sample with process evidence and then to the first such sample at least 60 seconds, on its monotonic clock, after the last one that carried it.
 The Collector takes them from the same table pass and names and validates them as it does the hottest processes.
+It skips a holder with no lifetime identifier, an empty or invalid name, or an executable that changed from its recorded confirmed name, and takes the next largest in its place.
+The list therefore names the largest holders the Collector could identify. It can hold fewer than five, can leave out a larger holder it could not name, and skipping a holder never changes the census.
 The list needs no CPU baseline and makes no census claim, so it is valid with a partial census or a zero interval, and it never establishes a process's absence or exit.
 Resident memory counts shared pages in every process that maps them, so the rows overlap and are never summed.
 A sample without `topByMemory` has not reported it. The Hub and dashboard treat its absence as not reported, never as no processes; older Collectors never send it, and other samples omit it.
-More than five entries or a repeated PID makes the whole process observation invalid, as a malformed `top` does.
+More than five entries, a repeated PID, or an invalid entry drops `topByMemory` alone. The rest of the process observation stays, because a list that only feeds a display must not cost hot-process evidence.
+An older Hub drops the unknown field and keeps the rest of the process observation.
 Executable lookup falls back to the platform's accounting name when unreadable, which can be truncated.
 The first reported fallback name stays attached to that lifetime, so changing an accounting name or losing read permission cannot clear a still-hot process.
 The Collector keeps these names and confirmed executable names in `process-names.sqlite` under its configured state directory.

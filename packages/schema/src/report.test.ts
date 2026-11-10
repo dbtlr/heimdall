@@ -26,10 +26,17 @@ test('process evidence preserves bounded CPU readings and discards malformed evi
   expect(VitalsSampleSchema.parse({ ...sample(0), processes: withMemory }).processes).toEqual(
     withMemory,
   );
+  for (const topByMemory of [
+    Array.from({ length: 6 }, (_, i) => ({ ...holder, pid: i + 1 })),
+    [holder, holder],
+  ]) {
+    expect(
+      VitalsSampleSchema.parse({ ...sample(0), processes: { ...processes, topByMemory } })
+        .processes,
+    ).toEqual(processes);
+  }
   for (const invalid of [
     { ...processes, intervalMs: 15_001 },
-    { ...processes, topByMemory: Array.from({ length: 6 }, (_, i) => ({ ...holder, pid: i + 1 })) },
-    { ...processes, topByMemory: [holder, holder] },
     { ...processes, top: Array.from({ length: 6 }, () => processes.top[0]) },
     { ...processes, top: [processes.top[0], processes.top[0]] },
     { ...processes, census: { ...processes.census, presentPids: [] } },

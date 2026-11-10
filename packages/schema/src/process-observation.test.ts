@@ -57,14 +57,14 @@ test('processes by memory carry name, pid, start, and resident bytes with any ce
   );
 });
 
-test('processes by memory reject more than five entries, a repeated pid, or an invalid name', () => {
+test('a malformed list by memory is dropped alone, keeping the CPU evidence and census', () => {
   const tooMany = Array.from({ length: MAX_TOP_MEMORY_PROCESSES + 1 }, (_, i) =>
     holder(100 + i, 1024),
   );
-  expect(
-    ProcessObservationSchema.safeParse({ ...observation, topByMemory: tooMany.slice(0, -1) })
-      .success,
-  ).toBe(true);
+  const five = tooMany.slice(0, -1);
+  expect(ProcessObservationSchema.parse({ ...observation, topByMemory: five }).topByMemory).toEqual(
+    five,
+  );
   for (const topByMemory of [
     tooMany,
     [holder(43, 4096), { ...holder(43, 1024), start: '9999' }],
@@ -75,7 +75,9 @@ test('processes by memory reject more than five entries, a repeated pid, or an i
     [{ ...holder(43, 4096), rssBytes: 1.5 }],
     [{ ...holder(43, 4096), rssBytes: -1 }],
   ]) {
-    expect(ProcessObservationSchema.safeParse({ ...observation, topByMemory }).success).toBe(false);
+    const parsed = ProcessObservationSchema.parse({ ...observation, topByMemory });
+    expect(parsed.topByMemory).toBeUndefined();
+    expect(parsed).toEqual(observation);
   }
 });
 

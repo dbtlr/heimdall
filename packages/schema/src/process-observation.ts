@@ -25,6 +25,14 @@ const MemoryReadingSchema = ProcessIdentitySchema.omit({ bootId: true }).extend(
   rssBytes: bytes,
 });
 
+const distinctPids = (entries: readonly { pid: number }[]) =>
+  new Set(entries.map((entry) => entry.pid)).size === entries.length;
+
+const TopByMemorySchema = z
+  .array(MemoryReadingSchema)
+  .max(MAX_TOP_MEMORY_PROCESSES)
+  .refine(distinctPids);
+
 const CompleteCensusSchema = z.object({
   kind: z.literal('complete'),
   presentPids: z.array(ProcessIdentitySchema.shape.pid).max(MAX_PROCESS_CENSUS),
@@ -34,25 +42,22 @@ const CompleteCensusSchema = z.object({
 const PartialCensusSchema = z.object({ kind: z.literal('partial') });
 const CensusSchema = z.discriminatedUnion('kind', [CompleteCensusSchema, PartialCensusSchema]);
 
-const distinctPids = (entries: readonly { pid: number }[]) =>
-  new Set(entries.map((entry) => entry.pid)).size === entries.length;
-
 // Contradictory census evidence cannot both observe a process and declare it exited.
 // `topByMemory` is the processes holding the most resident memory, largest
 // first. The Collector sends it on at most one sample a minute, so its absence
 // means not reported, never no processes. It needs no CPU baseline and makes no
-// census claim, so it is valid with a partial census or a zero interval.
+// census claim, so it is valid with a partial census or a zero interval. A
+// malformed list drops only itself: it feeds a display, so it must not cost the
+// CPU evidence hot-process judgment depends on.
 export const ProcessObservationSchema = z
   .object({
     bootId: ProcessIdentitySchema.shape.bootId,
     census: CensusSchema,
     intervalMs: z.number().nonnegative().max(15_000),
     top: z.array(ProcessReadingSchema).max(MAX_TOP_PROCESSES),
-    topByMemory: z.array(MemoryReadingSchema).max(MAX_TOP_MEMORY_PROCESSES).optional(),
+    // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
+    topByMemory: TopByMemorySchema.optional().catch(undefined),
   })
-  .refine(
-    (observation) => observation.topByMemory === undefined || distinctPids(observation.topByMemory),
-  )
   .refine((observation) => {
     if (!distinctPids(observation.top)) {
       return false;
