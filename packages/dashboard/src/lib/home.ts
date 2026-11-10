@@ -22,8 +22,9 @@ const isActionable = (item: Attention): item is Actionable =>
 
 // The open Conditions on paired Systems that need the operator, alerts before
 // warnings, then newest first: `lead` is the one Home shows with its evidence,
-// `rest` the others. Notes can wait in their own list, and evidence the Hub
-// holds no Condition for stays on its System's tile and page, so neither is here.
+// `rest` the others. Notes follow them on Home as `fleetAttention` lists them,
+// and evidence the Hub holds no Condition for stays on its System's tile and
+// page, so neither is here.
 export const pickAttention = (
   items: readonly Attention[],
 ): { lead: Actionable | undefined; rest: Actionable[] } => {
@@ -40,11 +41,14 @@ export const pickAttention = (
   return { lead, rest };
 };
 
-// "Low disk /data on server-1": an item's Condition, subject, and System.
-export const itemTitle = (item: Attention): string => {
+// "Low disk /data": an item's Condition and subject.
+export const itemName = (item: Attention): string => {
   const subject = subjectText(item);
-  return `${ATTENTION_NAMES[item.kind]}${subject === '' ? '' : ` ${subject}`} on ${item.system}`;
+  return `${ATTENTION_NAMES[item.kind]}${subject === '' ? '' : ` ${subject}`}`;
 };
+
+// "Low disk /data on server-1": an item's Condition, subject, and System.
+export const itemTitle = (item: Attention): string => `${itemName(item)} on ${item.system}`;
 
 // The verdict card's edge: the worst open level, healthy, or no System to judge.
 export type VerdictLevel = 'alert' | 'warning' | 'healthy' | 'empty';

@@ -3,7 +3,6 @@ import { expect, test } from 'bun:test';
 import type { Attention } from '../server/attention-types.ts';
 import { DELIVERY_FAILING_SHOWN_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
-import { canWaitRows } from './fleet-tile.ts';
 import { deliveryFailingShown, fleetAttention, fleetSummary, isAsleep } from './fleet.ts';
 
 const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
@@ -52,7 +51,7 @@ test('delivery failing is shown only once the run of failures is 10 minutes old'
   ).toBe(now - DELIVERY_FAILING_SHOWN_AFTER_MS);
 });
 
-test('Fleet verdict counts the same notes as Can wait, keeping other levels and excluding unpaired history', () => {
+test('Fleet counts leave out Service restarted notes, keeping other levels and excluding unpaired history', () => {
   const restarted: Attention = {
     checkedAt: 100,
     conditionId: 'restart',
@@ -74,7 +73,7 @@ test('Fleet verdict counts the same notes as Can wait, keeping other levels and 
     { ...restarted, unpaired: true },
   ];
   expect(fleetAttention(items).counts).toEqual({ alert: 1, note: 1, warning: 1 });
-  expect(canWaitRows(['server-1'], items)).toEqual([{ notes: ['Low disk /'], system: 'server-1' }]);
+  expect(fleetAttention(items).notes).toEqual([disk({ level: 'note' })]);
 });
 
 const lane = (name: string, lastSeenAt: number | undefined): SystemGlance => ({
@@ -115,6 +114,43 @@ test('the bars name the worst open level that asks for action, never a note, and
     worst: 'alert',
   });
   expect(summary([disk(), disk({ level: 'alert', unpaired: true })])).toMatchObject({
+    counts: { alert: 0, note: 0, warning: 1 },
+    worst: 'warning',
+  });
+});
+
+const maintenance = (
+  kind: 'pending_update' | 'reboot_required',
+  level: 'note' | 'warning',
+): Attention => ({
+  checkedAt: 100,
+  conditionId: `${kind}-${level}`,
+  evidence: 'current',
+  firstDetected: 100,
+  kind,
+  level,
+  reason: 'Routine work is waiting.',
+  subject: kind === 'pending_update' ? JSON.stringify(['apt', 'system']) : '',
+  system: 'server-1',
+  unpaired: false,
+});
+
+test('the bars and the verdict leave out maintenance notes, and count a Pending update or Reboot required at warning', () => {
+  const lanes = [lane('server-1', 100)];
+  const notes = [
+    maintenance('reboot_required', 'note'),
+    maintenance('pending_update', 'note'),
+    disk({ level: 'note' }),
+  ];
+
+  expect(fleetSummary({ attention: notes, lanes }).counts).toEqual({
+    alert: 0,
+    note: 1,
+    warning: 0,
+  });
+  expect(
+    fleetSummary({ attention: [maintenance('reboot_required', 'warning')], lanes }),
+  ).toMatchObject({
     counts: { alert: 0, note: 0, warning: 1 },
     worst: 'warning',
   });

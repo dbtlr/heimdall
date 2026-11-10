@@ -1,0 +1,160 @@
+// What Home's Maintenance, What changed, and Jobs cards read. Each read is one
+// statement over every paired System, so the count of statements does not
+// grow with Systems, Services, jobs, or changes.
+
+import { UpdateManagerSchema } from '@heimdall/schema';
+import type { UpdateManager } from '@heimdall/schema';
+import type { SQL } from 'bun';
+
+import { homeJob, orderJobs } from '../lib/home-jobs.ts';
+import type { Attention } from './attention-types.ts';
+import type { Change, HomeJob } from './home-types.ts';
+import { conditionKind, scheduleOf, toRun } from './hub-rows.ts';
+import type { RunRow } from './hub-rows.ts';
+import { nextScheduledTime } from './next-run.ts';
+import { readServiceStops } from './service-stops.ts';
+
+// Each paired System's latest observation of each package manager it has.
+export const readPackageObservations = async (
+  sql: SQL,
+): Promise<{ observation: UpdateManager; system: string }[]> => {
+  const rows: { observation: unknown; system: string }[] = await sql`
+    SELECT m.system, m.observation FROM update_managers m
+    JOIN paired_systems p ON p.system = m.system
+    WHERE NOT m.withdrawn
+  `;
+  return rows.flatMap(({ observation, system }) => {
+    const parsed = UpdateManagerSchema.safeParse(observation);
+    return parsed.success ? [{ observation: parsed.data, system }] : [];
+  });
+};
+
+type JobRow = {
+  latest_run: RunRow['latest_run'] | null;
+  name: string;
+  schedule: unknown;
+  system: string;
+  time_zone: string | null;
+};
+
+// Every job a paired System's provisioner recorded, with its latest run and
+// the Job failing and Job overdue Conditions open on it in `attention`; a job
+// that never ran is due at its next scheduled time in its System's zone. In
+// the order Home lists them.
+export const readHomeJobs = async (
+  sql: SQL,
+  { attention, now }: { attention: readonly Attention[]; now: number },
+): Promise<HomeJob[]> => {
+  const rows: JobRow[] = await sql`
+    SELECT r.system, r.name, r.record->'schedule' AS schedule, u.latest_run, s.time_zone
+    FROM mirrored_records r
+    JOIN paired_systems p ON p.system = r.system
+    LEFT JOIN mirrored_runs u ON u.system = r.system AND u.job = r.name
+    LEFT JOIN systems s ON s.name = r.system
+    WHERE r.kind = 'job'
+  `;
+  const open = (row: JobRow, kind: 'job_failing' | 'job_overdue') =>
+    attention.find(
+      (item) => item.kind === kind && item.system === row.system && item.subject === row.name,
+    );
+  return orderJobs(
+    rows.map((row) =>
+      homeJob({
+        dueAt:
+          row.latest_run !== null || row.time_zone === null
+            ? undefined
+            : nextScheduledTime({
+                after: now,
+                schedule: scheduleOf(row.schedule),
+                timeZone: row.time_zone,
+              }),
+        failing: open(row, 'job_failing') !== undefined,
+        latestRun: row.latest_run === null ? undefined : toRun(row.latest_run),
+        name: row.name,
+        overdueSince: open(row, 'job_overdue')?.firstDetected,
+        system: row.system,
+      }),
+    ),
+  );
+};
+
+// Each change on a paired System between `since` and `now`: every installed
+// version that replaced another, every Service stop, and every Condition
+// raised or cleared at warning or alert. A version first seen, or one now
+// unknown, is no change.
+export const readChanges = async (
+  sql: SQL,
+  { now, since }: { now: number; since: number },
+): Promise<Change[]> => {
+  const from = new Date(since);
+  const to = new Date(now);
+  const [versions, stops, transitions]: [
+    {
+      first_seen_at: Date;
+      previous: string | null;
+      service: string;
+      system: string;
+      version: string | null;
+    }[],
+    Awaited<ReturnType<typeof readServiceStops>>,
+    {
+      action: 'cleared' | 'raised';
+      at: Date;
+      id: string;
+      kind: string;
+      subject: string;
+      system: string;
+    }[],
+  ] = await Promise.all([
+    sql`
+      SELECT v.system, v.service, v.version, v.first_seen_at, previous.version AS previous
+      FROM service_versions v
+      JOIN paired_systems p ON p.system = v.system
+      JOIN LATERAL (
+        SELECT version FROM service_versions w
+        WHERE w.system = v.system AND w.service = v.service AND w.first_seen_at < v.first_seen_at
+        ORDER BY w.first_seen_at DESC LIMIT 1
+      ) previous ON true
+      WHERE v.first_seen_at >= ${from} AND v.first_seen_at <= ${to}
+    `,
+    readServiceStops(sql, { includeUnpaired: false, since: from }),
+    sql`
+      SELECT c.id::text AS id, c.system, c.kind, c.subject, t.action, t.at
+      FROM conditions c
+      JOIN paired_systems p ON p.system = c.system
+      JOIN condition_transitions t ON t.condition = c.id
+      WHERE (c.raised_at >= ${from} OR c.cleared_at >= ${from})
+        AND t.action IN ('raised', 'cleared') AND t.level IN ('warning', 'alert')
+        AND t.at >= ${from} AND t.at <= ${to}
+    `,
+  ]);
+  return [
+    ...versions.flatMap(({ first_seen_at, previous, service, system, version }): Change[] =>
+      previous === null || version === null || previous === version
+        ? []
+        : [
+            {
+              at: first_seen_at.getTime(),
+              from: previous,
+              kind: 'version',
+              service,
+              system,
+              to: version,
+            },
+          ],
+    ),
+    ...stops.flatMap(({ service, stoppedAt, system }): Change[] => {
+      const at = Date.parse(stoppedAt);
+      return at > now ? [] : [{ at, kind: 'stop', service, system }];
+    }),
+    ...transitions.map(({ action, at, id, kind, subject, system }): Change => ({
+      action,
+      at: at.getTime(),
+      condition: conditionKind(kind),
+      conditionId: id,
+      kind: 'condition',
+      subject,
+      system,
+    })),
+  ];
+};

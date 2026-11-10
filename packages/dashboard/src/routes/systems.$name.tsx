@@ -13,7 +13,7 @@ import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
 import { SystemNavigationHeader } from '../components/system-navigation.tsx';
 import { SystemNowCards } from '../components/system-now-cards.tsx';
-import { SystemOpenConditions } from '../components/system-open-conditions.tsx';
+import { SystemMaintenance, SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { headerLine } from '../lib/detail.ts';
@@ -145,6 +145,7 @@ function SystemPage() {
           <>
             <SystemNowCards detail={detail} items={attention} />
             <SystemOpenConditions items={attention} key={detail.name} now={detail.now} />
+            <SystemMaintenance items={attention} now={detail.now} />
             <div className="lg:hidden">
               <SystemGlance detail={detail} />
             </div>

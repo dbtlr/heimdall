@@ -206,7 +206,7 @@ describe('the attention card', () => {
 
   test('with nothing open, says so and names the Condition that cleared last', async () => {
     const html = await render({
-      attention: [{ ...drift, level: 'note' }],
+      attention: [],
       lastCleared: {
         clearedAt: NOW - 3 * 24 * HOUR,
         id: '9',
@@ -224,6 +224,45 @@ describe('the attention card', () => {
     expect(html).toContain('href="/systems/server-1/conditions/9"');
     expect(html).toContain('Drift /etc/hosts on server-1');
     expect(html).toContain(', open 2 h 28 min.');
+  });
+
+  test('notes follow the alerts and warnings as the last rows, with the note mark, and tint nothing', async () => {
+    const disk: Attention = {
+      checkedAt: NOW,
+      conditionId: '21',
+      disk: undefined,
+      evidence: 'current',
+      firstDetected: NOW - 2 * HOUR,
+      kind: 'low_disk',
+      level: 'note',
+      reason: '/data is 72% used',
+      subject: '/data',
+      system: 'server-1',
+      unpaired: false,
+    };
+    const reboot: Attention = {
+      ...disk,
+      conditionId: '22',
+      kind: 'reboot_required',
+      reason: 'A reboot is required.',
+      subject: '',
+    };
+
+    const html = await render({ attention: [disk, memory, reboot, drift] });
+
+    expect(html).toContain('data-level="warning"');
+    expect(html.indexOf('Drift /etc/hosts on server-1')).toBeLessThan(
+      html.indexOf('Low disk /data on server-1'),
+    );
+    expect(html).toContain('href="/systems/server-1/conditions/21"');
+    expect(html).toContain('fill-status-warning');
+    expect(html).not.toContain('Reboot required');
+
+    const notesOnly = await render({ attention: [disk, reboot] });
+
+    expect(notesOnly).not.toContain('data-level=');
+    expect(notesOnly).toContain('No alert or warning open');
+    expect(notesOnly).toContain('Low disk /data on server-1');
   });
 
   test('with nothing open and nothing ever cleared, says only that nothing is open', async () => {

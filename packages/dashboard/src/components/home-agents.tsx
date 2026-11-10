@@ -8,6 +8,7 @@ import { cn } from '../lib/utils.ts';
 import { NO_KEY, UNKNOWN_MODEL } from '../server/agents-overview-types.ts';
 import type { AgentsSession } from '../server/agents-overview-types.ts';
 import type { DayCost, HomeAgents } from '../server/home-types.ts';
+import { HomeCard } from './home-cards.tsx';
 
 const ROW = 'border-t first:border-t-0';
 
@@ -212,22 +213,16 @@ export function AgentsCard({ agents, now }: { agents: HomeAgents | undefined; no
     );
   }
   return (
-    <section
-      aria-labelledby="home-agents"
-      className="min-w-0 card-surface rounded-xl border px-4 py-3.5"
-    >
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h2
-          className="text-[11px] font-semibold tracking-[0.08em] text-dim uppercase"
-          id="home-agents"
-        >
-          Agents
-        </h2>
+    <HomeCard
+      id="home-agents"
+      link={
         <Link className="text-xs text-link hover:underline" to="/agents">
           Spend and Sessions →
         </Link>
-      </div>
+      }
+      title="Agents"
+    >
       {body}
-    </section>
+    </HomeCard>
   );
 }

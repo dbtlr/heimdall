@@ -4,6 +4,7 @@ import { NOW, push, report, startHub, storeToken, timeline, unpair } from '@heim
 import type { Hub } from '@heimdall/hub/testing';
 import type { SQL } from 'bun';
 
+import { changeWords } from '../lib/home-changes.ts';
 import { readHome } from './home.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -97,6 +98,48 @@ const counting = (sql: SQL) => {
       },
     });
   return { sql: wrap(sql), statements: () => statements };
+};
+
+const at = (ms: number) => new Date(ms);
+
+// A package manager's observation with one pending package per flag, each a
+// security update when its flag is true.
+const observation = (security: boolean[]) =>
+  JSON.stringify({
+    installation: 'system',
+    manager: 'apt',
+    observedAt: NOW,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: security.map((flag, index) => ({
+        available: '2',
+        installed: '1',
+        name: `package-${String(index)}`,
+        security: flag,
+      })),
+    },
+  });
+
+// A job `name` recorded on `system` daily at 03:00, with its latest run when
+// `exitStatus` is given.
+const recordJob = async (h: Hub, system: string, name: string, exitStatus?: number) => {
+  const record = JSON.stringify({ name, schedule: [{ hour: 3, minute: 0 }], scheduler: 'cron' });
+  await h.db.sql`
+    INSERT INTO mirrored_records (system, kind, name, record)
+    VALUES (${system}, 'job', ${name}, ${record}::text::jsonb)
+  `;
+  if (exitStatus !== undefined) {
+    const run = JSON.stringify({
+      exitStatus,
+      finished: new Date(NOW - HOUR).toISOString(),
+      started: new Date(NOW - 2 * HOUR).toISOString(),
+    });
+    await h.db.sql`
+      INSERT INTO mirrored_runs (system, job, latest_run)
+      VALUES (${system}, ${name}, ${run}::text::jsonb)
+    `;
+  }
 };
 
 describe('readHome', () => {
@@ -241,7 +284,148 @@ describe('readHome', () => {
     });
   });
 
-  test('sends as many statements for six Systems and their Sessions as for two and one', async () => {
+  test('reads the packages pending on each System with an open Pending update, at any level, and each Service with an update, dated by its upstream', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web'] });
+    await hear(h, 'laptop-1');
+    await h.db.sql`
+      INSERT INTO update_managers (system, manager, installation, observed_at, observation) VALUES
+        ('server-1', 'apt', 'system', ${at(NOW)}, ${observation([true, true, false])}::text::jsonb),
+        ('laptop-1', 'apt', 'system', ${at(NOW)}, ${observation([false])}::text::jsonb)
+    `;
+    const subject = JSON.stringify(['apt', 'system']);
+    const server = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -2 * 86_400,
+      subject,
+      system: 'server-1',
+    });
+    const laptop = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'warning',
+      raisedAt: -86_400,
+      subject,
+      system: 'laptop-1',
+    });
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+      VALUES ('server-1', 'web', '1.0', 'github:owner/web', ${at(NOW - 10 * DAY)})
+    `;
+    await h.db.sql`
+      INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at)
+      VALUES ('github:owner/web', '{"":"2.0"}', ${at(NOW)}, ${at(NOW)}, ${at(NOW + HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO upstream_releases (upstream, version, first_found_at)
+      VALUES ('github:owner/web', '2.0', ${at(NOW - 5 * DAY)})
+    `;
+
+    const { maintenance } = await home(h);
+
+    expect(maintenance.packages).toEqual([
+      { conditionId: server, packages: 3, security: 2, system: 'server-1' },
+      { conditionId: laptop, packages: 1, security: 0, system: 'laptop-1' },
+    ]);
+    expect(maintenance.updates).toEqual([
+      { name: 'web', since: NOW - 5 * DAY, system: 'server-1', version: '2.0' },
+    ]);
+  });
+
+  test('reads the changes of the last day grouped: a version change with its restarts across Systems, a lone stop, and a warning raised and cleared', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'collector', '0.10.0', null, ${at(NOW - 30 * HOUR)}),
+        ('server-1', 'collector', '0.10.1', null, ${at(NOW - 2 * HOUR)}),
+        ('laptop-1', 'collector', '0.10.0', null, ${at(NOW - 30 * HOUR)}),
+        ('laptop-1', 'collector', '0.10.1', null, ${at(NOW - 2 * HOUR + 3 * MINUTE)}),
+        ('server-1', 'new', '1.0', null, ${at(NOW - HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at) VALUES
+        ('server-1', 'collector', ${at(NOW - 2 * HOUR + MINUTE)}, false, 0, ${at(NOW)}, ${at(NOW)}),
+        ('laptop-1', 'collector', ${at(NOW - 2 * HOUR + 4 * MINUTE)}, false, 0, ${at(NOW)}, ${at(NOW)}),
+        ('server-1', 't3code', ${at(NOW - HOUR)}, false, 0, ${at(NOW)}, ${at(NOW)}),
+        ('server-1', 't3code', ${at(NOW - 2 * DAY)}, false, 0, ${at(NOW)}, ${at(NOW)})
+    `;
+    await addCondition(h.db.sql, {
+      clearedAt: -1.5 * 3600,
+      kind: 'drift',
+      raisedAt: -3 * 3600,
+      subject: '/etc/hosts',
+      system: 'server-1',
+    });
+    // A note raised is no change.
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'note',
+      raisedAt: -1800,
+      subject: '/',
+      system: 'server-1',
+    });
+
+    const { changes } = await home(h);
+
+    expect(changes.map((group) => changeWords(group).title)).toEqual([
+      't3code restarted',
+      'Drift cleared on server-1',
+      'collector 0.10.0 → 0.10.1',
+      'Drift raised on server-1',
+    ]);
+    expect(changes[2] === undefined ? undefined : changeWords(changes[2]).detail).toBe(
+      'laptop-1 and server-1, restarted once each',
+    );
+  });
+
+  test('reads every recorded job: failing first, then overdue, then by latest run, and one never run due at its next time', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await h.db.sql`UPDATE systems SET time_zone = 'UTC' WHERE name = 'server-1'`;
+    await recordJob(h, 'server-1', 'backup', 1);
+    await recordJob(h, 'server-1', 'rotate', 0);
+    await recordJob(h, 'server-1', 'sync', 0);
+    await recordJob(h, 'server-1', 'prune');
+    await addCondition(h.db.sql, {
+      kind: 'job_overdue',
+      raisedAt: -5 * 3600,
+      subject: 'rotate',
+      system: 'server-1',
+    });
+
+    const { jobs } = await home(h);
+
+    expect(jobs).toEqual([
+      {
+        at: NOW - HOUR,
+        lastRunAt: NOW - HOUR,
+        name: 'backup',
+        state: 'failing',
+        system: 'server-1',
+      },
+      {
+        at: NOW - 5 * HOUR,
+        lastRunAt: NOW - HOUR,
+        name: 'rotate',
+        state: 'overdue',
+        system: 'server-1',
+      },
+      { at: NOW - HOUR, lastRunAt: NOW - HOUR, name: 'sync', state: 'ok', system: 'server-1' },
+      {
+        at: Date.UTC(2026, 9, 7, 3, 0),
+        lastRunAt: undefined,
+        name: 'prune',
+        state: 'due',
+        system: 'server-1',
+      },
+    ]);
+  });
+
+  test('sends as many statements for six Systems, their Sessions, jobs, updates, and changes as for two and one', async () => {
     await using h = await startHub();
     const statementsFor = async () => {
       const counted = counting(h.db.sql);
@@ -257,10 +441,42 @@ describe('readHome', () => {
         system,
       });
     };
+    // A job, a pending update, a reboot, a version change, and a stop on `system`.
+    const cards = async (system: string) => {
+      await recordJob(h, system, 'backup', 0);
+      await h.db.sql`
+        INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+        VALUES (${system}, 'apt', 'system', ${at(NOW)}, ${observation([true])}::text::jsonb)
+      `;
+      await addCondition(h.db.sql, {
+        kind: 'pending_update',
+        level: 'note',
+        raisedAt: -600,
+        subject: JSON.stringify(['apt', 'system']),
+        system,
+      });
+      await addCondition(h.db.sql, {
+        kind: 'reboot_required',
+        level: 'note',
+        raisedAt: -600,
+        system,
+      });
+      await h.db.sql`
+        INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+          (${system}, 'web', '0.9', null, ${at(NOW - 2 * DAY)}),
+          (${system}, 'web', '1.0', null, ${at(NOW - HOUR)})
+      `;
+      await h.db.sql`
+        INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
+        VALUES (${system}, 'web', ${at(NOW - HOUR)}, false, 0, ${at(NOW)}, ${at(NOW)})
+      `;
+    };
     await hear(h, 'server-1', { down: ['api'], up: ['web'] });
     await hear(h, 'laptop-1', { up: ['web'] });
+    await h.db.sql`DELETE FROM service_versions`;
     await warning(h, 'server-1', -3600);
     await work('server-1');
+    await cards('server-1');
     const two = await statementsFor();
     for (const system of ['edge-1', 'db-1', 'build-1', 'mini-1']) {
       // oxlint-disable-next-line no-await-in-loop -- each System pairs before it reports.
@@ -271,11 +487,16 @@ describe('readHome', () => {
       await warning(h, system, -7200);
       // oxlint-disable-next-line no-await-in-loop -- two Sessions each.
       await work(system);
+      // oxlint-disable-next-line no-await-in-loop -- one more of each card's rows each.
+      await cards(system);
     }
     const read = await readHome(h.db.sql, { now: NOW, timeZone: 'Europe/Berlin', unpaired: false });
 
     expect(read.lanes).toHaveLength(6);
     expect(read.agents?.running).toHaveLength(5);
+    expect(read.jobs).toHaveLength(5);
+    expect(read.maintenance.packages).toHaveLength(5);
+    expect(read.changes.find(({ change }) => change.kind === 'version')?.systems).toHaveLength(5);
     expect(await statementsFor()).toBe(two);
     expect(two).toBeGreaterThan(0);
   });
