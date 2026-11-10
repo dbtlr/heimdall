@@ -77,7 +77,7 @@ One payload from a Collector to the Hub: a batch of Vitals samples, and the Coll
 _Avoid_: event, metric, ping
 
 **Vitals**:
-The small fixed set of host measurements: CPU, memory, disk, load, and uptime. Sampled as a time series so spikes are visible.
+The small fixed set of host measurements: CPU, memory, disk, load, and uptime. Sampled as a time series so spikes are visible. A sample can also name processes by executable: the five using the most CPU and, on at most one sample a minute while the Collector runs, the five holding the most resident memory. A sample without the memory list has not reported it.
 _Avoid_: metrics (too broad), telemetry
 
 **Harness**:

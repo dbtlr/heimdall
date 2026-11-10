@@ -13,6 +13,8 @@ import type {
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
+import { memoryHoldersView } from './detail.ts';
+import type { MemoryHoldersView } from './detail.ts';
 import { diskGrowth } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';
@@ -73,6 +75,9 @@ export type ConditionDetailView = {
   hero: HeroView;
   history: HistoryRow[];
   level: ConditionLevel;
+  // For high memory, the processes holding the most memory at the chart's
+  // newest sample; undefined when none are named.
+  memoryHolders: MemoryHoldersView | undefined;
   // Undefined once cleared.
   nextStep: { clears: string | undefined; steps: NextStep[] } | undefined;
   // The packages a pending_update Condition's source has pending, security
@@ -479,6 +484,7 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
     hero: leading.hero ?? openHero(detail, now),
     history: detail.transitions.map(historyRow),
     level: detail.level,
+    memoryHolders: memoryHoldersView(detail.memoryHolders),
     nextStep:
       attention === undefined
         ? undefined

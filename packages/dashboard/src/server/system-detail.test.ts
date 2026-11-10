@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { filesRecordDigest } from '@heimdall/schema';
+import { sample } from '@heimdall/schema/testing';
 
 import {
   parseDetailInput,
@@ -1092,5 +1093,82 @@ describe('readSystemRecords', () => {
       reason: 'drifted',
       subject: '/etc/a',
     });
+  });
+});
+
+type Holder = { name: string; pid: number; rssBytes: number };
+
+// A sample `seconds` after NOW, carrying `topByMemory` when given, as a
+// Collector `uptimeSeconds` after its boot takes it.
+const memorySample = (seconds: number, topByMemory?: Holder[], uptimeSeconds = 86_400) => ({
+  ...sample(NOW + seconds * SECOND),
+  uptimeSeconds,
+  ...(topByMemory && {
+    processes: {
+      bootId: 'boot-1',
+      census: { kind: 'partial' as const },
+      intervalMs: 15_000,
+      top: [],
+      topByMemory: topByMemory.map((holder) => ({ ...holder, start: '1' })),
+    },
+  }),
+});
+
+const hearSamples = async (h: Hub, samples: ReturnType<typeof memorySample>[]) => {
+  h.clock.now = NOW;
+  const response = await push(
+    h.hub,
+    { ...report('server-1', []), samples },
+    { token: 'server-token' },
+  );
+  expect(response.status).toBe(200);
+};
+
+describe('the processes holding the most memory', () => {
+  const older = [{ name: 'postgres', pid: 7, rssBytes: 3 * GIB }];
+  const newer = [
+    { name: 'postgres', pid: 7, rssBytes: 4 * GIB },
+    { name: 'bun', pid: 42, rssBytes: GIB },
+  ];
+
+  test('come from the newest sample at or before the inspected one that carries them, up to two minutes older', async () => {
+    await using h = await startHub();
+    await hearSamples(h, [
+      memorySample(-420, older),
+      ...[-405, -390, -255].map((seconds) => memorySample(seconds)),
+      memorySample(-240, older),
+      ...[-225, -135].map((seconds) => memorySample(seconds)),
+      memorySample(-120, newer),
+      memorySample(-105),
+      memorySample(0),
+    ]);
+
+    expect((await inspect(h, NOW - 105_000)).memoryHolders).toEqual({
+      processes: newer,
+      t: NOW - 120_000,
+    });
+    expect((await inspect(h, NOW - 120_000)).memoryHolders?.t).toBe(NOW - 120_000);
+    expect((await inspect(h, NOW)).memoryHolders?.t).toBe(NOW - 120_000);
+    expect((await inspect(h, NOW - 135_000)).memoryHolders).toEqual({
+      processes: older,
+      t: NOW - 240_000,
+    });
+    expect((await inspect(h, NOW - 255_000)).memoryHolders).toBeUndefined();
+  });
+
+  test('are none from before a reboot, from an empty list, or where no sample carries them', async () => {
+    await using h = await startHub();
+    await hearSamples(h, [
+      memorySample(-600, newer),
+      memorySample(-585),
+      memorySample(-300, newer),
+      memorySample(-285, undefined, 10),
+      memorySample(-60, []),
+      memorySample(-45),
+    ]);
+
+    expect((await inspect(h, NOW - 585_000)).memoryHolders?.t).toBe(NOW - 600_000);
+    expect((await inspect(h, NOW - 285_000)).memoryHolders).toBeUndefined();
+    expect((await inspect(h, NOW - 45_000)).memoryHolders).toBeUndefined();
   });
 });

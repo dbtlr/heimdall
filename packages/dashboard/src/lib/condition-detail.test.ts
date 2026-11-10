@@ -81,6 +81,7 @@ const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail =
   latestReason: '91% used',
   level: 'warning',
   limits: LIMITS,
+  memoryHolders: undefined,
   packages: undefined,
   platform: 'linux',
   raisedAt: NOW - 3 * DAY,
@@ -267,6 +268,7 @@ const cpuDetail = (): ConditionDetail => ({
   latestReason: 'CPU 93% for 32 of 60 min',
   level: 'note',
   limits: LIMITS,
+  memoryHolders: undefined,
   packages: undefined,
   platform: 'linux',
   raisedAt: NOW - 2 * HOUR,
@@ -401,6 +403,7 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
   latestReason: '3 updates',
   level: 'note',
   limits: LIMITS,
+  memoryHolders: undefined,
   packages: undefined,
   platform: 'linux',
   raisedAt: NOW - 3 * DAY,
@@ -597,4 +600,12 @@ test('an open pending_update Condition lists its packages with versions, securit
 test('a Condition with no packages to list has no table', () => {
   expect(conditionDetailView(updateDetail({ packages: undefined }), NOW).packages).toBeUndefined();
   expect(conditionDetailView(updateDetail({ packages: [] }), NOW).packages).toEqual([]);
+});
+
+test('a Condition carries the processes holding the most memory as the inspector reads them', () => {
+  const memoryHolders = { processes: [{ name: 'postgres', pid: 7, rssBytes: GIB }], t: NOW };
+  expect(conditionDetailView({ ...cpuDetail(), memoryHolders }, NOW).memoryHolders).toEqual({
+    at: NOW,
+    rows: [{ name: 'postgres', pid: 7, resident: '1.0 GiB' }],
+  });
 });

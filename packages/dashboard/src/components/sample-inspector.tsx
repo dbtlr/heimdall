@@ -1,9 +1,10 @@
-import { formatGiB, sampleProcessLine, unlinkedLine } from '../lib/detail.ts';
+import { formatGiB, memoryHoldersView, sampleProcessLine, unlinkedLine } from '../lib/detail.ts';
 import { harnessColor } from '../lib/lane.ts';
 import { clockSecondsAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
 import type { SampleInspection, SampleProcess } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
+import { MemoryHolders } from './memory-holders.tsx';
 import { MoreItems } from './more-items.tsx';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
@@ -46,8 +47,9 @@ function ProcessEntry({ process }: { process: SampleProcess }) {
 }
 
 // The panel that inspects one Vitals sample: its CPU against its 5-minute
-// bucket, memory and load, the Harness processes running then with their
-// Sessions, and the Sessions no single process is linked to.
+// bucket, memory and load, the processes holding the most memory, the Harness
+// processes running then with their Sessions, and the Sessions no single
+// process is linked to.
 export function SampleInspector({
   failed,
   loading = false,
@@ -61,6 +63,7 @@ export function SampleInspector({
     sample?.processes.filter((process) => process.cores === 0 && process.requests === 0) ?? [];
   const active =
     sample?.processes.filter((process) => process.cores !== 0 || process.requests !== 0) ?? [];
+  const holders = memoryHoldersView(sample?.memoryHolders);
   return (
     <aside
       aria-busy={loading}
@@ -86,6 +89,11 @@ export function SampleInspector({
             Memory {formatGiB(sample.memoryUsedBytes)} of {formatGiB(sample.memoryTotalBytes)} GiB.
             Load {sample.load1.toFixed(1)}.
           </p>
+          {holders !== undefined && (
+            <div className="mt-3.5">
+              <MemoryHolders holders={holders} />
+            </div>
+          )}
           <p className="mt-3.5 mb-2 text-[12.5px] text-muted-foreground">Running then</p>
           {sample.processes.length === 0 && sample.unlinked.length === 0 ? (
             <p className="text-[13.5px] text-muted-foreground">No Harness process or Session.</p>
