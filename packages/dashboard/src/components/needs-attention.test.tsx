@@ -251,7 +251,9 @@ describe('the attention card', () => {
     const html = await render({ attention: [disk, memory, reboot, drift] });
 
     expect(html).toContain('data-level="warning"');
-    expect(html.indexOf('Drift /etc/hosts on server-1')).toBeLessThan(
+    // Drift, the newer warning, leads; High memory is the other warning's row.
+    expect(html.indexOf('High memory on vm-host-1')).toBeGreaterThan(-1);
+    expect(html.indexOf('High memory on vm-host-1')).toBeLessThan(
       html.indexOf('Low disk /data on server-1'),
     );
     expect(html).toContain('href="/systems/server-1/conditions/21"');
