@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
+import { NOW, push, report, startHub, storeToken, timeline } from '@heimdall/hub/testing';
 
 import { readJumpIndex } from './jump-index.ts';
 
@@ -20,7 +20,7 @@ const records = (names: string[]) => ({
   unreadable: [],
 });
 
-test('the jump index names every System, each paired Service with its System, and the projects and Sessions of 30 days, newest Session first', async () => {
+test('the jump index names every System, each paired Service with its System, and the projects and Sessions of 30 days by their last working directory, newest Session first', async () => {
   await using h = await startHub();
   const heard = await push(
     h.hub,
@@ -29,9 +29,12 @@ test('the jump index names every System, each paired Service with its System, an
   );
   expect(heard.status).toBe(200);
   await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1'), ('retired-1')`;
+  // Paired, with no Report yet, so the Hub keeps no history of it.
+  await storeToken(h.db.sql, { pairedAt: NOW, system: 'edge-1', token: 'edge-token' });
   await addSession(h.db.sql, {
-    firstCwd: '/home/someone/work/norn',
+    firstCwd: '/home/someone/work/scratch',
     id: 'older',
+    lastCwd: '/home/someone/work/norn',
     requests: [-2 * DAY_S],
     system: 'server-1',
   });
@@ -73,7 +76,7 @@ test('the jump index names every System, each paired Service with its System, an
         system: 'server-1',
       },
     ],
-    systems: ['laptop-1', 'retired-1', 'server-1'],
+    systems: ['edge-1', 'laptop-1', 'retired-1', 'server-1'],
   });
 });
 

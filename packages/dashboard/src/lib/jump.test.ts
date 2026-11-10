@@ -48,6 +48,11 @@ test('a Session matches only by the prefix of its id', () => {
   expect(labels('e1b2')).toEqual([]);
 });
 
+test('spaces around a query are ignored', () => {
+  expect(labels('  norn ')).toEqual(['project norn']);
+  expect(labels(' 5e7a ')).toEqual(['session 5e7a0c']);
+});
+
 test('no match is an empty list', () => {
   expect(labels('zzz')).toEqual([]);
 });

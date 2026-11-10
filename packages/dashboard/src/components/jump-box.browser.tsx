@@ -148,6 +148,18 @@ async function run() {
     await opens('server-web', '/systems/edge-1/services/server-web');
     await opens('tools', '/agents?by=project&pick=server-tools&range=30d');
     await opens('5e7', '/systems/server-1/sessions/codex/codex/5e7a0c');
+
+    // As the top bar hides the box below its breakpoint.
+    const shown = box.parentElement;
+    if (shown === null) {
+      throw new Error('The jump box has no container');
+    }
+    shown.style.display = 'none';
+    const slash = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: '/' });
+    flushSync(() => document.body.dispatchEvent(slash));
+    assert(!slash.defaultPrevented, 'A slash with the box hidden is left to the browser');
+    assert(document.activeElement !== box, 'A slash focuses no hidden box');
+    shown.style.display = '';
   } finally {
     flushSync(() => reactRoot.unmount());
     container.remove();

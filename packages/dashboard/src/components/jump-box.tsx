@@ -40,7 +40,8 @@ const statusText = (index: JumpIndex | undefined, unread: boolean, query: string
 // The jump box: a combobox over Systems, Services, projects, and Sessions by id
 // prefix. The index of names is read each time it gains focus. Arrow keys
 // move through the results, Enter opens the active one, and Escape closes.
-// With `shortcut`, a bare `/` anywhere outside an editable field focuses it.
+// With `shortcut`, a bare `/` anywhere outside an editable field focuses it
+// while it is visible.
 // `wide` fills its container, with type sized for a phone.
 export function JumpBox({
   loadIndex,
@@ -72,9 +73,12 @@ export function JumpBox({
       // A DOM event's fields are getters, so they are copied by name.
       const { altKey, ctrlKey, key, metaKey, target } = event;
       const element = target instanceof HTMLElement ? target : null;
-      if (opensJump({ altKey, ctrlKey, key, metaKey, target: element })) {
+      // A box hidden at this width, as the top bar's is on a phone, leaves the
+      // slash to the browser.
+      const box = input.current;
+      if (box?.checkVisibility() && opensJump({ altKey, ctrlKey, key, metaKey, target: element })) {
         event.preventDefault();
-        input.current?.focus();
+        box.focus();
       }
     };
     document.addEventListener('keydown', focusOnSlash);
