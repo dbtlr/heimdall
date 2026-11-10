@@ -24,7 +24,7 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 - **The Hub ingests and derives.** It keeps the Collector-facing endpoints (Reports, transcript uploads, and pairing redemption) and its health check, derives Conditions, rollups, and Session insight, owns the schema and its migrations, and keeps its admin commands on its own System.
 - **The dashboard app serves every read.** Its pages and the read API, `GET /api/v1/records` and any later read endpoint, are TanStack Start routes in the same app, sharing their queries. The records read moved there whole; the Hub no longer serves it.
 - **It runs as its own Service on the Hub's System** and ships in each release beside the Collector and Hub binaries.
-- **Its type is Inter**, the variable font from Fontsource, served by the app itself.
+- **Its type is Barlow Semi Condensed**, from Fontsource, served by the app itself.
 - **The Hub serves no page.** The dashboard shows everything the Hub's page showed, so the page is gone.
 
 ## Considered Options
