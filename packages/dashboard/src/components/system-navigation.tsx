@@ -38,7 +38,7 @@ const statusColor = (system: SystemNavigation[number]) => {
   if (system.level !== undefined) {
     return MARK_COLOR[system.level];
   }
-  return system.status === 'up' ? 'text-[#7fdcae]' : 'text-muted-foreground';
+  return system.status === 'up' ? 'text-status-good' : 'text-muted-foreground';
 };
 
 // The System's local navigation stays visible; switching peers drops its sample.
@@ -59,7 +59,7 @@ export function SystemNavigationHeader({
     activePill.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [current]);
   return (
-    <header className="sticky top-0 z-20 border-b bg-card pt-[env(safe-area-inset-top)] sm:bg-background">
+    <header className="sticky top-0 z-20 border-b bg-bar pt-[env(safe-area-inset-top)] sm:bg-background">
       <div className={contentFrame('wide')}>
         <div className="flex min-h-14 items-center gap-3">
           <Link
@@ -74,7 +74,7 @@ export function SystemNavigationHeader({
           {selected !== undefined && (
             <span
               className={cn(
-                'shrink-0 rounded-full bg-card px-2.5 py-1 text-sm font-semibold',
+                'shrink-0 rounded-full bg-secondary px-2.5 py-1 text-sm font-semibold',
                 statusColor(selected),
               )}
             >
@@ -94,7 +94,7 @@ export function SystemNavigationHeader({
                 'flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 text-base',
                 system.name === current
                   ? 'border-foreground bg-foreground text-background'
-                  : 'bg-card',
+                  : 'bg-secondary',
               )}
               hash=""
               key={system.name}
@@ -127,7 +127,7 @@ export function SystemNavigationHeader({
               aria-current={tab === item ? 'page' : undefined}
               className={cn(
                 'flex min-h-11 shrink-0 items-center border-b-2 border-transparent px-1.5 text-base text-muted-foreground sm:px-4',
-                tab === item && 'border-foreground font-semibold text-foreground',
+                tab === item && 'border-select font-semibold text-foreground',
               )}
               from="/systems/$name"
               hash=""

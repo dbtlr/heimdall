@@ -4,7 +4,7 @@ import { formatGiB } from '../lib/detail.ts';
 import { formatLoad } from '../lib/facts.ts';
 import { diskReading, meterLevels } from '../lib/fleet-tile.ts';
 import { RANGE_LABELS } from '../lib/range.ts';
-import { sparklinePath } from '../lib/sparkline.ts';
+import { sparklineAreaPath, sparklinePath } from '../lib/sparkline.ts';
 import type { SparkPoint } from '../lib/sparkline.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
@@ -13,11 +13,19 @@ import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { DateTime } from './date-time.tsx';
+import {
+  PERCENT_DOMAIN,
+  PLOT_COLOR,
+  PlotGradient,
+  ScaledPlot,
+  usePlotGradientId,
+} from './plot-scale.tsx';
 
 const SPARK_WIDTH = 100;
-const SPARK_HEIGHT = 34;
+const SPARK_HEIGHT = 48;
 
-// A line of the points, with gaps breaking it. Decorative: the card says the values.
+// A percentage line of the points over a gradient fill, with gaps breaking
+// it, on a 0 to 100% scale. Decorative: the card says the values.
 function Sparkline({
   detail,
   points,
@@ -25,29 +33,35 @@ function Sparkline({
   detail: Pick<SystemDetail, 'from' | 'gaps' | 'to'>;
   points: readonly SparkPoint[];
 }) {
+  const fill = usePlotGradientId();
+  const box = {
+    ceiling: 100,
+    from: detail.from,
+    height: SPARK_HEIGHT,
+    to: detail.to,
+    width: SPARK_WIDTH,
+  };
   return (
-    <svg
-      aria-hidden="true"
-      className="mt-2 h-[34px] w-full"
-      preserveAspectRatio="none"
-      viewBox={`0 0 ${String(SPARK_WIDTH)} ${String(SPARK_HEIGHT)}`}
-    >
-      <path
-        d={sparklinePath(points, detail.gaps, {
-          ceiling: 100,
-          from: detail.from,
-          height: SPARK_HEIGHT,
-          to: detail.to,
-          width: SPARK_WIDTH,
-        })}
-        fill="none"
-        stroke="#9aa5bd"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={1.5}
-        style={{ vectorEffect: 'non-scaling-stroke' }}
-      />
-    </svg>
+    <ScaledPlot className="mt-2" domain={PERCENT_DOMAIN} gutter height={SPARK_HEIGHT}>
+      <PlotGradient color={PLOT_COLOR} id={fill} />
+      <svg
+        aria-hidden="true"
+        className="block size-full"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${String(SPARK_WIDTH)} ${String(SPARK_HEIGHT)}`}
+      >
+        <path d={sparklineAreaPath(points, detail.gaps, box)} fill={`url(#${fill})`} />
+        <path
+          d={sparklinePath(points, detail.gaps, box)}
+          fill="none"
+          stroke={PLOT_COLOR}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.5}
+          style={{ vectorEffect: 'non-scaling-stroke' }}
+        />
+      </svg>
+    </ScaledPlot>
   );
 }
 
@@ -66,8 +80,10 @@ function Card({
   valueClass?: string | undefined;
 }) {
   return (
-    <div className={cn('rounded-[10px] border bg-card px-3.5 py-3', muted && 'opacity-50')}>
-      <div className={cn('text-2xl leading-tight font-semibold', valueClass)}>{value}</div>
+    <div className={cn('card-surface rounded-xl border px-3.5 py-3', muted && 'opacity-50')}>
+      <div className={cn('text-2xl leading-tight font-semibold tabular-nums', valueClass)}>
+        {value}
+      </div>
       <div className="text-sm text-muted-foreground">{caption}</div>
       {children}
     </div>

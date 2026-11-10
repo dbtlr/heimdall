@@ -34,7 +34,7 @@ export function SystemGlance({
       </p>
       <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {facts.map(({ label, value }) => (
-          <div className="rounded-xl bg-card px-3 py-2.5" key={label}>
+          <div className="card-surface rounded-xl border px-3 py-2.5" key={label}>
             <dd className="text-2xl leading-tight font-semibold">{value}</dd>
             <dt className="text-sm text-muted-foreground">{label}</dt>
           </div>

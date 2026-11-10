@@ -5,12 +5,19 @@ import { clockSpan } from '../lib/phrase.ts';
 import type { Window } from '../lib/time.ts';
 import type { CpuBucket } from '../server/fleet-overview-types.ts';
 import { PhraseText } from './date-time.tsx';
+import {
+  PERCENT_DOMAIN,
+  PLOT_COLOR,
+  PlotGradient,
+  ScaledPlot,
+  usePlotGradientId,
+} from './plot-scale.tsx';
 import { ChartContainer, ChartTooltip } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
 
 const BUCKET_MS = 5 * 60_000;
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
-const CONFIG = { average: { color: 'var(--foreground)', label: 'CPU busy' } } satisfies ChartConfig;
+const CONFIG = { average: { color: PLOT_COLOR, label: 'CPU busy' } } satisfies ChartConfig;
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
@@ -45,9 +52,10 @@ function BucketTooltip({
   );
 }
 
-// A System's CPU busy over the window: each bucket's low to high as a band, the
-// average as a line. The x axis is the window, so every lane lines up, and a
-// gap in the Vitals is a break in the line.
+// A System's CPU busy over the window on a 0 to 100% scale: each bucket's low
+// to high as a band, the average as a line over a gradient fill. The x axis is
+// the window, so every lane lines up, and a gap in the Vitals is a break in
+// the line.
 export function CpuPlot({
   bucketMs = BUCKET_MS,
   buckets,
@@ -61,39 +69,57 @@ export function CpuPlot({
   label: string;
   window: Window;
 }) {
+  const fill = usePlotGradientId();
   return (
-    <ChartContainer
-      aria-label={label}
-      className="aspect-auto w-full"
-      config={CONFIG}
-      initialDimension={{ height, width: 1000 }}
-      role="img"
-      style={{ height }}
-    >
-      <ComposedChart data={cpuSeries(buckets, bucketMs)} margin={NO_MARGIN}>
-        <XAxis allowDataOverflow dataKey="t" domain={[window.from, window.to]} hide type="number" />
-        <YAxis allowDataOverflow domain={[0, 100]} hide />
-        <ChartTooltip
-          content={({ active, label: at }) => (
-            <BucketTooltip active={active} bucketMs={bucketMs} buckets={buckets} label={at} />
-          )}
-        />
-        <Area
-          activeDot={false}
-          dataKey="band"
-          fill="rgba(150, 170, 215, 0.22)"
-          isAnimationActive={false}
-          stroke="none"
-        />
-        <Line
-          activeDot={false}
-          dataKey="average"
-          dot={false}
-          isAnimationActive={false}
-          stroke="#d5dbea"
-          strokeWidth={1.25}
-        />
-      </ComposedChart>
-    </ChartContainer>
+    <ScaledPlot domain={PERCENT_DOMAIN} height={height}>
+      <PlotGradient color={PLOT_COLOR} id={fill} />
+      <ChartContainer
+        aria-label={label}
+        className="aspect-auto w-full"
+        config={CONFIG}
+        initialDimension={{ height, width: 1000 }}
+        role="img"
+        style={{ height }}
+      >
+        <ComposedChart data={cpuSeries(buckets, bucketMs)} margin={NO_MARGIN}>
+          <XAxis
+            allowDataOverflow
+            dataKey="t"
+            domain={[window.from, window.to]}
+            hide
+            type="number"
+          />
+          <YAxis allowDataOverflow domain={PERCENT_DOMAIN} hide />
+          <ChartTooltip
+            content={({ active, label: at }) => (
+              <BucketTooltip active={active} bucketMs={bucketMs} buckets={buckets} label={at} />
+            )}
+          />
+          <Area
+            activeDot={false}
+            dataKey="average"
+            fill={`url(#${fill})`}
+            isAnimationActive={false}
+            stroke="none"
+          />
+          <Area
+            activeDot={false}
+            dataKey="band"
+            fill={PLOT_COLOR}
+            fillOpacity={0.16}
+            isAnimationActive={false}
+            stroke="none"
+          />
+          <Line
+            activeDot={false}
+            dataKey="average"
+            dot={false}
+            isAnimationActive={false}
+            stroke={PLOT_COLOR}
+            strokeWidth={1.5}
+          />
+        </ComposedChart>
+      </ChartContainer>
+    </ScaledPlot>
   );
 }

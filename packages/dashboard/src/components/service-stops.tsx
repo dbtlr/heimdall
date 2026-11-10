@@ -20,7 +20,7 @@ export function StopsCard({ detail }: { detail: ServiceDetail }) {
   const ticks = stripTicks(stops, now);
   const received = newestReceived(stops, now);
   return (
-    <section className="mt-[14px] rounded-lg bg-card p-3">
+    <section className="mt-[14px] card-surface rounded-xl border p-3">
       <p className="text-sm">
         <b className="font-semibold">
           {total} {total === 1 ? 'stop' : 'stops'} in {WINDOW_DAYS} days
@@ -52,7 +52,7 @@ export function StopsCard({ detail }: { detail: ServiceDetail }) {
               <span
                 className={cn(
                   'absolute bottom-0 w-[3px] rounded-t-sm',
-                  tick.failure ? 'bg-status-serious' : 'bg-primary',
+                  tick.failure ? 'bg-status-serious' : 'bg-plot',
                 )}
                 key={tick.stoppedAt}
                 style={{ height: `${tick.height}%`, left: `${tick.left}%` }}

@@ -126,11 +126,11 @@ test('only the top five rows of a dimension take series colors and the rest shar
   );
   const rows = breakdownRows(overviewOf(sessions), 'project');
   expect(rows.map((row) => row.color)).toEqual([
-    'var(--chart-1)',
-    'var(--chart-2)',
-    'var(--chart-3)',
-    'var(--chart-4)',
-    'var(--chart-5)',
+    'var(--series-1)',
+    'var(--series-2)',
+    'var(--series-3)',
+    'var(--series-4)',
+    'var(--series-5)',
     'var(--chart-other)',
     'var(--chart-other)',
   ]);

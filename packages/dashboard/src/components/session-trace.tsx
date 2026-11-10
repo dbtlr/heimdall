@@ -44,7 +44,7 @@ function Swatch({ color }: { color: string }) {
 function Chips({ calls }: { calls: readonly SessionToolCall[] }) {
   return calls.map((call) => (
     <span
-      className="ml-1.5 inline-block rounded-[3px] bg-accent px-1.5 text-[11.5px]"
+      className="ml-1.5 inline-block rounded-[3px] bg-secondary px-1.5 text-xs"
       key={call.callId}
     >
       {call.name}
@@ -72,7 +72,7 @@ function RequestRow({
 }) {
   return (
     <div
-      className={cn(ROW, selected && 'bg-[rgba(255,214,102,0.14)] outline outline-[#ffd666]/60')}
+      className={cn(ROW, selected && 'bg-select/15 outline outline-select/60')}
       id={rowId(request.requestId)}
     >
       <span className="text-muted-foreground tabular-nums">
@@ -145,10 +145,10 @@ const eventText = (entry: TraceEntry, view: SessionView): ReactNode => {
 };
 
 const MARKERS: Partial<Record<TraceEntry['kind'], ReactNode>> = {
-  command: <i className="mr-2 inline-block h-3 w-0.5 bg-[#ffd666] align-middle" />,
-  link: <i className="mr-2 inline-block h-1.5 w-2.5 rounded-[2px] bg-chart-1 align-middle" />,
-  skill: <ChevronRight className="mr-1.5 inline size-3.5 text-[#ffd666]" />,
-  start: <i className="mr-2 inline-block h-1.5 w-2.5 rounded-[2px] bg-chart-1 align-middle" />,
+  command: <i className="mr-2 inline-block h-3 w-0.5 bg-plot align-middle" />,
+  link: <i className="mr-2 inline-block h-1.5 w-2.5 rounded-[2px] bg-plot align-middle" />,
+  skill: <ChevronRight className="mr-1.5 inline size-3.5 text-plot" />,
+  start: <i className="mr-2 inline-block h-1.5 w-2.5 rounded-[2px] bg-plot align-middle" />,
 };
 
 // A subagent the main conversation or a workflow run started, folded to one
@@ -255,7 +255,7 @@ function DensityStrip({ view }: { view: SessionView }) {
       <div className="flex h-8 items-end gap-px rounded-[3px] border-b">
         {bins.map((count, index) => (
           <i
-            className="flex-1 bg-chart-1/80"
+            className="flex-1 bg-plot/70"
             // oxlint-disable-next-line react/no-array-index-key -- bins are positions.
             key={index}
             style={{ height: `${String((count / most) * 100)}%` }}
@@ -333,7 +333,7 @@ export function SessionTrace({
   return (
     <>
       <DensityStrip view={view} />
-      <section className="rounded-lg bg-card px-2 pt-2 pb-3 sm:px-3">
+      <section className="card-surface rounded-xl border px-2 pt-2 pb-3 sm:px-3">
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 px-2">
           {narrowed === undefined ? (
             <p className="text-[13px] text-muted-foreground">Trace, oldest first</p>

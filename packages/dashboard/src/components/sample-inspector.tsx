@@ -67,7 +67,7 @@ export function SampleInspector({
   return (
     <aside
       aria-busy={loading}
-      className="mt-2.5 max-h-[70dvh] self-start overflow-y-auto rounded-lg border-l-[3px] border-l-[#ffd666] bg-card px-4 py-3.5"
+      className="mt-2.5 max-h-[70dvh] self-start overflow-y-auto card-surface rounded-xl border-l-[3px] border-l-select px-4 py-3.5"
     >
       {loading && <p role="status">Reading sample…</p>}
       {sample === null && !loading && (

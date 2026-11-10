@@ -46,7 +46,7 @@ function MiniMeter({
       <span
         className={cn(
           'block h-full rounded-full',
-          level === undefined ? 'bg-[#6f8fc4]' : FILL_COLOR[level],
+          level === undefined ? 'bg-plot' : FILL_COLOR[level],
         )}
         style={{ width: `${String(Math.min(100, Math.max(0, percent ?? 0)))}%` }}
       />
@@ -150,7 +150,7 @@ export function AppSidebar({ glance }: { glance: FleetGlance | undefined }) {
   return (
     <aside
       aria-label="Sidebar"
-      className="flex h-full w-[248px] flex-col overflow-y-auto border-r bg-[#121826] pt-[env(safe-area-inset-top)]"
+      className="flex h-full w-[248px] flex-col overflow-y-auto border-r bg-bar pt-[env(safe-area-inset-top)]"
     >
       <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-3">
         <span className="text-base font-bold tracking-[0.02em]">Heimdall</span>

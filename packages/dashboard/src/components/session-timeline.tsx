@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { spanTicks } from '../lib/axis.ts';
+import { harnessColor } from '../lib/lane.ts';
 import { modelColor, modelFamily, modelName } from '../lib/session-format.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { commandMarks } from '../lib/session.ts';
@@ -59,7 +60,8 @@ function TimelineLegend({ lanes, view }: { lanes: readonly AgentLane[]; view: Se
       {view.stretches.some((stretch) => stretch.link === 'ambiguous') && (
         <span className="inline-flex items-center gap-[5px]">
           <i
-            className={cn(SWATCH, 'border border-dashed border-chart-1 bg-chart-1/30')}
+            className={cn(SWATCH, 'border border-dashed border-current bg-current/30')}
+            style={{ color: harnessColor(view.harness) }}
             aria-hidden="true"
           />
           ambiguous process link
@@ -151,7 +153,7 @@ function LaneRow({
             .filter((command) => inWindow(command.at, window))
             .map((command) => (
               <span
-                className="absolute -top-1.5 z-10 rounded-[3px] border-l-2 border-l-[#ffd666] bg-accent px-1 text-[11px] whitespace-nowrap"
+                className="absolute -top-1.5 z-10 rounded-[3px] border-l-2 border-l-plot bg-secondary px-1 text-xs whitespace-nowrap"
                 key={`${command.name}-${String(command.at)}`}
                 style={{ left: `${String(xPercent(command.at, window))}%` }}
               >
@@ -205,7 +207,7 @@ export function SessionTimeline({
               return (
                 <div key={lane.agentId ?? 'main'}>
                   {startsRun && (
-                    <p className="pt-2 pb-0.5 text-[11.5px] tracking-[0.06em] text-muted-foreground uppercase">
+                    <p className="pt-2 pb-0.5 text-xs tracking-[0.06em] text-muted-foreground uppercase">
                       {runName(lanes, run)}
                     </p>
                   )}
@@ -241,7 +243,7 @@ export function SessionTimeline({
           >
             {selected !== undefined && (
               <span
-                className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-[#ffd666] px-[9px] font-semibold text-background"
+                className="absolute -top-px -translate-x-1/2 rounded-[3px] bg-select px-[9px] font-semibold text-background"
                 style={{ left: `${String(xPercent(selected.at, window))}%` }}
               >
                 <DateTime at={selected.at} format="clock" />

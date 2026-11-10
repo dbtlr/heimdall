@@ -11,7 +11,7 @@ const ALIGN = { end: '-translate-x-full', middle: '-translate-x-1/2', start: '' 
 export function SpanLabels({ window }: { window: Window }) {
   const timeZone = useTimeZone();
   return (
-    <div className="relative mt-0.5 h-4 text-[11.5px] text-muted-foreground">
+    <div className="relative mt-0.5 h-4 text-xs text-muted-foreground tabular-nums">
       {(timeZone === undefined ? [] : spanTicks(window, timeZone)).map((tick) => (
         <span
           className={cn('absolute', ALIGN[tick.edge], tick.minor && 'hidden sm:block')}

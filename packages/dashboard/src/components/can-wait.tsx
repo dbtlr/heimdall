@@ -23,7 +23,7 @@ export function CanWait({
           params={{ name: system }}
           to="/systems/$name"
         >
-          <b className="font-semibold text-[#cfd5e3]">{system}</b>
+          <b className="font-semibold text-foreground">{system}</b>
           <span className="min-w-0 wrap-anywhere">
             <ConditionGlyph className="mr-1.5 inline size-2" kind="note" />
             {notes.join(' · ')}

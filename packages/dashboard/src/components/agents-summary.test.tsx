@@ -144,9 +144,9 @@ test('switching clears a pick and tapping a row sets or clears it', async () => 
   });
   expect(html).toMatch(/<a(?=[^>]*href="[^"]*by=model)(?![^>]*pick=)[^>]*>Model<\/a>/u);
   // The picked row is outlined and links to the list without its pick.
-  expect(html).toMatch(/<a(?=[^>]*outline-chart-1)(?![^>]*pick=)[^>]*title="heimdall"/u);
+  expect(html).toMatch(/<a(?=[^>]*outline-select)(?![^>]*pick=)[^>]*title="heimdall"/u);
   // The row of Sessions with no working directory picks the empty key.
-  expect(html).toMatch(/<a(?![^>]*outline-chart-1)[^>]*pick=(?:&amp;|")[^>]*>/u);
+  expect(html).toMatch(/<a(?![^>]*outline-select)[^>]*pick=(?:&amp;|")[^>]*>/u);
 });
 
 // The line under the picked row, from its count to its link to the Sessions list.

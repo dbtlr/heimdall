@@ -6,7 +6,7 @@ import type { Attention } from '../server/attention-types.ts';
 import type { Lane } from '../server/fleet-overview-types.ts';
 import { FleetLane } from './fleet-lane.tsx';
 
-const LINK = 'text-[#4a90ea] underline decoration-[#4a90ea]/45 underline-offset-[3px]';
+const LINK = 'text-link underline decoration-link/45 underline-offset-[3px]';
 
 // The link below the lanes that shows the unpaired Systems or, once shown, hides
 // them. The choice lives in the URL as `unpaired`. Nothing without a count, and

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { axisTicks, spanTicks } from './axis.ts';
+import { axisTicks, crowdsAnEndWhenNarrow, spanTicks } from './axis.ts';
 
 const HOUR = 3_600_000;
 const TO = Date.UTC(2026, 9, 13, 16, 0, 0);
@@ -214,5 +214,50 @@ describe('spanTicks', () => {
   test('ticks fall on round times in the zone, not in UTC', () => {
     const ticks = spanTicks({ from: FROM, to: FROM + 6 * HOUR }, 'Asia/Kolkata');
     expect(labels(ticks)).toEqual(['21:30', '23:00', '00:00', '01:00', '02:00', '03:30']);
+  });
+});
+
+describe('on a narrow screen', () => {
+  const window = { from: TO - 10 * HOUR, to: TO };
+
+  test('a round tick within a fifth of either end crowds that end, so the narrow axis drops it', () => {
+    expect(
+      crowdsAnEndWhenNarrow({ at: TO - 9 * HOUR, edge: 'middle', label: '', minor: false }, window),
+    ).toBe(true);
+    expect(
+      crowdsAnEndWhenNarrow({ at: TO - HOUR, edge: 'middle', label: '', minor: false }, window),
+    ).toBe(true);
+  });
+
+  test('a round tick nearer the middle stays', () => {
+    expect(
+      crowdsAnEndWhenNarrow({ at: TO - 8 * HOUR, edge: 'middle', label: '', minor: false }, window),
+    ).toBe(false);
+    expect(
+      crowdsAnEndWhenNarrow({ at: TO - 2 * HOUR, edge: 'middle', label: '', minor: false }, window),
+    ).toBe(false);
+  });
+
+  test('the start and end labels always stay', () => {
+    expect(
+      crowdsAnEndWhenNarrow({ at: TO - 10 * HOUR, edge: 'start', label: '', minor: false }, window),
+    ).toBe(false);
+    expect(crowdsAnEndWhenNarrow({ at: TO, edge: 'end', label: 'now', minor: false }, window)).toBe(
+      false,
+    );
+  });
+
+  test('every range keeps a major round tick between its ends', () => {
+    for (const range of ['6h', '12h', '24h'] as const) {
+      const hours = Number.parseInt(range, 10);
+      for (let minutes = 0; minutes < 120; minutes += 13) {
+        const to = TO + minutes * 60_000;
+        const span = { from: to - hours * HOUR, to };
+        const kept = axisTicks(range, span, 'UTC').filter(
+          (tick) => tick.edge === 'middle' && !tick.minor && !crowdsAnEndWhenNarrow(tick, span),
+        );
+        expect(kept.length).toBeGreaterThan(0);
+      }
+    }
   });
 });

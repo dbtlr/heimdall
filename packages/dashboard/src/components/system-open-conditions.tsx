@@ -8,7 +8,9 @@ export function SystemOpenConditions({ items, now }: { items: readonly Attention
     <>
       <h2 className="mb-2 text-lg font-semibold">Open Conditions</h2>
       {attention.length === 0 ? (
-        <p className="rounded-xl bg-card p-4 text-base">No open Condition or uncertain evidence.</p>
+        <p className="card-surface rounded-xl border p-4 text-base">
+          No open Condition or uncertain evidence.
+        </p>
       ) : (
         <AttentionList compact items={attention} layout="table" now={now} />
       )}

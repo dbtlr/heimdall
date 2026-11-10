@@ -16,7 +16,7 @@ export function SessionTabs({ current }: { current: Tab }) {
           aria-current={tab === current ? 'page' : undefined}
           className={cn(
             '-mb-px border-b-2 border-transparent px-3.5 py-2 text-[15px] font-medium text-muted-foreground',
-            tab === current && 'border-b-[#ffd666] text-foreground',
+            tab === current && 'border-b-select text-foreground',
           )}
           from="/systems/$name/sessions/$harness/$source/$sessionId"
           key={tab}

@@ -60,7 +60,7 @@ export function ProcessLinkBar({
           >
             <span
               className={cn(
-                'block truncate px-1.5 text-[11px] leading-4',
+                'block truncate px-1.5 text-xs leading-4',
                 stretch.link === 'linked' ? 'text-white' : 'text-foreground',
               )}
             >

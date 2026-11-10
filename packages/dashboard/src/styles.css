@@ -1,55 +1,79 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import '@fontsource/barlow-semi-condensed/400.css';
-@import '@fontsource/barlow-semi-condensed/500.css';
-@import '@fontsource/barlow-semi-condensed/600.css';
-@import '@fontsource/barlow-semi-condensed/700.css';
+@import '@fontsource-variable/inter';
 
 /* The dashboard is dark only. */
 @custom-variant dark (&:is(.dark *));
 
-/* Design B's dark tokens, as shadcn's CSS variables. */
+/* The Slate visual system's tokens, as shadcn's CSS variables. Each color is
+   written once; a token that shares it refers to the one that holds it.
+   Components take colors from these through the Tailwind theme below, never as
+   literals. */
 :root {
-  --background: #151b2a;
-  --foreground: #e7eaf3;
-  --card: #1c2336;
-  --card-foreground: #e7eaf3;
-  --popover: #1c2336;
-  --popover-foreground: #e7eaf3;
-  --primary: #4a90ea;
-  --primary-foreground: #151b2a;
-  --secondary: #1c2336;
-  --secondary-foreground: #e7eaf3;
-  --muted: #1c2336;
-  --muted-foreground: #9ba4b9;
-  --accent: #232c44;
-  --accent-foreground: #e7eaf3;
-  --destructive: #d03b3b;
-  --border: #2b3450;
-  --input: #2b3450;
-  --ring: #4a90ea;
+  /* Three surface steps: the page, the bars and sidebar, and cards. A card's
+     gradient runs from its top to its bottom color. */
+  --background: #0a0f18;
+  --bar: #0e1420;
+  --card: #131a27;
+  --card-top: #161d2b;
+  --card-bottom: #111723;
+  --card-gradient: linear-gradient(180deg, var(--card-top), var(--card-bottom));
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 10px 24px -14px rgb(0 0 0 / 0.8);
+
+  --foreground: #e8edf6;
+  --card-foreground: var(--foreground);
+  --popover: var(--card-top);
+  --popover-foreground: var(--foreground);
+  /* Links and the current page: the link blue, which is no Harness's color. */
+  --link: #7fb0ff;
+  --primary: var(--link);
+  --primary-foreground: var(--background);
+  /* Chips, pills, and the current choice in a picker. */
+  --secondary: #1d2638;
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --muted-foreground: #9aa6bd;
+  /* Text quieter than muted: units, scale labels, times beside a value. */
+  --dim: #66738c;
+  --accent: var(--secondary);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--status-critical);
+  --border: #222c40;
+  --input: var(--border);
+  --ring: var(--link);
+  /* What is selected: a sample, a request, a tab, a breakdown row, a filter. */
+  --select: #9d8cff;
+  /* Data that carries no level, Harness, or series: CPU and memory lines,
+     meters, and the neutral marks of a trace, a timeline, or a breakdown. */
+  --plot: #8fa3c8;
   --radius: 0.5rem;
 
-  /* Chart series: one color per Harness. */
-  --chart-1: #4a90ea;
-  --chart-2: #e2672f;
-  --chart-3: #9ba4b9;
-  --chart-4: #fab219;
-  --chart-5: #0ca30c;
-  /* The rest of a breakdown, past the five series: unlike chart-3, a neutral that is no series. */
-  --chart-other: #6c789a;
+  /* One color per Harness, used for nothing else: Claude Code, Codex, any other. */
+  --chart-1: #5b9dff;
+  --chart-2: #f0763a;
+  --chart-3: var(--muted-foreground);
+  /* Series for breakdowns that are not by Harness, and for models. */
+  --series-1: #2bb3a6;
+  --series-2: #e07bc0;
+  --series-3: #4cc9e0;
+  --series-4: #b9c86a;
+  --series-5: #c8a98a;
+  /* The rest of a breakdown, past the five series: a neutral that is no series. */
+  --chart-other: #5c6882;
 
-  /* Status, from good to critical. */
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #d03b3b;
+  /* Status, from good to critical: ok, note, warning, alert. */
+  --status-good: #3ecf8e;
+  --status-warning: #f5b83d;
+  --status-serious: #ff8a4c;
+  --status-critical: #ff5d5d;
 }
 
 @theme inline {
-  --font-sans: 'Barlow Semi Condensed', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-bar: var(--bar);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -60,17 +84,20 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-dim: var(--dim);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-select: var(--select);
+  --color-plot: var(--plot);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
+  --color-chart-other: var(--chart-other);
   --color-status-good: var(--status-good);
   --color-status-warning: var(--status-warning);
   --color-status-serious: var(--status-serious);
@@ -79,6 +106,14 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* A card's surface: the gradient, an inset top highlight, and a soft shadow.
+   Pair it with `rounded-xl border`. */
+@utility card-surface {
+  background-color: var(--card);
+  background-image: var(--card-gradient);
+  box-shadow: var(--card-shadow);
 }
 
 @layer base {
@@ -91,8 +126,13 @@
     color-scheme: dark;
   }
 
+  /* Every figure is tabular, so numbers that stack or update line up. */
   body {
     @apply bg-background font-sans text-foreground antialiased;
     font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--select) 35%, transparent);
   }
 }

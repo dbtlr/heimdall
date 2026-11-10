@@ -62,11 +62,11 @@ function DiskRow({ disk, level }: { disk: Disk; level: ConditionLevel | undefine
         aria-valuemax={100}
         aria-valuemin={0}
         aria-valuenow={percent}
-        className="mt-0.5 h-1 overflow-hidden rounded-sm bg-[#2b3450]"
+        className="mt-0.5 h-1 overflow-hidden rounded-sm bg-secondary"
         role="meter"
       >
         <div
-          className={cn('h-full', level === undefined ? 'bg-[#8fa7d6]' : LEVEL_FILL[level])}
+          className={cn('h-full', level === undefined ? 'bg-plot' : LEVEL_FILL[level])}
           style={{ width: `${String(percent)}%` }}
         />
       </div>
@@ -113,14 +113,14 @@ export function SystemFacts({
   return (
     <section
       aria-label="System facts"
-      className="mt-1 mb-2.5 flex flex-col gap-4 rounded-lg bg-card px-4 py-3.5 sm:flex-row"
+      className="mt-1 mb-2.5 flex flex-col gap-4 card-surface rounded-xl border px-4 py-3.5 sm:flex-row"
     >
       {latest !== undefined && (
         <Fact asOf={asOf} title="Load average">
           <div className="flex gap-[18px]">
             {latest.load.map((load, i) => (
               <div key={LOAD_PERIODS[i]}>
-                <span className="block text-[19px] leading-tight font-semibold">
+                <span className="block text-[19px] leading-tight font-semibold tabular-nums">
                   {formatLoad(load)}
                 </span>
                 <span className="block text-xs text-muted-foreground">{LOAD_PERIODS[i]}</span>

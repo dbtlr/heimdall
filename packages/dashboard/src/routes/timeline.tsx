@@ -73,7 +73,7 @@ function FleetTimeline() {
             </div>
             <ol className="max-w-3xl space-y-3 lg:hidden">
               {entries.map((entry) => (
-                <li className="rounded-xl border bg-card p-4" key={entry.id}>
+                <li className="card-surface rounded-xl border p-4" key={entry.id}>
                   <Link
                     className="flex min-h-11 min-w-0 flex-wrap items-center gap-2 text-lg font-semibold text-primary"
                     params={{ name: entry.system }}

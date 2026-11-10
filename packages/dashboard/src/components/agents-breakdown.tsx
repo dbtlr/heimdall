@@ -67,7 +67,7 @@ function JumpToSessions({ matched }: { matched: number }) {
         {matched} {matched === 1 ? 'Session' : 'Sessions'}
       </span>
       <Link
-        className="inline-flex min-h-11 items-center font-semibold text-chart-1"
+        className="inline-flex min-h-11 items-center font-semibold text-select"
         hash="agents-sessions-heading"
         search={(previous) => previous}
         to="."
@@ -87,7 +87,7 @@ function BreakdownItem({ matched, row }: { matched: number | undefined; row: Bre
         aria-current={picked ? 'true' : undefined}
         className={cn(
           '-mx-2 flex min-h-11 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-          picked && 'bg-accent outline-1 outline-chart-1',
+          picked && 'bg-select/15 outline-1 outline-select',
         )}
         resetScroll={false}
         search={(previous) => ({ ...previous, pick: picked ? undefined : row.key })}

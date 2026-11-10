@@ -27,15 +27,16 @@ export const modelName = (model: string): string => {
 export const modelFamily = (model: string): string => claude(model)?.family ?? model;
 
 const FAMILY_COLORS: Record<string, string> = {
-  Fable: '#b48cf2',
-  Haiku: '#fab219',
-  Opus: '#4a90ea',
-  Sonnet: '#2bb39b',
+  Fable: 'var(--series-2)',
+  Haiku: 'var(--series-5)',
+  Opus: 'var(--series-1)',
+  Sonnet: 'var(--series-4)',
 };
 
-// One color per Claude family, and the Codex Harness's color for any other model.
+// One series color per Claude family, and one more for any other model. No
+// model takes a Harness's color.
 export const modelColor = (model: string): string =>
-  FAMILY_COLORS[claude(model)?.family ?? ''] ?? '#e2672f';
+  FAMILY_COLORS[claude(model)?.family ?? ''] ?? 'var(--series-3)';
 
 // "512", "1.9 k", "29.6 M".
 export const formatTokens = (tokens: number): string => {

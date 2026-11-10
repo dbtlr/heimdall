@@ -70,7 +70,16 @@ test('the four cards show CPU with its range high, memory, the disk, and load', 
   expect(html).toContain('Sample time');
   expect(html).toContain('1.50');
   expect(html).toContain('5-min 1.25 · 15-min 0.50');
-  expect((html.match(/<path /gu) ?? []).length).toBe(2);
+  expect((html.match(/<path [^>]*fill="none"/gu) ?? []).length).toBe(2);
+});
+
+test('each sparkline fills the area under its line with its gradient, on a 0 to 100 scale', () => {
+  const html = renderToStaticMarkup(<SystemNowCards detail={detail()} items={[]} />);
+  const gradients = [...html.matchAll(/<linearGradient id="([^"]+)"/gu)].map(([, id]) => id);
+  const fills = [...html.matchAll(/<path d="M[^"]*" fill="url\(#([^)]+)\)"/gu)].map(([, id]) => id);
+  expect(gradients).toHaveLength(2);
+  expect(fills).toEqual(gradients);
+  expect(html.match(/data-scale-tick="(?:100|50|0)"/gu)).toHaveLength(6);
 });
 
 test('the disk card names the low-disk mount and takes its Condition level color', () => {

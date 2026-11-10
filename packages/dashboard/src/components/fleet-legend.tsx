@@ -7,7 +7,7 @@ export function FleetLegend() {
   return (
     <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-muted-foreground">
       <span className="inline-flex items-center gap-[5px]">
-        <i className="inline-block h-[7px] w-3.5 flex-none rounded-[2px] border-t-2 border-[#d5dbea] bg-[rgba(150,170,215,0.22)]" />
+        <i className="inline-block h-[7px] w-3.5 flex-none rounded-[2px] border-t-2 border-plot bg-plot/25" />
         CPU busy, with 5-minute low and high
       </span>
       <span className="inline-flex items-center gap-[5px]">
