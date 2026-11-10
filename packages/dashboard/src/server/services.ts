@@ -9,7 +9,9 @@ import type { ChecksRow } from './hub-rows.ts';
 import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
 import type { UpstreamCheckRow } from './update-observations.ts';
 
-const serviceSubjects = (sql: SQL) => sql`
+// Each paired System's Services: its Service records, and the Services an open
+// Service down Condition or Service restarted note names after their record went.
+export const serviceSubjects = (sql: SQL) => sql`
   SELECT r.system, r.name FROM mirrored_records r
   JOIN paired_systems p ON p.system = r.system
   WHERE r.kind = 'service'

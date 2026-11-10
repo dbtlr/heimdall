@@ -44,8 +44,8 @@ export function AutoRefresh() {
   return null;
 }
 
-// A narrow browser skips the sidebar's read, so widening it past `lg` reads
-// the page's data again at once rather than at the next tick.
+// A narrow browser skips Home's lanes, so widening it past `lg` reads the
+// page's data again at once rather than at the next tick.
 export function RefreshOnWiden() {
   const router = useRouter();
   useEffect(() => {

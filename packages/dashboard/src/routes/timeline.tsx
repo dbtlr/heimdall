@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { ActiveTimelineFilters, TimelineFilterControl } from '../components/timeline-filters.tsx';
 import { ConditionOccurrence } from '../components/timeline-rail.tsx';
 import { TimelineTable } from '../components/timeline-table.tsx';
@@ -41,7 +40,6 @@ function FleetTimeline() {
   };
   return (
     <>
-      <AppHeader />
       <main className={`${contentFrame('wide')} py-5`}>
         <header className="flex items-start justify-between gap-3">
           <div>

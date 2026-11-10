@@ -2,24 +2,20 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
-import { AppSidebar } from '../components/app-sidebar.tsx';
 import { AutoRefresh, RefreshOnWiden } from '../components/auto-refresh.tsx';
-import { isNarrowBrowser } from '../lib/layout.ts';
+import { TopBar } from '../components/top-bar.tsx';
+import { fleetSummary } from '../lib/fleet.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
+import { getJumpIndex } from '../server/jump-index-fn.ts';
 import { getServiceAttentionCount } from '../server/services-fn.ts';
 
 import appCss from '../styles.css?url';
 
-// The sidebar lists every System, unpaired ones included, on every page from
-// `lg`. A phone's browser skips the read; the server cannot tell, so a first
-// load always reads it. A failed read leaves the sidebar without Systems
-// rather than failing every page.
-const readSidebarGlance = async () => {
-  if (isNarrowBrowser()) {
-    return undefined;
-  }
+// The top bar's verdict and the More page's Systems row, read with every page
+// at every width. A failed read leaves them out rather than failing every page.
+const readFleetSummary = async () => {
   try {
-    return await getFleetGlance({ data: { unpaired: true } });
+    return fleetSummary(await getFleetGlance({ data: { unpaired: false } }));
   } catch {
     return undefined;
   }
@@ -44,15 +40,15 @@ export const Route = createRootRoute({
     ],
   }),
   loader: async () => {
-    const [count, glance] = await Promise.all([getServiceAttentionCount(), readSidebarGlance()]);
-    return { count, glance };
+    const [count, fleet] = await Promise.all([getServiceAttentionCount(), readFleetSummary()]);
+    return { count, fleet };
   },
   shellComponent: ({ children }: { children: ReactNode }) => (
     <html className="dark" lang="en">
       <head>
         <HeadContent />
       </head>
-      <body className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] sm:pb-0 lg:pl-[248px]">
+      <body className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] sm:pb-0">
         {/* Safari samples a real fixed element's opaque background for its status bar.
             Touch and narrow layouts need 6px even when the top safe area is zero. */}
         <div
@@ -67,14 +63,12 @@ export const Route = createRootRoute({
 });
 
 function Root() {
-  const { count, glance } = Route.useLoaderData();
+  const { count, fleet } = Route.useLoaderData();
   return (
     <ServiceAttentionCount value={count}>
       <AutoRefresh />
       <RefreshOnWiden />
-      <div className="fixed inset-y-0 left-0 z-40 hidden w-[248px] lg:flex">
-        <AppSidebar glance={glance} />
-      </div>
+      <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
       <Outlet />
       <div className="sm:hidden">
         <AppNavigation />

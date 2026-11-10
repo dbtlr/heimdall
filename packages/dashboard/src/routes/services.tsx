@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 
-import { AppHeader } from '../components/app-header.tsx';
 import { ActiveServiceFilters, ServicesFilters } from '../components/service-filters.tsx';
 import { ServicesTable } from '../components/services-table.tsx';
 import { contentFrame } from '../lib/layout.ts';
@@ -33,7 +32,6 @@ function ServicesPage() {
   };
   return (
     <>
-      <AppHeader />
       <main className={`${contentFrame('narrow')} pb-8`}>
         <header className="flex items-center justify-between gap-3 py-5">
           <div>

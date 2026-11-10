@@ -12,16 +12,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { agentsSearch } from '../lib/agents-search.ts';
 import { AgentsRangePicker } from './agents-range-picker.tsx';
-import { AppHeader } from './app-header.tsx';
 
-test('Agents period links preserve the viewer zone and Fleet navigation remains available', async () => {
+test('Agents period links preserve the viewer zone and breakdown and drop the pick', async () => {
   const root = createRootRoute({ component: Outlet });
   const route = createRoute({
-    component: () => (
-      <AppHeader>
-        <AgentsRangePicker current="7d" />
-      </AppHeader>
-    ),
+    component: () => <AgentsRangePicker current="7d" />,
     getParentRoute: () => root,
     path: '/agents',
     validateSearch: agentsSearch,
@@ -34,9 +29,6 @@ test('Agents period links preserve the viewer zone and Fleet navigation remains 
   });
   await router.load();
   const html = renderToStaticMarkup(<RouterProvider router={router} />);
-  expect(html).toContain('href="/"');
-  expect(html).toContain('>Agents<');
-  expect(html).toMatch(/<a(?=[^>]*href="\/agents")(?=[^>]*aria-current="page")[^>]*>/u);
   expect(html).toContain('href="/agents?range=today&amp;by=model&amp;zone=Europe%2FBerlin"');
   expect(html).toContain('href="/agents?range=30d&amp;by=model&amp;zone=Europe%2FBerlin"');
   expect(html).not.toContain('pick=');

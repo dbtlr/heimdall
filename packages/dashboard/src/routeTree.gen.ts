@@ -12,9 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as CompareRouteImport } from './routes/compare'
+import { Route as MoreRouteImport } from './routes/more'
 import { Route as ServicesRouteImport } from './routes/services'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as SystemsIndexRouteImport } from './routes/systems.index'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
 import { Route as ApiV1RecordsRouteImport } from './routes/api.v1.records'
 import { Route as ApiV1ServiceStopsRouteImport } from './routes/api.v1.service-stops'
@@ -37,6 +39,11 @@ const CompareRoute = CompareRouteImport.update({
   path: '/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MoreRoute = MoreRouteImport.update({
+  id: '/more',
+  path: '/more',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ServicesRoute = ServicesRouteImport.update({
   id: '/services',
   path: '/services',
@@ -50,6 +57,11 @@ const TimelineRoute = TimelineRouteImport.update({
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemsIndexRoute = SystemsIndexRouteImport.update({
+  id: '/systems/',
+  path: '/systems/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SystemsNameRoute = SystemsNameRouteImport.update({
@@ -89,10 +101,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/systems/': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name/conditions/$id': typeof SystemsNameConditionsIdRoute
@@ -103,10 +117,12 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/systems': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name/conditions/$id': typeof SystemsNameConditionsIdRoute
@@ -118,10 +134,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
   '/systems/$name': typeof SystemsNameRoute
+  '/systems/': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
   '/api/v1/service-stops': typeof ApiV1ServiceStopsRoute
   '/systems/$name_/conditions/$id': typeof SystemsNameConditionsIdRoute
@@ -134,10 +152,12 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/more'
     | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
+    | '/systems/'
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name/conditions/$id'
@@ -148,10 +168,12 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/more'
     | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
+    | '/systems'
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name/conditions/$id'
@@ -162,10 +184,12 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/more'
     | '/services'
     | '/timeline'
     | '/api/health'
     | '/systems/$name'
+    | '/systems/'
     | '/api/v1/records'
     | '/api/v1/service-stops'
     | '/systems/$name_/conditions/$id'
@@ -177,10 +201,12 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentsRoute: typeof AgentsRoute
   CompareRoute: typeof CompareRoute
+  MoreRoute: typeof MoreRoute
   ServicesRoute: typeof ServicesRoute
   TimelineRoute: typeof TimelineRoute
   ApiHealthRoute: typeof ApiHealthRoute
   SystemsNameRoute: typeof SystemsNameRoute
+  SystemsIndexRoute: typeof SystemsIndexRoute
   ApiV1RecordsRoute: typeof ApiV1RecordsRoute
   ApiV1ServiceStopsRoute: typeof ApiV1ServiceStopsRoute
   SystemsNameConditionsIdRoute: typeof SystemsNameConditionsIdRoute
@@ -211,6 +237,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompareRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/more': {
+      id: '/more'
+      path: '/more'
+      fullPath: '/more'
+      preLoaderRoute: typeof MoreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/services': {
       id: '/services'
       path: '/services'
@@ -230,6 +263,13 @@ declare module '@tanstack/react-router' {
       path: '/api/health'
       fullPath: '/api/health'
       preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/systems/': {
+      id: '/systems/'
+      path: '/systems'
+      fullPath: '/systems/'
+      preLoaderRoute: typeof SystemsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/systems/$name': {
@@ -281,10 +321,12 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
   CompareRoute: CompareRoute,
+  MoreRoute: MoreRoute,
   ServicesRoute: ServicesRoute,
   TimelineRoute: TimelineRoute,
   ApiHealthRoute: ApiHealthRoute,
   SystemsNameRoute: SystemsNameRoute,
+  SystemsIndexRoute: SystemsIndexRoute,
   ApiV1RecordsRoute: ApiV1RecordsRoute,
   ApiV1ServiceStopsRoute: ApiV1ServiceStopsRoute,
   SystemsNameConditionsIdRoute: SystemsNameConditionsIdRoute,

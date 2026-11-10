@@ -2,8 +2,9 @@ import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
 import { DELIVERY_FAILING_SHOWN_AFTER_MS } from '../server/fleet-overview-types.ts';
+import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import { canWaitRows } from './fleet-tile.ts';
-import { deliveryFailingShown, fleetAttention, isAsleep } from './fleet.ts';
+import { deliveryFailingShown, fleetAttention, fleetSummary, isAsleep } from './fleet.ts';
 
 const disk = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
   checkedAt: 100,
@@ -74,4 +75,47 @@ test('Fleet verdict counts the same notes as Can wait, keeping other levels and 
   ];
   expect(fleetAttention(items).counts).toEqual({ alert: 1, note: 1, warning: 1 });
   expect(canWaitRows(['server-1'], items)).toEqual([{ notes: ['Low disk /'], system: 'server-1' }]);
+});
+
+const lane = (name: string, lastSeenAt: number | undefined): SystemGlance => ({
+  lastSeenAt,
+  latest: undefined,
+  name,
+  silencedUntil: undefined,
+  sleeps: false,
+  status: lastSeenAt === undefined ? 'never_seen' : 'up',
+});
+
+test('the bars count paired Systems and show the verdict only once a paired System has reported', () => {
+  expect(fleetSummary({ attention: [], lanes: [] })).toEqual({
+    counts: { alert: 0, note: 0, warning: 0 },
+    systems: 0,
+    verdictShown: false,
+    worst: undefined,
+  });
+  const waiting = [lane('server-1', undefined), lane('laptop-1', undefined)];
+  expect(fleetSummary({ attention: [], lanes: waiting })).toMatchObject({
+    systems: 2,
+    verdictShown: false,
+  });
+  const heard = [lane('server-1', 100), lane('laptop-1', undefined)];
+  expect(fleetSummary({ attention: [], lanes: heard })).toMatchObject({
+    systems: 2,
+    verdictShown: true,
+  });
+});
+
+test('the bars name the worst open level that asks for action, never a note, and leave unpaired history out', () => {
+  const lanes = [lane('server-1', 100)];
+  const summary = (attention: Attention[]) => fleetSummary({ attention, lanes });
+  expect(summary([disk({ level: 'note' })]).worst).toBeUndefined();
+  expect(summary([disk({ level: 'note' }), disk()]).worst).toBe('warning');
+  expect(summary([disk(), disk({ level: 'alert' })])).toMatchObject({
+    counts: { alert: 1, note: 0, warning: 1 },
+    worst: 'alert',
+  });
+  expect(summary([disk(), disk({ level: 'alert', unpaired: true })])).toMatchObject({
+    counts: { alert: 0, note: 0, warning: 1 },
+    worst: 'warning',
+  });
 });
