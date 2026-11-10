@@ -53,7 +53,11 @@ const currentChecks = (row: ServiceRow, now: number): boolean =>
 
 // Recorded Services and open Service Conditions on paired Systems, with checks and latest
 // stop, installed version, available update, and what dates that update, in one statement.
-const readServiceRows = (sql: SQL): Promise<ServiceRow[]> => sql`
+//
+// `dated` reads what dates an available update: when each release of the
+// Service's upstream was found, and each upstream it has had. Without it both
+// come back null, so a caller that shows no date reads no history.
+const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<ServiceRow[]> => sql`
     SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, s.sleeps,
            down.raised_at AS down_since,
            EXISTS (
@@ -99,7 +103,7 @@ const readServiceRows = (sql: SQL): Promise<ServiceRow[]> => sql`
                ORDER BY first_found_at, version
              ) AS found
       FROM upstream_releases
-      WHERE upstream = installed.upstream
+      WHERE ${dated} AND upstream = installed.upstream
     ) found ON true
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(
@@ -107,7 +111,7 @@ const readServiceRows = (sql: SQL): Promise<ServiceRow[]> => sql`
                ORDER BY first_seen_at
              ) AS history
       FROM service_versions
-      WHERE system = r.system AND service = r.name
+      WHERE ${dated} AND system = r.system AND service = r.name
     ) history ON true
   `;
 
@@ -118,7 +122,7 @@ const heldChecks = (row: ServiceRow) =>
 // Each Service's status, latest stop, installed version, and available update,
 // read in one statement from one snapshot.
 export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
-  const rows = await readServiceRows(sql);
+  const rows = await readServiceRows(sql, { dated: false });
   return sortServices(
     rows.map((row) => {
       const downSince = row.down_since?.getTime();
@@ -196,7 +200,7 @@ export const readServiceGlance = async (
   sql: SQL,
   now: number,
 ): Promise<{ counts: Map<string, { total: number; up: number }>; updates: AvailableUpdate[] }> => {
-  const rows = await readServiceRows(sql);
+  const rows = await readServiceRows(sql, { dated: true });
   return { counts: serviceCountsOf(rows, now), updates: availableUpdatesOf(rows, now) };
 };
 
