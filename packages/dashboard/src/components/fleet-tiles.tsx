@@ -7,7 +7,7 @@ import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { diskReading, meterLevels, tileStatusWords } from '../lib/fleet-tile.ts';
 import type { SystemTile } from '../lib/fleet-tile.ts';
 import { runningChip } from '../lib/home-agents.ts';
-import { harnessColor } from '../lib/lane.ts';
+import { ownHarnessColor } from '../lib/lane.ts';
 import { sparklineAreaPath, sparklinePath } from '../lib/sparkline.ts';
 import { formatSpanShort, silenceLeft } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
@@ -313,8 +313,8 @@ export function FleetTiles({
 }
 
 // The tile's last line: its Services up, and how many Sessions run on it, in
-// their Harness's color when they share one and in the neutral chip color
-// when they do not. Neither shows when there is none.
+// their Harness's color when they share one that has a color and in the
+// neutral chip color otherwise. Neither shows when there is none.
 function TileFooter({
   running,
   tile,
@@ -326,7 +326,7 @@ function TileFooter({
   if (services.total === 0 && running === undefined) {
     return null;
   }
-  const color = running?.harness === undefined ? undefined : harnessColor(running.harness);
+  const color = running?.harness === undefined ? undefined : ownHarnessColor(running.harness);
   return (
     <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
       {services.total > 0 && (

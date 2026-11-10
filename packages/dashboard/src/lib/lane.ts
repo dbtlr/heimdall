@@ -113,10 +113,14 @@ const HARNESS_COLORS: Record<string, string> = {
 
 export const harnessName = (harness: string): string => HARNESS_NAMES[harness] ?? harness;
 
+// The CSS variable holding the color of a Harness that has its own, or
+// undefined for any other.
+export const ownHarnessColor = (harness: string): string | undefined => HARNESS_COLORS[harness];
+
 // The CSS variable holding a Harness's color: one series color per Harness,
 // and the neutral one for any other.
 export const harnessColor = (harness: string): string =>
-  HARNESS_COLORS[harness] ?? 'var(--chart-3)';
+  ownHarnessColor(harness) ?? 'var(--chart-3)';
 
 // A Session stretch's tooltip: "fleet on main, Codex, 07:40 to 08:15, $4.05,
 // process linked".

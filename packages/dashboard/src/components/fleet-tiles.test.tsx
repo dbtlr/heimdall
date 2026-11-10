@@ -98,6 +98,21 @@ describe('a System tile', () => {
     expect(tile('edge-1')).not.toContain('running');
   });
 
+  test('shows Sessions sharing a Harness with no color of its own in the neutral chip color', async () => {
+    const html = await renderRouted(
+      <FleetTiles
+        from={NOW - DAY}
+        now={NOW}
+        running={[running('gateway-1', 'aider', 'a'), running('gateway-1', 'aider', 'b')]}
+        tiles={tileOrder([lane('gateway-1')], [], NOW)}
+      />,
+    );
+
+    expect(html).toContain('bg-secondary text-muted-foreground');
+    expect(html).toContain('>2 running<');
+    expect(html).not.toContain('color-mix');
+  });
+
   test('links to its System and shows Mem and the fullest Disk with rounded percents, and its Services up', async () => {
     const html = await render([lane('gateway-1')]);
 

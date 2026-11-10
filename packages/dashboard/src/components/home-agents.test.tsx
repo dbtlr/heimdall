@@ -60,6 +60,24 @@ describe('AgentsCard', () => {
     expect(text(html)).toContain('Spend and Sessions');
   });
 
+  test("keeps today's bar in the selection color before today has spent anything", async () => {
+    const html = await render(
+      agents({
+        days: [212, 0, 298, 181, 402, 371, 0].map((pricedCostUsd, index) => ({
+          pricedCostUsd,
+          requests: pricedCostUsd === 0 ? 0 : 10,
+          start: NOW - (6 - index) * DAY,
+          unpricedRequests: 0,
+        })),
+        today: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
+      }),
+    );
+
+    expect(html.match(/bg-select/gu)).toHaveLength(1);
+    expect(html.match(/bg-border/gu)).toHaveLength(1);
+    expect(html.match(/bg-plot/gu)).toHaveLength(5);
+  });
+
   test('marks a cost with an unpriced request "At least" and leaves out the usual when there is none', async () => {
     const html = await render(
       agents({

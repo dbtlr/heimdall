@@ -19,15 +19,16 @@ const dayCostText = ({ pricedCostUsd, unpricedRequests }: DayCost) =>
   `${unpricedRequests > 0 ? 'at least ' : ''}${formatCost(pricedCostUsd)}`;
 
 const barColor = (day: DayCost, today: boolean): string => {
-  if (day.pricedCostUsd === 0) {
-    return 'bg-border';
+  if (today) {
+    return 'bg-select';
   }
-  return today ? 'bg-select' : 'bg-plot';
+  return day.pricedCostUsd === 0 ? 'bg-border' : 'bg-plot';
 };
 
 // A bar per day, each as tall as its cost beside the costliest, today in the
 // selection color and the days before it in the plot color. A day that spent
-// nothing keeps a hairline, so the week reads as seven days.
+// nothing keeps a hairline, today's still in the selection color, so the week
+// reads as seven days.
 function DayBars({ days, timeZone }: { days: readonly DayCost[]; timeZone: string }) {
   const most = Math.max(0, ...days.map(({ pricedCostUsd }) => pricedCostUsd));
   const label = days
