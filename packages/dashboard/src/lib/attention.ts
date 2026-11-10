@@ -865,6 +865,29 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
   }
 };
 
-// Paired Systems keep Service restarted notes on the Services page.
-export const withoutServiceRestartedNotes = (items: readonly Attention[]): Attention[] =>
-  items.filter((item) => !(item.kind === 'service_restarted' && !item.unpaired));
+// Where a paired System's item is shown instead of with its open Conditions:
+// Service restarted notes on the Services page, and maintenance notes, a
+// Pending update or Reboot required at the note level, under Maintenance.
+// Undefined for every other item, which stays with the open Conditions; so do
+// all of an unpaired System's, whose history no other page lists.
+export const shownElsewhere = (item: Attention): 'maintenance' | 'services' | undefined => {
+  if (item.unpaired) {
+    return undefined;
+  }
+  if (item.kind === 'service_restarted') {
+    return 'services';
+  }
+  return (item.kind === 'pending_update' || item.kind === 'reboot_required') &&
+    item.level === 'note'
+    ? 'maintenance'
+    : undefined;
+};
+
+// A Pending update or Reboot required note on a paired System: routine work
+// that waits for the Maintenance card and a System's Maintenance section.
+export const isMaintenanceNote = (item: Attention): boolean =>
+  shownElsewhere(item) === 'maintenance';
+
+// The items that stay with the open Conditions and their counts.
+export const withoutNotesShownElsewhere = (items: readonly Attention[]): Attention[] =>
+  items.filter((item) => shownElsewhere(item) === undefined);

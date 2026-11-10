@@ -70,9 +70,99 @@ export type HomeAgents = {
   usualByNow: number | undefined;
 };
 
-// `agents` is undefined until the viewer's time zone is known.
+// A Service with a newer version available, and since when, when its
+// upstream's releases date it.
+export type AvailableUpdate = {
+  name: string;
+  since: number | undefined;
+  system: string;
+  version: string;
+};
+
+// The packages pending on one System, the security updates among them, and
+// the Pending update Condition the System's row links to.
+export type PendingPackages = {
+  conditionId: string;
+  packages: number;
+  security: number;
+  system: string;
+};
+
+// The packages the Hub holds as pending in one package source on a paired
+// System, and how many of them are security updates by its latest evidence or
+// earlier, the way the source's Pending update Condition page lists them.
+export type HeldPackages = {
+  installation: string;
+  manager: string;
+  packages: number;
+  security: number;
+  system: string;
+};
+
+// What Home's Maintenance card reads besides the open Conditions: the packages
+// pending on each paired System with an open Pending update, and each Service
+// on a paired System with an available update.
+export type HomeMaintenance = { packages: PendingPackages[]; updates: AvailableUpdate[] };
+
+// One change Home's What changed card reads, on a paired System: a Service's
+// installed version changing, a Service stopping, `ongoing` while it has not
+// run again, or a Condition at warning or alert being raised or cleared.
+export type Change =
+  | { at: number; from: string; kind: 'version'; service: string; system: string; to: string }
+  | { at: number; kind: 'stop'; ongoing: boolean; service: string; system: string }
+  | {
+      action: 'cleared' | 'raised';
+      at: number;
+      condition: ConditionKind;
+      conditionId: string;
+      kind: 'condition';
+      subject: string;
+      system: string;
+    };
+
+// Changes of one kind, about one Service or Condition, with one version
+// transition, or stops all ongoing or all over, that fell within CHANGE_WINDOW_MS of the first: `change` is the
+// newest, `at` its time, `systems` each System by name, and `stops` how many
+// times the Service stopped on each System: the stops a version change folded
+// in, or the stops themselves.
+export type ChangeGroup = {
+  at: number;
+  change: Change;
+  stops: Record<string, number>;
+  systems: string[];
+};
+
+// How far apart changes may be and still read as one.
+export const CHANGE_WINDOW_MS = 10 * 60_000;
+
+// How far back What changed reaches.
+export const CHANGES_SINCE_MS = 24 * 60 * 60_000;
+
+// How a recorded job stands on Home: failing when its latest run failed or Job
+// failing is open, overdue when Job overdue is open, ok after a run that
+// succeeded, and due when it has never run.
+export type JobState = 'due' | 'failing' | 'ok' | 'overdue';
+
+// One recorded job on a paired System. `at` is when the state began: when its
+// latest run finished for failing and ok, when Job overdue was raised for
+// overdue, and its next scheduled time for due, undefined when none is known.
+// `lastRunAt` is when its latest run finished, undefined when it never ran.
+export type HomeJob = {
+  at: number | undefined;
+  lastRunAt: number | undefined;
+  name: string;
+  state: JobState;
+  system: string;
+};
+
+// `agents` is undefined until the viewer's time zone is known. `changes` are
+// the newest groups of the last CHANGES_SINCE_MS, newest first, and `jobs`
+// every recorded job in the order Home lists them.
 export type Home = SystemTiles & {
   agents: HomeAgents | undefined;
+  changes: ChangeGroup[];
+  jobs: HomeJob[];
   lastCleared: ClearedCondition | undefined;
   lead: LeadEvidence | undefined;
+  maintenance: HomeMaintenance;
 };

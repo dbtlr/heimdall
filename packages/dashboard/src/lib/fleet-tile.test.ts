@@ -4,7 +4,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
-import { canWaitRows, diskReading, meterLevels, tileOrder, tileStatusWords } from './fleet-tile.ts';
+import { diskReading, meterLevels, tileOrder, tileStatusWords } from './fleet-tile.ts';
 
 const condition = (over: Partial<Extract<Attention, { kind: 'low_disk' }>> = {}): Attention => ({
   checkedAt: 100,
@@ -93,35 +93,6 @@ describe('meterLevels', () => {
   });
 });
 
-describe('canWaitRows', () => {
-  test('groups notes per System in the order the names come, skipping Systems without notes', () => {
-    const items = [
-      condition({ subject: '/', system: 'laptop-1' }),
-      condition({ subject: '/srv' }),
-      { ...cpu('warning'), system: 'router-1' },
-      condition({ subject: '/data', system: 'laptop-1' }),
-    ];
-
-    const rows = canWaitRows(['router-1', 'laptop-1', 'server-1'], items);
-
-    expect(rows.map((row) => row.system)).toEqual(['laptop-1', 'server-1']);
-    expect(rows[0]?.notes).toEqual(['Low disk /', 'Low disk /data']);
-    expect(rows[1]?.notes).toEqual(['Low disk /srv']);
-  });
-
-  test('a note about the whole System reads as its name alone', () => {
-    expect(canWaitRows(['server-1'], [reboot('note')])).toEqual([
-      { notes: ['Reboot required'], system: 'server-1' },
-    ]);
-  });
-
-  test('unpaired Systems and levels above note stay out of the shelf', () => {
-    const items = [condition({ unpaired: true }), condition({ level: 'warning' })];
-
-    expect(canWaitRows(['server-1'], items)).toEqual([]);
-  });
-});
-
 describe('tileOrder', () => {
   test('puts alerts first, then warnings, then awake before asleep, then by name', () => {
     const now = 10_000_000;
@@ -163,6 +134,14 @@ describe('tileOrder', () => {
     const [tile] = tileOrder([lane('a')], items, 0);
 
     expect(tile?.items).toEqual(items.slice(0, 1));
+  });
+
+  test("a tile leaves out its System's maintenance notes and keeps a Reboot required at warning", () => {
+    const items = [reboot('note'), reboot('warning'), condition()];
+
+    const [tile] = tileOrder([lane('server-1')], items, 0);
+
+    expect(tile?.items).toEqual(items.slice(1));
   });
 });
 
@@ -217,23 +196,4 @@ describe('diskReading', () => {
   test('a System with no disks reads nothing', () => {
     expect(diskReading([], [condition()])).toBeUndefined();
   });
-});
-
-test('Can wait leaves Service restarted notes on the Services page', () => {
-  const note: Attention = {
-    checkedAt: 100,
-    conditionId: 'restart',
-    evidence: 'current',
-    firstDetected: 0,
-    kind: 'service_restarted',
-    level: 'note',
-    reason: 'Stopped once',
-    service: undefined,
-    subject: 'web',
-    system: 'server-1',
-    unpaired: false,
-  };
-  expect(canWaitRows(['server-1'], [note, reboot('note')])).toEqual([
-    { notes: ['Reboot required'], system: 'server-1' },
-  ]);
 });

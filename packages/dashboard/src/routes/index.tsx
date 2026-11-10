@@ -2,14 +2,15 @@ import { Link, createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { CanWait } from '../components/can-wait.tsx';
 import { FleetTiles } from '../components/fleet-tiles.tsx';
 import { AgentsCard } from '../components/home-agents.tsx';
+import { ChangesCard, JobsCard, MaintenanceCardView } from '../components/home-cards.tsx';
 import { HomeVerdictCard } from '../components/home-verdict.tsx';
 import { NeedsAttention } from '../components/needs-attention.tsx';
 import { UnpairedLink } from '../components/unpaired-lanes.tsx';
 import { validZone } from '../lib/agents-search.ts';
-import { canWaitRows, tileOrder } from '../lib/fleet-tile.ts';
+import { tileOrder } from '../lib/fleet-tile.ts';
+import { maintenanceCard } from '../lib/home-maintenance.ts';
 import { homeFigures, homeVerdict } from '../lib/home.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { unpairedFromSearch } from '../lib/unpaired.ts';
@@ -32,8 +33,9 @@ export const Route = createFileRoute('/')({
 });
 
 // Home, the same on every screen and stacked on a phone: the verdict, what
-// needs attention beside agent work, a tile per paired System, the notes that
-// can wait, and the ways on to Compare and the unpaired Systems.
+// needs attention beside agent work, a tile per paired System, then the
+// maintenance that can wait, what changed, and the jobs, and the ways on to
+// Compare and the unpaired Systems.
 function Home() {
   const home = Route.useLoaderData();
   const search = Route.useSearch();
@@ -77,13 +79,21 @@ function Home() {
         <section aria-label="Systems">
           <FleetTiles from={home.from} now={now} running={running} tiles={tiles} />
         </section>
+        <div className="grid items-start gap-3 sm:gap-3.5 lg:grid-cols-3">
+          <MaintenanceCardView
+            card={maintenanceCard(
+              {
+                attention: home.attention,
+                packages: home.maintenance.packages,
+                updates: home.maintenance.updates,
+              },
+              now,
+            )}
+          />
+          <ChangesCard changes={home.changes} now={now} />
+          <JobsCard jobs={home.jobs} now={now} />
+        </div>
       </div>
-      <CanWait
-        rows={canWaitRows(
-          tiles.map(({ lane }) => lane.name),
-          home.attention,
-        )}
-      />
       <Link
         className="mt-2 inline-flex min-h-11 items-center text-base text-primary underline underline-offset-4"
         search={{ unpaired: showUnpaired || undefined }}

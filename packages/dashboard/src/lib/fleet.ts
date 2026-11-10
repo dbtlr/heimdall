@@ -3,7 +3,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { Attention } from '../server/attention-types.ts';
 import type { FleetGlance, SystemGlance } from '../server/fleet-overview-types.ts';
 import { DELIVERY_FAILING_SHOWN_AFTER_MS, QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
-import { withoutServiceRestartedNotes } from './attention.ts';
+import { withoutNotesShownElsewhere } from './attention.ts';
 import { emptyFleetText } from './unpaired.ts';
 
 const LEVEL_RANK: Record<ConditionLevel, number> = { alert: 0, note: 2, warning: 1 };
@@ -26,9 +26,12 @@ export const worstActionLevel = (
   return undefined;
 };
 
-// Freshness qualifies the evidence; it never changes the Hub's judgment.
+// The open items on paired Systems that count in the fleet's figures, less
+// the notes shown elsewhere: their count at each level, and the notes, the
+// newest first. Freshness qualifies the evidence; it never changes the Hub's
+// judgment.
 export const fleetAttention = (items: readonly Attention[]) => {
-  const paired = withoutServiceRestartedNotes(items).filter((item) => !item.unpaired);
+  const paired = withoutNotesShownElsewhere(items).filter((item) => !item.unpaired);
   const conditions = paired.toSorted(
     (a, b) =>
       (a.level === undefined ? 3 : LEVEL_RANK[a.level]) -

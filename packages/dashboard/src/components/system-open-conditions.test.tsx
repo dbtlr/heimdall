@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import type { Attention } from '../server/attention-types.ts';
 import { OpenNow } from './open-now.tsx';
 import { renderRouted } from './render-routed.tsx';
-import { SystemOpenConditions } from './system-open-conditions.tsx';
+import { SystemMaintenance, SystemOpenConditions } from './system-open-conditions.tsx';
 
 const restarted: Attention = {
   checkedAt: 0,
@@ -53,5 +53,71 @@ test('the Fleet unpaired section keeps Service restarted notes', async () => {
     <OpenNow items={[{ ...restarted, unpaired: true }]} now={1000} />,
   );
   expect(html).toContain('Service restarted');
+  expect(html).toContain('/conditions/restart');
+});
+
+const update = (level: 'alert' | 'note' | 'warning'): Attention => ({
+  checkedAt: 0,
+  conditionId: `update-${level}`,
+  evidence: 'current',
+  firstDetected: 0,
+  kind: 'pending_update',
+  level,
+  reason: '3 packages are pending.',
+  subject: JSON.stringify(['apt', 'system']),
+  system: 'server-1',
+  unpaired: false,
+});
+
+const reboot: Attention = {
+  checkedAt: 0,
+  conditionId: 'reboot',
+  evidence: 'current',
+  firstDetected: 0,
+  kind: 'reboot_required',
+  level: 'note',
+  reason: 'A reboot is required.',
+  subject: '',
+  system: 'server-1',
+  unpaired: false,
+};
+
+test('maintenance notes leave Open Conditions for a Maintenance section that links each to its page', async () => {
+  const items = [update('note'), reboot, down];
+  const html = await renderRouted(
+    <>
+      <SystemOpenConditions items={items} now={6 * 86_400_000} />
+      <SystemMaintenance items={items} now={6 * 86_400_000} />
+    </>,
+  );
+  const [open = '', maintenance = ''] = html.split('>Maintenance<');
+
+  expect(open).toContain('/conditions/down');
+  expect(open).not.toContain('/conditions/update-note');
+  expect(open).not.toContain('/conditions/reboot');
+  expect(maintenance).toContain('href="/systems/server-1/conditions/update-note"');
+  expect(maintenance).toContain('Pending update APT (system)');
+  expect(maintenance).toContain('href="/systems/server-1/conditions/reboot"');
+  expect(maintenance).toContain('Reboot required');
+  expect(maintenance).toContain('open 6 d');
+  expect(maintenance).not.toContain('/conditions/down');
+});
+
+test('a Pending update at warning stays in Open Conditions, and no Maintenance section shows without a maintenance note', async () => {
+  const items = [update('warning'), restarted];
+  const html = await renderRouted(<SystemOpenConditions items={items} now={1000} />);
+
+  expect(html).toContain('/conditions/update-warning');
+  expect(await renderRouted(<SystemMaintenance items={items} now={1000} />)).toBe('');
+});
+
+test("Compare's Open now leaves out maintenance notes and keeps a warning and a Service restarted note", async () => {
+  const html = await renderRouted(
+    <OpenNow items={[update('note'), reboot, update('warning'), restarted]} now={1000} />,
+  );
+
+  expect(html).not.toContain('/conditions/update-note');
+  expect(html).not.toContain('/conditions/reboot');
+  expect(html).toContain('/conditions/update-warning');
   expect(html).toContain('/conditions/restart');
 });

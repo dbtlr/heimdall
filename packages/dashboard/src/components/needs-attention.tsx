@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { evidenceNote, evidenceWords, nextSteps } from '../lib/attention.ts';
 import { conditionDetailView } from '../lib/condition-detail.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
+import { fleetAttention } from '../lib/fleet.ts';
 import { itemTitle, pickAttention } from '../lib/home.ts';
 import type { Actionable } from '../lib/home.ts';
 import { serviceChecks } from '../lib/recorded.ts';
@@ -208,8 +209,9 @@ function Lead({
   );
 }
 
-// Every other item that needs the operator, one line each, linking to its page.
-function OtherItems({ items, now }: { items: readonly Actionable[]; now: number }) {
+// Every other item, one line each with its mark, linking to its page: the
+// alerts and warnings after the lead, then the notes.
+function OtherItems({ items, now }: { items: readonly Attention[]; now: number }) {
   return (
     <ul className="mt-3 border-t pt-1 text-[13px]">
       {items.map((item) => (
@@ -218,7 +220,7 @@ function OtherItems({ items, now }: { items: readonly Actionable[]; now: number 
             className="flex min-h-9 min-w-0 items-center gap-2 hover:underline"
             item={item}
           >
-            <ConditionGlyph kind={item.level} />
+            <ConditionGlyph kind={item.level ?? 'unknown'} />
             <span className="min-w-0 flex-1 truncate">{itemTitle(item)}</span>
             <span className="flex-none text-xs text-dim">
               open {formatSpanShort(Math.max(0, now - item.firstDetected))}
@@ -230,15 +232,23 @@ function OtherItems({ items, now }: { items: readonly Actionable[]; now: number 
   );
 }
 
-// Nothing needs the operator: says so, and names the Condition that cleared
-// last, when one ever did.
-function NothingOpen({ cleared, now }: { cleared: ClearedCondition | undefined; now: number }) {
+// Nothing needs the operator: says so, that only notes are open when some
+// are, and names the Condition that cleared last, when one ever did.
+function NothingOpen({
+  cleared,
+  notes,
+  now,
+}: {
+  cleared: ClearedCondition | undefined;
+  notes: boolean;
+  now: number;
+}) {
   const subject = cleared === undefined ? '' : conditionSubject(cleared);
   return (
     <div>
       <p className="flex items-center gap-1.5 text-[15px] font-semibold">
         <ConditionGlyph kind="cleared" />
-        Nothing open
+        {notes ? 'No alert or warning open' : 'Nothing open'}
       </p>
       {cleared !== undefined && (
         <p className="mt-1 text-[13px] text-muted-foreground">
@@ -259,9 +269,10 @@ function NothingOpen({ cleared, now }: { cleared: ClearedCondition | undefined; 
 }
 
 // Home's attention card: the worst open item, then the newest, with its
-// evidence, tinted for its level; every other item after it in a line each;
-// or, with nothing open, the Condition that cleared last. Notes wait in the
-// list under the tiles.
+// evidence, tinted for its level; every other alert and warning after it in a
+// line each; or, with none open, the Condition that cleared last. The notes on
+// paired Systems follow as the last lines. They never tint the card (ADR-0017),
+// and maintenance notes and Service restarted notes wait elsewhere.
 export function NeedsAttention({
   attention,
   lastCleared,
@@ -274,6 +285,8 @@ export function NeedsAttention({
   now: number;
 }) {
   const { lead, rest } = pickAttention(attention);
+  const { notes } = fleetAttention(attention);
+  const others = [...rest, ...notes];
   const level = lead?.level;
   return (
     <section
@@ -307,7 +320,7 @@ export function NeedsAttention({
           </Link>
         </div>
         {lead === undefined ? (
-          <NothingOpen cleared={lastCleared} now={now} />
+          <NothingOpen cleared={lastCleared} notes={notes.length > 0} now={now} />
         ) : (
           <Lead
             evidence={evidence?.conditionId === lead.conditionId ? evidence : undefined}
@@ -315,7 +328,7 @@ export function NeedsAttention({
             now={now}
           />
         )}
-        {rest.length > 0 && <OtherItems items={rest} now={now} />}
+        {others.length > 0 && <OtherItems items={others} now={now} />}
       </div>
     </section>
   );

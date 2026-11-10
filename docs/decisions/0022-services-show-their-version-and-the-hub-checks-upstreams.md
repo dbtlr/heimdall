@@ -95,3 +95,7 @@ A restart is read beside the Service it happened to, and a fleet that deploys of
 - **Strict semver.** Rejected: most container tags, such as `16` or `16.4`, would never compare.
 - **Any newer release, prereleases included.** Rejected: a stable install would show every beta as an update.
 - **An update raises a note.** Rejected: upstreams release faster than a personal fleet upgrades, so the Fleet page would carry a standing pile of notes.
+
+## Changelog
+
+- 2026-11-10: Clarification. The Can wait list named above is gone from Home, whose remaining notes are the last rows of its Needs attention card. Pending update and Reboot required notes now leave the open Conditions too, for Home's Maintenance card ([ADR-0017](0017-the-hub-sets-condition-levels.md)). The decision is unchanged.

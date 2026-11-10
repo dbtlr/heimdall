@@ -19,7 +19,7 @@ import type { RequestFixture, SubagentFixture, ToolCallFixture } from '@heimdall
 // the rollups and views are the ones a real Hub keeps. Run it again to reset.
 //
 //   HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packages/dashboard seed
-import { filesRecordDigest } from '@heimdall/schema';
+import { filesRecordDigest, updateSourceSubject } from '@heimdall/schema';
 import type { SentServiceStop } from '@heimdall/schema';
 import { SQL } from 'bun';
 
@@ -226,7 +226,7 @@ type Report = ReturnType<typeof report>;
 
 // The sections a Collector sends beside Vitals: what its provisioner recorded,
 // the runs of its jobs, what it observed against both, and the Harnesses installed.
-type Provisioned = Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs'>;
+type Provisioned = Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs' | 'updates'>;
 
 const PROVENANCE = { by: 'fleet', revision: 'a1b2c3d' };
 const HOME = '/home/dev';
@@ -291,6 +291,37 @@ const scenarioOf = (now: number) => {
   };
 };
 type Scenario = ReturnType<typeof scenarioOf>;
+
+// A package-manager observation for each source, with `packages` pending of
+// which the first `security` are security updates, and whether a reboot is
+// required, as a Collector reports them.
+const updatesSection = (
+  now: number,
+  sources: {
+    installation?: string;
+    manager: 'apt' | 'homebrew';
+    packages: number;
+    security: number;
+  }[],
+  rebootRequired: boolean,
+): NonNullable<Report['updates']> => ({
+  managers: sources.map(({ installation = 'system', manager, packages, security }) => ({
+    installation,
+    manager,
+    observedAt: now - 20 * MINUTE,
+    result: {
+      kind: 'available',
+      metadataAt: now - 2 * HOUR,
+      updates: Array.from({ length: packages }, (_, index) => ({
+        available: `1.${String(index)}.1`,
+        installed: `1.${String(index)}.0`,
+        name: `package-${String(index + 1)}`,
+        security: index < security,
+      })),
+    },
+  })),
+  reboot: { kind: 'available', observedAt: now - 20 * MINUTE, required: rebootRequired },
+});
 
 const WORKSTATION_DOTFILES = [
   '.bashrc',
@@ -441,6 +472,11 @@ const workstationSections = async (now: number, scenario: Scenario) => {
       ],
       unreadable: [],
     },
+    updates: updatesSection(
+      now,
+      [{ installation: '/opt/homebrew', manager: 'homebrew', packages: 4, security: 0 }],
+      false,
+    ),
   } satisfies Provisioned;
 };
 
@@ -473,6 +509,14 @@ const serverSections = async (now: number, scenario: Scenario) => {
     scheduler: 'systemd-timer',
     unit: 'log-rotate.timer',
   };
+  // Recorded today, so it has not run yet.
+  const prune = {
+    name: 'restic-prune',
+    provenance: PROVENANCE,
+    schedule: [{ hour: 4, minute: 0, weekday: 0 }],
+    scheduler: 'systemd-timer',
+    unit: 'restic-prune.timer',
+  };
   const nightly = {
     name: 'nightly-backup',
     provenance: PROVENANCE,
@@ -501,6 +545,7 @@ const serverSections = async (now: number, scenario: Scenario) => {
         { kind: 'service', name: devDb.name, record: devDb },
         { kind: 'job', name: nightly.name, record: nightly },
         { kind: 'job', name: logRotate.name, record: logRotate },
+        { kind: 'job', name: prune.name, record: prune },
         { kind: 'files', name: appConfig.name, record: appConfig },
       ],
       unreadable: [],
@@ -512,6 +557,7 @@ const serverSections = async (now: number, scenario: Scenario) => {
       ],
       unreadable: [],
     },
+    updates: updatesSection(now, [{ manager: 'apt', packages: 12, security: 3 }], true),
   } satisfies Provisioned;
 };
 
@@ -548,7 +594,13 @@ const provisionedBySystem = async (now: number) => {
     ['server-1', await serverSections(now, scenario)],
     // A Collector that looked for Harnesses and found none, unlike laptop-1's,
     // which never says.
-    ['gateway-1', { harnesses: { installs: [] } }],
+    [
+      'gateway-1',
+      {
+        harnesses: { installs: [] },
+        updates: updatesSection(now, [{ manager: 'apt', packages: 9, security: 2 }], true),
+      },
+    ],
     [
       UNPAIRED_SYSTEM,
       { harnesses: { installs: [{ harness: 'codex', location: 'npm', version: '0.57.0' }] } },
@@ -1094,6 +1146,47 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: '/data',
     system: SYSTEM,
   });
+  // Routine maintenance: notes that wait for the Maintenance card, and one
+  // Pending update the Hub raised to a warning, which stays with the open
+  // Conditions.
+  conditions.push({
+    kind: 'pending_update',
+    level: 'note',
+    raisedAt: -hours(30),
+    reason: '12 APT packages are pending, 3 of them security updates.',
+    subject: updateSourceSubject({ installation: 'system', manager: 'apt' }),
+    system: 'server-1',
+  });
+  conditions.push({
+    kind: 'pending_update',
+    level: 'warning',
+    raisedAt: -(9 * DAY) / SECOND,
+    reason: '4 Homebrew packages are pending; Homebrew metadata is over 7 days old.',
+    subject: updateSourceSubject({ installation: '/opt/homebrew', manager: 'homebrew' }),
+    system: SYSTEM,
+  });
+  conditions.push({
+    kind: 'pending_update',
+    level: 'note',
+    raisedAt: -hours(50),
+    reason: '9 APT packages are pending, 2 of them security updates.',
+    subject: updateSourceSubject({ installation: 'system', manager: 'apt' }),
+    system: 'gateway-1',
+  });
+  conditions.push({
+    kind: 'reboot_required',
+    level: 'note',
+    raisedAt: -(6 * DAY) / SECOND,
+    reason: 'A reboot is required.',
+    system: 'server-1',
+  });
+  conditions.push({
+    kind: 'reboot_required',
+    level: 'note',
+    raisedAt: -(2 * DAY) / SECOND,
+    reason: 'A reboot is required.',
+    system: 'gateway-1',
+  });
   // The unpaired System keeps the Conditions it left open, and its history.
   conditions.push({
     clearedAt: -(3 * DAY) / SECOND,
@@ -1173,6 +1266,50 @@ const seedServiceStops = async (sql: SQL, now: number) => {
   ]);
 };
 
+// The Collector's own release rolled out to every paired System awake 2.5
+// hours ago, each restarting it once; and the versions of two of the
+// workstation's Services, each with a newer upstream release found days ago,
+// so the Maintenance card has Services with an update.
+const seedVersions = async (sql: SQL, now: number) => {
+  const rollout = now - 2.5 * HOUR;
+  const systems = ['server-1', 'gateway-1', SYSTEM];
+  await sql`
+    DELETE FROM service_versions
+    WHERE service IN ('heimdall-collector', 'ollama') OR (system = ${SYSTEM} AND service = 'syncthing')
+  `;
+  await sql`
+    INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at) VALUES
+      ('github:example/collector', '{"":"0.10.2"}', ${new Date(now - HOUR)}, ${new Date(now - HOUR)}, ${new Date(now + 5 * HOUR)}),
+      ('github:example/ollama', '{"":"0.6.0"}', ${new Date(now - HOUR)}, ${new Date(now - HOUR)}, ${new Date(now + 5 * HOUR)})
+  `;
+  await sql`
+    INSERT INTO upstream_releases (upstream, version, first_found_at) VALUES
+      ('github:example/collector', '0.10.2', ${new Date(now - 40 * MINUTE)}),
+      ('github:example/ollama', '0.6.0', ${new Date(now - 12 * DAY)})
+  `;
+  for (const [index, system] of systems.entries()) {
+    const at = rollout + index * MINUTE;
+    // oxlint-disable-next-line no-await-in-loop -- three Systems.
+    await sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        (${system}, 'heimdall-collector', '0.10.0', 'github:example/collector', ${new Date(now - 6 * DAY)}),
+        (${system}, 'heimdall-collector', '0.10.1', 'github:example/collector', ${new Date(at)})
+    `;
+    // oxlint-disable-next-line no-await-in-loop -- three Systems.
+    await sql`
+      INSERT INTO service_stops (system, service, stopped_at, started_at, ongoing, restarts, result, exit_status, sent_at, received_at)
+      VALUES (${system}, 'heimdall-collector', ${new Date(at - 20 * SECOND)}, ${new Date(at)}, false, 0, 'success', 0,
+              ${new Date(at + MINUTE)}, ${new Date(at + MINUTE)})
+    `;
+  }
+  await sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      (${SYSTEM}, 'ollama', '0.5.1', 'github:example/ollama', ${new Date(now - 20 * DAY)}),
+      (${SYSTEM}, 'syncthing', '1.29.0', null, ${new Date(now - 20 * DAY)}),
+      (${SYSTEM}, 'syncthing', '1.29.2', null, ${new Date(now - 5 * HOUR)})
+  `;
+};
+
 // Every table the seed writes. Truncating `systems` cascades to the rest.
 const TABLES = [
   'systems',
@@ -1183,6 +1320,7 @@ const TABLES = [
   'projected_tool_calls',
   'current_parsers',
   'model_prices',
+  'upstream_checks',
 ];
 
 // The seed replaces what a scratch database holds, so before it creates or
@@ -1243,6 +1381,7 @@ const fill = async (sql: SQL) => {
     ),
   );
   await seedServiceStops(sql, now);
+  await seedVersions(sql, now);
   await seedConditions(sql, now);
   await seedSessions(sql, now);
   await seedWorkSession(sql, now);

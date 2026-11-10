@@ -72,3 +72,4 @@ The evidence of why a Service stopped, such as a provisioner's own health events
 
 - 2026-10-24: Clarification. systemd forgets a unit's result and exit status when the unit starts again, so a stop that begins and ends between two checks carries neither, and its note cannot tell a clean stop from a failure (HMD-164). The decision is unchanged.
 - 2026-10-27: Clarification. The dashboard shows the note on the Services page with its Service, not in a System's open Conditions or the Fleet page's Can wait ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The note is unchanged.
+- 2026-11-10: Clarification. The Can wait list named above is gone from Home, whose remaining notes are the last rows of its Needs attention card; Service restarted notes stay on the Services page ([ADR-0017](0017-the-hub-sets-condition-levels.md)). The note is unchanged.

@@ -3,6 +3,7 @@ import {
   anchorOf,
   attentionMark,
   evidenceWords,
+  isMaintenanceNote,
   rankAttention,
 } from '../lib/attention.ts';
 import { cn } from '../lib/utils.ts';
@@ -80,9 +81,10 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
 }
 
 // Open Conditions across the Systems shown: current evidence first, then
-// evidence old or unknown under its own
-// heading, each row linking to its Condition's page.
-export function OpenNow({ items, now }: { items: readonly Attention[]; now: number }) {
+// evidence old or unknown under its own heading, each row linking to its
+// Condition's page. Maintenance notes wait under Maintenance instead.
+export function OpenNow({ items: all, now }: { items: readonly Attention[]; now: number }) {
+  const items = all.filter((item) => !isMaintenanceNote(item));
   const { confirmed, unconfirmed } = rankAttention(items);
   return (
     <section className="mt-[18px] card-surface rounded-xl border p-4">

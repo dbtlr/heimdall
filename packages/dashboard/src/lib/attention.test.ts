@@ -4,17 +4,18 @@ import type { ConditionLevel } from '@heimdall/schema';
 
 import type { Attention, AttentionFacts } from '../server/attention-types.ts';
 import {
-  withoutServiceRestartedNotes,
   ATTENTION_NAMES,
   anchorOf,
   attentionMark,
   evidenceNote,
   evidenceWords,
   isConfirmed,
+  isMaintenanceNote,
   laneSummary,
   nextSteps,
   rankAttention,
   subjectText,
+  withoutNotesShownElsewhere,
 } from './attention.ts';
 import { phraseText, whenAt, zoneFreeText } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
@@ -1025,8 +1026,51 @@ test('System Open Conditions exclude Service restarted notes while keeping Servi
     { level: 'alert' },
   );
   const uncertain = attention({ kind: 'checks_missing', set: 'checks' });
-  expect(withoutServiceRestartedNotes([note, down, uncertain])).toEqual([down, uncertain]);
-  expect(withoutServiceRestartedNotes([note])).toEqual([]);
+  expect(withoutNotesShownElsewhere([note, down, uncertain])).toEqual([down, uncertain]);
+  expect(withoutNotesShownElsewhere([note])).toEqual([]);
   const unpaired = { ...note, unpaired: true };
-  expect(withoutServiceRestartedNotes([note, unpaired])).toEqual([unpaired]);
+  expect(withoutNotesShownElsewhere([note, unpaired])).toEqual([unpaired]);
+});
+
+const pendingUpdate = (level: ConditionLevel) =>
+  attention({ kind: 'pending_update', reason: '3 packages' }, { level });
+const rebootRequired = (level: ConditionLevel, unpaired = false) =>
+  attention({ kind: 'reboot_required', reason: 'Reboot required' }, { level, unpaired });
+
+describe('maintenance notes', () => {
+  test('a Pending update or Reboot required note on a paired System is a maintenance note, and leaves the open Conditions', () => {
+    for (const item of [pendingUpdate('note'), rebootRequired('note')]) {
+      expect(isMaintenanceNote(item)).toBe(true);
+      expect(withoutNotesShownElsewhere([item])).toEqual([]);
+    }
+  });
+
+  test('at warning or alert, either kind stays with the open Conditions', () => {
+    for (const item of [
+      pendingUpdate('warning'),
+      pendingUpdate('alert'),
+      rebootRequired('warning'),
+      rebootRequired('alert'),
+    ]) {
+      expect(isMaintenanceNote(item)).toBe(false);
+      expect(withoutNotesShownElsewhere([item])).toEqual([item]);
+    }
+  });
+
+  test('on a System no longer paired, a note stays with its open Conditions', () => {
+    const item = rebootRequired('note', true);
+
+    expect(isMaintenanceNote(item)).toBe(false);
+    expect(withoutNotesShownElsewhere([item])).toEqual([item]);
+  });
+
+  test('a note of another kind is no maintenance note', () => {
+    const disk = attention(
+      { disk: undefined, kind: 'low_disk', reason: '/ is 72% used' },
+      { level: 'note' },
+    );
+
+    expect(isMaintenanceNote(disk)).toBe(false);
+    expect(withoutNotesShownElsewhere([disk])).toEqual([disk]);
+  });
 });

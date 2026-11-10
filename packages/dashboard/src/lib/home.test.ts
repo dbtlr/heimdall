@@ -135,6 +135,14 @@ describe('homeVerdict', () => {
     );
   });
 
+  test('the notes that can wait leave out maintenance notes', () => {
+    const reboot = note({ conditionId: '8', kind: 'reboot_required', subject: '' });
+
+    expect(zoneFreeText(verdict([note(), reboot]).support)).toBe(
+      'Every System reports and every Service is up. One note can wait.',
+    );
+  });
+
   test('with nothing open the fleet is healthy, and the line says what holds back the all-clear', () => {
     const lanes = [
       lane('server-1', { services: { total: 3, up: 2 } }),

@@ -3,9 +3,9 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { Attention, AttentionKind } from '../server/attention-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import type { Disk } from '../server/system-detail-types.ts';
-import { ATTENTION_NAMES, subjectText } from './attention.ts';
+import { isMaintenanceNote } from './attention.ts';
 import { diskUsage, fullestDisk } from './facts.ts';
-import { fleetAttention, isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
+import { isAsleep, levelCounts, worstActionLevel } from './fleet.ts';
 import { formatSpanShort } from './time.ts';
 
 // The resources a System tile draws a meter for. CPU has no meter: a tile
@@ -39,28 +39,8 @@ export const meterLevels = (
   return levels;
 };
 
-// The "Can wait" shelf: for each name, in the order given, that has notes on a
-// paired System, the notes as "Low disk /data" text. Names without notes are skipped.
-export const canWaitRows = (
-  names: readonly string[],
-  items: readonly Attention[],
-): { notes: string[]; system: string }[] => {
-  const { notes } = fleetAttention(items);
-  return names.flatMap((system) => {
-    const texts = notes
-      .filter((note) => note.system === system)
-      .map((note) => {
-        const subject = subjectText(note);
-        return subject === ''
-          ? ATTENTION_NAMES[note.kind]
-          : `${ATTENTION_NAMES[note.kind]} ${subject}`;
-      });
-    return texts.length === 0 ? [] : [{ notes: texts, system }];
-  });
-};
-
-// One System's tile: its lane, its own items, its worst level that calls for
-// action, and whether it is asleep.
+// One System's tile: its lane, its own items less its maintenance notes, its
+// worst level that calls for action, and whether it is asleep.
 export type SystemTile<L extends SystemGlance = SystemGlance> = {
   asleep: boolean;
   items: Attention[];
@@ -90,7 +70,9 @@ export const tileOrder = <L extends SystemGlance>(
 ): SystemTile<L>[] =>
   lanes
     .map((lane) => {
-      const items = attention.filter((item) => item.system === lane.name);
+      const items = attention.filter(
+        (item) => item.system === lane.name && !isMaintenanceNote(item),
+      );
       const counts = levelCounts(items);
       return { asleep: isAsleep(lane, now), counts, items, lane, level: worstActionLevel(counts) };
     })
