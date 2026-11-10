@@ -6,6 +6,7 @@ import { barSegments, breakdownRows, formatPercent, sessionsIn } from './agents-
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   activeRecently: false,
   branch: undefined,
+  firstRequestAt: 50,
   harness: 'claude-code',
   lastRequestAt: 100,
   models: ['m-a'],
@@ -15,6 +16,7 @@ const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   sessionId: 'one',
   source: 'default',
   system: 'server-1',
+  topModel: 'm-a',
   unpricedRequests: 0,
   ...overrides,
 });

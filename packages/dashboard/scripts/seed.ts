@@ -677,6 +677,86 @@ const seedSessions = async (sql: SQL, now: number) => {
   });
 };
 
+// Sessions still running when the seed ends, so Home lists them for the next
+// 5 minutes: two Claude Code Sessions on server-1, and a Codex and a Claude
+// Code Session on the workstation. Then a Session on each of the 7 days
+// before, over the same hours of the day, so Home's bars and what is usually
+// spent by now have a week to draw on. Times are seconds before `now`.
+const seedRecentSessions = async (sql: SQL, now: number) => {
+  const { addSession } = timeline(now);
+  const running = [
+    {
+      branch: 'feat/tags',
+      harness: 'claude-code',
+      id: 'notes-tags',
+      model: 'claude-opus-5-5',
+      project: 'notes-app',
+      start: -hours(2.2),
+      system: 'server-1',
+    },
+    {
+      branch: 'chore/release',
+      harness: 'claude-code',
+      id: 'cli-release',
+      model: 'claude-sonnet-5-5',
+      project: 'cli-tool',
+      start: -hours(0.7),
+      system: 'server-1',
+    },
+    {
+      branch: 'ops/alerts',
+      harness: 'codex',
+      id: 'infra-alerts',
+      model: 'gpt-5.1-codex',
+      project: 'infra',
+      start: -hours(0.3),
+      system: SYSTEM,
+    },
+    {
+      branch: 'main',
+      harness: 'claude-code',
+      id: 'web-copy',
+      model: 'claude-sonnet-5-5',
+      project: 'web',
+      start: -hours(1.1),
+      system: SYSTEM,
+    },
+  ];
+  for (const [index, session] of running.entries()) {
+    const cwd = `${HOME}/projects/${session.project}`;
+    // oxlint-disable-next-line no-await-in-loop -- four fixture Sessions.
+    await addSession(sql, {
+      firstCwd: cwd,
+      gitBranch: session.branch,
+      harness: session.harness,
+      id: session.id,
+      inputTokens: 60_000,
+      lastCwd: cwd,
+      model: session.model,
+      outputTokens: 3000,
+      requests: [...requestTimes(session.start, -120), -20 - 15 * index],
+      system: session.system,
+    });
+  }
+  const busy = [1.4, 2.1, 1.7, 0.6, 2.3, 2, 1];
+  for (const [index, spread] of busy.entries()) {
+    const day = -hours(24 * (index + 1));
+    const cwd = `${HOME}/projects/api`;
+    // oxlint-disable-next-line no-await-in-loop -- seven fixture Sessions.
+    await addSession(sql, {
+      firstCwd: cwd,
+      gitBranch: 'feat/rate-limits',
+      id: `api-day-${String(index + 1)}`,
+      inputTokens: 90_000,
+      lastCwd: cwd,
+      model: 'claude-sonnet-5-5',
+      outputTokens: 4000,
+      requests: requestTimes(day - hours(4 * spread), day - hours(0.5)),
+      system: SYSTEM,
+    });
+  }
+};
+
 // One long Session shaped like real agent work, for the Session page: a main
 // conversation on Opus with subagents on Sonnet, one with a subagent of its
 // own; a workflow run; skills, tool calls, and slash commands; a /compact that
@@ -1166,6 +1246,7 @@ const fill = async (sql: SQL) => {
   await seedConditions(sql, now);
   await seedSessions(sql, now);
   await seedWorkSession(sql, now);
+  await seedRecentSessions(sql, now);
   await unpair(sql, UNPAIRED_SYSTEM);
   // Stores the seeded Sessions' stretches and totals, as a running Hub would.
   await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });

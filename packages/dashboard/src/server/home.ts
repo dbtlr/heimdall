@@ -13,6 +13,7 @@ import {
   toBucket,
 } from './fleet-overview.ts';
 import type { BucketRow } from './fleet-overview.ts';
+import { readHomeAgents } from './home-agents.ts';
 import { STOPS_WINDOW_MS, TILE_HISTORY_MS } from './home-types.ts';
 import type {
   ClearedCondition,
@@ -127,16 +128,21 @@ const readLastCleared = async (sql: SQL): Promise<ClearedCondition | undefined> 
 };
 
 // Home at `now`: the tiles, the evidence behind the item that needs the
-// operator most, and, when nothing does, the Condition that cleared last.
-// Read-only.
-const readHomeSnapshot = async (sql: SQL, input: Input): Promise<Home> => {
+// operator most, and, when nothing does, the Condition that cleared last; and,
+// once the viewer's time zone is known, agent work in it. Read-only.
+const readHomeSnapshot = async (
+  sql: SQL,
+  input: Input & { timeZone?: string | undefined },
+): Promise<Home> => {
   const tiles = await readTilesSnapshot(sql, input);
   const { lead } = pickAttention(tiles.attention);
-  const [evidence, lastCleared] = await Promise.all([
-    readLeadEvidence(sql, lead, input.now),
+  const { now, timeZone } = input;
+  const [evidence, lastCleared, agents] = await Promise.all([
+    readLeadEvidence(sql, lead, now),
     lead === undefined ? readLastCleared(sql) : undefined,
+    timeZone === undefined ? undefined : readHomeAgents(sql, { now, timeZone }),
   ]);
-  return { ...tiles, lastCleared, lead: evidence };
+  return { ...tiles, agents, lastCleared, lead: evidence };
 };
 
 // Each read sees one snapshot, so a tile's status agrees with the evidence

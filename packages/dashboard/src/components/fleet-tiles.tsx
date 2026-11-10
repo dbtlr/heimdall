@@ -6,12 +6,15 @@ import { laneSummary } from '../lib/attention.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { diskReading, meterLevels, tileStatusWords } from '../lib/fleet-tile.ts';
 import type { SystemTile } from '../lib/fleet-tile.ts';
+import { runningChip } from '../lib/home-agents.ts';
+import { harnessColor } from '../lib/lane.ts';
 import { sparklineAreaPath, sparklinePath } from '../lib/sparkline.ts';
 import { formatSpanShort, silenceLeft } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { SystemGlance } from '../server/fleet-overview-types.ts';
 import type { TileGlance } from '../server/home-types.ts';
+import type { SessionKey } from '../server/session-view-types.ts';
 import {
   AttentionStatus,
   MARK_COLOR,
@@ -258,14 +261,17 @@ function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
 
 // The Systems as tiles, in the order given, two across on a phone and as many
 // as fit from `sm`, seven at 1440 px: each links to its System and shows its
-// health, its CPU since `from`, its Mem and Disk meters, and its Services up.
+// health, its CPU since `from`, its Mem and Disk meters, its Services up, and
+// how many of the `running` Sessions run on it.
 export function FleetTiles({
   from,
   now,
+  running = [],
   tiles,
 }: {
   from: number;
   now: number;
+  running?: readonly SessionKey[];
   tiles: readonly SystemTile<TileGlance>[];
 }) {
   return (
@@ -299,13 +305,51 @@ export function FleetTiles({
             <TileSparkline from={from} now={now} tile={tile} />
           )}
           <TileMeters now={now} tile={tile} />
-          {tile.lane.services.total > 0 && (
-            <p className="mt-1 text-xs text-muted-foreground tabular-nums">
-              Services {tile.lane.services.up}/{tile.lane.services.total}
-            </p>
-          )}
+          <TileFooter running={runningChip(running, tile.lane.name)} tile={tile} />
         </Link>
       ))}
+    </div>
+  );
+}
+
+// The tile's last line: its Services up, and how many Sessions run on it, in
+// their Harness's color when they share one and in the neutral chip color
+// when they do not. Neither shows when there is none.
+function TileFooter({
+  running,
+  tile,
+}: {
+  running: ReturnType<typeof runningChip>;
+  tile: SystemTile<TileGlance>;
+}) {
+  const { services } = tile.lane;
+  if (services.total === 0 && running === undefined) {
+    return null;
+  }
+  const color = running?.harness === undefined ? undefined : harnessColor(running.harness);
+  return (
+    <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+      {services.total > 0 && (
+        <p className="text-xs text-muted-foreground tabular-nums">
+          Services {services.up}/{services.total}
+        </p>
+      )}
+      {running !== undefined && (
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-xs whitespace-nowrap tabular-nums',
+            color === undefined && 'bg-secondary text-muted-foreground',
+          )}
+          data-harness={running.harness}
+          style={
+            color === undefined
+              ? undefined
+              : { background: `color-mix(in srgb, ${color} 16%, transparent)`, color }
+          }
+        >
+          {running.count} running
+        </span>
+      )}
     </div>
   );
 }

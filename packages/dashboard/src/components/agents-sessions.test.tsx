@@ -39,6 +39,7 @@ test('period Session rows link with every identity field and describe observed r
     {
       activeRecently: true,
       branch: 'topic/agents',
+      firstRequestAt: 100,
       harness: 'codex',
       lastRequestAt: 180,
       models: ['m-a'],
@@ -48,11 +49,13 @@ test('period Session rows link with every identity field and describe observed r
       sessionId: 'one',
       source: 'work',
       system: 'server-1',
+      topModel: 'm-a',
       unpricedRequests: 1,
     },
     {
       activeRecently: false,
       branch: undefined,
+      firstRequestAt: 160,
       harness: 'aider',
       lastRequestAt: 160,
       models: [],
@@ -62,6 +65,7 @@ test('period Session rows link with every identity field and describe observed r
       sessionId: 'two',
       source: 'home',
       system: 'unpaired-system',
+      topModel: undefined,
       unpricedRequests: 0,
     },
   ]);

@@ -5,6 +5,7 @@
 
 import type { ConditionKind, ConditionLevel } from '@heimdall/schema';
 
+import type { AgentsSession, PeriodTotals } from './agents-overview-types.ts';
 import type { ConditionDetail } from './condition-detail-types.ts';
 import type { CpuBucket, FleetGlance, Gap, SystemGlance } from './fleet-overview-types.ts';
 
@@ -48,7 +49,30 @@ export type ClearedCondition = {
   system: string;
 };
 
+// One local day's list-price cost, oldest first in HomeAgents.days.
+export type DayCost = PeriodTotals & { start: number };
+
+// Agent work as Home's Agents card shows it, in the viewer's time zone, over
+// every System, paired or with history kept, as the Agents page counts it.
+// `today` is the Agents page's Today total. `days` are the 6 local days before
+// today and today, whose amount is `today`'s. `usualByNow` is what the 7 days
+// before today usually spent by this time of day (usualByNow), if enough of
+// them had requests. `running` holds every running Session, the latest request
+// first, each priced over all its requests. `latestRequestAt` is the newest
+// request of any Session, read only while none is running: undefined then
+// means no Session was ever recorded.
+export type HomeAgents = {
+  days: DayCost[];
+  latestRequestAt: number | undefined;
+  running: AgentsSession[];
+  timeZone: string;
+  today: PeriodTotals;
+  usualByNow: number | undefined;
+};
+
+// `agents` is undefined until the viewer's time zone is known.
 export type Home = SystemTiles & {
+  agents: HomeAgents | undefined;
   lastCleared: ClearedCondition | undefined;
   lead: LeadEvidence | undefined;
 };
