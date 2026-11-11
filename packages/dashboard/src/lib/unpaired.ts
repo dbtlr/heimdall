@@ -10,7 +10,7 @@ export const unpairedFromSearch = (search: Record<string, unknown>): boolean =>
 // Shown with none to list, as a URL can ask, it leads back instead.
 export const unpairedLinkText = (count: number, shown: boolean): string => {
   if (shown && count === 0) {
-    return 'Back to Fleet';
+    return 'Back to Home';
   }
   return `${shown ? 'Hide' : 'Show'} ${String(count)} unpaired System${count === 1 ? '' : 's'}`;
 };

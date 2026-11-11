@@ -44,7 +44,6 @@ test('Today counts only requests since local midnight, including subagents of an
   expect(result.totals).toEqual({ pricedCostUsd: 3, requests: 3, unpricedRequests: 0 });
   expect(result.sessions).toHaveLength(1);
   expect(result.sessions[0]).toMatchObject({
-    activeRecently: true,
     lastRequestAt: NOW - 20_000,
     pricedCostUsd: 3,
     requests: 3,
@@ -78,15 +77,9 @@ test('whole Sessions retain priced lower bounds, include unpaired history, and k
 
   const result = await view(h);
   expect(result.totals).toEqual({ pricedCostUsd: 3, requests: 3, unpricedRequests: 1 });
-  expect(
-    result.sessions.map(({ activeRecently, pricedCostUsd, source }) => ({
-      activeRecently,
-      pricedCostUsd,
-      source,
-    })),
-  ).toEqual([
-    { activeRecently: false, pricedCostUsd: 2, source: 'work' },
-    { activeRecently: true, pricedCostUsd: 1, source: 'personal' },
+  expect(result.sessions.map(({ pricedCostUsd, source }) => ({ pricedCostUsd, source }))).toEqual([
+    { pricedCostUsd: 2, source: 'work' },
+    { pricedCostUsd: 1, source: 'personal' },
   ]);
 });
 

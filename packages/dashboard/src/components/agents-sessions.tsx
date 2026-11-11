@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 
+import { isRunning, RUNNING_TITLE, runningCount } from '../lib/home-agents.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
 import { formatCost } from '../lib/time.ts';
 import type { AgentsBreakdown, AgentsSession } from '../server/agents-overview-types.ts';
@@ -7,6 +8,15 @@ import { DateTime } from './date-time.tsx';
 
 // A Session lists a model it used; it sits in a project, on a System, or of a Harness.
 const filterPreposition = (by: AgentsBreakdown) => (by === 'model' ? 'using' : 'in');
+
+// How many of the period's Sessions are running, by the rule Home uses.
+export function RunningCount({ now, sessions }: { now: number; sessions: AgentsSession[] }) {
+  return (
+    <p className="text-sm text-muted-foreground" title={RUNNING_TITLE}>
+      {runningCount(sessions, now)} running
+    </p>
+  );
+}
 
 // `picked` names the breakdown row, of dimension `by`, the list is filtered to, if any.
 export function AgentsSessions({
@@ -90,12 +100,9 @@ export function AgentsSessions({
                     {session.system} · {harnessName(session.harness)}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    {session.activeRecently ? (
-                      <span
-                        className="text-status-good"
-                        title="A request was observed in the last 60 seconds"
-                      >
-                        Active recently
+                    {isRunning(session.lastRequestAt, now) ? (
+                      <span className="text-status-good" title={RUNNING_TITLE}>
+                        Running
                       </span>
                     ) : (
                       <>

@@ -18,13 +18,13 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
     <table className="w-full table-fixed border-collapse text-left">
       <thead>
         <tr className="border-b text-xs text-muted-foreground">
-          <th className="w-1/2 px-3 py-3 font-medium" scope="col">
+          <th className="w-[40%] px-2 py-3 sm:w-1/2 sm:px-3 font-medium" scope="col">
             Service
           </th>
-          <th className="w-1/4 px-3 py-3 font-medium" scope="col">
+          <th className="w-[30%] px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
             System
           </th>
-          <th className="w-1/4 px-3 py-3 font-medium" scope="col">
+          <th className="w-[30%] px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
             Version
           </th>
         </tr>
@@ -35,7 +35,7 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
             className="relative border-b border-border/60 hover:bg-card focus-within:bg-card"
             key={`${row.system}/${row.name}`}
           >
-            <td className="px-3 py-4 align-top">
+            <td className="px-2 py-4 align-top sm:px-3">
               <Link
                 className="flex items-baseline gap-2 font-medium after:absolute after:inset-0"
                 params={{ name: row.system, service: row.name }}
@@ -61,10 +61,16 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
                 </p>
               )}
             </td>
-            <td className="px-3 py-4 align-top text-muted-foreground wrap-anywhere">
+            <td
+              className="overflow-hidden px-2 py-4 align-top text-ellipsis text-muted-foreground sm:px-3"
+              title={row.system}
+            >
               {row.system}
             </td>
-            <td className="px-3 py-4 align-top wrap-anywhere">
+            <td
+              className="overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:px-3"
+              title={row.version ?? 'unknown'}
+            >
               {row.version ?? <span className="text-muted-foreground">unknown</span>}
               {row.update !== undefined && (
                 <span className="block text-sm text-muted-foreground">→ {row.update}</span>

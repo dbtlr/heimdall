@@ -21,7 +21,6 @@ export type PeriodTotals = {
 
 export type AgentsSession = SessionKey &
   PeriodTotals & {
-    activeRecently: boolean;
     branch: string | undefined;
     // The Session's first request, in the period or before it.
     firstRequestAt: number;

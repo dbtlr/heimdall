@@ -291,12 +291,14 @@ export function FleetTiles({
           <div className="flex items-center gap-1.5">
             <h3
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold break-all',
+                'flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold',
                 tile.asleep && 'text-muted-foreground',
               )}
             >
               <StatusSlot tile={tile} />
-              {tile.lane.name}
+              <span className="min-w-0 truncate" title={tile.lane.name}>
+                {tile.lane.name}
+              </span>
             </h3>
             <TileCorner lane={tile.lane} now={now} />
           </div>

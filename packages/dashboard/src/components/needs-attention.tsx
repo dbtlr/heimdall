@@ -209,12 +209,17 @@ function Lead({
   );
 }
 
-// Every other item, one line each with its mark, linking to its page: the
-// alerts and warnings after the lead, then the notes.
+// How many other items the card lists before "+N more".
+export const OTHERS_SHOWN = 5;
+
+// The other items, one line each with its mark, linking to its page: the
+// alerts and warnings after the lead, then the notes. Past OTHERS_SHOWN, a
+// last line counts the rest and links to every open Condition.
 function OtherItems({ items, now }: { items: readonly Attention[]; now: number }) {
+  const more = items.length - OTHERS_SHOWN;
   return (
     <ul className="mt-3 border-t pt-1 text-[13px]">
-      {items.map((item) => (
+      {items.slice(0, OTHERS_SHOWN).map((item) => (
         <li key={`${item.system}-${item.kind}-${item.subject}`}>
           <AttentionLink
             className="flex min-h-9 min-w-0 items-center gap-2 hover:underline"
@@ -228,6 +233,17 @@ function OtherItems({ items, now }: { items: readonly Attention[]; now: number }
           </AttentionLink>
         </li>
       ))}
+      {more > 0 && (
+        <li>
+          <Link
+            className="flex min-h-9 items-center text-xs text-link hover:underline"
+            search={{ status: ['open'] }}
+            to="/timeline"
+          >
+            +{more} more
+          </Link>
+        </li>
+      )}
     </ul>
   );
 }

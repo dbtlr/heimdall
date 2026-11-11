@@ -23,7 +23,7 @@ export function FleetVerdict({ counts }: { counts: Record<ConditionLevel, number
   return (
     <span
       aria-label={levelCountsText(counts)}
-      className="flex items-center gap-1.5 text-[15.5px] font-semibold"
+      className="flex items-center gap-1.5 text-[15.5px] font-semibold tabular-nums"
       role="img"
     >
       {LEVELS.filter((level) => counts[level] > 0).map((level) => (

@@ -126,10 +126,11 @@
     color-scheme: dark;
   }
 
-  /* Every figure is tabular, so numbers that stack or update line up. */
+  /* Figures that stack in a column or update in place opt in to tabular-nums.
+     Not the body: Inter's tabular hyphen is as wide as a digit, which spaces
+     out names such as server-1. */
   body {
     @apply bg-background font-sans text-foreground antialiased;
-    font-variant-numeric: tabular-nums;
   }
 
   ::selection {

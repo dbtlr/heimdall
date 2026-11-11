@@ -161,9 +161,7 @@ export const readPeriodSessions = async (
 ): Promise<{ models: ModelTotals[]; sessions: AgentsSession[] }> => {
   const rows = await readSessionRows(sql, period);
   const { models, top, used } = modelBreakdown(await readModelRows(sql, period), rows);
-  const now = period.to.getTime();
   const sessions = rows.map((row) => ({
-    activeRecently: now - row.last_request_at.getTime() <= 60_000,
     branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
     firstRequestAt: row.first_request_at.getTime(),
     harness: row.harness,

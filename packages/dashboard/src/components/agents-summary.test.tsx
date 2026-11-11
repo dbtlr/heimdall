@@ -25,7 +25,6 @@ const overview: AgentsOverview = {
   range: 'today',
   sessions: [
     {
-      activeRecently: true,
       branch: 'main',
       firstRequestAt: 100,
       harness: 'codex',
@@ -41,7 +40,6 @@ const overview: AgentsOverview = {
       unpricedRequests: 1,
     },
     {
-      activeRecently: false,
       branch: undefined,
       firstRequestAt: 100,
       harness: 'claude-code',

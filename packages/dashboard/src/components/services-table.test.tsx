@@ -54,3 +54,28 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html.match(/→/gu)).toHaveLength(1);
   expect(html).toContain('>unknown</span>');
 });
+
+test('a System name wraps only at its hyphens and a version never breaks, each truncated with its full text in a title', async () => {
+  const html = await renderRouted(
+    <ServicesTable
+      now={0}
+      rows={[
+        {
+          downSince: undefined,
+          latestStopAt: undefined,
+          name: 'web',
+          status: 'unknown',
+          system: 'workstation-1',
+          update: undefined,
+          version: null,
+        },
+      ]}
+    />,
+  );
+  const cell = (title: string) => new RegExp(`<td[^>]*title="${title}"[^>]*>`, 'u').exec(html)?.[0];
+
+  expect(cell('workstation-1')).toContain('text-ellipsis');
+  expect(cell('workstation-1')).not.toContain('wrap-anywhere');
+  expect(cell('unknown')).toContain('whitespace-nowrap');
+  expect(cell('unknown')).toContain('text-ellipsis');
+});

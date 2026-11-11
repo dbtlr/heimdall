@@ -113,6 +113,15 @@ describe('a System tile', () => {
     expect(html).not.toContain('color-mix');
   });
 
+  test('keeps a long name on one line beside the last-seen time, truncated with the full name in a title', async () => {
+    const html = await render([lane('workstation-1')]);
+
+    expect(html).toContain(
+      '<span class="min-w-0 truncate" title="workstation-1">workstation-1</span>',
+    );
+    expect(html).not.toContain('break-all');
+  });
+
   test('links to its System and shows Mem and the fullest Disk with rounded percents, and its Services up', async () => {
     const html = await render([lane('gateway-1')]);
 

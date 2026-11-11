@@ -46,7 +46,7 @@ function Compare() {
       </PageToolbar>
       <main className={`${contentFrame('wide')} pb-8`}>
         <Link className="inline-flex min-h-11 items-center text-primary" to="/">
-          ‹ Fleet
+          ‹ Home
         </Link>
         <h1 className="text-2xl font-semibold">Compare</h1>
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 pt-3.5 pb-2 sm:pt-[18px] sm:pb-2.5">

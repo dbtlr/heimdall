@@ -14,14 +14,29 @@ const ROW_PX = 18;
 
 // Where a bar's label goes: after the bar when there is room, else before it,
 // else over its start when the bar spans most of the window.
+// The label never leaves the plot: its `maxWidth` is the room on its side of
+// the bar, and what does not fit ends in an ellipsis.
 const conditionLabelPlace = ({ left, width }: { left: number; width: number }) => {
   if (left + width <= 70) {
-    return { style: { left: `calc(${String(left + width)}% + 8px)` } };
+    return {
+      style: {
+        left: `calc(${String(left + width)}% + 8px)`,
+        maxWidth: `calc(${String(100 - left - width)}% - 8px)`,
+      },
+    };
   }
   if (left >= 30) {
-    return { style: { right: `calc(${String(100 - left)}% + 8px)` } };
+    return {
+      style: {
+        maxWidth: `calc(${String(left)}% - 8px)`,
+        right: `calc(${String(100 - left)}% + 8px)`,
+      },
+    };
   }
-  return { over: true, style: { left: `calc(${String(left)}% + 8px)` } };
+  return {
+    over: true,
+    style: { left: `calc(${String(left)}% + 8px)`, maxWidth: `calc(${String(100 - left)}% - 8px)` },
+  };
 };
 
 // Each Condition open during the window as a bar from raised to cleared, with
@@ -90,7 +105,7 @@ export function ConditionSpans({
             })}
             <span
               className={cn(
-                'absolute text-xs whitespace-nowrap text-muted-foreground',
+                'absolute overflow-hidden text-xs text-ellipsis whitespace-nowrap text-muted-foreground',
                 'over' in labelStyle && 'rounded-[3px] bg-background px-1',
               )}
               style={{ ...labelStyle.style, top: row * ROW_PX + 1 }}

@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { UnpairedLink } from './unpaired-lanes.tsx';
 
-test('Compare returns to Fleet when its empty unpaired view says Back to Fleet', async () => {
+test('Compare returns to Home when its empty unpaired view says Back to Home', async () => {
   const root = createRootRoute({ component: Outlet });
   const compare = createRoute({
     component: () => <UnpairedLink count={0} shown />,
@@ -27,5 +27,5 @@ test('Compare returns to Fleet when its empty unpaired view says Back to Fleet',
   await router.load();
   const html = renderToStaticMarkup(<RouterProvider router={router} />);
   expect(html).toContain('href="/"');
-  expect(html).toContain('Back to Fleet');
+  expect(html).toContain('Back to Home');
 });
