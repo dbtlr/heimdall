@@ -47,6 +47,7 @@ export function AppNavigation() {
   return (
     <nav
       aria-label="Main navigation"
+      data-bottom-bar
       className="fixed inset-x-0 bottom-0 z-40 flex border-t bg-bar/92 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgb(0_0_0/0.35)] backdrop-blur-lg"
     >
       {PHONE_TABS.map(({ key, label }) => {

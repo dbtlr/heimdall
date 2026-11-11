@@ -3,8 +3,11 @@ import { expect, test } from 'bun:test';
 import type { JumpIndex } from '../server/jump-index-types.ts';
 import {
   JUMP_INDEX_FRESH_MS,
+  JUMP_LIST_FLOOR,
+  JUMP_LIST_GAP,
   JUMP_LIMIT,
   jumpIndexDue,
+  jumpListMaxHeight,
   jumpMatches,
   jumpTarget,
   moveActive,
@@ -141,4 +144,17 @@ test('the jump index is read again only once the held one is a minute old', () =
   expect(jumpIndexDue(undefined, 1000)).toBe(true);
   expect(jumpIndexDue(1000, 1000 + JUMP_INDEX_FRESH_MS - 1)).toBe(false);
   expect(jumpIndexDue(1000, 1000 + JUMP_INDEX_FRESH_MS)).toBe(true);
+});
+
+test('the result list fills the room above the bottom bar, else above the viewport bottom', () => {
+  const room = { inputBottom: 100, viewportBottom: 659 };
+  expect(jumpListMaxHeight({ ...room, barTop: 590 })).toBe(590 - 100 - JUMP_LIST_GAP);
+  expect(jumpListMaxHeight({ ...room, barTop: undefined })).toBe(659 - 100 - JUMP_LIST_GAP);
+});
+
+test('a keyboard that shrinks the viewport shrinks the list, which keeps three rows', () => {
+  expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 400 })).toBe(292);
+  expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 200 })).toBe(
+    JUMP_LIST_FLOOR,
+  );
 });

@@ -15,16 +15,16 @@ const DOT: Record<ServiceStatus, string> = {
 
 export function ServicesTable({ now, rows }: { now: number; rows: readonly ServiceSummary[] }) {
   return (
-    <table className="w-full table-fixed border-collapse text-left">
+    <table className="w-full border-collapse sm:table-fixed text-left">
       <thead>
         <tr className="border-b text-xs text-muted-foreground">
-          <th className="w-[40%] px-2 py-3 sm:w-1/2 sm:px-3 font-medium" scope="col">
+          <th className="px-2 py-3 sm:w-1/2 sm:px-3 font-medium" scope="col">
             Service
           </th>
-          <th className="w-[30%] px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
+          <th className="px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
             System
           </th>
-          <th className="w-[30%] px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
+          <th className="px-2 py-3 sm:w-1/4 sm:px-3 font-medium" scope="col">
             Version
           </th>
         </tr>
@@ -62,7 +62,7 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
               )}
             </td>
             <td
-              className="overflow-hidden px-2 py-4 align-top text-ellipsis text-muted-foreground sm:px-3"
+              className="max-w-36 overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap text-muted-foreground sm:max-w-none sm:px-3"
               title={row.system}
             >
               {row.system}
