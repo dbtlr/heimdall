@@ -18,9 +18,12 @@ const TAB_PATHS: Record<PhoneTab, '/' | '/agents' | '/more' | '/services' | '/ti
   services: '/services',
 };
 
-// The count of Services down or restarted beside the Services label, hidden at
-// zero; screen readers get it in words.
-export function ServicesBadge() {
+// The count of Services down or restarted, hidden at zero; screen readers get
+// it in words. It sits beside the Services label in the top bar. With `corner`
+// it sits on the corner of the phone bar's Services icon, placed from the
+// tab's center, so the count adds no width to its tab and the five tabs stay
+// evenly spaced.
+export function ServicesBadge({ corner = false }: { corner?: boolean }) {
   const count = useContext(ServiceAttentionCount);
   if (count === 0) {
     return null;
@@ -29,7 +32,11 @@ export function ServicesBadge() {
     <>
       <span
         aria-hidden="true"
-        className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary"
+        className={
+          corner
+            ? 'absolute top-1 left-1/2 ml-1.5 min-w-4 rounded-full bg-primary px-1 text-center text-[11px] leading-4 font-semibold text-primary-foreground tabular-nums ring-2 ring-bar'
+            : 'rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary'
+        }
       >
         {count}
       </span>
@@ -59,17 +66,15 @@ export function AppNavigation() {
             activeOptions={{ exact: true }}
             aria-current={active === key ? 'page' : undefined}
             className={cn(
-              'flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[13px] font-medium tracking-[0.02em] text-muted-foreground',
+              'relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[13px] font-medium tracking-[0.02em] text-muted-foreground',
               active === key && 'font-semibold text-primary',
             )}
             key={key}
             to={TAB_PATHS[key]}
           >
             <Icon aria-hidden="true" className="size-6" />
-            <span className="inline-flex items-center gap-1">
-              {label}
-              {key === 'services' && <ServicesBadge />}
-            </span>
+            {key === 'services' && <ServicesBadge corner />}
+            <span>{label}</span>
           </Link>
         );
       })}

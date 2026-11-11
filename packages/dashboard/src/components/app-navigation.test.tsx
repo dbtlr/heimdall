@@ -45,6 +45,9 @@ for (const count of [0, 3]) {
     );
     if (count > 0) {
       expect(html).toMatch(/<span aria-hidden="true"[^>]*>3<\/span>/u);
+      // On the icon's corner, not beside the label, so the tab keeps its width.
+      expect(html).toMatch(/<\/svg><span aria-hidden="true" class="absolute[^"]*">3<\/span>/u);
+      expect(html).toContain('<span>Services</span>');
     }
   });
 }
