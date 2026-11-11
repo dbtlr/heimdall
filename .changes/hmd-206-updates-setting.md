@@ -1,1 +1,0 @@
-- **A bad `[updates]` value names the setting** (HMD-206). `heimdall-collector run` stops with `collector.toml is not valid:` and the setting's problem, such as `updates.intervalHours must be at least 1/3600 and at most 596`, where a distributed build printed only `Something went wrong.`

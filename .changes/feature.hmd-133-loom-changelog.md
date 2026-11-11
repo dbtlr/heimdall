@@ -1,1 +1,0 @@
-- **Release notes group entries as Breaking Changes, Features, and Fixes** (HMD-133). Sections written from the next release on use these groups, and a breaking change carries a migration section. Earlier sections keep Keep a Changelog's categories.
