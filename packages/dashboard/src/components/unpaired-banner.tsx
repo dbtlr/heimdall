@@ -11,7 +11,7 @@ export function UnpairedBanner({ name }: { name: string }) {
         search={{ unpaired: true }}
         to="/"
       >
-        Back to Fleet
+        Back to Home
       </Link>
     </div>
   );

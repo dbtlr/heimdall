@@ -121,7 +121,7 @@ function LaneRow({
             <span className="text-muted-foreground"> {modelFamily(lane.model)}</span>
           )}
         </p>
-        <p className="flex-none text-muted-foreground">{formatCost(lane.costUsd)}</p>
+        <p className="flex-none text-muted-foreground tabular-nums">{formatCost(lane.costUsd)}</p>
       </div>
       <DetailTrack
         onSelect={(t) => {

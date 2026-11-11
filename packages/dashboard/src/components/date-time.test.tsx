@@ -10,7 +10,7 @@ const AT = Date.UTC(2026, 9, 13, 22, 30, 0);
 // The server cannot know the viewer's zone, so it writes no time at all.
 test('on the server a DateTime is an empty time element', () => {
   expect(renderToStaticMarkup(<DateTime at={AT} format="clock" />)).toBe(
-    '<time dateTime="2026-10-13T22:30:00.000Z"></time>',
+    '<time class="tabular-nums" dateTime="2026-10-13T22:30:00.000Z"></time>',
   );
 });
 

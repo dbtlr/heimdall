@@ -58,11 +58,11 @@ function OpenRow({ item, now }: { item: Attention; now: number }) {
       <td className={cn(CELL, 'max-sm:col-span-full', unconfirmed && 'italic')}>
         <PhraseText phrase={evidenceWords(item, now).observedShort} />
       </td>
-      <td className={cn(CELL, 'sm:whitespace-nowrap')}>
+      <td className={cn(CELL, 'tabular-nums sm:whitespace-nowrap')}>
         <PhoneLabel>First detected</PhoneLabel>
         <DateTime at={item.firstDetected} format="when" now={now} />
       </td>
-      <td className={cn(CELL, 'sm:whitespace-nowrap')}>
+      <td className={cn(CELL, 'tabular-nums sm:whitespace-nowrap')}>
         <PhoneLabel>Latest check</PhoneLabel>
         {item.checkedAt === undefined ? (
           '—'

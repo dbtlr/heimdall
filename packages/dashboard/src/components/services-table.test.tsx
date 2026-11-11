@@ -54,3 +54,29 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html.match(/→/gu)).toHaveLength(1);
   expect(html).toContain('>unknown</span>');
 });
+
+test('a System name and a version stay on one line below sm, truncated with the full text in a title, and wrap again from sm', async () => {
+  const html = await renderRouted(
+    <ServicesTable
+      now={0}
+      rows={[
+        {
+          downSince: undefined,
+          latestStopAt: undefined,
+          name: 'web',
+          status: 'unknown',
+          system: 'workstation-1',
+          update: undefined,
+          version: null,
+        },
+      ]}
+    />,
+  );
+  const cell = (title: string) => new RegExp(`<td[^>]*title="${title}"[^>]*>`, 'u').exec(html)?.[0];
+
+  expect(cell('workstation-1')).toContain('text-ellipsis');
+  expect(cell('workstation-1')).not.toMatch(/(?<!sm:)wrap-anywhere/u);
+  expect(cell('workstation-1')).toContain('sm:whitespace-normal');
+  expect(cell('unknown')).toContain('whitespace-nowrap');
+  expect(cell('unknown')).toContain('text-ellipsis');
+});

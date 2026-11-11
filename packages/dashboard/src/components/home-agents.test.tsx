@@ -10,7 +10,6 @@ const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
 const session = (sessionId: string, over: Partial<AgentsSession> = {}): AgentsSession => ({
-  activeRecently: true,
   branch: 'feat/tombstones',
   firstRequestAt: NOW - 130 * MINUTE,
   harness: 'claude-code',

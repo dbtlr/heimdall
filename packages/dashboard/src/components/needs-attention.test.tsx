@@ -113,6 +113,14 @@ const memoryDetail = (holders: ConditionDetail['memoryHolders']): ConditionDetai
   transitions: [],
 });
 
+const others = (count: number): Attention[] =>
+  Array.from({ length: count }, (_, at) => ({
+    ...drift,
+    conditionId: `o${String(at)}`,
+    firstDetected: NOW - 2 * HOUR - at * MINUTE,
+    subject: `/srv/file-${String(at)}`,
+  }));
+
 const render = ({
   attention,
   lastCleared,
@@ -272,5 +280,22 @@ describe('the attention card', () => {
 
     expect(html).toContain('Nothing open');
     expect(html).not.toContain('The last Condition cleared');
+  });
+
+  describe('with many other items', () => {
+    test('lists 5 others without a count of more', async () => {
+      const html = await render({ attention: [down, ...others(5)] });
+
+      expect(html).toContain('/srv/file-4');
+      expect(html).not.toContain('more</a>');
+    });
+
+    test('lists 5 of 8 others, then +3 more linking to the open Conditions', async () => {
+      const html = await render({ attention: [down, ...others(8)] });
+
+      expect(html).toContain('/srv/file-4');
+      expect(html).not.toContain('/srv/file-5');
+      expect(html).toMatch(/<a[^>]*href="\/timeline\?status=%5B%22open%22%5D"[^>]*>\+3 more<\/a>/u);
+    });
   });
 });

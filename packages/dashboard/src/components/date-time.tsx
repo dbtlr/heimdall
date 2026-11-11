@@ -5,6 +5,7 @@ import type { Phrase } from '../lib/phrase.ts';
 import { formatTime } from '../lib/time.ts';
 import type { TimeFormat } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
+import { cn } from '../lib/utils.ts';
 
 // Renders what `children` makes from the viewer's zone, and nothing until the
 // browser's zone is known. The server and the first client render cannot know
@@ -22,7 +23,7 @@ export function DateTime({
   ...format
 }: TimeFormat & { at: number; className?: string }) {
   return (
-    <time className={className} dateTime={new Date(at).toISOString()}>
+    <time className={cn('tabular-nums', className)} dateTime={new Date(at).toISOString()}>
       <InZone>{(timeZone) => formatTime(at, timeZone, format)}</InZone>
     </time>
   );

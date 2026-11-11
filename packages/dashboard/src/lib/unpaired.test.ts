@@ -27,7 +27,7 @@ describe('unpairedLinkText', () => {
 });
 
 test('the link leads back when shown with no unpaired System to list', () => {
-  expect(unpairedLinkText(0, true)).toBe('Back to Fleet');
+  expect(unpairedLinkText(0, true)).toBe('Back to Home');
 });
 
 describe('emptyFleetText', () => {

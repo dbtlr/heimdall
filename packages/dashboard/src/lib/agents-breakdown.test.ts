@@ -4,7 +4,6 @@ import type { AgentsOverview, AgentsSession } from '../server/agents-overview-ty
 import { barSegments, breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
 
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
-  activeRecently: false,
   branch: undefined,
   firstRequestAt: 50,
   harness: 'claude-code',

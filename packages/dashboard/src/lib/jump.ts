@@ -129,3 +129,20 @@ export const JUMP_INDEX_FRESH_MS = 60_000;
 // holds none, or the one it holds was read JUMP_INDEX_FRESH_MS or longer ago.
 export const jumpIndexDue = (readAt: number | undefined, now: number): boolean =>
   readAt === undefined || now - readAt >= JUMP_INDEX_FRESH_MS;
+
+// The room under a jump box's input that its result list may fill, in px: down
+// to the top of the fixed bottom bar when it shows (`barTop` is undefined when
+// it does not), or to the bottom of the visual viewport, whichever is higher,
+// as an on-screen keyboard shrinks the viewport. Less `gap`, and never more
+// than the room there is, so no result sits behind the bar or the keyboard.
+export const JUMP_LIST_GAP = 8;
+export const jumpListMaxHeight = ({
+  barTop,
+  inputBottom,
+  viewportBottom,
+}: {
+  barTop: number | undefined;
+  inputBottom: number;
+  viewportBottom: number;
+}): number =>
+  Math.max(0, Math.min(barTop ?? viewportBottom, viewportBottom) - inputBottom - JUMP_LIST_GAP);

@@ -2,7 +2,14 @@ import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 
-import { jumpIndexDue, jumpMatches, jumpTarget, moveActive, opensJump } from '../lib/jump.ts';
+import {
+  jumpIndexDue,
+  jumpListMaxHeight,
+  jumpMatches,
+  jumpTarget,
+  moveActive,
+  opensJump,
+} from '../lib/jump.ts';
 import type { JumpItem } from '../lib/jump.ts';
 import { cn } from '../lib/utils.ts';
 import type { JumpIndex } from '../server/jump-index-types.ts';
@@ -13,6 +20,13 @@ const KIND_NAMES: Record<JumpItem['kind'], string> = {
   session: 'Session',
   system: 'System',
 };
+
+// Whether an element is rendered: `checkVisibility` where the browser has it
+// (Safari from 17.4), else whether it has any box.
+const isShown = (element: Element): boolean =>
+  typeof element.checkVisibility === 'function'
+    ? element.checkVisibility()
+    : element.getClientRects().length > 0;
 
 const itemName = (item: JumpItem) => (item.kind === 'session' ? item.sessionId : item.name);
 
@@ -62,10 +76,52 @@ export function JumpBox({
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState<number>();
+  const [listMax, setListMax] = useState<number>();
   const matches = index === undefined ? [] : jumpMatches(index, query);
   const expanded = open && query.trim() !== '';
   const current = active !== undefined && active < matches.length ? active : undefined;
   const optionId = (at: number) => `${id}-option-${String(at)}`;
+
+  // Keeps the active option inside the scrolling list as the arrow keys move it.
+  useEffect(() => {
+    if (expanded && current !== undefined) {
+      document
+        .getElementById(`${id}-option-${String(current)}`)
+        ?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [expanded, current, id]);
+
+  // The wide list's height: the room between the input and the bottom bar, or
+  // the visual viewport's bottom, measured when it opens and as that viewport
+  // resizes or scrolls (an on-screen keyboard).
+  useEffect(() => {
+    const box = input.current;
+    if (!wide || !expanded || box === null) {
+      return undefined;
+    }
+    const measure = () => {
+      const bar = document.querySelector('[data-bottom-bar]');
+      const viewport = window.visualViewport;
+      setListMax(
+        jumpListMaxHeight({
+          barTop: bar !== null && isShown(bar) ? bar.getBoundingClientRect().top : undefined,
+          inputBottom: box.getBoundingClientRect().bottom,
+          viewportBottom:
+            viewport === null ? window.innerHeight : viewport.offsetTop + viewport.height,
+        }),
+      );
+    };
+    measure();
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', measure);
+    viewport?.addEventListener('scroll', measure);
+    window.addEventListener('resize', measure);
+    return () => {
+      viewport?.removeEventListener('resize', measure);
+      viewport?.removeEventListener('scroll', measure);
+      window.removeEventListener('resize', measure);
+    };
+  }, [wide, expanded]);
 
   useEffect(() => {
     if (!shortcut) {
@@ -78,7 +134,11 @@ export function JumpBox({
       // A box hidden at this width, as the top bar's is on a phone, leaves the
       // slash to the browser.
       const box = input.current;
-      if (box?.checkVisibility() && opensJump({ altKey, ctrlKey, key, metaKey, target: element })) {
+      if (
+        box !== null &&
+        isShown(box) &&
+        opensJump({ altKey, ctrlKey, key, metaKey, target: element })
+      ) {
         event.preventDefault();
         box.focus();
       }
@@ -161,12 +221,14 @@ export function JumpBox({
       <ul
         aria-label="Jump results"
         className={cn(
-          'absolute right-0 z-50 mt-1 max-h-[70vh] overflow-y-auto rounded-xl border bg-popover card-surface py-1',
-          wide ? 'left-0' : 'w-[min(26rem,calc(100vw-2rem))]',
+          'absolute right-0 z-50 mt-1 overflow-y-auto rounded-xl border bg-popover card-surface py-1',
+          // The wide box sits on the More page: its list ends above the fixed bottom bar.
+          wide ? 'left-0 max-h-[40dvh]' : 'max-h-[70vh] w-[min(26rem,calc(100vw-2rem))]',
           !(expanded && matches.length > 0) && 'hidden',
         )}
         id={`${id}-list`}
         role="listbox"
+        style={wide && listMax !== undefined ? { maxHeight: listMax } : undefined}
       >
         {expanded &&
           matches.map((item, at) => (

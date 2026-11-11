@@ -54,7 +54,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between border-b border-border/60 py-1 text-[13.5px] last:border-b-0">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd>{value}</dd>
+      <dd className="tabular-nums">{value}</dd>
     </div>
   );
 }

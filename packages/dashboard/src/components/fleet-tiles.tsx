@@ -233,7 +233,7 @@ function StatusSlot({ tile }: { tile: SystemTile }) {
 // The tile's top-right: the time left on a silence with a crossed-out bell, else
 // the short time since Last seen, or "Never seen". Screen readers get the long form.
 function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
-  const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground';
+  const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground tabular-nums';
   if (lane.silencedUntil !== undefined) {
     const left = silenceLeft(now, lane.silencedUntil);
     return (
@@ -291,12 +291,14 @@ export function FleetTiles({
           <div className="flex items-center gap-1.5">
             <h3
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold break-all',
+                'flex min-w-0 flex-1 items-center gap-1.5 text-[15px] font-semibold',
                 tile.asleep && 'text-muted-foreground',
               )}
             >
               <StatusSlot tile={tile} />
-              {tile.lane.name}
+              <span className="min-w-0 truncate" title={tile.lane.name}>
+                {tile.lane.name}
+              </span>
             </h3>
             <TileCorner lane={tile.lane} now={now} />
           </div>

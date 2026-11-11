@@ -27,7 +27,7 @@ function Step({
     <span>
       {transitionLabel(transition)}
       {' · '}
-      <time dateTime={new Date(transition.at).toISOString()}>
+      <time className="tabular-nums" dateTime={new Date(transition.at).toISOString()}>
         {formatWhen(transition.at, now, timeZone)}
       </time>
       {transition.backfilled && <span className="text-muted-foreground"> · Backfilled level</span>}
@@ -86,7 +86,7 @@ function Row({ entry, now, timeZone }: { entry: Entry; now: number; timeZone: st
       <td className={CELL}>
         <Transitions entry={entry} now={now} timeZone={timeZone} />
       </td>
-      <td className={`${CELL} whitespace-nowrap`}>
+      <td className={`${CELL} whitespace-nowrap tabular-nums`}>
         {entry.clearedAt === undefined ? (
           `Open for ${formatSpan(now - entry.raisedAt)}`
         ) : (

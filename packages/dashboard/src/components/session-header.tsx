@@ -98,6 +98,30 @@ const totals = (view: SessionView, lanes: readonly AgentLane[]) => {
   ];
 };
 
+// "Agents / server-1 / heimdall on main": the Session's place under the Agents
+// section, its System, and what it worked on.
+export function SessionTitle({
+  view,
+}: {
+  view: Pick<SessionView, 'branch' | 'harness' | 'project' | 'system'>;
+}) {
+  return (
+    <h1 className="text-[19px] font-semibold sm:text-[22px]">
+      <Link className="text-muted-foreground" to="/agents">
+        Agents
+      </Link>{' '}
+      /{' '}
+      <Link className="text-muted-foreground" params={{ name: view.system }} to="/systems/$name">
+        {view.system}
+      </Link>{' '}
+      / {view.project ?? `${harnessName(view.harness)} Session`}
+      {view.branch !== undefined && (
+        <span className="font-medium text-muted-foreground"> on {view.branch}</span>
+      )}
+    </h1>
+  );
+}
+
 // The Session's place and span, and its totals.
 export function SessionHeader({
   lanes,
@@ -111,23 +135,7 @@ export function SessionHeader({
   return (
     <>
       <div className="pt-3.5 pb-2.5 sm:pt-[18px]">
-        <h1 className="text-[19px] font-semibold sm:text-[22px]">
-          <Link className="text-muted-foreground" to="/">
-            Fleet
-          </Link>{' '}
-          /{' '}
-          <Link
-            className="text-muted-foreground"
-            params={{ name: view.system }}
-            to="/systems/$name"
-          >
-            {view.system}
-          </Link>{' '}
-          / {view.project ?? `${harnessName(view.harness)} Session`}
-          {view.branch !== undefined && (
-            <span className="font-medium text-muted-foreground"> on {view.branch}</span>
-          )}
-        </h1>
+        <SessionTitle view={view} />
         <p className="text-muted-foreground">
           <PlaceLine now={now} view={view} />
         </p>
