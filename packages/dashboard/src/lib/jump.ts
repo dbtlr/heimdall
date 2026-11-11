@@ -133,10 +133,9 @@ export const jumpIndexDue = (readAt: number | undefined, now: number): boolean =
 // The room under a jump box's input that its result list may fill, in px: down
 // to the top of the fixed bottom bar when it shows (`barTop` is undefined when
 // it does not), or to the bottom of the visual viewport, whichever is higher,
-// as an on-screen keyboard shrinks the viewport. Less `gap`, and never below
-// `floor`, about three rows.
+// as an on-screen keyboard shrinks the viewport. Less `gap`, and never more
+// than the room there is, so no result sits behind the bar or the keyboard.
 export const JUMP_LIST_GAP = 8;
-export const JUMP_LIST_FLOOR = 144;
 export const jumpListMaxHeight = ({
   barTop,
   inputBottom,
@@ -146,7 +145,4 @@ export const jumpListMaxHeight = ({
   inputBottom: number;
   viewportBottom: number;
 }): number =>
-  Math.max(
-    JUMP_LIST_FLOOR,
-    Math.min(barTop ?? viewportBottom, viewportBottom) - inputBottom - JUMP_LIST_GAP,
-  );
+  Math.max(0, Math.min(barTop ?? viewportBottom, viewportBottom) - inputBottom - JUMP_LIST_GAP);

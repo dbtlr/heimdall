@@ -236,7 +236,7 @@ function OtherItems({ items, now }: { items: readonly Attention[]; now: number }
       {more > 0 && (
         <li>
           <Link
-            className="flex min-h-9 items-center text-xs text-link hover:underline"
+            className="flex min-h-9 items-center text-xs text-link tabular-nums hover:underline"
             search={{ status: ['open'] }}
             to="/timeline"
           >

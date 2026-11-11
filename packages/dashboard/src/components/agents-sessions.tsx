@@ -12,7 +12,7 @@ const filterPreposition = (by: AgentsBreakdown) => (by === 'model' ? 'using' : '
 // How many of the period's Sessions are running, by the rule Home uses.
 export function RunningCount({ now, sessions }: { now: number; sessions: AgentsSession[] }) {
   return (
-    <p className="text-sm text-muted-foreground" title={RUNNING_TITLE}>
+    <p className="text-sm text-muted-foreground tabular-nums" title={RUNNING_TITLE}>
       {runningCount(sessions, now)} running
     </p>
   );

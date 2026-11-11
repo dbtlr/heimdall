@@ -3,7 +3,6 @@ import { expect, test } from 'bun:test';
 import type { JumpIndex } from '../server/jump-index-types.ts';
 import {
   JUMP_INDEX_FRESH_MS,
-  JUMP_LIST_FLOOR,
   JUMP_LIST_GAP,
   JUMP_LIMIT,
   jumpIndexDue,
@@ -152,9 +151,8 @@ test('the result list fills the room above the bottom bar, else above the viewpo
   expect(jumpListMaxHeight({ ...room, barTop: undefined })).toBe(659 - 100 - JUMP_LIST_GAP);
 });
 
-test('a keyboard that shrinks the viewport shrinks the list, which keeps three rows', () => {
+test('a keyboard that shrinks the viewport shrinks the list to the room left, down to none', () => {
   expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 400 })).toBe(292);
-  expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 200 })).toBe(
-    JUMP_LIST_FLOOR,
-  );
+  expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 200 })).toBe(92);
+  expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 90 })).toBe(0);
 });

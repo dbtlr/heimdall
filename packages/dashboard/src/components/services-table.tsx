@@ -68,12 +68,14 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
               {row.system}
             </td>
             <td
-              className="overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:overflow-visible sm:px-3 sm:whitespace-normal sm:wrap-anywhere"
+              className="max-w-28 overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:max-w-none sm:overflow-visible sm:px-3 sm:whitespace-normal sm:wrap-anywhere"
               title={row.version ?? 'unknown'}
             >
               {row.version ?? <span className="text-muted-foreground">unknown</span>}
               {row.update !== undefined && (
-                <span className="block text-sm text-muted-foreground">→ {row.update}</span>
+                <span className="block overflow-hidden text-sm text-ellipsis text-muted-foreground">
+                  → {row.update}
+                </span>
               )}
             </td>
           </tr>
