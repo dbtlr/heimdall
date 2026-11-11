@@ -71,7 +71,7 @@ function PaidFor({ view }: { view: SessionView }) {
               style={{ background: KIND_STYLE[kind.kind].color }}
             />
             <span>
-              <b className="font-semibold">{formatCost(kind.costUsd)}</b>{' '}
+              <b className="font-semibold tabular-nums">{formatCost(kind.costUsd)}</b>{' '}
               {KIND_STYLE[kind.kind].label}
               <br />
               <span className="text-muted-foreground">{formatTokens(kind.tokens)} tokens</span>
@@ -129,7 +129,11 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
           <YAxis
             axisLine={false}
             mirror
-            tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
+            tick={{
+              fill: 'var(--muted-foreground)',
+              fontSize: 12,
+              style: { fontVariantNumeric: 'tabular-nums' },
+            }}
             tickFormatter={(value: number) => `$${String(value)}`}
             tickLine={false}
           />

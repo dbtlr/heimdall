@@ -35,7 +35,7 @@ export function ServicesBadge({ corner = false }: { corner?: boolean }) {
         className={
           corner
             ? 'absolute top-1 left-1/2 ml-1.5 min-w-4 rounded-full bg-primary px-1 text-center text-[11px] leading-4 font-semibold text-primary-foreground tabular-nums ring-2 ring-bar'
-            : 'rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary'
+            : 'rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary tabular-nums'
         }
       >
         {count}

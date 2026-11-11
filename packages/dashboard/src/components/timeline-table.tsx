@@ -83,10 +83,10 @@ function Row({ entry, now, timeZone }: { entry: Entry; now: number; timeZone: st
       <td className={CELL}>
         <ConditionLink entry={entry} system={entry.system} />
       </td>
-      <td className={CELL}>
+      <td className={`${CELL} tabular-nums`}>
         <Transitions entry={entry} now={now} timeZone={timeZone} />
       </td>
-      <td className={`${CELL} whitespace-nowrap`}>
+      <td className={`${CELL} whitespace-nowrap tabular-nums`}>
         {entry.clearedAt === undefined ? (
           `Open for ${formatSpan(now - entry.raisedAt)}`
         ) : (

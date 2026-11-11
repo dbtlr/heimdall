@@ -227,7 +227,7 @@ function OtherItems({ items, now }: { items: readonly Attention[]; now: number }
           >
             <ConditionGlyph kind={item.level ?? 'unknown'} />
             <span className="min-w-0 flex-1 truncate">{itemTitle(item)}</span>
-            <span className="flex-none text-xs text-dim">
+            <span className="flex-none text-xs text-dim tabular-nums">
               open {formatSpanShort(Math.max(0, now - item.firstDetected))}
             </span>
           </AttentionLink>

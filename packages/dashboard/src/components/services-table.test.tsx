@@ -55,7 +55,7 @@ test('Service rows link to detail, expose status, and date down from the Conditi
   expect(html).toContain('>unknown</span>');
 });
 
-test('a System name wraps only at its hyphens and a version never breaks, each truncated with its full text in a title', async () => {
+test('a System name and a version stay on one line below sm, truncated with the full text in a title, and wrap again from sm', async () => {
   const html = await renderRouted(
     <ServicesTable
       now={0}
@@ -75,7 +75,8 @@ test('a System name wraps only at its hyphens and a version never breaks, each t
   const cell = (title: string) => new RegExp(`<td[^>]*title="${title}"[^>]*>`, 'u').exec(html)?.[0];
 
   expect(cell('workstation-1')).toContain('text-ellipsis');
-  expect(cell('workstation-1')).not.toContain('wrap-anywhere');
+  expect(cell('workstation-1')).not.toMatch(/(?<!sm:)wrap-anywhere/u);
+  expect(cell('workstation-1')).toContain('sm:whitespace-normal');
   expect(cell('unknown')).toContain('whitespace-nowrap');
   expect(cell('unknown')).toContain('text-ellipsis');
 });

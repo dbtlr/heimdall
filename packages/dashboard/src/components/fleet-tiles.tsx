@@ -233,7 +233,7 @@ function StatusSlot({ tile }: { tile: SystemTile }) {
 // The tile's top-right: the time left on a silence with a crossed-out bell, else
 // the short time since Last seen, or "Never seen". Screen readers get the long form.
 function TileCorner({ lane, now }: { lane: SystemGlance; now: number }) {
-  const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground';
+  const corner = 'flex-none text-xs whitespace-nowrap text-muted-foreground tabular-nums';
   if (lane.silencedUntil !== undefined) {
     const left = silenceLeft(now, lane.silencedUntil);
     return (

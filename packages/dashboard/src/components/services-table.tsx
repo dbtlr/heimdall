@@ -51,24 +51,24 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
                 </span>
               </Link>
               {row.status === 'down' && row.downSince !== undefined && (
-                <p className="mt-0.5 pl-4 text-sm text-muted-foreground">
+                <p className="mt-0.5 pl-4 text-sm text-muted-foreground tabular-nums">
                   Down {formatSpanShort(now - row.downSince)}
                 </p>
               )}
               {row.status === 'restarted' && row.latestStopAt !== undefined && (
-                <p className="mt-0.5 pl-4 text-sm text-muted-foreground">
+                <p className="mt-0.5 pl-4 text-sm text-muted-foreground tabular-nums">
                   <PhraseText phrase={['Restarted ', whenAt(row.latestStopAt, now)]} />
                 </p>
               )}
             </td>
             <td
-              className="max-w-36 overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap text-muted-foreground sm:max-w-none sm:px-3"
+              className="max-w-36 overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap text-muted-foreground sm:max-w-none sm:overflow-visible sm:px-3 sm:whitespace-normal sm:wrap-anywhere"
               title={row.system}
             >
               {row.system}
             </td>
             <td
-              className="overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:px-3"
+              className="overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:overflow-visible sm:px-3 sm:whitespace-normal sm:wrap-anywhere"
               title={row.version ?? 'unknown'}
             >
               {row.version ?? <span className="text-muted-foreground">unknown</span>}

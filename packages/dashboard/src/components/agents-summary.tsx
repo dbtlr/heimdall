@@ -21,7 +21,7 @@ export function AgentsSummary({
     >
       <p className="text-sm text-muted-foreground">List-price cost</p>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <p className="text-[44px] leading-tight font-bold tracking-tight sm:text-[56px]">
+        <p className="text-[44px] leading-tight font-bold tracking-tight tabular-nums sm:text-[56px]">
           {formatCost(totals.pricedCostUsd)}
         </p>
         {totals.unpricedRequests > 0 && (

@@ -44,7 +44,7 @@ export function SystemMaintenance({ items, now }: { items: readonly Attention[];
             >
               <ConditionGlyph kind="note" />
               <span className="min-w-0 flex-1 wrap-anywhere">{itemName(item)}</span>
-              <span className="flex-none text-xs text-dim">
+              <span className="flex-none text-xs text-dim tabular-nums">
                 open {formatSpanShort(Math.max(0, now - item.firstDetected))}
               </span>
             </AttentionLink>

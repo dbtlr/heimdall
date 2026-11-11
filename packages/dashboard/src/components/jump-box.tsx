@@ -21,6 +21,13 @@ const KIND_NAMES: Record<JumpItem['kind'], string> = {
   system: 'System',
 };
 
+// Whether an element is rendered: `checkVisibility` where the browser has it
+// (Safari from 17.4), else whether it has any box.
+const isShown = (element: Element): boolean =>
+  typeof element.checkVisibility === 'function'
+    ? element.checkVisibility()
+    : element.getClientRects().length > 0;
+
 const itemName = (item: JumpItem) => (item.kind === 'session' ? item.sessionId : item.name);
 
 // What a result says beside its name: the System a Service or Session is on,
@@ -97,7 +104,7 @@ export function JumpBox({
       const viewport = window.visualViewport;
       setListMax(
         jumpListMaxHeight({
-          barTop: bar?.checkVisibility() === true ? bar.getBoundingClientRect().top : undefined,
+          barTop: bar !== null && isShown(bar) ? bar.getBoundingClientRect().top : undefined,
           inputBottom: box.getBoundingClientRect().bottom,
           viewportBottom:
             viewport === null ? window.innerHeight : viewport.offsetTop + viewport.height,
@@ -127,7 +134,11 @@ export function JumpBox({
       // A box hidden at this width, as the top bar's is on a phone, leaves the
       // slash to the browser.
       const box = input.current;
-      if (box?.checkVisibility() && opensJump({ altKey, ctrlKey, key, metaKey, target: element })) {
+      if (
+        box !== null &&
+        isShown(box) &&
+        opensJump({ altKey, ctrlKey, key, metaKey, target: element })
+      ) {
         event.preventDefault();
         box.focus();
       }

@@ -133,7 +133,7 @@ export function SessionRows({
                 })}
                 <span
                   className={cn(
-                    'absolute hidden text-xs whitespace-nowrap text-muted-foreground sm:block',
+                    'absolute hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums sm:block',
                     'over' in place && 'rounded-[3px] bg-background px-1',
                   )}
                   style={costStyle(place, top)}
@@ -162,7 +162,7 @@ export function SessionRows({
               </b>{' '}
               {session.project !== undefined && session.branch}
               <br />
-              <span className="text-muted-foreground">
+              <span className="text-muted-foreground tabular-nums">
                 <PhraseText phrase={[...sessionSpan(session, window), ', ']} />
                 {formatCost(session.costUsd)}
               </span>

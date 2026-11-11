@@ -126,10 +126,10 @@ function Summary({
         </span>
         {table && (
           <>
-            <span className="hidden text-xs whitespace-nowrap text-muted-foreground lg:block">
+            <span className="hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums lg:block">
               open {formatSpanShort(Math.max(0, now - item.firstDetected))}
             </span>
-            <span className="hidden text-xs whitespace-nowrap text-muted-foreground lg:block">
+            <span className="hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums lg:block">
               {item.checkedAt === undefined ? (
                 'no check'
               ) : (
@@ -185,11 +185,11 @@ function Summary({
         <Label>Observed</Label>
         <PhraseText phrase={words.observedShort} />
       </span>
-      <span>
+      <span className="tabular-nums">
         <Label>First detected</Label>
         <DateTime at={item.firstDetected} format="when" now={now} />
       </span>
-      <span>
+      <span className="tabular-nums">
         <Label>Latest check</Label>
         {item.checkedAt === undefined ? (
           '—'
