@@ -27,7 +27,7 @@ function Step({
     <span>
       {transitionLabel(transition)}
       {' · '}
-      <time dateTime={new Date(transition.at).toISOString()}>
+      <time className="tabular-nums" dateTime={new Date(transition.at).toISOString()}>
         {formatWhen(transition.at, now, timeZone)}
       </time>
       {transition.backfilled && <span className="text-muted-foreground"> · Backfilled level</span>}
@@ -83,7 +83,7 @@ function Row({ entry, now, timeZone }: { entry: Entry; now: number; timeZone: st
       <td className={CELL}>
         <ConditionLink entry={entry} system={entry.system} />
       </td>
-      <td className={`${CELL} tabular-nums`}>
+      <td className={CELL}>
         <Transitions entry={entry} now={now} timeZone={timeZone} />
       </td>
       <td className={`${CELL} whitespace-nowrap tabular-nums`}>
