@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { assertAssembles, mockProcess } from '@loomcli/testing';
 
 import { app } from './application.ts';
+
+// Each test builds a git repository and runs Loom as its own process, which a
+// slow CI runner can take longer than bun's 5 s default to start.
+setDefaultTimeout(30_000);
 
 const HEADER = '# Changelog\n\nReleased Heimdall changes.\n';
 
