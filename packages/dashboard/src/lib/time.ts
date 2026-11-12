@@ -185,6 +185,18 @@ export const xPercent = (t: number, { from, to }: Window): number =>
 // Whether `t` is inside the window, edges included.
 export const inWindow = (t: number, { from, to }: Window): boolean => t >= from && t <= to;
 
+// How far a pinned sample may lie outside the window and still be marked at
+// its edge: the stored sample nearest a time at the window's end can fall just
+// past it.
+const PIN_EDGE_MS = 5 * 60_000;
+
+// Where to mark the pinned sample at `t`, in percent of the window, held to its
+// edges; undefined when `t` lies further outside than a sample's reach.
+export const pinnedX = (t: number, window: Window): number | undefined =>
+  t < window.from - PIN_EDGE_MS || t > window.to + PIN_EDGE_MS
+    ? undefined
+    : Math.min(100, Math.max(0, xPercent(t, window)));
+
 // The left edge and width, in percent of the window, of the span `start` to
 // `end` clipped to the window.
 export const spanBox = (

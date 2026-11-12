@@ -10,6 +10,7 @@ import {
   formatSpanShort,
   formatTime,
   formatWhen,
+  pinnedX,
   spanBox,
   xPercent,
 } from './time.ts';
@@ -81,6 +82,16 @@ test('x position is a percent of the window', () => {
   expect(xPercent(1000, window)).toBe(0);
   expect(xPercent(2000, window)).toBe(50);
   expect(xPercent(3000, window)).toBe(100);
+});
+
+test("a pinned sample just outside the window marks the window's edge, and one further out marks nothing", () => {
+  const window = { from: 0, to: 60 * 60_000 };
+  expect(pinnedX(30 * 60_000, window)).toBe(50);
+  expect([pinnedX(-10_000, window), pinnedX(window.to + 10_000, window)]).toEqual([0, 100]);
+  expect([pinnedX(-10 * 60_000, window), pinnedX(window.to + 10 * 60_000, window)]).toEqual([
+    undefined,
+    undefined,
+  ]);
 });
 
 test('a span is clipped to the window', () => {

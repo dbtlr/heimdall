@@ -309,11 +309,13 @@ describe('costPlacement', () => {
   });
 });
 
+const NO_MODIFIERS = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+
 test('a key on the time axis moves the pinned sample a bucket, an hour with Shift or a page key, or to an end, within the window', () => {
   const window = { from: 0, to: 12 * 60 * MINUTE };
   const at = 6 * 60 * MINUTE;
   const step = (key: string, shift = false, selected = at) =>
-    steppedSample({ key, shiftKey: shift }, selected, window);
+    steppedSample({ ...NO_MODIFIERS, key, shiftKey: shift }, selected, window);
 
   expect([step('ArrowRight'), step('ArrowUp'), step('ArrowLeft'), step('ArrowDown')]).toEqual([
     at + 5 * MINUTE,
@@ -329,10 +331,22 @@ test('a key on the time axis moves the pinned sample a bucket, an hour with Shif
   ]).toEqual([at + 60 * MINUTE, at - 60 * MINUTE, at + 60 * MINUTE, at - 60 * MINUTE]);
   expect([step('Home'), step('End')]).toEqual([window.from, window.to]);
   // With none pinned it starts from the newest; it never leaves the window.
-  expect(steppedSample({ key: 'ArrowLeft', shiftKey: false }, undefined, window)).toBe(
+  expect(steppedSample({ ...NO_MODIFIERS, key: 'ArrowLeft' }, undefined, window)).toBe(
     window.to - 5 * MINUTE,
   );
   expect(step('ArrowRight', false, window.to - MINUTE)).toBe(window.to);
   expect(step('PageDown', false, window.from + MINUTE)).toBe(window.from);
   expect(step('Enter')).toBeUndefined();
+});
+
+test('a key held with Alt, Ctrl, or Meta moves no pinned sample, so the browser keeps its shortcut', () => {
+  const window = { from: 0, to: 12 * 60 * MINUTE };
+  const held = (modifier: 'altKey' | 'ctrlKey' | 'metaKey', key: string) =>
+    steppedSample({ ...NO_MODIFIERS, [modifier]: true, key }, 6 * 60 * MINUTE, window);
+
+  expect([
+    held('altKey', 'ArrowLeft'),
+    held('ctrlKey', 'Home'),
+    held('metaKey', 'ArrowRight'),
+  ]).toEqual([undefined, undefined, undefined]);
 });

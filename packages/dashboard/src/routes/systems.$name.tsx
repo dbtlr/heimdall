@@ -144,6 +144,7 @@ function SystemPage() {
         {overview && (
           <div className="hidden lg:block">
             <SystemOverview
+              at={search.at}
               attention={attention}
               detail={detail}
               failed={failed}

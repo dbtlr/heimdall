@@ -52,6 +52,7 @@ const render = (
 ) =>
   renderRouted(
     <SystemOverview
+      at={undefined}
       attention={[]}
       detail={detail(limitPercent, overrides)}
       failed={false}
@@ -115,4 +116,41 @@ test('keeps the Harness process plots in a closed disclosure under the Session l
   expect(disclosure).not.toMatch(/<details[^>]*\bopen\b[^>]*><summary[^>]*>Harness processes/u);
   expect(disclosure).toContain('aria-label="CPU cores per Harness process"');
   expect(disclosure).toContain('1 idle process in this range');
+});
+
+// The opening tag of the element carrying `marker`, such as `role="slider"`.
+const tagWith = (html: string, marker: string): string =>
+  new RegExp(`<[a-z]+ [^>]*${marker}[^>]*>`, 'u').exec(html)?.[0] ?? '';
+
+test('the time slider draws a focus ring when the keyboard reaches it', async () => {
+  const html = await render(undefined);
+
+  expect(tagWith(html, 'role="slider"')).toContain('focus-visible:outline-2');
+});
+
+// The markup of the Harness processes disclosure, from its summary on.
+const harnessDisclosure = async (processes: SystemDetail['processes']) => {
+  const html = await render(undefined, { processes });
+  const [, disclosure = ''] = html.split(/<summary[^>]*>Harness processes<\/summary>/u);
+  return disclosure;
+};
+
+test('the Harness process plots keep the gutter of the charts above and draw their scale in it', async () => {
+  const disclosure = await harnessDisclosure([harnessProcess(1, 0.5)]);
+
+  expect(tagWith(disclosure, 'aria-label="Harness processes"')).toContain('pl-14');
+  expect(tagWith(disclosure, 'data-scale-tick="0"')).toContain('right-full');
+});
+
+test('the Harness processes disclosure grows to hold its plots rather than scrolling them', async () => {
+  const disclosure = await harnessDisclosure([harnessProcess(1, 0.5)]);
+
+  expect(disclosure).toMatch(/^<div class="[^"]*"/u);
+  expect(disclosure).not.toMatch(/^<div class="[^"]*overflow-y-auto/u);
+});
+
+test('leaves out the Harness processes disclosure when the System ran none in the window', async () => {
+  const html = await render(undefined, { processes: [] });
+
+  expect(html).not.toContain('Harness processes');
 });

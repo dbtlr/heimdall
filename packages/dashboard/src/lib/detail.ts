@@ -223,15 +223,25 @@ export const idleProcessesLabel = (count: number): string =>
 // The pinned sample's big step on the time axis: an hour of buckets.
 const LARGE_STEP_MS = 12 * BUCKET_MS;
 
-// Where a key on the time axis moves the pinned sample from `selected`, the
+// Where a key on the time axis moves the pinned time from `selected`, the
 // newest time when none is pinned: a bucket for an arrow, an hour with Shift or
 // for Page Up and Page Down, the window's ends for Home and End, and never past
-// either end. Undefined for a key that moves nothing.
+// either end. Undefined for a key that moves nothing, and for any key held with
+// Alt, Ctrl, or Meta, so the browser's own shortcuts still work.
 export const steppedSample = (
-  { key, shiftKey }: { key: string; shiftKey: boolean },
+  {
+    altKey,
+    ctrlKey,
+    key,
+    metaKey,
+    shiftKey,
+  }: { altKey: boolean; ctrlKey: boolean; key: string; metaKey: boolean; shiftKey: boolean },
   selected: number | undefined,
   { from, to }: Window,
 ): number | undefined => {
+  if (altKey || ctrlKey || metaKey) {
+    return undefined;
+  }
   const at = selected ?? to;
   const step = shiftKey ? LARGE_STEP_MS : BUCKET_MS;
   const moved = (by: number) => Math.min(to, Math.max(from, at + by));

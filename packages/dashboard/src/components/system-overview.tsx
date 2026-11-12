@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { axisTicks } from '../lib/axis.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
-import { inWindow, xPercent } from '../lib/time.ts';
+import { pinnedX } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
@@ -66,7 +66,8 @@ const limitWords = (limit: number | undefined) =>
 
 // The System's Harness process plots, closed until asked for: CPU cores per
 // process tree for the busy ones, then the idle ones folded under them, as on
-// the phone. Each plot keeps the gutter, so it stays on the shared axis.
+// the phone. Each plot keeps the gutter, so it stays on the shared axis. With
+// no Harness process in the window, there is nothing to disclose.
 function HarnessProcesses({
   processes,
   window,
@@ -74,6 +75,9 @@ function HarnessProcesses({
   processes: SystemDetail['processes'];
   window: Window;
 }) {
+  if (processes.length === 0) {
+    return null;
+  }
   const { active, idle } = splitIdleProcesses(processes);
   return (
     <MoreItems label="Harness processes" scrolls={false}>
@@ -102,6 +106,7 @@ function HarnessProcesses({
 // in a rail beside them; and the disks, the installed Harnesses, and the
 // maintenance line under them.
 export function SystemOverview({
+  at,
   attention,
   detail,
   failed,
@@ -110,6 +115,8 @@ export function SystemOverview({
   recorded,
   sample,
 }: {
+  // The pinned time the route holds, which `sample` is the stored one nearest.
+  at: number | undefined;
   attention: readonly Attention[];
   detail: SystemDetail;
   failed: boolean;
@@ -120,7 +127,7 @@ export function SystemOverview({
 }) {
   const timeZone = useTimeZone();
   const window = { from: detail.from, to: detail.to };
-  const sampleX = sample === null ? 0 : xPercent(sample.t, window);
+  const sampleX = sample === null ? undefined : pinnedX(sample.t, window);
   const { latest, limitPercent } = detail;
   const total = latest === undefined ? undefined : formatGiB(latest.memoryTotalBytes);
   return (
@@ -131,7 +138,7 @@ export function SystemOverview({
             aria-label="Vitals, Sessions, and Conditions"
             className="card-surface rounded-xl border px-4 py-3.5"
           >
-            <DetailAxis onSelect={onSelect} selected={sample?.t} window={window}>
+            <DetailAxis at={at} onSelect={onSelect} selected={sample?.t} window={window}>
               <Chart
                 note={['average, low–high band', ...limitWords(limitPercent?.cpu)].join(' · ')}
                 title="CPU busy"
@@ -200,7 +207,7 @@ export function SystemOverview({
                     ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
                     window={window}
                   >
-                    {sample !== null && inWindow(sample.t, window) && (
+                    {sample !== null && sampleX !== undefined && (
                       <span
                         className={cn(
                           'absolute -top-px rounded bg-select px-2 font-semibold text-background',
