@@ -1056,6 +1056,23 @@ describe('readSystemRecords', () => {
     ]);
   });
 
+  test("keeps an unpaired System's recorded Services' installed versions on its own page", async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('laptop-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW)})
+    `;
+    await unpair(h.db.sql, 'laptop-1');
+
+    const laptop = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+
+    expect(laptop.recorded.services.map(({ name, version }) => ({ name, version }))).toEqual([
+      { name: 'web', version: '1.0' },
+    ]);
+  });
+
   test('reads each recorded job with its schedule, its latest run, and its open job Conditions', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', {

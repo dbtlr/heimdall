@@ -14,7 +14,11 @@ import type { UpstreamCheckRow } from './update-observations.ts';
 
 // Each paired System's Services: its Service records, and the Services an open
 // Service down Condition or Service restarted note names after their record went.
-export const serviceSubjects = (sql: SQL) => sql`
+// With `system`, that one System's, paired or not, since its own page keeps an
+// unpaired System's history.
+export const serviceSubjects = (sql: SQL, system?: string) =>
+  system === undefined
+    ? sql`
   SELECT r.system, r.name FROM mirrored_records r
   JOIN paired_systems p ON p.system = r.system
   WHERE r.kind = 'service'
@@ -22,6 +26,14 @@ export const serviceSubjects = (sql: SQL) => sql`
   SELECT c.system, c.subject AS name FROM conditions c
   JOIN paired_systems p ON p.system = c.system
   WHERE c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
+`
+    : sql`
+  SELECT r.system, r.name FROM mirrored_records r
+  WHERE r.kind = 'service' AND r.system = ${system}
+  UNION
+  SELECT c.system, c.subject AS name FROM conditions c
+  WHERE c.system = ${system}
+    AND c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
 `;
 
 type ServiceRow = UpstreamCheckRow & {
@@ -71,7 +83,7 @@ const readServiceRows = (
            stop.stopped_at AS latest_stop_at, installed.version, installed.upstream,
            upstream.releases, upstream.checked_at, upstream.succeeded_at, upstream.failure,
            managers.observations, found.found, history.history
-    FROM (${serviceSubjects(sql)}) r
+    FROM (${serviceSubjects(sql, system ?? undefined)}) r
     LEFT JOIN systems s ON s.name = r.system
     LEFT JOIN check_sets c ON c.system = r.system
     LEFT JOIN LATERAL (
