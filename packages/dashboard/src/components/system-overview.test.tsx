@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { SystemDetail } from '../server/system-detail-types.ts';
+import { DetailAxis, SampleSlider } from './detail-track.tsx';
 import { renderRouted } from './render-routed.tsx';
 import { SystemOverview } from './system-overview.tsx';
 
@@ -153,4 +154,26 @@ test('leaves out the Harness processes disclosure when the System ran none in th
   const html = await render(undefined, { processes: [] });
 
   expect(html).not.toContain('Harness processes');
+});
+
+// The slider's aria-valuenow in `html`.
+const sliderValue = (html: string) =>
+  /aria-valuenow="(\d+)"/u.exec(tagWith(html, 'role="slider"'))?.[1];
+
+// The slider alone over the 6 h window, with `at` pinned.
+const renderSlider = (at: number) =>
+  renderRouted(
+    <DetailAxis
+      at={at}
+      onSelect={() => undefined}
+      selected={undefined}
+      window={{ from: FROM, to: NOW }}
+    >
+      <SampleSlider>axis</SampleSlider>
+    </DetailAxis>,
+  );
+
+test('the time slider stands at the window edge when the pinned time lies outside it, as after a range change', async () => {
+  expect(sliderValue(await renderSlider(FROM - 3 * 3_600_000))).toBe(String(FROM));
+  expect(sliderValue(await renderSlider(NOW + 3_600_000))).toBe(String(NOW));
 });
