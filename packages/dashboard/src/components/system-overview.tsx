@@ -15,7 +15,6 @@ import { DetailAxis, DetailTrack } from './detail-track.tsx';
 import { GapShades } from './gap-shades.tsx';
 import { LoadPlot } from './load-plot.tsx';
 import { MemoryPlot } from './memory-plot.tsx';
-import { RangePicker } from './range-picker.tsx';
 import { SampleInspector } from './sample-inspector.tsx';
 import { HarnessLegend, SessionLanes } from './session-lanes.tsx';
 import { SystemDisks, SystemHarnesses } from './system-facts.tsx';
@@ -47,10 +46,13 @@ function Chart({
         </h2>
         {aside}
       </div>
-      {children}
+      {/* The gutter holds a plot's scale, so every chart keeps one x-extent. */}
+      <div className={GUTTER}>{children}</div>
     </section>
   );
 }
+
+const GUTTER = 'pl-14';
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
@@ -88,9 +90,6 @@ export function SystemOverview({
   const total = latest === undefined ? undefined : formatGiB(latest.memoryTotalBytes);
   return (
     <>
-      <div className="mb-3 flex justify-end">
-        <RangePicker current={detail.range} />
-      </div>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="grid min-w-0 gap-4">
           <section
@@ -105,13 +104,14 @@ export function SystemOverview({
                 <DetailTrack>
                   <GapShades
                     gaps={detail.gaps}
-                    labelHeight={110}
+                    labelHeight={140}
                     sleeps={detail.sleeps}
                     window={window}
                   />
                   <CpuPlot
+                    scaleBeside
                     buckets={detail.cpu}
-                    height={110}
+                    height={140}
                     label="CPU busy"
                     limits={
                       limitPercent === undefined
@@ -140,8 +140,9 @@ export function SystemOverview({
               >
                 <DetailTrack>
                   <MemoryPlot
+                    scaleBeside
                     buckets={detail.memory}
-                    height={96}
+                    height={110}
                     limitPercent={limitPercent?.memory}
                     window={window}
                   />
@@ -150,30 +151,32 @@ export function SystemOverview({
               {/* No line at the core count: no Collector reports one yet. */}
               <Chart title="Load (1 min)">
                 <DetailTrack>
-                  <LoadPlot buckets={detail.load} height={80} window={window} />
+                  <LoadPlot scaleBeside buckets={detail.load} height={80} window={window} />
                 </DetailTrack>
               </Chart>
               <Chart aside={<ChangesLegend />} title="Conditions and changes">
                 <ChangesLane detail={detail} window={window} />
               </Chart>
-              <TimeAxis
-                bare
-                ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
-                window={window}
-              >
-                {sample !== null && inWindow(sample.t, window) && (
-                  <span
-                    className={cn(
-                      'absolute -top-px rounded bg-select px-2 font-semibold text-background',
-                      sampleX > 90 && '-translate-x-full',
-                      sampleX >= 10 && sampleX <= 90 && '-translate-x-1/2',
-                    )}
-                    style={{ left: `${String(sampleX)}%` }}
-                  >
-                    <DateTime at={sample.t} format="clock" />
-                  </span>
-                )}
-              </TimeAxis>
+              <div className={GUTTER}>
+                <TimeAxis
+                  bare
+                  ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
+                  window={window}
+                >
+                  {sample !== null && inWindow(sample.t, window) && (
+                    <span
+                      className={cn(
+                        'absolute -top-px rounded bg-select px-2 font-semibold text-background',
+                        sampleX > 90 && '-translate-x-full',
+                        sampleX >= 10 && sampleX <= 90 && '-translate-x-1/2',
+                      )}
+                      style={{ left: `${String(sampleX)}%` }}
+                    >
+                      <DateTime at={sample.t} format="clock" />
+                    </span>
+                  )}
+                </TimeAxis>
+              </div>
             </DetailAxis>
             {latest !== undefined && (
               <p className="sr-only">

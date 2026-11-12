@@ -23,16 +23,19 @@ export const loadDomain = (buckets: readonly LoadBucket[]) => {
 export function LoadPlot({
   buckets,
   height,
+  scaleBeside = false,
   window,
 }: {
   buckets: readonly LoadBucket[];
   height: number;
+  scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
   const domain = loadDomain(buckets);
   return (
     <ScaledPlot
+      beside={scaleBeside}
       domain={domain}
       format={(value) => String(value)}
       height={height}

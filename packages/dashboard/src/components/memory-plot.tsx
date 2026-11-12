@@ -34,11 +34,13 @@ export function MemoryPlot({
   buckets,
   height = HEIGHT,
   limitPercent,
+  scaleBeside = false,
   window,
 }: {
   buckets: readonly MemoryBucket[];
   height?: number;
   limitPercent?: number | undefined;
+  scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
@@ -46,6 +48,7 @@ export function MemoryPlot({
   const domain = niceDomain([0, total], total >= 10 ? 1 : 0.1);
   return (
     <ScaledPlot
+      beside={scaleBeside}
       domain={domain}
       format={gibLabel(domain[1])}
       height={height}

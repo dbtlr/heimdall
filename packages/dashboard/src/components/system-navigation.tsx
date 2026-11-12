@@ -9,6 +9,7 @@ import { cn } from '../lib/utils.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import type { SystemNavigation } from '../server/system-navigation.ts';
 import { MARK_COLOR } from './attention-status.tsx';
+import { RangePicker } from './range-picker.tsx';
 
 const TAB_NAMES: Record<SystemTab, string> = {
   now: 'Now',
@@ -121,26 +122,29 @@ export function SystemNavigationHeader({
             </Link>
           ))}
         </nav>
-        <nav aria-label="System views" className="hidden gap-6 lg:flex">
-          {DESKTOP_TABS.map((item) => (
-            <Link
-              aria-current={desktopTab(tab) === desktopTab(item.tab) ? 'page' : undefined}
-              className={cn(
-                'flex min-h-11 shrink-0 items-center border-b-2 border-transparent px-1.5 text-base text-muted-foreground sm:px-4',
-                desktopTab(tab) === desktopTab(item.tab) &&
-                  'border-select font-semibold text-foreground',
-              )}
-              from="/systems/$name"
-              hash=""
-              key={item.name}
-              resetScroll
-              search={(previous) => ({ ...previous, tab: item.tab })}
-              to="."
-            >
-              {item.name}
-            </Link>
-          ))}
-        </nav>
+        <div className="hidden items-center justify-between gap-4 lg:flex">
+          <nav aria-label="System views" className="flex gap-6">
+            {DESKTOP_TABS.map((item) => (
+              <Link
+                aria-current={desktopTab(tab) === desktopTab(item.tab) ? 'page' : undefined}
+                className={cn(
+                  'flex min-h-11 shrink-0 items-center border-b-2 border-transparent px-1.5 text-base text-muted-foreground sm:px-4',
+                  desktopTab(tab) === desktopTab(item.tab) &&
+                    'border-select font-semibold text-foreground',
+                )}
+                from="/systems/$name"
+                hash=""
+                key={item.name}
+                resetScroll
+                search={(previous) => ({ ...previous, tab: item.tab })}
+                to="."
+              >
+                {item.name}
+              </Link>
+            ))}
+          </nav>
+          <RangePicker current={range} />
+        </div>
         <nav
           aria-label="System views"
           className="flex justify-between gap-1 overflow-x-auto lg:hidden"

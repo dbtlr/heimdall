@@ -63,6 +63,7 @@ export function CpuPlot({
   height = 46,
   limits = [],
   label,
+  scaleBeside = false,
   window,
 }: {
   bucketMs?: number;
@@ -70,11 +71,12 @@ export function CpuPlot({
   height?: number;
   limits?: readonly PlotLimit[];
   label: string;
+  scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
   return (
-    <ScaledPlot domain={PERCENT_DOMAIN} height={height} limits={limits}>
+    <ScaledPlot beside={scaleBeside} domain={PERCENT_DOMAIN} height={height} limits={limits}>
       <PlotGradient color={PLOT_COLOR} id={fill} />
       <ChartContainer
         aria-label={label}
