@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { agentsSearch } from '../lib/agents-search.ts';
 import type { AgentsBreakdown, AgentsSession } from '../server/agents-overview-types.ts';
-import { AgentsSessions, RunningCount } from './agents-sessions.tsx';
+import { AgentsSessions } from './agents-sessions.tsx';
 
 const renderSessions = async (
   sessions: AgentsSession[],
@@ -127,13 +127,10 @@ const at = (lastRequestAt: number): AgentsSession => ({
   unpricedRequests: 0,
 });
 
-test('a Session is running for 5 minutes after its latest request, as on Home, in the header count and on its row', async () => {
+test('a Session is running for 5 minutes after its latest request, as on Home, on its row', async () => {
   const now = 10 * 60_000;
   const edge = at(now - 5 * 60_000);
   const past = at(now - 5 * 60_000 - 1);
-  const html = renderToStaticMarkup(<RunningCount now={now} sessions={[edge, past]} />);
-  expect(html).toContain('1 running');
-  expect(html).not.toContain('active recently');
 
   const rows = await renderSessions([edge], undefined, 'project', now);
   expect(rows).toContain('>Running<');

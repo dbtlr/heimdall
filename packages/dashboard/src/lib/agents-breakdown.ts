@@ -7,13 +7,13 @@ import type {
 } from '../server/agents-overview-types.ts';
 import { harnessColor, harnessName } from './lane.ts';
 
-// How many rows the list shows before the rest fold into "N more".
-export const VISIBLE_ROWS = 8;
+// How many keys the legend lists before the rest fold into "N more".
+export const LEGEND_SHOWN = 5;
 
 const SERIES_COLORS = [1, 2, 3, 4, 5].map((index) => `var(--series-${String(index)})`);
 // Rows past the fifth share one neutral, which is no series color so the
 // merged rest never reads as a row of its own.
-const NEUTRAL_COLOR = 'var(--chart-other)';
+export const NEUTRAL_COLOR = 'var(--chart-other)';
 
 // `exact` has a list price for every request, `at-least` is a lower bound,
 // and `none` has no priced request at all.
@@ -110,27 +110,6 @@ export const breakdownRows = (overview: AgentsOverview, by: AgentsBreakdown): Br
       unpricedRequests: group.unpricedRequests,
     };
   });
-};
-
-export type BarSegment = { color: string; key: string; percent: number };
-
-// The stacked bar: one segment per colored row, and the neutral rows combined
-// into one. A row with no priced cost has no width.
-export const barSegments = (rows: BreakdownRow[]): BarSegment[] => {
-  const segments: BarSegment[] = [];
-  for (const row of rows) {
-    const percent = row.percent ?? 0;
-    const last = segments.at(-1);
-    if (percent === 0) {
-      continue;
-    }
-    if (row.color === NEUTRAL_COLOR && last?.color === NEUTRAL_COLOR) {
-      last.percent += percent;
-    } else {
-      segments.push({ color: row.color, key: row.key, percent });
-    }
-  }
-  return segments;
 };
 
 export const formatPercent = (percent: number | undefined): string => {

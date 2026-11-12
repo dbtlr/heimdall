@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { AgentsOverview, AgentsSession } from '../server/agents-overview-types.ts';
-import { barSegments, breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
+import { breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
 
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   branch: undefined,
@@ -24,13 +24,16 @@ const overviewOf = (
   sessions: AgentsSession[],
   models: AgentsOverview['models'] = [],
 ): AgentsOverview => ({
+  chart: { buckets: [], cells: [], unit: 'day' },
   from: 0,
   models,
   now: 200,
   range: 'today',
   sessions,
   timeZone: 'UTC',
+  today: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
   totals: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
+  usualByNow: undefined,
 });
 
 test('rows group Sessions by project, System, or Harness, highest priced cost first and ties by name', () => {
@@ -135,11 +138,6 @@ test('only the top five rows of a dimension take series colors and the rest shar
     'var(--chart-other)',
     'var(--chart-other)',
   ]);
-  const segments = barSegments(rows);
-  expect(segments).toHaveLength(6);
-  expect(segments.at(-1)?.color).toBe('var(--chart-other)');
-  expect(segments.at(-1)?.percent).toBeCloseTo(((5 + 4) / 49) * 100);
-  expect(segments.reduce((sum, segment) => sum + segment.percent, 0)).toBeCloseTo(100);
 });
 
 test('unpriced rules: a lower bound for mixed rows, no list price and no percent for all-unpriced ones', () => {
@@ -168,7 +166,6 @@ test('unpriced rules: a lower bound for mixed rows, no list price and no percent
     ['clean', 'exact', 25],
     ['none', 'none', undefined],
   ]);
-  expect(barSegments(rows).map((segment) => segment.percent)).toEqual([75, 25]);
 });
 
 test('percent labels round and never show a nonzero share as 0%', () => {
@@ -181,7 +178,6 @@ test('percent labels round and never show a nonzero share as 0%', () => {
 test('a period with no priced cost has zero percents, not NaN', () => {
   const rows = breakdownRows(overviewOf([session({ pricedCostUsd: 0 })]), 'project');
   expect(rows[0]?.percent).toBe(0);
-  expect(barSegments(rows)).toEqual([]);
 });
 
 test('a pick keeps the Sessions in that project, on that System, of that Harness, or that used that model', () => {

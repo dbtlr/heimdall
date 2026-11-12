@@ -2,11 +2,10 @@ import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
+import { AgentsChart } from '../components/agents-chart.tsx';
+import { AgentsFigures, rangeName } from '../components/agents-headline.tsx';
 import { AgentsRangePicker } from '../components/agents-range-picker.tsx';
-import { AgentsSessions, RunningCount } from '../components/agents-sessions.tsx';
-import { AgentsSummary } from '../components/agents-summary.tsx';
-import { DateTime } from '../components/date-time.tsx';
-import { PageToolbar } from '../components/page-toolbar.tsx';
+import { AgentsSessions } from '../components/agents-sessions.tsx';
 import { breakdownRows, sessionsIn } from '../lib/agents-breakdown.ts';
 import { agentsSearch } from '../lib/agents-search.ts';
 import { contentFrame } from '../lib/layout.ts';
@@ -41,42 +40,36 @@ function Agents() {
     }
   }, [navigate, search.zone, timeZone]);
   const ready = timeZone !== undefined && overview?.timeZone === timeZone;
-  // A pick that matches no row is ignored.
+  // A pick that matches no key is ignored.
   const picked = ready
     ? breakdownRows(overview, search.by).find((row) => row.key === search.pick)
     : undefined;
+  const systems = ready ? new Set(overview.sessions.map((session) => session.system)).size : 0;
   return (
-    <>
-      <PageToolbar>
-        <AgentsRangePicker current={search.range} />
-      </PageToolbar>
-      <main className={`${contentFrame('wide')} pb-8`}>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-5 pb-4 sm:pt-6">
+    <main className={`${contentFrame('wide')} pb-8`}>
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 pt-5 pb-4 sm:pt-6">
+        <div>
           <h1 className="text-[24px] font-semibold sm:text-[28px]">Agents</h1>
-          {ready && <RunningCount now={overview.now} sessions={overview.sessions} />}
+          {ready && (
+            <p className="text-sm text-muted-foreground">
+              List price · {overview.sessions.length}{' '}
+              {overview.sessions.length === 1 ? 'Session' : 'Sessions'} on {systems}{' '}
+              {systems === 1 ? 'System' : 'Systems'}{' '}
+              {overview.range === 'today' ? 'today' : `in ${rangeName(overview.range)}`}
+            </p>
+          )}
         </div>
-        {!ready ? (
-          <p className="py-5 text-muted-foreground" role="status">
-            Loading requests in your time zone…
-          </p>
-        ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-            <div>
-              <p className="mb-3 text-sm text-muted-foreground">
-                {overview.range === 'today'
-                  ? 'Requests since local midnight'
-                  : `Requests in the last ${overview.range === '7d' ? '7' : '30'} days`}
-                , to <DateTime at={overview.now} format="clock" />.
-              </p>
-              <AgentsSummary by={search.by} overview={overview} pick={picked?.key} />
-              <p className="mt-3 text-sm text-muted-foreground">
-                Token usage at API list prices, including subagents. Subscription charges may
-                differ.
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Session amounts include only requests in this period.
-              </p>
-            </div>
+        {ready && <AgentsFigures overview={overview} />}
+        <AgentsRangePicker current={search.range} />
+      </div>
+      {!ready ? (
+        <p className="py-5 text-muted-foreground" role="status">
+          Loading requests in your time zone…
+        </p>
+      ) : (
+        <div className="space-y-6">
+          <AgentsChart by={search.by} overview={overview} pick={picked?.key} />
+          <div>
             <AgentsSessions
               by={search.by}
               now={overview.now}
@@ -87,9 +80,13 @@ function Agents() {
                   : sessionsIn(overview.sessions, search.by, picked.key)
               }
             />
+            <p className="mt-3 text-sm text-muted-foreground">
+              Token usage at API list prices, including subagents. Subscription charges may differ.
+              Session amounts include only requests in this period.
+            </p>
           </div>
-        )}
-      </main>
-    </>
+        </div>
+      )}
+    </main>
   );
 }

@@ -36,12 +36,41 @@ export type AgentsSession = SessionKey &
 // `model` is NO_KEY for requests with an empty model.
 export type ModelTotals = PeriodTotals & { model: string };
 
+// One bar of the cost chart: a local hour or a local day, from its first
+// instant to the next one's.
+export type CostBucket = { end: number; start: number };
+
+// What requests in one bucket cost, per Harness, System, model, and project,
+// the four ways the chart splits its bars. `project` and `model` are NO_KEY
+// when unknown.
+export type CostCell = {
+  bucket: number;
+  harness: string;
+  model: string;
+  pricedCostUsd: number;
+  project: string;
+  system: string;
+  unpricedRequests: number;
+};
+
+export type CostChart = {
+  buckets: CostBucket[];
+  cells: CostCell[];
+  // The Today range's bars span an hour; the others' a day.
+  unit: 'day' | 'hour';
+};
+
 export type AgentsOverview = {
+  chart: CostChart;
   from: number;
   models: ModelTotals[];
   now: number;
   range: AgentsRange;
   sessions: AgentsSession[];
   timeZone: string;
+  // What requests since local midnight cost.
+  today: PeriodTotals;
   totals: PeriodTotals;
+  // What is usually spent by now; undefined when too few days show it.
+  usualByNow: number | undefined;
 };

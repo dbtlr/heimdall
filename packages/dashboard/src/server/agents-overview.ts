@@ -1,6 +1,7 @@
 import type { SQL } from 'bun';
 
-import { localDays } from '../lib/home-agents.ts';
+import { localDays, usualByNow } from '../lib/home-agents.ts';
+import { readCostChart } from './agents-costs.ts';
 import type {
   AgentsOverview,
   AgentsRange,
@@ -8,6 +9,7 @@ import type {
   ModelTotals,
   PeriodTotals,
 } from './agents-overview-types.ts';
+import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import { projectOf } from './fleet-overview.ts';
 import { sessionSpans } from './session-spans.ts';
 
@@ -207,15 +209,25 @@ const readSnapshot = async (
     range === 'today'
       ? todayPeriod(now, timeZone)
       : { from: new Date(now - 86_400_000 * (range === '7d' ? 7 : 30)), to: new Date(now) };
-  const { models, sessions } = await readPeriodSessions(sql, period);
+  const [{ models, sessions }, chart, todays, earlier] = await Promise.all([
+    readPeriodSessions(sql, period),
+    readCostChart(sql, { now, period, range, timeZone }),
+    // The period's own Sessions are today's when the period is Today.
+    range === 'today' ? undefined : readPeriodSessions(sql, todayPeriod(now, timeZone)),
+    readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1)),
+  ]);
+  const totals = periodTotals(sessions);
   return {
+    chart,
     from: period.from.getTime(),
     models,
     now,
     range,
     sessions,
     timeZone,
-    totals: periodTotals(sessions),
+    today: todays === undefined ? totals : periodTotals(todays.sessions),
+    totals,
+    usualByNow: usualByNow(earlier),
   };
 };
 
