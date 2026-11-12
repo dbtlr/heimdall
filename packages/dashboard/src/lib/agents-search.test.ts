@@ -67,6 +67,13 @@ test('a sorted page is a link: the search holds only a known column, a direction
   }
 });
 
+test('a page in the address is plain digits; any other spelling of a number is page 1', () => {
+  expect(agentsSearch({ page: '12' }).page).toBe(12);
+  for (const page of ['0x2', '2e0', ' 3 ', '+2', '2.0', '', '1000001']) {
+    expect(agentsSearch({ page }).page).toBeUndefined();
+  }
+});
+
 test('the server reads the query a search describes, with newest first on page 1 as the default', () => {
   expect(sessionsQueryOf(agentsSearch({}))).toEqual({
     by: 'project',

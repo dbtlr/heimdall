@@ -36,10 +36,11 @@ const validDirection = (dir: unknown): SortDirection | undefined =>
   dir === 'asc' || dir === 'desc' ? dir : undefined;
 
 // A page number is a whole number from 2, the first page being the default.
+// In the address it is plain digits, so "0x2", "2e0", and " 3 " are page 1.
 // The ceiling keeps the offset a safe integer.
 const MAX_PAGE = 1_000_000;
 const validPage = (page: unknown): number | undefined => {
-  const number = typeof page === 'string' ? Number(page) : page;
+  const number = typeof page === 'string' && /^\d+$/u.test(page) ? Number(page) : page;
   return typeof number === 'number' && Number.isInteger(number) && number > 1 && number <= MAX_PAGE
     ? number
     : undefined;

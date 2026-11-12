@@ -194,6 +194,26 @@ test('each column header links to its sort, flipping the direction of the sorted
   expect(html).toContain('aria-sort="descending"');
 });
 
+// The desktop pager, the first of the two "Pages" navs.
+const desktopPager = (html: string) =>
+  /<nav aria-label="Pages"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? '';
+
+test('the pager keeps Prev and Next in place, disabled and not links at the first and last pages', async () => {
+  const shown = Array.from({ length: 25 }, (_, index) => at(index));
+  const first = desktopPager(await renderSessions(shown, { page: 1, total: 96 }));
+  expect(
+    first
+      .replace(/<[^>]+>/gu, ' ')
+      .trim()
+      .split(/\s+/u),
+  ).toEqual(['‹', 'Prev', '1', '2', '3', '4', 'Next', '›']);
+  expect(first).toMatch(/<span[^>]*aria-disabled="true"[^>]*>‹ Prev<\/span>/u);
+  expect(first).toMatch(/<a[^>]*href="[^"]*page=2[^"]*"[^>]*>Next ›/u);
+  const last = desktopPager(await renderSessions(shown, { page: 4, total: 96 }));
+  expect(last).toMatch(/<span[^>]*aria-disabled="true"[^>]*>Next ›<\/span>/u);
+  expect(last).toMatch(/<a[^>]*href="[^"]*page=3[^"]*"[^>]*>‹ Prev/u);
+});
+
 test('the pager states which Sessions a page shows and links its neighbours', async () => {
   const shown = Array.from({ length: 25 }, (_, index) => at(index));
   const html = await renderSessions(shown, { page: 2, total: 96 });

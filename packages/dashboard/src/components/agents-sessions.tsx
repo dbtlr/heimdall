@@ -264,11 +264,23 @@ function PageLink({ label, page, current }: { current?: boolean; label: string; 
   );
 }
 
+// Prev or Next: a link to the neighbouring page, or, at the first or last
+// page, the same label muted and disabled, so the pager never shifts.
+function PageStep({ label, page }: { label: string; page: number | undefined }) {
+  return page === undefined ? (
+    <span aria-disabled="true" className={cn(PAGE_LINK, 'text-muted-foreground/60')}>
+      {label}
+    </span>
+  ) : (
+    <PageLink label={label} page={page} />
+  );
+}
+
 function Pager({ rangeText, table }: { rangeText: string; table: SessionsPage }) {
   const pages = pageCount(table.total);
   const { first, last } = pageRange(table.page, table.sessions.length);
-  const hasPrevious = table.page > 1;
-  const hasNext = table.page < pages;
+  const previous = table.page > 1 ? table.page - 1 : undefined;
+  const next = table.page < pages ? table.page + 1 : undefined;
   return (
     <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
       <p className="text-sm text-muted-foreground tabular-nums">
@@ -277,7 +289,7 @@ function Pager({ rangeText, table }: { rangeText: string; table: SessionsPage })
       {pages > 1 && (
         <>
           <nav aria-label="Pages" className="hidden items-center gap-0.5 sm:flex">
-            {hasPrevious && <PageLink label="‹ Prev" page={table.page - 1} />}
+            <PageStep label="‹ Prev" page={previous} />
             {pageButtons(table.page, pages).map((button, index) =>
               button === 'gap' ? (
                 // oxlint-disable-next-line react/no-array-index-key -- a gap has no number of its own.
@@ -297,11 +309,11 @@ function Pager({ rangeText, table }: { rangeText: string; table: SessionsPage })
                 />
               ),
             )}
-            {hasNext && <PageLink label="Next ›" page={table.page + 1} />}
+            <PageStep label="Next ›" page={next} />
           </nav>
           <nav aria-label="Pages" className="flex items-center gap-2 sm:hidden">
-            {hasPrevious && <PageLink label="‹ Prev" page={table.page - 1} />}
-            {hasNext && <PageLink label="Next ›" page={table.page + 1} />}
+            <PageStep label="‹ Prev" page={previous} />
+            <PageStep label="Next ›" page={next} />
           </nav>
         </>
       )}
