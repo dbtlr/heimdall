@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
-import type { AgentsOverview, AgentsSession } from '../server/agents-overview-types.ts';
-import { breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
+import type { AgentsSession, ModelTotals } from '../server/agents-overview-types.ts';
+import { breakdownRows, breakdownTotals, formatPercent, sessionsIn } from './agents-breakdown.ts';
 
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   branch: undefined,
@@ -20,20 +20,8 @@ const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   ...overrides,
 });
 
-const overviewOf = (
-  sessions: AgentsSession[],
-  models: AgentsOverview['models'] = [],
-): AgentsOverview => ({
-  chart: { buckets: [], cells: [], unit: 'day' },
-  from: 0,
-  models,
-  now: 200,
-  range: 'today',
-  sessions,
-  timeZone: 'UTC',
-  today: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
-  totals: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
-  usualByNow: undefined,
+const overviewOf = (sessions: AgentsSession[], models: ModelTotals[] = []) => ({
+  breakdown: breakdownTotals(sessions, models),
 });
 
 test('rows group Sessions by project, System, or Harness, highest priced cost first and ties by name', () => {
@@ -103,7 +91,7 @@ test('an empty model groups under an empty key labelled Unknown model, apart fro
   ]);
 });
 
-test('model rows come from the overview, not from Sessions', () => {
+test('model rows come from the model totals, not from Sessions', () => {
   const rows = breakdownRows(
     overviewOf(
       [session({})],

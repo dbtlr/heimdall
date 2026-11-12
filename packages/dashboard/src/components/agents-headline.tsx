@@ -1,4 +1,4 @@
-import { isRunning, runningCount, RUNNING_TITLE, wholeDollars } from '../lib/home-agents.ts';
+import { RUNNING_TITLE, wholeDollars } from '../lib/home-agents.ts';
 import { formatCost } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { AgentsOverview, AgentsRange } from '../server/agents-overview-types.ts';
@@ -40,14 +40,8 @@ function Figure({
 }
 
 // The projects of the running Sessions, two at most.
-const runningProjects = ({ now, sessions }: AgentsOverview): string => {
-  const names = [
-    ...new Set(
-      sessions
-        .filter(({ lastRequestAt }) => isRunning(lastRequestAt, now))
-        .map(({ project, system }) => project ?? system),
-    ),
-  ];
+const runningProjects = ({ running }: AgentsOverview): string => {
+  const names = [...new Set(running.map(({ project, system }) => project ?? system))];
   return names.length > 2
     ? `${names.slice(0, 2).join(', ')} and ${String(names.length - 2)} more`
     : names.join(', ');
@@ -59,7 +53,7 @@ const runningProjects = ({ now, sessions }: AgentsOverview): string => {
 // they sit two across in a card under the title.
 export function AgentsFigures({ overview }: { overview: AgentsOverview }) {
   const { range, today, totals, usualByNow } = overview;
-  const running = runningCount(overview.sessions, overview.now);
+  const running = overview.running.length;
   return (
     <div className="card-surface grid grid-cols-2 gap-x-6 rounded-xl border p-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:rounded-none sm:border-0 sm:bg-transparent sm:bg-none sm:p-0 sm:shadow-none">
       <Figure

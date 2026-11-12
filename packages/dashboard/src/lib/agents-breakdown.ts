@@ -3,6 +3,8 @@ import type {
   AgentsBreakdown,
   AgentsOverview,
   AgentsSession,
+  KeyTotals,
+  ModelTotals,
   PeriodTotals,
 } from '../server/agents-overview-types.ts';
 import { harnessColor, harnessName } from './lane.ts';
@@ -28,7 +30,7 @@ export type BreakdownRow = PeriodTotals & {
   pricing: RowPricing;
 };
 
-type Group = PeriodTotals & { key: string; name: string };
+type Group = KeyTotals & { name: string };
 
 const keyOf = (by: Exclude<AgentsBreakdown, 'model'>, session: AgentsSession): string =>
   by === 'project' ? (session.project ?? NO_KEY) : session[by === 'system' ? 'system' : 'harness'];
@@ -39,24 +41,22 @@ const NONE_LABELS: Partial<Record<AgentsBreakdown, string>> = {
 };
 
 // What a row shows for its key: the empty key gets a label, and a Harness its name.
-const nameOf = (by: AgentsBreakdown, key: string): string => {
+export const nameOf = (by: AgentsBreakdown, key: string): string => {
   if (by === 'harness') {
     return harnessName(key);
   }
   return key === NO_KEY ? (NONE_LABELS[by] ?? key) : key;
 };
 
-const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSession[]) => {
-  const groups = new Map<string, Group>();
+// The Sessions' amounts summed per project, System, or Harness.
+const groupSessions = (
+  by: Exclude<AgentsBreakdown, 'model'>,
+  sessions: readonly AgentsSession[],
+): KeyTotals[] => {
+  const groups = new Map<string, KeyTotals>();
   for (const session of sessions) {
     const key = keyOf(by, session);
-    const group = groups.get(key) ?? {
-      key,
-      name: nameOf(by, key),
-      pricedCostUsd: 0,
-      requests: 0,
-      unpricedRequests: 0,
-    };
+    const group = groups.get(key) ?? { key, pricedCostUsd: 0, requests: 0, unpricedRequests: 0 };
     group.pricedCostUsd += session.pricedCostUsd;
     group.requests += session.requests;
     group.unpricedRequests += session.unpricedRequests;
@@ -65,15 +65,28 @@ const groupSessions = (by: Exclude<AgentsBreakdown, 'model'>, sessions: AgentsSe
   return [...groups.values()];
 };
 
-// Model totals come from the overview: a Session can use several models.
-const groupsOf = (overview: AgentsOverview, by: AgentsBreakdown): Group[] =>
+// The period's cost per key of each breakdown. Model totals come from the
+// requests, since a Session can use several models.
+export const breakdownTotals = (
+  sessions: readonly AgentsSession[],
+  models: readonly ModelTotals[],
+): Record<AgentsBreakdown, KeyTotals[]> => ({
+  harness: groupSessions('harness', sessions),
+  model: models.map(({ model, ...totals }) => ({ ...totals, key: model })),
+  project: groupSessions('project', sessions),
+  system: groupSessions('system', sessions),
+});
+
+// The Sessions in the picked row's project, on its System, of its Harness, or
+// that used its model.
+export const sessionsIn = <S extends AgentsSession>(
+  sessions: readonly S[],
+  by: AgentsBreakdown,
+  key: string,
+): S[] =>
   by === 'model'
-    ? overview.models.map(({ model, ...totals }) => ({
-        ...totals,
-        key: model,
-        name: nameOf('model', model),
-      }))
-    : groupSessions(by, overview.sessions);
+    ? sessions.filter((session) => session.models.includes(key))
+    : sessions.filter((session) => keyOf(by, session) === key);
 
 const pricingOf = (group: PeriodTotals): RowPricing => {
   if (group.unpricedRequests === 0) {
@@ -94,8 +107,13 @@ const shareOf = (cost: number, total: number): number => (total === 0 ? 0 : (cos
 // The period's cost split by project, System, model, or Harness, highest
 // priced cost first and ties by name. A Harness keeps its own color; in the
 // other dimensions the top five rows take the series colors in order.
-export const breakdownRows = (overview: AgentsOverview, by: AgentsBreakdown): BreakdownRow[] => {
-  const sorted = groupsOf(overview, by).toSorted(byCostThenName);
+export const breakdownRows = (
+  overview: Pick<AgentsOverview, 'breakdown'>,
+  by: AgentsBreakdown,
+): BreakdownRow[] => {
+  const sorted = overview.breakdown[by]
+    .map((group) => ({ ...group, name: nameOf(by, group.key) }))
+    .toSorted(byCostThenName);
   const total = sorted.reduce((sum, group) => sum + group.pricedCostUsd, 0);
   return sorted.map((group, index) => {
     const pricing = pricingOf(group);
@@ -119,14 +137,3 @@ export const formatPercent = (percent: number | undefined): string => {
   const rounded = Math.round(percent);
   return rounded === 0 && percent > 0 ? '<1%' : `${String(rounded)}%`;
 };
-
-// The Sessions in the picked row's project, on its System, of its Harness, or
-// that used its model.
-export const sessionsIn = (
-  sessions: AgentsSession[],
-  by: AgentsBreakdown,
-  key: string,
-): AgentsSession[] =>
-  by === 'model'
-    ? sessions.filter((session) => session.models.includes(key))
-    : sessions.filter((session) => keyOf(by, session) === key);

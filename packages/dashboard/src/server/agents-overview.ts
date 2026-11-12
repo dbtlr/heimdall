@@ -1,6 +1,9 @@
 import type { SQL } from 'bun';
 
-import { localDays, usualByNow } from '../lib/home-agents.ts';
+import { breakdownTotals } from '../lib/agents-breakdown.ts';
+import { agentsSearch, sessionsQueryOf } from '../lib/agents-search.ts';
+import { sessionsPage } from '../lib/agents-sessions.ts';
+import { isRunning, localDays, usualByNow } from '../lib/home-agents.ts';
 import { readCostChart } from './agents-costs.ts';
 import type {
   AgentsOverview,
@@ -8,6 +11,7 @@ import type {
   AgentsSession,
   ModelTotals,
   PeriodTotals,
+  SessionsQuery,
 } from './agents-overview-types.ts';
 import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import { projectOf } from './fleet-overview.ts';
@@ -201,14 +205,33 @@ export const todayPeriod = (now: number, timeZone: string): Period => {
   return { from: new Date(today?.start ?? now), to: new Date(now) };
 };
 
+// The Agents page's period: Today from local midnight, else a trailing 7 or 30 days.
+export const agentsPeriod = ({
+  now,
+  range,
+  timeZone,
+}: {
+  now: number;
+  range: AgentsRange;
+  timeZone: string;
+}): Period =>
+  range === 'today'
+    ? todayPeriod(now, timeZone)
+    : { from: new Date(now - 86_400_000 * (range === '7d' ? 7 : 30)), to: new Date(now) };
+
+// The period's Sessions are read whole, since the totals, the breakdown, and
+// the running count cover all of them, and leave as sums and one page of the
+// table. `table` is the table's query, the page's default unless given.
 const readSnapshot = async (
   sql: SQL,
-  { now, range, timeZone }: { now: number; range: AgentsRange; timeZone: string },
+  {
+    now,
+    range,
+    table = sessionsQueryOf(agentsSearch({})),
+    timeZone,
+  }: { now: number; range: AgentsRange; table?: SessionsQuery; timeZone: string },
 ): Promise<AgentsOverview> => {
-  const period =
-    range === 'today'
-      ? todayPeriod(now, timeZone)
-      : { from: new Date(now - 86_400_000 * (range === '7d' ? 7 : 30)), to: new Date(now) };
+  const period = agentsPeriod({ now, range, timeZone });
   const [{ models, sessions }, chart, todays, earlier] = await Promise.all([
     readPeriodSessions(sql, period),
     readCostChart(sql, { now, period, range, timeZone }),
@@ -218,12 +241,15 @@ const readSnapshot = async (
   ]);
   const totals = periodTotals(sessions);
   return {
+    breakdown: breakdownTotals(sessions, models),
     chart,
     from: period.from.getTime(),
-    models,
     now,
     range,
-    sessions,
+    running: sessions.filter(({ lastRequestAt }) => isRunning(lastRequestAt, now)),
+    sessionCount: sessions.length,
+    systemCount: new Set(sessions.map(({ system }) => system)).size,
+    table: sessionsPage(sessions, table, now),
     timeZone,
     today: todays === undefined ? totals : periodTotals(todays.sessions),
     totals,

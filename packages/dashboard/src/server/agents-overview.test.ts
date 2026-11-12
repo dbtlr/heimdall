@@ -3,7 +3,7 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import { readAgentsOverview } from './agents-overview.ts';
+import { agentsPeriod, readAgentsOverview, readPeriodSessions } from './agents-overview.ts';
 
 beforeAll(async () => {
   await using _h = await startHub();
@@ -21,7 +21,16 @@ const start = async () => {
   return h;
 };
 
-const view = (h: Hub) => readAgentsOverview(h.db.sql, { now: NOW, range: '7d', timeZone: 'UTC' });
+// The overview, its model breakdown as model totals, and the period's
+// Sessions it sums, which leave the server only as sums and a page.
+const read = async (h: Hub, input: Parameters<typeof readAgentsOverview>[1]) => {
+  const overview = await readAgentsOverview(h.db.sql, input);
+  const { sessions } = await h.db.sql.begin((tx) => readPeriodSessions(tx, agentsPeriod(input)));
+  const models = overview.breakdown.model.map(({ key, ...totals }) => ({ model: key, ...totals }));
+  return { ...overview, models, sessions };
+};
+
+const view = (h: Hub) => read(h, { now: NOW, range: '7d', timeZone: 'UTC' });
 
 test('Today counts only requests since local midnight, including subagents of an older Session', async () => {
   await using h = await start();
@@ -35,7 +44,7 @@ test('Today counts only requests since local midnight, including subagents of an
     system: 'server-1',
   });
 
-  const result = await readAgentsOverview(h.db.sql, {
+  const result = await read(h, {
     now: NOW,
     range: 'today',
     timeZone: 'Europe/Berlin',
@@ -200,7 +209,7 @@ test.each([
       requests: [(from + 30 * 60_000 - now) / 1000],
       system: 'server-1',
     });
-    const result = await readAgentsOverview(h.db.sql, { now, range: 'today', timeZone });
+    const result = await read(h, { now, range: 'today', timeZone });
     expect(result.from).toBe(from);
     expect(result.totals).toEqual({ pricedCostUsd: 1, requests: 1, unpricedRequests: 0 });
   },
@@ -238,7 +247,7 @@ test('a price refresh lag can mix stored and current prices while the total stil
 test('the 7d range is a trailing duration even across the database time zone clock change', async () => {
   await using h = await start();
   const now = Date.UTC(2026, 2, 10, 12);
-  const result = await readAgentsOverview(h.db.sql, {
+  const result = await read(h, {
     now,
     range: '7d',
     timeZone: 'Europe/Berlin',

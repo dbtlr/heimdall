@@ -83,6 +83,17 @@ export const formatWhen = (t: number, now: number, timeZone: string): string =>
 export const formatDated = (t: number, now: number, timeZone: string): string =>
   `${localDayNumber(t, timeZone) === localDayNumber(now, timeZone) ? 'Today' : formatDate(t, timeZone)} ${formatClock(t, timeZone)}`;
 
+// A time that may be weeks before `now`: "HH:MM" on the same local day,
+// "Yesterday 14:02" on the day before, else "10 Nov 14:02", so an older time
+// never reads as this week's.
+export const formatPast = (t: number, now: number, timeZone: string): string => {
+  const days = localDayNumber(now, timeZone) - localDayNumber(t, timeZone);
+  if (days === 0) {
+    return formatClock(t, timeZone);
+  }
+  return `${days === 1 ? 'Yesterday' : formatDate(t, timeZone)} ${formatClock(t, timeZone)}`;
+};
+
 // A time ahead of `now`: "HH:MM" on the same local day, "Mon 14:02" within the
 // coming week, else "Tue 20 Oct 14:02".
 export const formatAhead = (t: number, now: number, timeZone: string): string =>

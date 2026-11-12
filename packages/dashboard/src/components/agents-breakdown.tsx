@@ -30,7 +30,7 @@ export function AgentsBreakdownSwitch({ current }: { current: AgentsBreakdown })
           key={by}
           replace
           resetScroll={false}
-          search={(previous) => ({ ...previous, by, pick: undefined })}
+          search={(previous) => ({ ...previous, by, page: undefined, pick: undefined })}
           to="."
         >
           {SWITCH_LABELS[by]}
@@ -59,7 +59,11 @@ function LegendKey({ picked, row }: { picked: boolean; row: BreakdownRow }) {
           picked && 'border-select bg-select/15',
         )}
         resetScroll={false}
-        search={(previous) => ({ ...previous, pick: picked ? undefined : row.key })}
+        search={(previous) => ({
+          ...previous,
+          page: undefined,
+          pick: picked ? undefined : row.key,
+        })}
         title={row.name}
         to="."
       >
