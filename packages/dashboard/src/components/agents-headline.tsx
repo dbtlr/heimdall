@@ -56,8 +56,7 @@ const runningProjects = ({ now, sessions }: AgentsOverview): string => {
 // The figures beside the page's title: what Today costs against what is
 // usually spent by now, the period's total, and how many Sessions run. The
 // Today range's total is Today's, so the two are one figure there. On a phone
-// they sit in a card under the title, Today and Running now side by side, as
-// in the picked mock; the period's total shows from 640 px up.
+// they sit two across in a card under the title.
 export function AgentsFigures({ overview }: { overview: AgentsOverview }) {
   const { range, today, totals, usualByNow } = overview;
   const running = runningCount(overview.sessions, overview.now);
@@ -71,17 +70,15 @@ export function AgentsFigures({ overview }: { overview: AgentsOverview }) {
         value={formatCost(today.pricedCostUsd)}
       />
       {range !== 'today' && (
-        <div className="hidden sm:block">
-          <Figure
-            label={rangeName(range)}
-            note={
-              totals.unpricedRequests > 0
-                ? `at least · ${String(totals.unpricedRequests)} unpriced`
-                : 'at list price'
-            }
-            value={formatCost(totals.pricedCostUsd)}
-          />
-        </div>
+        <Figure
+          label={rangeName(range)}
+          note={
+            totals.unpricedRequests > 0
+              ? `at least · ${String(totals.unpricedRequests)} unpriced`
+              : 'at list price'
+          }
+          value={formatCost(totals.pricedCostUsd)}
+        />
       )}
       <Figure
         className={running > 0 ? 'text-status-good' : undefined}

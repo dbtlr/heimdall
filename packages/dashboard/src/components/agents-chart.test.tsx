@@ -253,9 +253,10 @@ test("Today reads at least when today's requests include unpriced ones", async (
   expect(html).toContain('at list price');
 });
 
-test('on a phone the figures show Today and Running now, and the period total only from 640 px', async () => {
+test('the period total shows at every width, so a phone sees what the range cost', async () => {
   const html = await render(<AgentsFigures overview={overview} />);
-  expect(html).toMatch(/<div class="hidden sm:block"><div[^>]*><p[^>]*>7 days</u);
+  expect(html).toMatch(/<p[^>]*>7 days</u);
+  expect(html).not.toContain('hidden sm:block');
 });
 
 // The time axis labels, in order: each label's class and text.
