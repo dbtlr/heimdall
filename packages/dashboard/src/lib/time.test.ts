@@ -35,6 +35,12 @@ test('a time on the same local day reads as a clock time, another day with its w
   expect(formatWhen(NOON - 14 * HOUR, NOON, 'UTC')).toBe('Mon 22:00');
 });
 
+test('a time a week or more before now carries its date, so it never reads as this week', () => {
+  expect(formatWhen(NOON - 6 * 24 * HOUR, NOON, 'UTC')).toBe('Wed 12:00');
+  expect(formatWhen(NOON - 7 * 24 * HOUR, NOON, 'UTC')).toBe('Tue 6 Oct 12:00');
+  expect(formatWhen(NOON - 9 * 24 * HOUR, NOON, 'UTC')).toBe('Sun 4 Oct 12:00');
+});
+
 test('the day is the one in the zone, not in UTC', () => {
   const lateUtc = Date.UTC(2026, 9, 13, 23, 0, 0);
   // 23:00 UTC is already the 14th in Tokyo.

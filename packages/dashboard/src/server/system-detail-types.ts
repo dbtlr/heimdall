@@ -13,7 +13,7 @@ import type {
   Link,
   Range,
 } from './fleet-overview-types.ts';
-import type { Change } from './home-types.ts';
+import type { ServiceChange } from './home-types.ts';
 
 // One 5-minute Vitals rollup bucket, starting at `t`: memory used on average,
 // and the memory the System had.
@@ -53,9 +53,8 @@ export type Disk = { mount: string; totalBytes: number; usedBytes: number };
 export type HarnessInstall = { harness: string; location: string; version: string };
 
 export type SystemDetail = {
-  // The System's changes over the range: Service versions and stops, and
-  // Conditions raised and cleared at warning or alert.
-  changes: Change[];
+  // The System's Service changes over the range: versions and stops.
+  changes: ServiceChange[];
   // The Collector's version, undefined until a Report from it is stored.
   collectorVersion: string | undefined;
   conditions: ConditionMark[];
@@ -79,6 +78,9 @@ export type SystemDetail = {
         uptimeSeconds: number;
       }
     | undefined;
+  // The CPU and memory percent the Hub judges this System by, its own limits
+  // else the fleet's; undefined while the Hub has stored none.
+  limitPercent: { cpu: number; memory: number } | undefined;
   // The 1-minute load average per 5-minute bucket.
   load: LoadBucket[];
   memory: MemoryBucket[];

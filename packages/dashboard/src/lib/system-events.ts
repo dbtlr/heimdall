@@ -6,7 +6,8 @@ import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
-import type { Change } from '../server/home-types.ts';
+import type { ServiceChange } from '../server/home-types.ts';
+import { shownElsewhere } from './attention.ts';
 import { changeWords, groupChanges } from './home-changes.ts';
 import type { Window } from './time.ts';
 
@@ -24,30 +25,41 @@ export const peakLevel = (mark: ConditionMark): ConditionLevel =>
     mark.level,
   );
 
-// Conditions a note-level Pending update or Reboot required, and Service
-// restarted, which the Maintenance line and the Service changes show instead.
-const shownElsewhere = (mark: ConditionMark): boolean =>
-  mark.kind === 'service_restarted' ||
-  ((mark.kind === 'pending_update' || mark.kind === 'reboot_required') &&
-    peakLevel(mark) === 'note');
-
 // The Conditions of `marks` that belong on the lane, each open at some time in
-// the window.
-export const laneConditions = (marks: readonly ConditionMark[], window: Window): ConditionMark[] =>
+// the window. A paired System's Conditions that its open Conditions leave to
+// another place stay off the lane too: a Pending update or Reboot required
+// that never rose above a note, which the Maintenance line shows, and Service
+// restarted, which the Service changes show. Judged by the highest level
+// reached, a span that once rose to warning stays as the history it is.
+export const laneConditions = (
+  marks: readonly ConditionMark[],
+  { paired, window }: { paired: boolean; window: Window },
+): ConditionMark[] =>
   marks.filter(
     (mark) =>
-      !shownElsewhere(mark) &&
+      shownElsewhere({ kind: mark.kind, level: peakLevel(mark), unpaired: !paired }) ===
+        undefined &&
       mark.raisedAt <= window.to &&
       (mark.clearedAt ?? window.to) >= window.from,
   );
 
-// The Conditions open in the window, and the Service changes in it, as events
-// oldest first. A Condition raised or cleared is its span, not a second event.
+// When an event last mattered: a Condition still open matters now, one
+// cleared when it was cleared, and a change when it happened.
+const lastSeen = (event: SystemEvent): number =>
+  event.kind === 'condition' ? (event.end ?? Number.POSITIVE_INFINITY) : event.at;
+
+// The Conditions open in the window, and the Service changes in it, as events,
+// the latest first: Conditions still open, then by when each was cleared or
+// happened. A Condition raised or cleared is its span, not a second event.
 export const systemEvents = (
-  { changes, conditions }: { changes: readonly Change[]; conditions: readonly ConditionMark[] },
+  {
+    changes,
+    conditions,
+    paired,
+  }: { changes: readonly ServiceChange[]; conditions: readonly ConditionMark[]; paired: boolean },
   window: Window,
 ): SystemEvent[] => {
-  const spans = laneConditions(conditions, window).map((mark): SystemEvent => {
+  const spans = laneConditions(conditions, { paired, window }).map((mark): SystemEvent => {
     const level = peakLevel(mark);
     const subject = mark.subject === '' ? '' : ` ${conditionSubject(mark)}`;
     return {
@@ -58,10 +70,7 @@ export const systemEvents = (
       text: `${CONDITION_KIND_NAMES[mark.kind]}${subject}, ${level}`,
     };
   });
-  const moves = groupChanges(
-    changes.filter(({ kind }) => kind !== 'condition'),
-    Number.POSITIVE_INFINITY,
-  ).map((group): SystemEvent => {
+  const moves = groupChanges(changes, Number.POSITIVE_INFINITY).map((group): SystemEvent => {
     const restarted =
       group.change.kind === 'version' && Object.values(group.stops).some((count) => count > 0);
     return {
@@ -70,7 +79,7 @@ export const systemEvents = (
       text: `${changeWords(group).title}${restarted ? ', restarted' : ''}`,
     };
   });
-  return [...spans, ...moves].toSorted((a, b) => a.at - b.at);
+  return [...spans, ...moves].toSorted((a, b) => lastSeen(b) - lastSeen(a) || b.at - a.at);
 };
 
 // The stretches of a Condition's span at each level it held, from its raise to

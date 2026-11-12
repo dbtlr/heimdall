@@ -4,11 +4,12 @@ import {
   parseUpdateSubject,
   PendingUpdateSchema,
 } from '@heimdall/schema';
-import type { ConditionLimitSet, ConditionKind } from '@heimdall/schema';
+import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { readAttention } from './attention.ts';
 import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
+import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
@@ -173,14 +174,6 @@ const readSeries = (
   return Promise.resolve(undefined);
 };
 
-// The System's own limits, else the fleet's.
-const readLimits = async (sql: SQL, system: string): Promise<ConditionLimitSet | undefined> => {
-  const rows: { limits: ConditionLimitSet; system: string }[] = await sql`
-    SELECT system, limits FROM condition_limits WHERE system IN (${system}, '')
-  `;
-  return (rows.find((row) => row.system === system) ?? rows[0])?.limits;
-};
-
 // The platform the System's Collector last reported, if any.
 const readPlatform = async (sql: SQL, system: string): Promise<string | undefined> => {
   const [row]: { collector_platform: string | null }[] = await sql`
@@ -253,7 +246,7 @@ export const readConditionDetail = async (
   const [transitions, limits, series, attention, packages, platform, memoryHolders] =
     await Promise.all([
       readConditionTransitions(sql, [row]),
-      readLimits(sql, name),
+      readConditionLimits(sql, name),
       readSeries(sql, { kind, subject: row.subject, system: name, window }),
       clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
       clearedAt === undefined && kind === 'pending_update'

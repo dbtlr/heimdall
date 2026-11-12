@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
-import type { Change } from '../server/home-types.ts';
+import type { ServiceChange } from '../server/home-types.ts';
 import { levelSegments, packRows, systemEvents } from './system-events.ts';
 
 const MINUTE = 60_000;
@@ -20,7 +20,7 @@ const mark = (overrides: Partial<ConditionMark> & Pick<ConditionMark, 'kind'>): 
   ...overrides,
 });
 
-const version: Change = {
+const version: ServiceChange = {
   at: NOW - 2 * HOUR,
   from: '1.8.2',
   kind: 'version',
@@ -30,7 +30,7 @@ const version: Change = {
 };
 
 describe('systemEvents', () => {
-  test('lists Conditions and Service changes together, oldest first, and leaves out what other places show', () => {
+  test('lists Conditions and Service changes together, the latest first, and leaves out what other places show', () => {
     const events = systemEvents(
       {
         changes: [
@@ -42,27 +42,18 @@ describe('systemEvents', () => {
             service: 'web',
             system: 'server-1',
           },
-          {
-            action: 'raised',
-            at: NOW - HOUR,
-            condition: 'high_memory',
-            conditionId: 'c1',
-            kind: 'condition',
-            subject: '',
-            system: 'server-1',
-          },
         ],
         conditions: [
           mark({ clearedAt: NOW - 30 * MINUTE, kind: 'high_memory', raisedAt: NOW - HOUR }),
           mark({ kind: 'pending_update', level: 'note' }),
           mark({ kind: 'service_restarted', level: 'note', subject: 'web' }),
         ],
+        paired: true,
       },
       WINDOW,
     );
 
     expect(events).toEqual([
-      { at: version.at, kind: 'change', text: 'web 1.8.2 → 1.8.3, restarted' },
       {
         at: NOW - HOUR,
         end: NOW - 30 * MINUTE,
@@ -70,6 +61,81 @@ describe('systemEvents', () => {
         level: 'warning',
         text: 'High memory, warning',
       },
+      { at: version.at, kind: 'change', text: 'web 1.8.2 → 1.8.3, restarted' },
+    ]);
+  });
+
+  test('puts Conditions still open first, however long ago they were raised, then the rest by when they ended or happened', () => {
+    const events = systemEvents(
+      {
+        changes: [{ ...version, at: NOW - 10 * MINUTE }],
+        conditions: [
+          mark({ clearedAt: NOW - 5 * HOUR, kind: 'drift', raisedAt: NOW - 6 * HOUR }),
+          mark({ kind: 'low_disk', raisedAt: WINDOW.from - 9 * HOUR, subject: '/backup' }),
+          mark({ clearedAt: NOW - 20 * MINUTE, kind: 'high_cpu', raisedAt: NOW - 2 * HOUR }),
+        ],
+        paired: true,
+      },
+      WINDOW,
+    );
+
+    expect(events.map(({ text }) => text)).toEqual([
+      'Low disk /backup, warning',
+      'web 1.8.2 → 1.8.3',
+      'High CPU, warning',
+      'Drift, warning',
+    ]);
+  });
+
+  test('keeps a Pending update or Reboot required that rose above a note, which the Maintenance line does not show', () => {
+    const events = systemEvents(
+      {
+        changes: [],
+        conditions: [
+          mark({ kind: 'pending_update', level: 'warning' }),
+          mark({
+            kind: 'reboot_required',
+            level: 'note',
+            transitions: [
+              { at: NOW - HOUR, backfilled: false, kind: 'raised', level: 'warning', reason: '' },
+              {
+                at: NOW - 20 * MINUTE,
+                backfilled: false,
+                kind: 'level_changed',
+                level: 'note',
+                previousLevel: 'warning',
+                reason: '',
+              },
+            ],
+          }),
+        ],
+        paired: true,
+      },
+      WINDOW,
+    );
+
+    expect(events.map(({ text }) => text).toSorted()).toEqual([
+      'Pending update, warning',
+      'Reboot required, warning',
+    ]);
+  });
+
+  test("keeps an unpaired System's notes, which no Maintenance line or Services page shows", () => {
+    const events = systemEvents(
+      {
+        changes: [],
+        conditions: [
+          mark({ kind: 'pending_update', level: 'note' }),
+          mark({ kind: 'service_restarted', level: 'note', subject: 'web' }),
+        ],
+        paired: false,
+      },
+      WINDOW,
+    );
+
+    expect(events.map(({ text }) => text).toSorted()).toEqual([
+      'Pending update, note',
+      'Service restarted web, note',
     ]);
   });
 
@@ -95,6 +161,7 @@ describe('systemEvents', () => {
             ],
           }),
         ],
+        paired: true,
       },
       WINDOW,
     );
@@ -109,6 +176,7 @@ describe('systemEvents', () => {
         conditions: [
           mark({ clearedAt: WINDOW.from - HOUR, kind: 'drift', raisedAt: WINDOW.from - 2 * HOUR }),
         ],
+        paired: true,
       },
       WINDOW,
     );

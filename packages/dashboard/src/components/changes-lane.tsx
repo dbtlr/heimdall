@@ -8,10 +8,12 @@ import { cn } from '../lib/utils.ts';
 import type { SystemDetail } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
 import { DetailTrack } from './detail-track.tsx';
+import { MoreItems } from './more-items.tsx';
 
 const ROW_PX = 11;
 const DIAMOND_ROW_PX = 14;
-// Events listed under the lane before "and N more".
+// Events listed under the lane, the latest first, before the rest wait behind
+// a disclosure.
 const EVENTS_SHOWN = 6;
 
 const LEVELS = [
@@ -58,15 +60,15 @@ function EventItem({ event, now }: { event: SystemEvent; now: number }) {
 
 // The System's Conditions open in the window as spans, colored by level and
 // stacked where they overlap, a diamond for each Service change, and the same
-// events as a line under them.
+// events as a line under them, the latest first.
 export function ChangesLane({
   detail,
   window,
 }: {
-  detail: Pick<SystemDetail, 'changes' | 'conditions' | 'now'>;
+  detail: Pick<SystemDetail, 'changes' | 'conditions' | 'now' | 'paired'>;
   window: Window;
 }) {
-  const marks = laneConditions(detail.conditions, window);
+  const marks = laneConditions(detail.conditions, { paired: detail.paired, window });
   const events = systemEvents(detail, window);
   const rows = packRows(
     marks.map((mark) => ({ end: mark.clearedAt ?? window.to, start: mark.raisedAt })),
@@ -113,16 +115,25 @@ export function ChangesLane({
               )}
             </div>
           </DetailTrack>
-          <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px]">
-            {events.slice(0, EVENTS_SHOWN).map((event) => (
-              <EventItem event={event} key={`${String(event.at)}-${event.text}`} now={detail.now} />
-            ))}
-            {events.length > EVENTS_SHOWN && (
-              <li className="text-muted-foreground">and {events.length - EVENTS_SHOWN} more</li>
-            )}
-          </ul>
+          <EventLine events={events.slice(0, EVENTS_SHOWN)} now={detail.now} />
+          {events.length > EVENTS_SHOWN && (
+            <MoreItems label={`Show ${String(events.length - EVENTS_SHOWN)} earlier events`}>
+              <EventLine events={events.slice(EVENTS_SHOWN)} now={detail.now} />
+            </MoreItems>
+          )}
         </>
       )}
     </>
+  );
+}
+
+// The events as one wrapping line, in the order given.
+function EventLine({ events, now }: { events: readonly SystemEvent[]; now: number }) {
+  return (
+    <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px]">
+      {events.map((event) => (
+        <EventItem event={event} key={`${String(event.at)}-${event.text}`} now={now} />
+      ))}
+    </ul>
   );
 }

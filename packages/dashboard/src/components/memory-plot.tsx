@@ -38,7 +38,7 @@ export function MemoryPlot({
 }: {
   buckets: readonly MemoryBucket[];
   height?: number;
-  limitPercent?: number;
+  limitPercent?: number | undefined;
   window: Window;
 }) {
   const fill = usePlotGradientId();

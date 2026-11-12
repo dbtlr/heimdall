@@ -1,0 +1,1 @@
+- **A time a week or more ago carries its date** (HMD-231). Where the dashboard writes a past time as a weekday and clock time, one from a week or more before today now reads "Tue 3 Nov 06:04", so it no longer reads as this week.

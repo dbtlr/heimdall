@@ -23,9 +23,6 @@ import { SystemMaintenanceLine } from './system-open-conditions.tsx';
 import { RailConditions, RailJobs, RailServices } from './system-rail.tsx';
 import { TimeAxis } from './time-axis.tsx';
 
-// The limit the Hub judges CPU and memory by, unless the System overrides it.
-const LIMIT_PERCENT = 90;
-
 // One chart of the stack: its title and what it shows, a key at the right,
 // and the chart under them.
 function Chart({
@@ -44,7 +41,9 @@ function Chart({
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
         <h2 className="text-[13px]">
           <b className="font-semibold">{title}</b>
-          {note !== undefined && <span className="text-muted-foreground"> {note}</span>}
+          {note !== undefined && note !== '' && (
+            <span className="text-muted-foreground"> {note}</span>
+          )}
         </h2>
         {aside}
       </div>
@@ -54,6 +53,11 @@ function Chart({
 }
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
+
+// What a chart's note says of its limit: the percent the Hub judges by, or
+// nothing while the Hub has stored no limits.
+const limitWords = (limit: number | undefined) =>
+  limit === undefined ? [] : [`limit ${String(limit)}%`];
 
 // The wide System page: one card stacking CPU busy, the agent Sessions, memory,
 // load, and the Conditions and changes on one time axis, with the pinned sample
@@ -80,7 +84,7 @@ export function SystemOverview({
   const timeZone = useTimeZone();
   const window = { from: detail.from, to: detail.to };
   const sampleX = sample === null ? 0 : xPercent(sample.t, window);
-  const { latest } = detail;
+  const { latest, limitPercent } = detail;
   const total = latest === undefined ? undefined : formatGiB(latest.memoryTotalBytes);
   return (
     <>
@@ -95,7 +99,7 @@ export function SystemOverview({
           >
             <DetailAxis onSelect={onSelect} selected={sample?.t} window={window}>
               <Chart
-                note={`average, low–high band · limit ${String(LIMIT_PERCENT)}%`}
+                note={['average, low–high band', ...limitWords(limitPercent?.cpu)].join(' · ')}
                 title="CPU busy"
               >
                 <DetailTrack>
@@ -109,13 +113,17 @@ export function SystemOverview({
                     buckets={detail.cpu}
                     height={110}
                     label="CPU busy"
-                    limits={[
-                      {
-                        color: LEVEL_STROKE.note,
-                        label: `${String(LIMIT_PERCENT)}% limit`,
-                        value: LIMIT_PERCENT,
-                      },
-                    ]}
+                    limits={
+                      limitPercent === undefined
+                        ? []
+                        : [
+                            {
+                              color: LEVEL_STROKE.note,
+                              label: `${String(limitPercent.cpu)}% limit`,
+                              value: limitPercent.cpu,
+                            },
+                          ]
+                    }
                     window={window}
                   />
                 </DetailTrack>
@@ -124,18 +132,22 @@ export function SystemOverview({
                 <SessionLanes sessions={detail.sessions} system={detail.name} window={window} />
               </Chart>
               <Chart
-                note={`${total === undefined ? '' : `of ${total} GiB · `}limit ${String(LIMIT_PERCENT)}%`}
+                note={[
+                  ...(total === undefined ? [] : [`of ${total} GiB`]),
+                  ...limitWords(limitPercent?.memory),
+                ].join(' · ')}
                 title="Memory used"
               >
                 <DetailTrack>
                   <MemoryPlot
                     buckets={detail.memory}
                     height={96}
-                    limitPercent={LIMIT_PERCENT}
+                    limitPercent={limitPercent?.memory}
                     window={window}
                   />
                 </DetailTrack>
               </Chart>
+              {/* No line at the core count: no Collector reports one yet. */}
               <Chart title="Load (1 min)">
                 <DetailTrack>
                   <LoadPlot buckets={detail.load} height={80} window={window} />

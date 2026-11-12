@@ -1,6 +1,8 @@
+import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { readAttention } from './attention.ts';
+import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import { isRange, RANGES } from './fleet-overview-types.ts';
 import type { Link, Range } from './fleet-overview-types.ts';
@@ -16,8 +18,8 @@ import {
   toMark,
 } from './fleet-overview.ts';
 import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
-import { readChanges } from './home-cards.ts';
-import type { Change } from './home-types.ts';
+import { readServiceChanges } from './home-cards.ts';
+import type { ServiceChange } from './home-types.ts';
 import {
   byCheck,
   field,
@@ -225,6 +227,7 @@ const readSystemDetailSnapshot = async (
     open,
     silenced,
     changes,
+    limits,
   ]: [
     { installs: HarnessInstall[] }[],
     LatestRow[],
@@ -236,7 +239,8 @@ const readSystemDetailSnapshot = async (
     ConditionRow[],
     { n: number }[],
     Map<string, number>,
-    Change[],
+    ServiceChange[],
+    ConditionLimitSet | undefined,
   ] = await Promise.all([
     sql`SELECT installs FROM harness_installs WHERE system = ${name}`,
     sql`
@@ -296,7 +300,8 @@ const readSystemDetailSnapshot = async (
     `,
     sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL AND level <> 'note'`,
     readSilencedUntil(sql, { now, systems: [name] }),
-    readChanges(sql, { now, since: from, system: name }),
+    readServiceChanges(sql, { now, since: from, system: name }),
+    readConditionLimits(sql, name),
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
@@ -333,6 +338,8 @@ const readSystemDetailSnapshot = async (
             t: newest.t.getTime(),
             uptimeSeconds: newest.uptime_seconds,
           },
+    limitPercent:
+      limits === undefined ? undefined : { cpu: limits.cpu.percent, memory: limits.memory.percent },
     load: load.map((row): LoadBucket => ({ t: row.bucket.getTime(), value: row.load })),
     memory: memory.map((row): MemoryBucket => ({
       t: row.bucket.getTime(),

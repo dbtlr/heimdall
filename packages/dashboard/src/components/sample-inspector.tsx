@@ -99,7 +99,7 @@ export function SampleInspector({
             <dt className="text-muted-foreground">Memory</dt>
             <dd>
               <b className="font-semibold">
-                {formatGiB(sample.memoryUsedBytes)} / {formatGiB(sample.memoryTotalBytes)} GB
+                {formatGiB(sample.memoryUsedBytes)} / {formatGiB(sample.memoryTotalBytes)} GiB
               </b>
               {sample.memoryTotalBytes > 0 && (
                 <span className="block text-xs text-muted-foreground">
