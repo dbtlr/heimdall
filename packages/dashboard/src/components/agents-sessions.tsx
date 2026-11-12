@@ -378,7 +378,9 @@ export function AgentsSessions({
       )}
       {table.sessions.length === 0 ? (
         <p className="card-surface rounded-xl border px-4 py-5 text-muted-foreground">
-          No requests in this period.
+          {pick === undefined
+            ? 'No requests in this period.'
+            : `No Sessions ${preposition} ${pick} in this period.`}
         </p>
       ) : (
         <>

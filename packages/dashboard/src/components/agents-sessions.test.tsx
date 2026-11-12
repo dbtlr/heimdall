@@ -111,13 +111,15 @@ test('period Session rows link with every identity field and describe observed r
   expect(html).toContain('aider Session two');
 });
 
-test('a picked row shows a chip that clears the pick, and a pick with no Sessions shows the empty state', async () => {
+test('a picked row shows a chip that clears the pick, and a pick with no Sessions says the pick has none rather than the period', async () => {
   const html = await renderSessions([], { pick: 'heimdall' });
   expect(html).toContain('Sessions in');
   expect(html).toMatch(/<a(?=[^>]*href="\/agents\?[^"]*")(?![^>]*pick=)[^>]*>heimdall/u);
-  expect(html).toContain('No requests in this period.');
+  expect(html).toContain('No Sessions in heimdall in this period.');
+  expect(html).not.toContain('No requests in this period.');
   const plain = await renderSessions([]);
   expect(plain).not.toContain('Sessions in');
+  expect(plain).toContain('No requests in this period.');
   // The chip is as tall as the other controls.
   expect(html).toContain('min-h-11');
   expect(html).not.toContain('min-h-9');

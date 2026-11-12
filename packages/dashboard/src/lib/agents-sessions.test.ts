@@ -139,6 +139,18 @@ test('Duration sorts by how long a Session ran, and a Session with no project or
   expect(order('model', 'desc').at(-1)).toBe('loose');
 });
 
+test('a Session whose only requests had an empty model sorts last by model both ways, as an unknown model', () => {
+  const sessions = [
+    session({ sessionId: 'known-a', topModel: 'a-model' }),
+    session({ sessionId: 'empty', topModel: '' }),
+    session({ sessionId: 'known-z', topModel: 'z-model' }),
+  ];
+  const order = (dir: SessionsQuery['dir']) =>
+    sessionsPage(sessions, query({ dir, sort: 'model' }), NOW).sessions.map((one) => one.sessionId);
+  expect(order('asc')).toEqual(['known-a', 'known-z', 'empty']);
+  expect(order('desc')).toEqual(['known-z', 'known-a', 'empty']);
+});
+
 test('running Sessions lead every sort, a pick filters before the table is paged, and a page past the end reads as the first', () => {
   const sessions = [
     ...Array.from({ length: 30 }, (_, index) =>

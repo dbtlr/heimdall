@@ -1,4 +1,4 @@
-import { SESSIONS_PER_PAGE } from '../server/agents-overview-types.ts';
+import { NO_KEY, SESSIONS_PER_PAGE } from '../server/agents-overview-types.ts';
 import type {
   AgentsSession,
   SessionSort,
@@ -81,12 +81,13 @@ export const pageButtons = (page: number, pages: number): (number | 'gap')[] => 
   return buttons;
 };
 
-// What each column sorts a Session by; undefined sorts last both ways.
+// What each column sorts a Session by; undefined sorts last both ways, and so
+// does an empty model, which the table shows as unknown.
 const SORT_VALUES: Record<SessionSort, (session: AgentsSession) => number | string | undefined> = {
   cost: (session) => session.pricedCostUsd,
   duration: (session) => session.lastRequestAt - session.firstRequestAt,
   harness: (session) => session.harness,
-  model: (session) => session.topModel,
+  model: (session) => (session.topModel === NO_KEY ? undefined : session.topModel),
   project: (session) => session.project,
   requests: (session) => session.requests,
   started: (session) => session.firstRequestAt,
