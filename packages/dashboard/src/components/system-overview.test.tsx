@@ -201,3 +201,10 @@ test('lists each Service with its installed version and the update on offer, cou
   expect(html).toContain('8.2.1');
   expect(html.match(/data-update="[^"]*"/gu)).toEqual(['data-update="2.10.3"']);
 });
+
+test('reads a Service whose installed version is unknown as a muted "unknown", as the Services page does', async () => {
+  const html = await render(undefined, {}, [service('cron', null, undefined)]);
+  const [, rail = ''] = html.split('id="rail-services"');
+
+  expect(rail).toContain('<span class="text-muted-foreground">unknown</span>');
+});

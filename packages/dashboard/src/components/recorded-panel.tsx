@@ -43,20 +43,22 @@ function Row({
       <span
         className={cn('size-2 self-center rounded-full', state !== undefined && RECORD_DOT[state])}
       />
-      <b className="flex min-w-0 flex-wrap items-baseline gap-x-2 font-semibold wrap-anywhere">
-        {system === undefined ? (
-          name
-        ) : (
-          <Link
-            className="text-primary"
-            params={{ name: system, service: name }}
-            to="/systems/$name/services/$service"
-          >
-            {name}
-          </Link>
-        )}
+      <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 wrap-anywhere">
+        <b className="font-semibold">
+          {system === undefined ? (
+            name
+          ) : (
+            <Link
+              className="text-primary"
+              params={{ name: system, service: name }}
+              to="/systems/$name/services/$service"
+            >
+              {name}
+            </Link>
+          )}
+        </b>
         {version}
-      </b>
+      </span>
       <span className="col-start-2 min-w-0 wrap-anywhere text-muted-foreground sm:col-start-auto">
         {children}
       </span>

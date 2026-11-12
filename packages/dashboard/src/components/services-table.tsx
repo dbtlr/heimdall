@@ -5,6 +5,7 @@ import type { ServiceStatus, ServiceSummary } from '../lib/services.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { PhraseText } from './date-time.tsx';
+import { InstalledVersion } from './service-version.tsx';
 
 const DOT: Record<ServiceStatus, string> = {
   down: 'bg-status-critical',
@@ -71,7 +72,7 @@ export function ServicesTable({ now, rows }: { now: number; rows: readonly Servi
               className="max-w-28 overflow-hidden px-2 py-4 align-top text-ellipsis whitespace-nowrap sm:max-w-none sm:overflow-visible sm:px-3 sm:whitespace-normal sm:wrap-anywhere"
               title={row.version ?? 'unknown'}
             >
-              {row.version ?? <span className="text-muted-foreground">unknown</span>}
+              <InstalledVersion version={row.version} />
               {row.update !== undefined && (
                 <span className="block overflow-hidden text-sm text-ellipsis text-muted-foreground">
                   → {row.update}
