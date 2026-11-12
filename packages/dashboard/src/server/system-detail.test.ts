@@ -174,6 +174,13 @@ const detail = async (h: Hub, name = 'server-1', range: '12h' | '24h' | '6h' | '
   return found;
 };
 
+// One disk rollup of `system`'s `mount`, `daysAgo` before NOW, of 100 GiB.
+const rollup = (h: Hub, system: string, mount: string, daysAgo: number, usedGiB: number) =>
+  h.db.sql`
+    INSERT INTO disk_rollups (system, bucket, mount, used_max, total_max)
+    VALUES (${system}, ${new Date(NOW - daysAgo * DAY)}, ${mount}, ${usedGiB * GIB}, ${100 * GIB})
+  `;
+
 describe('parseDetailInput', () => {
   test('takes the System and range, and opens on 12 hours', () => {
     expect(parseDetailInput({ name: 'server-1', range: '7d' })).toEqual({
@@ -313,7 +320,7 @@ describe('readSystemDetail', () => {
     expect(found.load[0]?.value).toBeCloseTo(3, 9);
   });
 
-  test('carries the CPU and memory limits the Hub judges this System by: its own, else the fleet, else none', async () => {
+  test('carries the CPU and memory limits and disk bands the Hub judges this System by: its own, else the fleet, else none', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await hear(h, 'laptop-1');
@@ -324,67 +331,67 @@ describe('readSystemDetail', () => {
       h.db.sql,
       parseConditionLimits({
         cpu: { percent: 75 },
+        disk: { alert: 95, note: 75, warning: 85 },
         memory: { percent: 80 },
-        systems: { 'server-1': { cpu: { percent: 60 }, memory: { percent: 70 } } },
+        systems: {
+          'server-1': {
+            cpu: { percent: 60 },
+            disk: { alert: 90, note: 60, warning: 80 },
+            memory: { percent: 70 },
+          },
+        },
       }),
     );
 
-    expect((await detail(h, 'server-1')).limitPercent).toMatchObject({ cpu: 60, memory: 70 });
-    expect((await detail(h, 'laptop-1')).limitPercent).toMatchObject({ cpu: 75, memory: 80 });
+    expect((await detail(h, 'server-1')).limitPercent).toEqual({
+      cpu: 60,
+      disk: { alert: 90, note: 60, warning: 80 },
+      memory: 70,
+    });
+    expect((await detail(h, 'laptop-1')).limitPercent).toEqual({
+      cpu: 75,
+      disk: { alert: 95, note: 75, warning: 85 },
+      memory: 80,
+    });
   });
 
-  test('carries the disk bands the Hub judges this System by: its own, else the fleet', async () => {
+  test("fits each mount's growth over the last 7 days whatever the range, from this System's readings alone", async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await hear(h, 'laptop-1');
-    await storeConditionLimits(
-      h.db.sql,
-      parseConditionLimits({
-        disk: { alert: 95, note: 75, warning: 85 },
-        systems: { 'server-1': { disk: { alert: 90, note: 60, warning: 80 } } },
-      }),
-    );
-
-    expect((await detail(h, 'server-1')).limitPercent?.disk).toEqual({
-      alert: 90,
-      note: 60,
-      warning: 80,
-    });
-    expect((await detail(h, 'laptop-1')).limitPercent?.disk).toEqual({
-      alert: 95,
-      note: 75,
-      warning: 85,
-    });
-  });
-
-  test("carries each mount's growth over the last 7 days whatever the range, from readings a day or more apart", async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
     await h.db.sql`DELETE FROM disk_rollups`;
-    const rollup = (mount: string, daysAgo: number, usedGiB: number) =>
-      h.db.sql`
-        INSERT INTO disk_rollups (system, bucket, mount, used_max, total_max)
-        VALUES ('server-1', ${new Date(NOW - daysAgo * DAY)}, ${mount}, ${usedGiB * GIB}, ${100 * GIB})
-      `;
-    // `/` gains 2 GiB a day; the reading 9 days back is outside the window.
+    // server-1's `/` gains 2 GiB a day; the reading 9 days back is outside the
+    // window, and laptop-1's `/` shrinks.
     await Promise.all([
-      rollup('/', 9, 1),
-      rollup('/', 3, 44),
-      rollup('/', 2, 46),
-      rollup('/', 1, 48),
-      rollup('/', 0, 50),
-      rollup('/data', 3, 60),
-      rollup('/data', 0, 60),
-      rollup('/new', 0.5, 10),
-      rollup('/new', 0, 11),
+      rollup(h, 'server-1', '/', 9, 1),
+      rollup(h, 'server-1', '/', 3, 44),
+      rollup(h, 'server-1', '/', 2, 46),
+      rollup(h, 'server-1', '/', 1, 48),
+      rollup(h, 'server-1', '/', 0, 50),
+      rollup(h, 'laptop-1', '/', 3, 90),
+      rollup(h, 'laptop-1', '/', 0, 30),
     ]);
 
     const { diskTrends } = await detail(h, 'server-1', '6h');
-    const byMount = new Map(diskTrends.map((trend) => [trend.mount, trend.growth]));
 
-    expect(byMount.get('/')?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
-    expect(byMount.get('/data')?.bytesPerDay).toBeCloseTo(0, -3);
-    expect(byMount.get('/new')).toBeUndefined();
+    expect(diskTrends).toHaveLength(1);
+    expect(diskTrends[0]?.growth?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
+  });
+
+  test('fits a silent System over the 7 days up to its newest disk reading, not up to now', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await h.db.sql`DELETE FROM disk_rollups`;
+    // Heard last 8 days ago, after a fortnight of gaining 2 GiB a day; a reading
+    // stamped after now is no reading yet.
+    await Promise.all([
+      ...Array.from({ length: 15 }, (_, day) => rollup(h, 'server-1', '/', 22 - day, 2 * day)),
+      rollup(h, 'server-1', '/', -1, 99),
+    ]);
+
+    const { diskTrends } = await detail(h, 'server-1');
+
+    expect(diskTrends[0]?.growth?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
   });
 
   test("carries this System's Service changes over the range, and no other System's, earlier ones, or Conditions", async () => {

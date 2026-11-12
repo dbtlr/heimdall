@@ -94,8 +94,9 @@ export function RailConditions({ items, now }: { items: readonly Attention[]; no
   );
 }
 
-// The Services its provisioner recorded, each with the supervisor that runs it
-// and, when it is not up, what the checks say.
+// The Services its provisioner recorded, each with the supervisor that runs it,
+// its installed version and any available update, and, when it is not up, what
+// the checks say. The count names how many have an update.
 export function RailServices({
   now,
   recorded,

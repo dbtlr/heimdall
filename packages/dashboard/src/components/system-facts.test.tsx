@@ -3,6 +3,7 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { diskForecast, forecastWords } from '../lib/disk-forecast.ts';
 import { readSystemPage } from '../server/system-detail.ts';
 import { SystemDisks, SystemFacts } from './system-facts.tsx';
 
@@ -76,45 +77,51 @@ test('disk bars use the stored Hub level instead of inferring urgency from disk 
 });
 
 const GIB = 1024 ** 3;
+const BANDS = { alert: 90, note: 70, warning: 80 };
+const ROOT = { mount: '/', totalBytes: 100 * GIB, usedBytes: 74 * GIB };
+const DATA = { mount: '/data', totalBytes: 100 * GIB, usedBytes: 10 * GIB };
 
-const disksDetail = (growth: { bytesPerDay: number } | undefined, bands: boolean) => ({
+const disksDetail = ({ bands }: { bands: boolean }) => ({
   conditions: [],
-  diskTrends: [{ growth, mount: '/' }],
-  harnesses: undefined,
+  diskTrends: [
+    { growth: { bytesPerDay: 5 * GIB }, mount: '/data' },
+    { growth: { bytesPerDay: 2 * GIB }, mount: '/' },
+  ],
   latest: {
     cpuBusyPercent: 1,
-    disks: [{ mount: '/', totalBytes: 100 * GIB, usedBytes: 74 * GIB }],
+    disks: [ROOT, DATA],
     load: [0, 0, 0] as [number, number, number],
     memoryTotalBytes: 100,
     memoryUsedBytes: 1,
     t: 0,
     uptimeSeconds: 100,
   },
-  limitPercent: bands
-    ? { cpu: 90, disk: { alert: 90, note: 70, warning: 80 }, memory: 90 }
-    : undefined,
+  limitPercent: bands ? { cpu: 90, disk: BANDS, memory: 90 } : undefined,
   now: 0,
 });
 
-test('a disk shows ticks at the Hub bands, its growth, and when it reaches the next band', () => {
-  const html = renderToStaticMarkup(
-    <SystemDisks detail={disksDetail({ bytesPerDay: 2 * GIB }, true)} />,
-  );
+test("each disk draws the Hub's bands as ticks and forecasts from its own mount's growth", () => {
+  const html = renderToStaticMarkup(<SystemDisks detail={disksDetail({ bands: true })} />);
   expect([...html.matchAll(/data-band="(\d+)"/gu)].map(([, band]) => band)).toEqual([
     '70',
     '80',
     '90',
+    '70',
+    '80',
+    '90',
   ]);
-  expect(html).toContain('+2 GiB/day · 80% in about 3 days');
+  for (const [disk, bytesPerDay] of [
+    [ROOT, 2 * GIB],
+    [DATA, 5 * GIB],
+  ] as const) {
+    expect(html).toContain(
+      forecastWords(diskForecast({ bands: BANDS, disk, growth: { bytesPerDay } })),
+    );
+  }
 });
 
-test('a disk says why it has no forecast, and draws no ticks while the Hub has stored no bands', () => {
-  const flat = renderToStaticMarkup(
-    <SystemDisks detail={disksDetail({ bytesPerDay: 0 }, false)} />,
-  );
-  expect(flat).toContain('Not growing over the last 7 days, so no forecast.');
-  expect(flat).not.toContain('data-band');
-  expect(renderToStaticMarkup(<SystemDisks detail={disksDetail(undefined, true)} />)).toContain(
-    'Under a day of readings, so no forecast.',
-  );
+test('a disk draws no ticks while the Hub has stored no bands', () => {
+  expect(
+    renderToStaticMarkup(<SystemDisks detail={disksDetail({ bands: false })} />),
+  ).not.toContain('data-band');
 });

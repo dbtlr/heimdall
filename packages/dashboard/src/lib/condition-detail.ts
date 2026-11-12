@@ -15,13 +15,11 @@ import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
 import { memoryHoldersView } from './detail.ts';
 import type { MemoryHoldersView } from './detail.ts';
-import { diskGrowth } from './disk-growth.ts';
+import { diskGrowth, gibWords, growthWords, isGrowing, reachWords } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';
 import type { Window } from './time.ts';
 
-const GIB = 1024 ** 3;
-const MIB = 1024 ** 2;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
@@ -90,9 +88,6 @@ export type ConditionDetailView = {
   title: string;
 };
 
-const plural = (count: number, one: string, many: string) =>
-  `${String(count)} ${count === 1 ? one : many}`;
-
 // "7 days" or "24 h": a length of time.
 const spanWords = (span: number) =>
   span >= 2 * DAY_MS
@@ -101,12 +96,6 @@ const spanWords = (span: number) =>
 
 // The length of the chart's window.
 const windowWords = ({ from, to }: Window) => spanWords(to - from);
-
-// "38 GiB", or "3.2 GiB" below ten.
-const gib = (bytes: number) => {
-  const value = bytes / GIB;
-  return `${value >= 10 ? String(Math.round(value)) : value.toFixed(1)} GiB`;
-};
 
 const cores = (count: number) => (count > 1 ? `${String(count)} cores` : `${String(count)} core`);
 
@@ -317,7 +306,7 @@ const diskHeroText = (
   mount: string,
   cleared: boolean,
 ): Phrase => [
-  `${cleared ? 'used when it cleared' : 'used'}. ${gib(totalBytes - usedBytes)} free of ${gib(totalBytes)} on ${mount}.`,
+  `${cleared ? 'used when it cleared' : 'used'}. ${gibWords(totalBytes - usedBytes)} free of ${gibWords(totalBytes)} on ${mount}.`,
 ];
 
 const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
@@ -332,25 +321,14 @@ const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
     growth === undefined ||
     first === undefined ||
     last === undefined ||
-    growth.bytesPerDay < MIB ||
+    !isGrowing(growth) ||
     growth.daysUntilFull === undefined
   ) {
     return undefined;
   }
-  const perDay =
-    growth.bytesPerDay >= GIB
-      ? gib(growth.bytesPerDay)
-      : `${String(Math.round(growth.bytesPerDay / MIB))} MiB`;
-  const days = Math.round(growth.daysUntilFull);
-  let fills = `in about ${plural(days, 'day', 'days')}`;
-  if (growth.daysUntilFull < 1) {
-    fills = 'in under a day';
-  } else if (growth.daysUntilFull >= 365) {
-    fills = 'in over a year';
-  }
   return {
     estimate: true,
-    text: `+${perDay} a day over the last ${spanWords(last.t - first.t)}. At that rate it is full ${fills}.`,
+    text: `${growthWords(growth.bytesPerDay)} over the last ${spanWords(last.t - first.t)}. At that rate it is full ${reachWords(growth.daysUntilFull)}.`,
   };
 };
 

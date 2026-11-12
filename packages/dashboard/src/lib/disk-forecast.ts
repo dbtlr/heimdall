@@ -1,4 +1,5 @@
 import type { Disk } from '../server/system-detail-types.ts';
+import { growthWords, isGrowing, reachWords } from './disk-growth.ts';
 import type { DiskGrowth } from './disk-growth.ts';
 
 // The used percents at which the Hub raises a Low disk note, warning, and alert.
@@ -10,12 +11,9 @@ export type DiskForecast =
   | { bytesPerDay: number; days: number; kind: 'growing'; percent: number }
   | { kind: 'none'; reason: 'few-readings' | 'not-growing' };
 
-const MIB = 1024 ** 2;
-const GIB = 1024 ** 3;
-const TIB = 1024 ** 4;
-
 // The next band above the mount's use, else full, and the days to reach it at
-// the fitted growth. `growth` is undefined with under a day of readings.
+// the fitted growth: 0 for a mount already full. `growth` is undefined with
+// under a day of readings; growth under a MiB a day is not growing.
 export const diskForecast = ({
   bands,
   disk,
@@ -28,7 +26,7 @@ export const diskForecast = ({
   if (growth === undefined) {
     return { kind: 'none', reason: 'few-readings' };
   }
-  if (growth.bytesPerDay <= 0 || disk.totalBytes <= 0) {
+  if (!isGrowing(growth) || disk.totalBytes <= 0) {
     return { kind: 'none', reason: 'not-growing' };
   }
   const used = (disk.usedBytes / disk.totalBytes) * 100;
@@ -45,23 +43,8 @@ export const diskForecast = ({
   };
 };
 
-const rate = (bytesPerDay: number) => {
-  let [unit, bytes] = ['MiB', MIB] as [string, number];
-  if (bytesPerDay >= TIB) {
-    [unit, bytes] = ['TiB', TIB];
-  } else if (bytesPerDay >= GIB / 10) {
-    [unit, bytes] = ['GiB', GIB];
-  }
-  const value = bytesPerDay / bytes;
-  return `+${String(Number(value >= 100 ? value.toFixed(0) : value.toFixed(1)))} ${unit}/day`;
-};
-
-const dayWords = (days: number) => {
-  const whole = Math.round(days);
-  return days < 1 ? 'under a day' : `about ${String(whole)} ${whole === 1 ? 'day' : 'days'}`;
-};
-
-// A forecast as the Disks card says it.
+// A forecast as the Disks card says it, in the Condition page's words for
+// growth and time: "+2.1 GiB a day · 80% in about 3 days".
 export const forecastWords = (forecast: DiskForecast): string => {
   if (forecast.kind === 'none') {
     return forecast.reason === 'few-readings'
@@ -69,5 +52,5 @@ export const forecastWords = (forecast: DiskForecast): string => {
       : 'Not growing over the last 7 days, so no forecast.';
   }
   const target = forecast.percent >= 100 ? 'full' : `${String(forecast.percent)}%`;
-  return `${rate(forecast.bytesPerDay)} · ${target} in ${dayWords(forecast.days)}`;
+  return `${growthWords(forecast.bytesPerDay)} · ${target} ${reachWords(forecast.days)}`;
 };

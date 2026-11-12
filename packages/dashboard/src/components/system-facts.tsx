@@ -164,8 +164,9 @@ function Harnesses({ installs }: { installs: readonly HarnessInstall[] }) {
 }
 
 // What the Collector last said about the System that the plots do not draw:
-// its load averages, the use of each disk, and its Harness installs. A fact the
-// System never sent is left out, and so is the whole card when none was sent.
+// its load averages, the use and growth of each disk, and its Harness
+// installs. A fact the System never sent is left out, and so is the whole card
+// when none was sent.
 export function SystemFacts({
   detail,
 }: {
@@ -222,8 +223,9 @@ const WIDE_CARD = 'min-w-0 card-surface rounded-xl border px-4 py-3.5';
 const WIDE_HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
 // The card of each disk's use, under the charts on a wide screen: used of
-// total, with the Low disk level when one is open on it, its growth and
-// forecast, dated as the System facts are when the sample is no longer current.
+// total with a tick at each band the Hub judges disks by, the Low disk level
+// when one is open on it, and its growth over 7 days with the next band it
+// reaches, dated as the System facts are when the sample is no longer current.
 // Nothing without a sample.
 export function SystemDisks({
   detail,

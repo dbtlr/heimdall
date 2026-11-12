@@ -50,8 +50,9 @@ export type SessionRow = {
 // One mount of the newest Vitals sample.
 export type Disk = { mount: string; totalBytes: number; usedBytes: number };
 
-// How fast a mount filled over the last 7 days, whatever the page's range;
-// growth is undefined with under a day of readings.
+// How fast a mount filled over the 7 days up to the System's newest disk
+// reading, whatever the page's range; growth is undefined with under a day of
+// readings.
 export type DiskTrend = { growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined; mount: string };
 
 // One install of a Harness: which, its version, and the kind of place the
@@ -65,7 +66,8 @@ export type SystemDetail = {
   collectorVersion: string | undefined;
   conditions: ConditionMark[];
   cpu: CpuBucket[];
-  // Each mount's growth over the last 7 days, for the mounts with readings.
+  // Each mount's growth over the 7 days up to its newest reading, for the
+  // mounts with readings.
   diskTrends: DiskTrend[];
   from: number;
   gaps: Gap[];
@@ -86,8 +88,9 @@ export type SystemDetail = {
         uptimeSeconds: number;
       }
     | undefined;
-  // The CPU and memory percent the Hub judges this System by, its own limits
-  // else the fleet's; undefined while the Hub has stored none.
+  // The CPU and memory percent and the Low disk bands the Hub judges this
+  // System by, its own limits else the fleet's; undefined while the Hub has
+  // stored none.
   limitPercent: { cpu: number; disk: DiskBands; memory: number } | undefined;
   // The 1-minute load average per 5-minute bucket.
   load: LoadBucket[];

@@ -30,15 +30,14 @@ test('names only full while the Hub has stored no bands', () => {
   });
 });
 
-test('gives no forecast for flat or shrinking growth', () => {
-  expect(diskForecast({ bands: BANDS, disk: disk(50), growth: growing(0) })).toEqual({
-    kind: 'none',
-    reason: 'not-growing',
-  });
-  expect(diskForecast({ bands: BANDS, disk: disk(50), growth: growing(-1) })).toEqual({
-    kind: 'none',
-    reason: 'not-growing',
-  });
+test('gives no forecast for growth under a MiB a day, which is churn on a flat mount', () => {
+  // 50 GiB used, wobbling a few MiB: the fitted line tilts by kilobytes a day.
+  for (const bytesPerDay of [24_293, 0, -GIB]) {
+    expect(diskForecast({ bands: BANDS, disk: disk(50), growth: { bytesPerDay } })).toEqual({
+      kind: 'none',
+      reason: 'not-growing',
+    });
+  }
 });
 
 test('gives no forecast without a trend, which needs a day of readings', () => {
@@ -50,16 +49,18 @@ test('gives no forecast without a trend, which needs a day of readings', () => {
 
 test('says growth and the next band in words, and why there is no forecast', () => {
   const growth = diskForecast({ bands: BANDS, disk: disk(74), growth: growing(2) });
-  expect(forecastWords(growth)).toBe('+2 GiB/day · 80% in about 3 days');
-  const full = diskForecast({ bands: undefined, disk: disk(10), growth: growing(0.1) });
-  expect(forecastWords(full)).toBe('+0.1 GiB/day · full in about 900 days');
-  expect(forecastWords(diskForecast({ bands: BANDS, disk: disk(74), growth: growing(80) }))).toBe(
-    '+80 GiB/day · 80% in under a day',
-  );
+  expect(forecastWords(growth)).toBe('+2.0 GiB a day · 80% in about 3 days');
   expect(forecastWords({ kind: 'none', reason: 'not-growing' })).toBe(
     'Not growing over the last 7 days, so no forecast.',
   );
   expect(forecastWords({ kind: 'none', reason: 'few-readings' })).toBe(
     'Under a day of readings, so no forecast.',
+  );
+});
+
+test('a full mount that still grows is full now', () => {
+  const full = { mount: '/', totalBytes: 100 * GIB, usedBytes: 100 * GIB };
+  expect(forecastWords(diskForecast({ bands: BANDS, disk: full, growth: growing(1) }))).toBe(
+    '+1.0 GiB a day · full now',
   );
 });
