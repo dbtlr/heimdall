@@ -174,6 +174,13 @@ const detail = async (h: Hub, name = 'server-1', range: '12h' | '24h' | '6h' | '
   return found;
 };
 
+// One disk rollup of `system`'s `mount`, `daysAgo` before NOW, of 100 GiB.
+const rollup = (h: Hub, system: string, mount: string, daysAgo: number, usedGiB: number) =>
+  h.db.sql`
+    INSERT INTO disk_rollups (system, bucket, mount, used_max, total_max)
+    VALUES (${system}, ${new Date(NOW - daysAgo * DAY)}, ${mount}, ${usedGiB * GIB}, ${100 * GIB})
+  `;
+
 describe('parseDetailInput', () => {
   test('takes the System and range, and opens on 12 hours', () => {
     expect(parseDetailInput({ name: 'server-1', range: '7d' })).toEqual({
@@ -313,7 +320,7 @@ describe('readSystemDetail', () => {
     expect(found.load[0]?.value).toBeCloseTo(3, 9);
   });
 
-  test('carries the CPU and memory limits the Hub judges this System by: its own, else the fleet, else none', async () => {
+  test('carries the CPU and memory limits and disk bands the Hub judges this System by: its own, else the fleet, else none', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
     await hear(h, 'laptop-1');
@@ -324,13 +331,70 @@ describe('readSystemDetail', () => {
       h.db.sql,
       parseConditionLimits({
         cpu: { percent: 75 },
+        disk: { alert: 95, note: 75, warning: 85 },
         memory: { percent: 80 },
-        systems: { 'server-1': { cpu: { percent: 60 }, memory: { percent: 70 } } },
+        systems: {
+          'server-1': {
+            cpu: { percent: 60 },
+            disk: { alert: 90, note: 60, warning: 80 },
+            memory: { percent: 70 },
+          },
+        },
       }),
     );
 
-    expect((await detail(h, 'server-1')).limitPercent).toEqual({ cpu: 60, memory: 70 });
-    expect((await detail(h, 'laptop-1')).limitPercent).toEqual({ cpu: 75, memory: 80 });
+    expect((await detail(h, 'server-1')).limitPercent).toEqual({
+      cpu: 60,
+      disk: { alert: 90, note: 60, warning: 80 },
+      memory: 70,
+    });
+    expect((await detail(h, 'laptop-1')).limitPercent).toEqual({
+      cpu: 75,
+      disk: { alert: 95, note: 75, warning: 85 },
+      memory: 80,
+    });
+  });
+
+  test("fits each mount's growth over the last 7 days whatever the range, from this System's readings alone", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM disk_rollups`;
+    // server-1's `/` gains 2 GiB a day; the reading 9 days back is outside the
+    // window, and laptop-1's `/` shrinks.
+    await Promise.all([
+      rollup(h, 'server-1', '/', 9, 1),
+      rollup(h, 'server-1', '/', 3, 44),
+      rollup(h, 'server-1', '/', 2, 46),
+      rollup(h, 'server-1', '/', 1, 48),
+      rollup(h, 'server-1', '/', 0, 50),
+      rollup(h, 'laptop-1', '/', 3, 90),
+      rollup(h, 'laptop-1', '/', 0, 30),
+    ]);
+
+    const { diskTrends } = await detail(h, 'server-1', '6h');
+
+    expect(diskTrends).toHaveLength(1);
+    expect(diskTrends[0]?.growth?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
+  });
+
+  test('fits a silent System over the 7 days up to its newest disk reading, not up to now', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM disk_rollups`;
+    // Heard last 8 days ago, after a fortnight of gaining 2 GiB a day; a reading
+    // stamped after now is no reading yet. Another System still reporting today
+    // does not move this System's window.
+    await Promise.all([
+      ...Array.from({ length: 15 }, (_, day) => rollup(h, 'server-1', '/', 22 - day, 2 * day)),
+      rollup(h, 'server-1', '/', -1, 99),
+      rollup(h, 'laptop-1', '/', 0, 10),
+    ]);
+
+    const { diskTrends } = await detail(h, 'server-1');
+
+    expect(diskTrends[0]?.growth?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
   });
 
   test("carries this System's Service changes over the range, and no other System's, earlier ones, or Conditions", async () => {
@@ -959,7 +1023,53 @@ describe('readSystemRecords', () => {
         ],
         name: 'web',
         supervisor: 'systemd',
+        update: undefined,
+        version: null,
       },
+    ]);
+  });
+
+  test("reads a recorded Service's installed version and its available update, from the Services page's reader", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records });
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW)}),
+        ('laptop-1', 'web', '1.0', 'github:owner/other', ${new Date(NOW)})
+    `;
+    await h.db.sql`
+      INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, failure, next_check_at) VALUES
+        ('github:owner/web', '{"":"2.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)}),
+        ('github:owner/other', '{"":"1.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)})
+    `;
+
+    const server = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+    const laptop = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+
+    expect(server.recorded.services.map(({ update, version }) => ({ update, version }))).toEqual([
+      { update: '2.0', version: '1.0' },
+    ]);
+    expect(laptop.recorded.services.map(({ update, version }) => ({ update, version }))).toEqual([
+      { update: undefined, version: '1.0' },
+    ]);
+  });
+
+  test("keeps an unpaired System's recorded Services' installed versions on its own page", async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('laptop-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW)})
+    `;
+    await unpair(h.db.sql, 'laptop-1');
+
+    const laptop = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+
+    expect(laptop.recorded.services.map(({ name, version }) => ({ name, version }))).toEqual([
+      { name: 'web', version: '1.0' },
     ]);
   });
 

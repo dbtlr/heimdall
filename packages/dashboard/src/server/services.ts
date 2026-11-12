@@ -14,7 +14,11 @@ import type { UpstreamCheckRow } from './update-observations.ts';
 
 // Each paired System's Services: its Service records, and the Services an open
 // Service down Condition or Service restarted note names after their record went.
-export const serviceSubjects = (sql: SQL) => sql`
+// With `system`, that one System's, paired or not, since its own page keeps an
+// unpaired System's history.
+export const serviceSubjects = (sql: SQL, system?: string) =>
+  system === undefined
+    ? sql`
   SELECT r.system, r.name FROM mirrored_records r
   JOIN paired_systems p ON p.system = r.system
   WHERE r.kind = 'service'
@@ -22,6 +26,14 @@ export const serviceSubjects = (sql: SQL) => sql`
   SELECT c.system, c.subject AS name FROM conditions c
   JOIN paired_systems p ON p.system = c.system
   WHERE c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
+`
+    : sql`
+  SELECT r.system, r.name FROM mirrored_records r
+  WHERE r.kind = 'service' AND r.system = ${system}
+  UNION
+  SELECT c.system, c.subject AS name FROM conditions c
+  WHERE c.system = ${system}
+    AND c.kind IN ('service_down', 'service_restarted') AND c.cleared_at IS NULL
 `;
 
 type ServiceRow = UpstreamCheckRow & {
@@ -57,7 +69,10 @@ const currentChecks = (row: ServiceRow, now: number): boolean =>
 // `dated` reads what dates an available update: when each release of the
 // Service's upstream was found, and each upstream it has had. Without it both
 // come back null, so a caller that shows no date reads no history.
-const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<ServiceRow[]> => sql`
+const readServiceRows = (
+  sql: SQL,
+  { dated, system = null }: { dated: boolean; system?: string | null | undefined },
+): Promise<ServiceRow[]> => sql`
     SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, s.sleeps,
            down.raised_at AS down_since,
            EXISTS (
@@ -68,7 +83,7 @@ const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<Servi
            stop.stopped_at AS latest_stop_at, installed.version, installed.upstream,
            upstream.releases, upstream.checked_at, upstream.succeeded_at, upstream.failure,
            managers.observations, found.found, history.history
-    FROM (${serviceSubjects(sql)}) r
+    FROM (${serviceSubjects(sql, system ?? undefined)}) r
     LEFT JOIN systems s ON s.name = r.system
     LEFT JOIN check_sets c ON c.system = r.system
     LEFT JOIN LATERAL (
@@ -113,6 +128,7 @@ const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<Servi
       FROM service_versions
       WHERE ${dated} AND system = r.system AND service = r.name
     ) history ON true
+    WHERE (${system}::text IS NULL OR r.system = ${system})
   `;
 
 // A row's checks of its own Service, however old.
@@ -120,9 +136,13 @@ const heldChecks = (row: ServiceRow) =>
   (row.services ?? []).filter(({ service }) => service === row.name);
 
 // Each Service's status, latest stop, installed version, and available update,
-// read in one statement from one snapshot.
-export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
-  const rows = await readServiceRows(sql, { dated: false });
+// read in one statement from one snapshot; one System's when `system` names it.
+export const readServices = async (
+  sql: SQL,
+  now = Date.now(),
+  system?: string,
+): Promise<ServiceSummary[]> => {
+  const rows = await readServiceRows(sql, { dated: false, system });
   return sortServices(
     rows.map((row) => {
       const downSince = row.down_since?.getTime();

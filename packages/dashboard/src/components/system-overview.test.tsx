@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test';
 
-import type { SystemDetail } from '../server/system-detail-types.ts';
+import type { Recorded, SystemDetail } from '../server/system-detail-types.ts';
 import { DetailAxis, SampleSlider } from './detail-track.tsx';
 import { renderRouted } from './render-routed.tsx';
 import { SystemOverview } from './system-overview.tsx';
 
 const GIB = 1024 ** 3;
+const BANDS = { alert: 90, note: 70, warning: 80 };
 const NOW = 1_800_000_000_000;
 const FROM = NOW - 6 * 3_600_000;
 
@@ -17,6 +18,7 @@ const detail = (
   collectorVersion: '1.0.0',
   conditions: [],
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 300_000 }],
+  diskTrends: [],
   from: FROM,
   gaps: [],
   harnesses: [],
@@ -50,6 +52,7 @@ const detail = (
 const render = (
   limitPercent: SystemDetail['limitPercent'],
   overrides: Partial<SystemDetail> = {},
+  services: Recorded['services'] = [],
 ) =>
   renderRouted(
     <SystemOverview
@@ -59,7 +62,7 @@ const render = (
       failed={false}
       loading={false}
       onSelect={() => {}}
-      recorded={{ applications: [], files: [], jobs: [], services: [] }}
+      recorded={{ applications: [], files: [], jobs: [], services }}
       sample={null}
     />,
   );
@@ -69,7 +72,7 @@ const limitLines = (html: string) =>
   [...html.matchAll(/data-limit="([^"]*)"/gu)].map(([, value]) => Number(value));
 
 test('draws and names the CPU and memory limits the Hub judges this System by', async () => {
-  const html = await render({ cpu: 60, memory: 70 });
+  const html = await render({ cpu: 60, disk: BANDS, memory: 70 });
 
   // CPU at 60% of its scale; memory at 70% of the System's 10 GiB.
   expect(limitLines(html)).toEqual([60, 7]);
@@ -90,7 +93,7 @@ test('draws and names no limit while the Hub has stored none', async () => {
 test("draws the memory limit at its share of the System's own memory when that is under the scale's 1 GiB floor", async () => {
   const MIB = 1024 ** 2;
   const html = await render(
-    { cpu: 60, memory: 80 },
+    { cpu: 60, disk: BANDS, memory: 80 },
     { memory: [{ t: NOW - 300_000, totalBytes: 512 * MIB, usedBytes: 256 * MIB }] },
   );
 
@@ -176,4 +179,32 @@ const renderSlider = (at: number) =>
 test('the time slider stands at the window edge when the pinned time lies outside it, as after a range change', async () => {
   expect(sliderValue(await renderSlider(FROM - 3 * 3_600_000))).toBe(String(FROM));
   expect(sliderValue(await renderSlider(NOW + 3_600_000))).toBe(String(NOW));
+});
+
+const service = (name: string, version: string | null, update: string | undefined) => ({
+  checks: [],
+  name,
+  supervisor: 'systemd',
+  update,
+  version,
+});
+
+test('lists each Service with its installed version and the update on offer, counting the updates', async () => {
+  const html = await render(undefined, {}, [
+    service('caddy', '2.10.2', '2.10.3'),
+    service('redis', '8.2.1', undefined),
+    service('cron', null, undefined),
+  ]);
+
+  expect(html).toContain('3 · 1 update');
+  expect(html).toContain('2.10.2');
+  expect(html).toContain('8.2.1');
+  expect(html.match(/data-update="[^"]*"/gu)).toEqual(['data-update="2.10.3"']);
+});
+
+test('reads a Service whose installed version is unknown as a muted "unknown", as the Services page does', async () => {
+  const html = await render(undefined, {}, [service('cron', null, undefined)]);
+  const [, rail = ''] = html.split('id="rail-services"');
+
+  expect(rail).toContain('<span class="text-muted-foreground">unknown</span>');
 });

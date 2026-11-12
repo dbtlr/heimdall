@@ -159,11 +159,11 @@ The dashboard opens with one briefing that joins System health and agent work, a
 - Home replaces the Fleet page and its desktop twin, Compare: a verdict sentence, the Conditions that need attention with their evidence, agent cost today against the usual pace with the Sessions running now, a tile per System, maintenance, what changed in the last 24 hours, and jobs.
 - A top bar with Home, Systems, Services, Agents, Maintenance, and Activity and a jump box replaces the sidebar and its list of Systems. On a phone the bottom bar holds Home, Services, Agents, Activity, and More.
 - Pending update and Reboot required notes move to a Maintenance page with the available Service updates, as Service restarted notes moved to Services in M10. The Hub still raises them, so the Timeline is unchanged, and a note that steps up to a warning returns to the open Conditions.
-- A System page is one overview on a desktop: Vitals with a scale and limit lines, Sessions under CPU so a peak names its Session, and Services, jobs, and disks beside them. Its tabs remain on a phone.
+- A System page is one overview on a desktop: Vitals with a scale and limit lines, Sessions under CPU so a peak names its Session, and Services with their versions and updates, jobs, and disks with their growth beside them. Its tabs remain on a phone.
 - The Agents page charts cost per day and lists Sessions in a table with pages, in place of one card per Session.
 - A Jobs page lists every recorded job with its runs. An Activity page replaces the Timeline page and Compare: it groups events that happen together, adds version changes and alerts sent, and puts every System and agent cost on one time axis where a chosen moment names its Sessions.
 - The Collector reports the five processes holding the most memory, so a High memory Condition shows what holds it.
-- Later in the milestone: ranges of 30 days and a year from the rollups already kept, availability history for a Service and a System, disk growth on the System page, a page per project, and a page for the Hub's own status.
+- Later in the milestone: ranges of 30 days and a year from the rollups already kept, availability history for a Service and a System, a page per project, and a page for the Hub's own status.
 - Order: a visual system, navigation, and Home first, each from a chosen mock; then the System and Agents pages; then Maintenance, Jobs, and Activity; then the later items. Each phase ships alone.
 
 Size: large. Sharp edges: a baseline for the usual pace of agent cost, a rule for which events group together, and the storage a second process list adds to raw samples.

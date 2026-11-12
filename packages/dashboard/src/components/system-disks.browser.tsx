@@ -30,7 +30,17 @@ const heading = (t: number) => {
   document.body.append(container);
   const root = createRoot(container);
   flushSync(() =>
-    root.render(<SystemDisks detail={{ conditions: [], latest: latest(t), now: NOW }} />),
+    root.render(
+      <SystemDisks
+        detail={{
+          conditions: [],
+          diskTrends: [],
+          latest: latest(t),
+          limitPercent: undefined,
+          now: NOW,
+        }}
+      />,
+    ),
   );
   const text = container.querySelector('h2')?.textContent ?? '';
   flushSync(() => root.unmount());
@@ -42,7 +52,10 @@ try {
   const old = heading(NOW - 2 * HOUR);
   assert(old.startsWith('Disks, as of '), `An old sample's disks are dated, not "${old}"`);
   const current = heading(NOW - 60_000);
-  assert(current === 'Disks', `A current sample's disks are not dated, not "${current}"`);
+  assert(
+    current === 'Disks growth over 7 days',
+    `A current sample's disks are not dated, not "${current}"`,
+  );
   document.body.textContent = 'System disks DOM tests passed';
 } catch (error) {
   document.body.textContent =
