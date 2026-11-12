@@ -10,6 +10,22 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.11.0 - 2026-11-12
+
+### Features
+
+- **A System's page opens on one overview** (HMD-231). On a wide screen, CPU busy, agent Sessions, memory used, 1-minute load, and the System's Conditions and changes share one time axis with one pinned sample, which the arrow, Home, and End keys move along the axis as a click does, and the sample's inspector, open Conditions, Services, and jobs with their next run sit in a rail beside them. The CPU and memory charts draw the limits the Hub judges the System by, and the line of events under Conditions and changes lists the latest first, with the earlier ones behind a disclosure. The memory limit is a share of the memory the System has, even under the chart's 1 GiB floor. The most recently active Sessions keep their lanes, and the System's Harness process plots, when it ran any, open from a disclosure under them. The load chart has no line at the core count yet, because no Collector reports one. Disks, installed Harnesses, and the Maintenance line sit under the charts: the disks name their sample's time when it is old, and each maintenance note links to its Condition. Records and Timeline stay as tabs beside the overview. The phone keeps its Now, Vitals, and Sessions tabs.
+
+- **Agents charts the cost per day and picking a key filters the Sessions** (HMD-233). One stacked chart shows the cost of each local day in your time zone, or of each hour since midnight on Today, split by Project, Harness, Model, or System. The legend lists each key's total and share, with a hint that picking a key filters the Sessions; a tap on a key dims the rest and filters the Session list, and a dashed mark on today's bar shows what is usually spent by now. The 7- and 30-day charts say from what time their first bar counts. Today against usual by now, the range total, and the Sessions running now sit beside the title; on a phone, they sit in a card under it.
+
+- **Agents lists Sessions in a sortable, paged table** (HMD-234). The table shows when each Session started, its project and branch, Harness, top model, System, duration, requests, and cost, newest first. Any column header sorts it, 25 Sessions show per page, and the sort and page are in the address so a view can be linked. Sessions with a request in the last 5 minutes stay at the top on every sort, and picking a key in the chart legend still filters the table. On a phone the Sessions are cards with a Newest, Cost, and Duration switch.
+
+- **A System's page shows each Service's version and each disk's growth** (HMD-232). The Services list beside the overview gives every Service's installed version, or a muted "unknown" as on the Services page, and, when one is on offer, an update tag with its version; the count says how many have one. The Disks card shows each mount's use with a tick at the Hub's note, warning, and alert limits, how fast it grew per day over the 7 days up to its newest reading whatever range the page shows, and how long until it reaches the next limit or is full, in the words the Low disk Condition page uses. A mount growing under 1 MiB a day, or with under a day of readings, says there is no forecast. A full mount that still grows reads "full now", on the Condition page too, where it read "in under a day". The phone shows the same under Vitals (disks) and Records (Services).
+
+### Fixes
+
+- **A time a week or more ago carries its date** (HMD-231). Where the dashboard writes a past time as a weekday and clock time, one from a week or more before today now reads "Tue 3 Nov 06:04", so it no longer reads as this week.
+
 ## v0.10.2 - 2026-11-11
 
 ### Features
