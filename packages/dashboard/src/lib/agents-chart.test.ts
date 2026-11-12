@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 
 import type { CostCell } from '../server/agents-overview-types.ts';
 import type { BreakdownRow } from './agents-breakdown.ts';
-import { barStacks, chartBuckets, costDomain, OTHERS_KEY } from './agents-chart.ts';
+import { barStacks, chartBuckets, costDomain, hourNames, OTHERS_KEY } from './agents-chart.ts';
 
 const HOUR = 3_600_000;
 
@@ -61,10 +61,13 @@ const cell = (overrides: Partial<CostCell>): CostCell => ({
   ...overrides,
 });
 
-test('a bar stacks its keys in the legend order, and keys without a color merge into others on top', () => {
+test('a bar stacks its keys in the legend order, and keys past the fifth merge into others on top', () => {
   const rows = [
     row('api', 'var(--series-1)'),
     row('fleet', 'var(--series-2)'),
+    row('s3', 'var(--series-3)'),
+    row('s4', 'var(--series-4)'),
+    row('s5', 'var(--series-5)'),
     row('tail-1', 'var(--chart-other)'),
     row('tail-2', 'var(--chart-other)'),
   ];
@@ -93,4 +96,38 @@ test('the value scale tops out at a whole step above the costliest bar', () => {
   expect(costDomain(31.5)).toEqual([0, 40]);
   expect(costDomain(8.7)).toEqual([0, 10]);
   expect(costDomain(0)).toEqual([0, 0.02]);
+});
+
+test('the repeated hour of a clock change gets its zone offset, and other hours keep plain names', () => {
+  const midnight = Date.UTC(2026, 9, 24, 22); // 25 October 00:00 in Berlin
+  const { buckets } = chartBuckets('today', midnight, midnight + 4.5 * HOUR, 'Europe/Berlin');
+  const names = hourNames(buckets, 'Europe/Berlin');
+  expect(names).toHaveLength(5);
+  expect(names[0]).toBe('00:00');
+  expect(names[1]).toBe('01:00');
+  expect(names[2]).not.toBe(names[3]);
+  expect(names[2]).toStartWith('02:00');
+  expect(names[3]).toStartWith('02:00');
+  expect(names[4]).toBe('03:00');
+});
+
+test('seven Harness-colored keys give at most five named segments plus others', () => {
+  const rows = Array.from({ length: 7 }, (_, index) =>
+    row(`harness-${String(index)}`, `var(--harness-${String(index)})`),
+  );
+  const [stack] = barStacks(
+    rows.map((r, index) => cell({ harness: r.key, pricedCostUsd: 10 - index })),
+    1,
+    'harness',
+    rows,
+  );
+  expect(stack?.segments.map(({ key }) => key)).toEqual([
+    'harness-0',
+    'harness-1',
+    'harness-2',
+    'harness-3',
+    'harness-4',
+    OTHERS_KEY,
+  ]);
+  expect(stack?.segments.at(-1)?.pricedCostUsd).toBe(5 + 4);
 });

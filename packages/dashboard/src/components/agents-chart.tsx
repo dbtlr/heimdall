@@ -1,5 +1,5 @@
-import { breakdownRows, NEUTRAL_COLOR } from '../lib/agents-breakdown.ts';
-import { barStacks, costDomain, OTHERS_KEY } from '../lib/agents-chart.ts';
+import { breakdownRows, LEGEND_SHOWN } from '../lib/agents-breakdown.ts';
+import { barStacks, costDomain, hourNames, OTHERS_KEY } from '../lib/agents-chart.ts';
 import type { BarStack } from '../lib/agents-chart.ts';
 import { scaleTicks, yPercent } from '../lib/chart-scale.ts';
 import type { Domain } from '../lib/chart-scale.ts';
@@ -45,7 +45,7 @@ const barName = (overview: AgentsOverview, index: number): string => {
   const { buckets, unit } = overview.chart;
   const start = buckets[index]?.start ?? 0;
   if (unit === 'hour') {
-    return `${formatClock(start, overview.timeZone)}${index === buckets.length - 1 ? ' (so far)' : ''}`;
+    return `${hourNames(buckets, overview.timeZone)[index] ?? ''}${index === buckets.length - 1 ? ' (so far)' : ''}`;
   }
   if (index === buckets.length - 1) {
     return 'Today (so far)';
@@ -126,14 +126,22 @@ export function AgentsChart({
   const stacks = barStacks(cells, buckets.length, by, rows);
   const usual = unit === 'day' ? overview.usualByNow : undefined;
   const domain = costDomain(Math.max(0, usual ?? 0, ...stacks.map(({ total }) => total)));
-  // The merged "others" segment is lit only while the pick is one of them.
-  const pickedColor = rows.find((row) => row.key === pick)?.color;
+  // The merged "others" segment is lit only while the pick is one of them,
+  // a row past the legend's fold.
+  const pickedPastFold = rows.findIndex((row) => row.key === pick) >= LEGEND_SHOWN;
   const dimmed = (key: string) =>
-    pick !== undefined && (key === OTHERS_KEY ? pickedColor !== NEUTRAL_COLOR : key !== pick);
+    pick !== undefined && (key === OTHERS_KEY ? !pickedPastFold : key !== pick);
   const per = unit === 'hour' ? 'hour' : 'day';
+  const keyNames = new Map(rows.map((row) => [row.key, row.name]));
+  const segmentName = (key: string) => (key === OTHERS_KEY ? 'Others' : (keyNames.get(key) ?? key));
   const summary = stacks
-    .map(({ total }, index) => `${barName(overview, index)} ${formatCost(total)}`)
-    .join(', ');
+    .map(({ segments, total }, index) => {
+      const parts = segments
+        .map((segment) => `${segmentName(segment.key)} ${formatCost(segment.pricedCostUsd)}`)
+        .join(', ');
+      return `${barName(overview, index)} ${formatCost(total)}${parts === '' ? '' : ` (${parts})`}`;
+    })
+    .join('; ');
   return (
     <section
       aria-labelledby="agents-chart-heading"

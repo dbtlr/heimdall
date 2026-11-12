@@ -285,3 +285,13 @@ test('each axis label sits centered under its own bar, and Today ends at the cha
 test('a hint beside the legend says picking a key filters the table', async () => {
   expect(await chart('harness')).toContain('Pick a key to filter the table');
 });
+
+test('the chart reads each bar aloud with every segment, the others one included', async () => {
+  const label = /aria-label="([^"]*)"[^>]*role="img"/u.exec(
+    await chart('project', undefined, many),
+  );
+  const text = label?.[1] ?? '';
+  expect(text).toContain('project-0 $10.00');
+  expect(text).toContain('project-4 $6.00');
+  expect(text).toContain('Others $9.00');
+});

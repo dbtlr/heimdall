@@ -7,10 +7,11 @@ import type {
   CostBucket,
   CostCell,
 } from '../server/agents-overview-types.ts';
-import { NEUTRAL_COLOR } from './agents-breakdown.ts';
+import { LEGEND_SHOWN, NEUTRAL_COLOR } from './agents-breakdown.ts';
 import type { BreakdownRow } from './agents-breakdown.ts';
 import { niceDomain } from './chart-scale.ts';
 import type { Domain } from './chart-scale.ts';
+import { formatClock } from './time.ts';
 
 // The bars for a period from `from` to `now` in `timeZone`: the Today range
 // has one per local hour since midnight, the current hour included and still
@@ -48,6 +49,21 @@ export const chartBuckets = (
   return { buckets, unit: 'day' };
 };
 
+// Each hourly bar's name: its "HH:MM" clock time, plus the zone's short name
+// (such as "CEST") only on a time that a clock change makes appear twice.
+export const hourNames = (buckets: readonly CostBucket[], timeZone: string): string[] => {
+  const clocks = buckets.map(({ start }) => formatClock(start, timeZone));
+  const zoneName = (start: number) =>
+    new Intl.DateTimeFormat('en-GB', { timeZone, timeZoneName: 'short' })
+      .formatToParts(start)
+      .find((part) => part.type === 'timeZoneName')?.value ?? '';
+  return clocks.map((clock, index) =>
+    clocks.indexOf(clock) === clocks.lastIndexOf(clock)
+      ? clock
+      : `${clock} ${zoneName(buckets[index]?.start ?? 0)}`,
+  );
+};
+
 export type StackSegment = { color: string; key: string; pricedCostUsd: number };
 export type BarStack = { segments: StackSegment[]; total: number };
 
@@ -59,8 +75,8 @@ const keyOf = (by: AgentsBreakdown, cell: CostCell): string =>
 
 // Each bar's stack split by `by`, the segments in the legend's order from the
 // bottom up, so a key sits at the same height in every bar. Keys with a color
-// of their own get a segment each; the rest merge into one "others" segment
-// on top.
+// of their own (the first LEGEND_SHOWN rows) get a segment each; the rest merge
+// into one "others" segment on top.
 export const barStacks = (
   cells: readonly CostCell[],
   bucketCount: number,
@@ -70,12 +86,13 @@ export const barStacks = (
   const order = new Map(rows.map((row, index) => [row.key, index]));
   const colors = new Map(rows.map((row) => [row.key, row.color]));
   const rank = (key: string) => order.get(key) ?? Number.MAX_SAFE_INTEGER;
+  const isOther = (key: string) => rank(key) >= LEGEND_SHOWN;
   return Array.from({ length: bucketCount }, (_, bucket) => {
     const costs = new Map<string, number>();
     for (const cell of cells) {
       if (cell.bucket === bucket && cell.pricedCostUsd > 0) {
         const key = keyOf(by, cell);
-        const shown = (colors.get(key) ?? NEUTRAL_COLOR) === NEUTRAL_COLOR ? OTHERS_KEY : key;
+        const shown = isOther(key) ? OTHERS_KEY : key;
         costs.set(shown, (costs.get(shown) ?? 0) + cell.pricedCostUsd);
       }
     }
