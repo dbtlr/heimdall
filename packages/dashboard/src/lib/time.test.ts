@@ -7,6 +7,7 @@ import {
   formatCost,
   formatDate,
   formatDated,
+  formatPast,
   formatSpanShort,
   formatTime,
   formatWhen,
@@ -139,5 +140,17 @@ test('formatDated reads Today and the clock on the day of now, else the date and
   expect(formatDated(early, now, 'America/New_York')).toBe('23 Oct 23:30');
   expect(formatTime(Date.UTC(2026, 9, 19, 2, 10), 'UTC', { format: 'dated', now })).toBe(
     '19 Oct 02:10',
+  );
+});
+
+test('formatPast dates a time from before yesterday, so one weeks ago never reads as this week', () => {
+  const now = Date.UTC(2026, 10, 12, 12, 0);
+  expect(formatPast(Date.UTC(2026, 10, 12, 3, 30), now, 'UTC')).toBe('03:30');
+  expect(formatPast(Date.UTC(2026, 10, 11, 21, 10), now, 'UTC')).toBe('Yesterday 21:10');
+  expect(formatPast(Date.UTC(2026, 10, 10, 14, 2), now, 'UTC')).toBe('10 Nov 14:02');
+  expect(formatPast(now - 29 * 86_400_000, now, 'UTC')).toBe('14 Oct 12:00');
+  // The local day decides: 03:30 UTC is the evening before in New York.
+  expect(formatPast(Date.UTC(2026, 10, 12, 3, 30), now, 'America/New_York')).toBe(
+    'Yesterday 22:30',
   );
 });

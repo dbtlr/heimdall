@@ -61,7 +61,6 @@ function Agents() {
     ? breakdownRows(overview, search.by).find((row) => row.key === search.pick)
     : undefined;
   const order = sessionsQueryOf(search);
-  const systems = ready ? new Set(overview.sessions.map((session) => session.system)).size : 0;
   return (
     <main className={`${contentFrame('wide')} pb-8`}>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 pt-5 pb-4 sm:pt-6">
@@ -69,9 +68,9 @@ function Agents() {
           <h1 className="text-[24px] font-semibold sm:text-[28px]">Agents</h1>
           {ready && (
             <p className="hidden text-sm text-muted-foreground sm:block">
-              List price · {overview.sessions.length}{' '}
-              {overview.sessions.length === 1 ? 'Session' : 'Sessions'} on {systems}{' '}
-              {systems === 1 ? 'System' : 'Systems'}{' '}
+              List price · {overview.sessionCount}{' '}
+              {overview.sessionCount === 1 ? 'Session' : 'Sessions'} on {overview.systemCount}{' '}
+              {overview.systemCount === 1 ? 'System' : 'Systems'}{' '}
               {overview.range === 'today' ? 'today' : `in ${rangeName(overview.range)}`}
             </p>
           )}
@@ -104,6 +103,7 @@ function Agents() {
               rangeText={overview.range === 'today' ? 'today' : `in ${rangeName(overview.range)}`}
               sort={order.sort}
               table={overview.table}
+              timeZone={overview.timeZone}
             />
             <p className="mt-3 text-sm text-muted-foreground">
               Token usage at API list prices, including subagents. Subscription charges may differ.

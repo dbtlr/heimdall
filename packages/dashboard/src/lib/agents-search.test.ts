@@ -87,12 +87,8 @@ test('the server reads the query a search describes, with newest first on page 1
 
 test('the server boundary rejects invalid periods and zones instead of reading different totals', () => {
   expect(parseAgentsInput({ range: '7d', timeZone: 'Europe/Berlin' })).toEqual({
-    by: 'project',
-    dir: 'desc',
-    page: 1,
-    pick: undefined,
+    ...sessionsQueryOf(agentsSearch({})),
     range: '7d',
-    sort: 'started',
     timeZone: 'Europe/Berlin',
   });
   for (const input of [

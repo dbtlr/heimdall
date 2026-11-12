@@ -1,5 +1,13 @@
 import { SESSIONS_PER_PAGE } from '../server/agents-overview-types.ts';
-import type { SessionSort, SortDirection } from '../server/agents-overview-types.ts';
+import type {
+  AgentsSession,
+  SessionSort,
+  SessionsPage,
+  SessionsQuery,
+  SortDirection,
+} from '../server/agents-overview-types.ts';
+import { sessionsIn } from './agents-breakdown.ts';
+import { isRunning } from './home-agents.ts';
 
 // Words sort from A, and a time or an amount from the most.
 const FIRST_DIRECTION: Record<SessionSort, SortDirection> = {
@@ -15,11 +23,14 @@ const FIRST_DIRECTION: Record<SessionSort, SortDirection> = {
 
 export const firstDirection = (sort: SessionSort): SortDirection => FIRST_DIRECTION[sort];
 
+// The table's order without a `sort` in the search: newest first.
+export const DEFAULT_SORT: SessionSort = 'started';
+
 // The search params of an order, leaving out what the table does anyway:
-// newest first is no `sort`, and a column's first direction is no `dir`.
+// the default sort is no `sort`, and a column's first direction is no `dir`.
 export const sortSearch = ({ dir, sort }: { dir: SortDirection; sort: SessionSort }) => ({
   dir: dir === FIRST_DIRECTION[sort] ? undefined : dir,
-  sort: sort === 'started' ? undefined : sort,
+  sort: sort === DEFAULT_SORT ? undefined : sort,
 });
 
 // What picking a column header sorts by: the column's first direction, or the
@@ -68,4 +79,85 @@ export const pageButtons = (page: number, pages: number): (number | 'gap')[] => 
     buttons.push(number);
   }
   return buttons;
+};
+
+// What each column sorts a Session by; undefined sorts last both ways.
+const SORT_VALUES: Record<SessionSort, (session: AgentsSession) => number | string | undefined> = {
+  cost: (session) => session.pricedCostUsd,
+  duration: (session) => session.lastRequestAt - session.firstRequestAt,
+  harness: (session) => session.harness,
+  model: (session) => session.topModel,
+  project: (session) => session.project,
+  requests: (session) => session.requests,
+  started: (session) => session.firstRequestAt,
+  system: (session) => session.system,
+};
+
+// Numbers by size and words by code unit, as the breakdown's keys are.
+const compareValues = (left: number | string, right: number | string): number => {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+
+// The Session's identity, which breaks every tie, so a Session keeps its
+// place from one page to the next whatever order the Sessions arrive in.
+const identityOf = (session: AgentsSession) =>
+  [session.system, session.harness, session.source, session.sessionId] as const;
+
+const compareIdentity = (left: AgentsSession, right: AgentsSession): number => {
+  const rightIdentity = identityOf(right);
+  for (const [index, part] of identityOf(left).entries()) {
+    const order = compareValues(part, rightIdentity[index] ?? '');
+    if (order !== 0) {
+      return order;
+    }
+  }
+  return 0;
+};
+
+// The order of the Sessions table: running Sessions first, then the column in
+// the direction asked, a Session with no value for it last, then identity.
+const compareSessions =
+  ({ dir, sort }: Pick<SessionsQuery, 'dir' | 'sort'>, now: number) =>
+  (left: AgentsSession, right: AgentsSession): number => {
+    const running =
+      Number(isRunning(right.lastRequestAt, now)) - Number(isRunning(left.lastRequestAt, now));
+    if (running !== 0) {
+      return running;
+    }
+    const leftValue = SORT_VALUES[sort](left);
+    const rightValue = SORT_VALUES[sort](right);
+    if (leftValue === undefined || rightValue === undefined) {
+      const missing = Number(leftValue === undefined) - Number(rightValue === undefined);
+      if (missing !== 0) {
+        return missing;
+      }
+    } else {
+      const order = compareValues(leftValue, rightValue);
+      if (order !== 0) {
+        return dir === 'asc' ? order : -order;
+      }
+    }
+    return compareIdentity(left, right);
+  };
+
+// The page of the period's Sessions the query asks for: those matching its
+// pick, sorted, 25 a page. A page past the last one reads as the first, so a
+// link to a page that no longer exists still shows Sessions.
+export const sessionsPage = (
+  sessions: readonly AgentsSession[],
+  { by, dir, page, pick, sort }: SessionsQuery,
+  now: number,
+): SessionsPage => {
+  const matching = pick === undefined ? [...sessions] : sessionsIn(sessions, by, pick);
+  const sorted = matching.toSorted(compareSessions({ dir, sort }, now));
+  const shown = page > pageCount(sorted.length) ? 1 : page;
+  const start = (shown - 1) * SESSIONS_PER_PAGE;
+  return {
+    page: shown,
+    sessions: sorted.slice(start, start + SESSIONS_PER_PAGE),
+    total: sorted.length,
+  };
 };

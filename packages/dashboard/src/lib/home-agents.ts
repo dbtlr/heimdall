@@ -61,10 +61,6 @@ export const isRunning = (lastRequestAt: number, now: number): boolean =>
 // What a "running" label says it means, wherever the dashboard shows one.
 export const RUNNING_TITLE = 'A request was observed in the last 5 minutes';
 
-// How many of `sessions` are running at `now`.
-export const runningCount = (sessions: readonly { lastRequestAt: number }[], now: number): number =>
-  sessions.filter(({ lastRequestAt }) => isRunning(lastRequestAt, now)).length;
-
 type Running = SessionKey & { lastRequestAt: number };
 
 const keyOf = ({ harness, sessionId, source, system }: SessionKey) =>

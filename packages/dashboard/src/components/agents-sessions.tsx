@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { nextSort, pageButtons, pageCount, pageRange, sortSearch } from '../lib/agents-sessions.ts';
 import { isRunning, RUNNING_TITLE } from '../lib/home-agents.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
-import { formatCost, formatSpan } from '../lib/time.ts';
+import { formatCost, formatPast, formatSpan } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { NO_KEY } from '../server/agents-overview-types.ts';
 import type {
@@ -13,7 +13,6 @@ import type {
   SessionsPage,
   SortDirection,
 } from '../server/agents-overview-types.ts';
-import { DateTime } from './date-time.tsx';
 
 // A Session lists a model it used; it sits in a project, on a System, or of a Harness.
 const filterPreposition = (by: AgentsBreakdown) => (by === 'model' ? 'using' : 'in');
@@ -51,6 +50,10 @@ const sessionParams = (session: AgentsSession) => ({
 
 const SESSION_ROUTE = '/systems/$name/sessions/$harness/$source/$sessionId' as const;
 
+// What a row or card needs: its Session, the time the page was read, and the
+// viewer's zone, which the page knows before it shows the table.
+type RowProps = { now: number; session: AgentsSession; timeZone: string };
+
 function ProjectBranch({ session }: { session: AgentsSession }) {
   return (
     <>
@@ -59,6 +62,16 @@ function ProjectBranch({ session }: { session: AgentsSession }) {
         <span className="font-normal text-muted-foreground"> {session.branch}</span>
       )}
     </>
+  );
+}
+
+// When the Session's first request was, dated once it is older than
+// yesterday, since a Session in a 30-day range can be weeks old.
+function Started({ now, session, timeZone }: RowProps) {
+  return (
+    <time className="tabular-nums" dateTime={new Date(session.firstRequestAt).toISOString()}>
+      {formatPast(session.firstRequestAt, now, timeZone)}
+    </time>
   );
 }
 
@@ -120,11 +133,11 @@ function SortHeader({
   );
 }
 
-function SessionRow({ now, session }: { now: number; session: AgentsSession }) {
+function SessionRow({ now, session, timeZone }: RowProps) {
   return (
     <tr className="relative border-b border-border/60 hover:bg-card focus-within:bg-card">
       <td className="px-2 py-3 align-top whitespace-nowrap tabular-nums">
-        <DateTime at={session.firstRequestAt} format="when" now={now} />
+        <Started now={now} session={session} timeZone={timeZone} />
         {isRunning(session.lastRequestAt, now) && <RunningTag className="block text-xs" />}
       </td>
       <td className="max-w-72 px-2 py-3 align-top break-words">
@@ -165,7 +178,7 @@ function SessionRow({ now, session }: { now: number; session: AgentsSession }) {
   );
 }
 
-function SessionCard({ now, session }: { now: number; session: AgentsSession }) {
+function SessionCard({ now, session, timeZone }: RowProps) {
   return (
     <li className="relative flex gap-3 border-b border-border/60 py-3 last:border-b-0">
       <span
@@ -186,7 +199,7 @@ function SessionCard({ now, session }: { now: number; session: AgentsSession }) 
         </Link>
         <p className="mt-0.5 text-sm break-words text-muted-foreground">
           {harnessName(session.harness)} · {session.system} ·{' '}
-          <DateTime at={session.firstRequestAt} format="when" now={now} /> ·{' '}
+          <Started now={now} session={session} timeZone={timeZone} /> ·{' '}
           {formatSpan(session.lastRequestAt - session.firstRequestAt)}
           {isRunning(session.lastRequestAt, now) && (
             <>
@@ -299,6 +312,7 @@ function Pager({ rangeText, table }: { rangeText: string; table: SessionsPage })
 // The Sessions of the period in a table, sortable by each column, and as
 // cards on a phone. `pick` names the breakdown row, of dimension `by`, the
 // list is filtered to, if any. `rangeText` finishes "of 96 Sessions …".
+// Times are written in `timeZone`, the viewer's.
 export function AgentsSessions({
   by,
   dir,
@@ -307,6 +321,7 @@ export function AgentsSessions({
   rangeText,
   sort,
   table,
+  timeZone,
 }: {
   by: AgentsBreakdown;
   dir: SortDirection;
@@ -315,6 +330,7 @@ export function AgentsSessions({
   rangeText: string;
   sort: SessionSort;
   table: SessionsPage;
+  timeZone: string;
 }) {
   const preposition = filterPreposition(by);
   const current = { dir, sort };
@@ -366,14 +382,24 @@ export function AgentsSessions({
               </thead>
               <tbody>
                 {table.sessions.map((session) => (
-                  <SessionRow key={sessionKey(session)} now={now} session={session} />
+                  <SessionRow
+                    key={sessionKey(session)}
+                    now={now}
+                    session={session}
+                    timeZone={timeZone}
+                  />
                 ))}
               </tbody>
             </table>
           </div>
           <ul className="sm:hidden">
             {table.sessions.map((session) => (
-              <SessionCard key={sessionKey(session)} now={now} session={session} />
+              <SessionCard
+                key={sessionKey(session)}
+                now={now}
+                session={session}
+                timeZone={timeZone}
+              />
             ))}
           </ul>
           <Pager rangeText={rangeText} table={table} />

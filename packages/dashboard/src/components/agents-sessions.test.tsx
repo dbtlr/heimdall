@@ -50,6 +50,7 @@ const renderSessions = async (
         rangeText="in 30 days"
         sort={sort}
         table={{ page, sessions, total }}
+        timeZone="UTC"
       />
     ),
     getParentRoute: () => root,
@@ -159,6 +160,24 @@ test('a Session is running for 5 minutes after its latest request, as on Home, o
   const rows = await renderSessions([edge], { now });
   expect(rows).toContain('>Running<');
   expect(await renderSessions([past], { now })).not.toContain('Running');
+});
+
+test('Started dates a Session from before yesterday, on its row and its card, so weeks apart never read alike', async () => {
+  const now = Date.UTC(2026, 10, 12, 12);
+  const html = await renderSessions(
+    [
+      { ...at(now - 22 * 86_400_000), sessionId: 'old' },
+      { ...at(Date.UTC(2026, 10, 11, 21, 10)), sessionId: 'yesterday' },
+      { ...at(Date.UTC(2026, 10, 12, 9, 5)), sessionId: 'today' },
+    ],
+    { now },
+  );
+  const text = html.replace(/<[^>]+>/gu, ' ');
+  // Once in the table and once on the phone's card.
+  expect(text.match(/21 Oct 12:00/gu)).toHaveLength(2);
+  expect(text.match(/Yesterday 21:10/gu)).toHaveLength(2);
+  expect(text).not.toContain('Wed 12:00');
+  expect(html).toContain(`dateTime="${new Date(Date.UTC(2026, 10, 12, 9, 5)).toISOString()}"`);
 });
 
 test('each column header links to its sort, flipping the direction of the sorted column and dropping the page, which is the first again', async () => {

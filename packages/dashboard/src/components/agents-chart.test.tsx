@@ -11,12 +11,14 @@ import {
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { breakdownTotals } from '../lib/agents-breakdown.ts';
 import { agentsSearch } from '../lib/agents-search.ts';
 import type {
   AgentsBreakdown,
   AgentsOverview,
   AgentsSession,
   CostCell,
+  ModelTotals,
 } from '../server/agents-overview-types.ts';
 import { AgentsChart } from './agents-chart.tsx';
 import { AgentsFigures } from './agents-headline.tsx';
@@ -52,7 +54,26 @@ const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   ...overrides,
 });
 
+const MODELS: ModelTotals[] = [
+  { model: 'big-model', pricedCostUsd: 12, requests: 3, unpricedRequests: 0 },
+  { model: 'small-model', pricedCostUsd: 4, requests: 2, unpricedRequests: 0 },
+];
+
+// The first is running, its latest request a minute old.
+const SESSIONS = [
+  session({}),
+  session({
+    harness: 'codex',
+    lastRequestAt: NOW - 3_600_000,
+    pricedCostUsd: 4,
+    project: 'fleet',
+    sessionId: 'two',
+    unpricedRequests: 0,
+  }),
+];
+
 const overview: AgentsOverview = {
+  breakdown: breakdownTotals(SESSIONS, MODELS),
   chart: {
     buckets: [0, 1, 2].map((index) => ({
       end: NOW - (2 - index) * DAY + DAY / 2,
@@ -66,23 +87,11 @@ const overview: AgentsOverview = {
     unit: 'day',
   },
   from: NOW - 7 * DAY,
-  models: [
-    { model: 'big-model', pricedCostUsd: 12, requests: 3, unpricedRequests: 0 },
-    { model: 'small-model', pricedCostUsd: 4, requests: 2, unpricedRequests: 0 },
-  ],
   now: NOW,
   range: '7d',
-  sessions: [
-    session({}),
-    session({
-      harness: 'codex',
-      lastRequestAt: NOW - 3_600_000,
-      pricedCostUsd: 4,
-      project: 'fleet',
-      sessionId: 'two',
-      unpricedRequests: 0,
-    }),
-  ],
+  running: SESSIONS.slice(0, 1),
+  sessionCount: 2,
+  systemCount: 1,
   table: { page: 1, sessions: [], total: 0 },
   timeZone: 'UTC',
   today: { pricedCostUsd: 8, requests: 2, unpricedRequests: 0 },
@@ -93,19 +102,22 @@ const overview: AgentsOverview = {
 // Seven projects in one bar: five with colors of their own, two merged into others.
 const many: AgentsOverview = {
   ...overview,
+  breakdown: breakdownTotals(
+    Array.from({ length: 7 }, (_, index) =>
+      session({
+        pricedCostUsd: 10 - index,
+        project: `project-${String(index)}`,
+        sessionId: String(index),
+      }),
+    ),
+    MODELS,
+  ),
   chart: {
     ...overview.chart,
     cells: Array.from({ length: 7 }, (_, index) =>
       cell({ pricedCostUsd: 10 - index, project: `project-${String(index)}` }),
     ),
   },
-  sessions: Array.from({ length: 7 }, (_, index) =>
-    session({
-      pricedCostUsd: 10 - index,
-      project: `project-${String(index)}`,
-      sessionId: String(index),
-    }),
-  ),
 };
 
 const render = async (
@@ -203,7 +215,10 @@ test('a note says unpriced requests may change the shares, only when there are s
   expect(
     await chart('model', undefined, {
       ...overview,
-      models: [{ model: 'mystery', pricedCostUsd: 0, requests: 1, unpricedRequests: 1 }],
+      breakdown: {
+        ...overview.breakdown,
+        model: [{ key: 'mystery', pricedCostUsd: 0, requests: 1, unpricedRequests: 1 }],
+      },
     }),
   ).toContain(note);
   expect(await chart('harness')).not.toContain(note);
@@ -212,9 +227,8 @@ test('a note says unpriced requests may change the shares, only when there are s
 test('with nothing priced the chart still draws a scale, without NaN', async () => {
   const html = await chart('project', undefined, {
     ...overview,
+    breakdown: breakdownTotals([], []),
     chart: { ...overview.chart, cells: [] },
-    models: [],
-    sessions: [],
   });
   expect(html).toContain('$0');
   expect(html).not.toContain('NaN');

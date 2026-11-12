@@ -4,7 +4,7 @@ import {
   SESSION_SORTS,
 } from '../server/agents-overview-types.ts';
 import type { SessionsQuery, SortDirection } from '../server/agents-overview-types.ts';
-import { firstDirection } from './agents-sessions.ts';
+import { DEFAULT_SORT, firstDirection } from './agents-sessions.ts';
 
 // The IANA zone named, as Intl resolves it, or undefined for anything else.
 export const validZone = (zone: unknown): string | undefined => {
@@ -31,7 +31,7 @@ const validPick = (pick: unknown): string | undefined =>
 // otherwise. A search holds only what differs from that, so a default stays
 // out of the address, and a column's own first direction is no `dir`.
 const validSort = (sort: unknown) =>
-  SESSION_SORTS.find((known) => known === sort && known !== 'started');
+  SESSION_SORTS.find((known) => known === sort && known !== DEFAULT_SORT);
 const validDirection = (dir: unknown): SortDirection | undefined =>
   dir === 'asc' || dir === 'desc' ? dir : undefined;
 
@@ -55,9 +55,10 @@ export const agentsSearch = (search: Record<string, unknown>) => ({
   zone: validZone(search.zone),
 });
 
-// The Sessions table's query with its defaults filled in.
+// The Sessions table's query with its defaults filled in. The one place they
+// are: the table's default query is `sessionsQueryOf(agentsSearch({}))`.
 export const sessionsQueryOf = (search: ReturnType<typeof agentsSearch>): SessionsQuery => {
-  const sort = search.sort ?? 'started';
+  const sort = search.sort ?? DEFAULT_SORT;
   return {
     by: search.by,
     dir: search.dir ?? firstDirection(sort),
