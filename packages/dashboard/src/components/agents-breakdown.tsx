@@ -86,7 +86,8 @@ function LegendKey({ picked, row }: { picked: boolean; row: BreakdownRow }) {
 }
 
 // The legend of the chart: every key with its total and share, the first five
-// and a "N more" control for the rest; a picked key among them keeps it open.
+// and a "N more" control for the rest, and from 640 px a hint that picking a
+// key filters the Sessions. A picked key past the fifth keeps the legend open.
 // The state belongs to one split, so the caller keys the legend by it.
 export function AgentsLegend({
   pick,
@@ -101,25 +102,28 @@ export function AgentsLegend({
   const hidden = rows.length - LEGEND_SHOWN;
   return (
     <div>
-      <ul aria-label="Keys of the chart" className="flex flex-wrap gap-2">
-        {(showAll ? rows : rows.slice(0, LEGEND_SHOWN)).map((row) => (
-          <LegendKey key={row.key} picked={row.key === pick} row={row} />
-        ))}
-        {hidden > 0 && !pickedPastFold && (
-          <li>
-            <button
-              aria-expanded={expanded}
-              className="min-h-11 rounded-lg px-2.5 text-sm text-muted-foreground"
-              onClick={() => {
-                setExpanded(!expanded);
-              }}
-              type="button"
-            >
-              {expanded ? 'Show fewer' : `${String(hidden)} more`}
-            </button>
-          </li>
-        )}
-      </ul>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <ul aria-label="Keys of the chart" className="flex flex-wrap gap-2">
+          {(showAll ? rows : rows.slice(0, LEGEND_SHOWN)).map((row) => (
+            <LegendKey key={row.key} picked={row.key === pick} row={row} />
+          ))}
+          {hidden > 0 && !pickedPastFold && (
+            <li>
+              <button
+                aria-expanded={expanded}
+                className="min-h-11 rounded-lg px-2.5 text-sm text-muted-foreground"
+                onClick={() => {
+                  setExpanded(!expanded);
+                }}
+                type="button"
+              >
+                {expanded ? 'Show fewer' : `${String(hidden)} more`}
+              </button>
+            </li>
+          )}
+        </ul>
+        <span className="hidden text-sm text-dim sm:inline">Pick a key to filter the table</span>
+      </div>
       {rows.some((row) => row.pricing !== 'exact') && (
         <p className="mt-2 text-sm text-muted-foreground">
           Unpriced requests may change these shares and this order.

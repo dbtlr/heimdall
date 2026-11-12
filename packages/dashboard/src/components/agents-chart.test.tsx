@@ -257,3 +257,30 @@ test('on a phone the figures show Today and Running now, and the period total on
   const html = await render(<AgentsFigures overview={overview} />);
   expect(html).toMatch(/<div class="hidden sm:block"><div[^>]*><p[^>]*>7 days</u);
 });
+
+// The time axis labels, in order: each label's class and text.
+const axisLabels = (html: string) =>
+  [...html.matchAll(/<span class="(absolute [^"]*whitespace-nowrap[^"]*)">([^<]+)<\/span>/gu)].map(
+    ([, className, text]) => ({ className, text }),
+  );
+
+test('each axis label sits centered under its own bar, and Today ends at the chart edge', async () => {
+  const days = axisLabels(await chart('project'));
+  expect(days.map(({ text }) => text)).toEqual(['4 Oct', '5 Oct', 'Today']);
+  expect(days[0]?.className).toContain('left-1/2 -translate-x-1/2');
+  expect(days[1]?.className).toContain('left-1/2 -translate-x-1/2');
+  expect(days[2]?.className).toContain('right-0');
+  const hours = axisLabels(
+    await chart('project', undefined, {
+      ...overview,
+      chart: { ...overview.chart, unit: 'hour' },
+      range: 'today',
+    }),
+  );
+  expect(hours.map(({ text }) => text)).toEqual(['00:00']);
+  expect(hours[0]?.className).toContain('left-1/2 -translate-x-1/2');
+});
+
+test('a hint beside the legend says picking a key filters the table', async () => {
+  expect(await chart('harness')).toContain('Pick a key to filter the table');
+});

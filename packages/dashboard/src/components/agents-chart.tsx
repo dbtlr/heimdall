@@ -4,6 +4,7 @@ import type { BarStack } from '../lib/agents-chart.ts';
 import { scaleTicks, yPercent } from '../lib/chart-scale.ts';
 import type { Domain } from '../lib/chart-scale.ts';
 import { formatClock, formatCost, formatDate } from '../lib/time.ts';
+import { cn } from '../lib/utils.ts';
 import type { AgentsBreakdown, AgentsOverview } from '../server/agents-overview-types.ts';
 import { AgentsBreakdownSwitch, AgentsLegend, SWITCH_LABELS } from './agents-breakdown.tsx';
 import { ScaledPlot } from './plot-scale.tsx';
@@ -179,10 +180,19 @@ export function AgentsChart({
             ))}
           </div>
         </ScaledPlot>
+        {/* Each label sits centered under the bar of the hour or day it names;
+            Today's ends at the chart's edge. */}
         <div aria-hidden="true" className="flex gap-[3px] pt-1 pl-8 text-xs text-dim">
           {buckets.map((bucket, index) => (
             <span className="relative h-4 min-w-0 flex-1" key={bucket.start}>
-              <span className="absolute right-0 whitespace-nowrap tabular-nums">
+              <span
+                className={cn(
+                  'absolute whitespace-nowrap tabular-nums',
+                  unit === 'day' && index === buckets.length - 1
+                    ? 'right-0'
+                    : 'left-1/2 -translate-x-1/2',
+                )}
+              >
                 {axisLabel(overview, index)}
               </span>
             </span>
