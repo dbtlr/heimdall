@@ -21,7 +21,7 @@ export function AgentsRangePicker({ current }: { current: AgentsRange }) {
           )}
           key={range}
           resetScroll={false}
-          search={(previous) => ({ ...previous, pick: undefined, range })}
+          search={(previous) => ({ ...previous, page: undefined, pick: undefined, range })}
           to="."
         >
           {labels[range]}

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { AgentsOverview, AgentsSession } from '../server/agents-overview-types.ts';
-import { breakdownRows, formatPercent, sessionsIn } from './agents-breakdown.ts';
+import { breakdownRows, formatPercent } from './agents-breakdown.ts';
 
 const session = (overrides: Partial<AgentsSession>): AgentsSession => ({
   branch: undefined,
@@ -30,6 +30,7 @@ const overviewOf = (
   now: 200,
   range: 'today',
   sessions,
+  table: { page: 1, sessions, total: sessions.length },
   timeZone: 'UTC',
   today: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
   totals: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
@@ -178,23 +179,4 @@ test('percent labels round and never show a nonzero share as 0%', () => {
 test('a period with no priced cost has zero percents, not NaN', () => {
   const rows = breakdownRows(overviewOf([session({ pricedCostUsd: 0 })]), 'project');
   expect(rows[0]?.percent).toBe(0);
-});
-
-test('a pick keeps the Sessions in that project, on that System, of that Harness, or that used that model', () => {
-  const sessions = [
-    session({ harness: 'codex', models: ['m-a', 'm-b'], project: undefined, sessionId: 'a' }),
-    session({ models: ['m-b'], project: 'heimdall', sessionId: 'b', system: 'laptop' }),
-    session({ models: [''], project: 'other', sessionId: 'c', system: 'desk' }),
-  ];
-  const ids = (by: Parameters<typeof sessionsIn>[1], key: string) =>
-    sessionsIn(sessions, by, key).map((one) => one.sessionId);
-  expect(ids('project', 'heimdall')).toEqual(['b']);
-  expect(ids('project', '')).toEqual(['a']);
-  expect(ids('project', 'No working directory')).toEqual([]);
-  expect(ids('system', 'laptop')).toEqual(['b']);
-  expect(ids('model', 'm-b')).toEqual(['a', 'b']);
-  expect(ids('model', 'm-a')).toEqual(['a']);
-  expect(ids('model', '')).toEqual(['c']);
-  expect(ids('harness', 'codex')).toEqual(['a']);
-  expect(ids('harness', 'nothing')).toEqual([]);
 });

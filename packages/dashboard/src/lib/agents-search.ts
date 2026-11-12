@@ -1,4 +1,10 @@
-import { AGENTS_BREAKDOWNS, AGENTS_RANGES } from '../server/agents-overview-types.ts';
+import {
+  AGENTS_BREAKDOWNS,
+  AGENTS_RANGES,
+  SESSION_SORTS,
+} from '../server/agents-overview-types.ts';
+import type { SessionsQuery, SortDirection } from '../server/agents-overview-types.ts';
+import { firstDirection } from './agents-sessions.ts';
 
 // The IANA zone named, as Intl resolves it, or undefined for anything else.
 export const validZone = (zone: unknown): string | undefined => {
@@ -21,12 +27,45 @@ export const validZone = (zone: unknown): string | undefined => {
 const validPick = (pick: unknown): string | undefined =>
   typeof pick === 'string' && pick.length <= 4096 ? pick : undefined;
 
+// The Sessions table is newest first, on page 1, unless the search says
+// otherwise. A search holds only what differs from that, so a default stays
+// out of the address, and a column's own first direction is no `dir`.
+const validSort = (sort: unknown) =>
+  SESSION_SORTS.find((known) => known === sort && known !== 'started');
+const validDirection = (dir: unknown): SortDirection | undefined =>
+  dir === 'asc' || dir === 'desc' ? dir : undefined;
+
+// A page number is a whole number from 2, the first page being the default.
+// The ceiling keeps the offset a safe integer.
+const MAX_PAGE = 1_000_000;
+const validPage = (page: unknown): number | undefined => {
+  const number = typeof page === 'string' ? Number(page) : page;
+  return typeof number === 'number' && Number.isInteger(number) && number > 1 && number <= MAX_PAGE
+    ? number
+    : undefined;
+};
+
 export const agentsSearch = (search: Record<string, unknown>) => ({
   by: AGENTS_BREAKDOWNS.find((by) => by === search.by) ?? 'project',
+  dir: validDirection(search.dir),
+  page: validPage(search.page),
   pick: validPick(search.pick),
   range: AGENTS_RANGES.find((range) => range === search.range) ?? 'today',
+  sort: validSort(search.sort),
   zone: validZone(search.zone),
 });
+
+// The Sessions table's query with its defaults filled in.
+export const sessionsQueryOf = (search: ReturnType<typeof agentsSearch>): SessionsQuery => {
+  const sort = search.sort ?? 'started';
+  return {
+    by: search.by,
+    dir: search.dir ?? firstDirection(sort),
+    page: search.page ?? 1,
+    pick: search.pick,
+    sort,
+  };
+};
 
 export const parseAgentsInput = (input: unknown) => {
   if (
@@ -42,5 +81,5 @@ export const parseAgentsInput = (input: unknown) => {
   if (range === undefined || timeZone === undefined) {
     throw new Error('Invalid Agents period');
   }
-  return { range, timeZone };
+  return { ...sessionsQueryOf(agentsSearch(input)), range, timeZone };
 };

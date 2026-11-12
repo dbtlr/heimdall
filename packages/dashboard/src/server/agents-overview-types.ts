@@ -33,6 +33,34 @@ export type AgentsSession = SessionKey &
     topModel: string | undefined;
   };
 
+// The Sessions table's columns that sort, in display order, and the direction.
+export const SESSION_SORTS = [
+  'started',
+  'project',
+  'harness',
+  'model',
+  'system',
+  'duration',
+  'requests',
+  'cost',
+] as const;
+export type SessionSort = (typeof SESSION_SORTS)[number];
+export type SortDirection = 'asc' | 'desc';
+export const SESSIONS_PER_PAGE = 25;
+
+// How the Sessions table is ordered, filtered, and cut into pages; `pick` is
+// the key of the breakdown row, of dimension `by`, the table is filtered to.
+export type SessionsQuery = {
+  by: AgentsBreakdown;
+  dir: SortDirection;
+  page: number;
+  pick: string | undefined;
+  sort: SessionSort;
+};
+
+// One page of the Sessions that match the query, and how many match in all.
+export type SessionsPage = { page: number; sessions: AgentsSession[]; total: number };
+
 // `model` is NO_KEY for requests with an empty model.
 export type ModelTotals = PeriodTotals & { model: string };
 
@@ -67,6 +95,8 @@ export type AgentsOverview = {
   now: number;
   range: AgentsRange;
   sessions: AgentsSession[];
+  // The page of the Sessions table the search asked for.
+  table: SessionsPage;
   timeZone: string;
   // What requests since local midnight cost.
   today: PeriodTotals;

@@ -83,6 +83,7 @@ const overview: AgentsOverview = {
       unpricedRequests: 0,
     }),
   ],
+  table: { page: 1, sessions: [], total: 0 },
   timeZone: 'UTC',
   today: { pricedCostUsd: 8, requests: 2, unpricedRequests: 0 },
   totals: { pricedCostUsd: 16, requests: 4, unpricedRequests: 1 },

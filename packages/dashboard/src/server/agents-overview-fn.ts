@@ -6,4 +6,6 @@ import { database } from './database.ts';
 
 export const getAgentsOverview = createServerFn({ method: 'GET' })
   .validator(parseAgentsInput)
-  .handler(async ({ data }) => readAgentsOverview(await database(), { ...data, now: Date.now() }));
+  .handler(async ({ data: { range, timeZone, ...table } }) =>
+    readAgentsOverview(await database(), { now: Date.now(), range, table, timeZone }),
+  );

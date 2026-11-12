@@ -39,7 +39,7 @@ const NONE_LABELS: Partial<Record<AgentsBreakdown, string>> = {
 };
 
 // What a row shows for its key: the empty key gets a label, and a Harness its name.
-const nameOf = (by: AgentsBreakdown, key: string): string => {
+export const nameOf = (by: AgentsBreakdown, key: string): string => {
   if (by === 'harness') {
     return harnessName(key);
   }
@@ -119,14 +119,3 @@ export const formatPercent = (percent: number | undefined): string => {
   const rounded = Math.round(percent);
   return rounded === 0 && percent > 0 ? '<1%' : `${String(rounded)}%`;
 };
-
-// The Sessions in the picked row's project, on its System, of its Harness, or
-// that used its model.
-export const sessionsIn = (
-  sessions: AgentsSession[],
-  by: AgentsBreakdown,
-  key: string,
-): AgentsSession[] =>
-  by === 'model'
-    ? sessions.filter((session) => session.models.includes(key))
-    : sessions.filter((session) => keyOf(by, session) === key);
