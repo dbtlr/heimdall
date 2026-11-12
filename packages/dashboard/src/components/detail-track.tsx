@@ -86,7 +86,10 @@ export function DetailTrack({
     >
       {children}
       {selected !== undefined && (
-        <Mark className="w-[5px] -translate-x-1/2 bg-select/25" t={selected} window={window} />
+        <>
+          <Mark className="w-[5px] -translate-x-1/2 bg-select/25" t={selected} window={window} />
+          <Mark className="w-px -translate-x-1/2 bg-select" t={selected} window={window} />
+        </>
       )}
       {hovered !== undefined && <Mark className="w-px bg-white/30" t={hovered} window={window} />}
     </div>

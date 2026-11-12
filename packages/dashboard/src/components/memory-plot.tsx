@@ -1,6 +1,7 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
 import { niceDomain } from '../lib/chart-scale.ts';
+import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { memoryRows } from '../lib/detail.ts';
 import type { Window } from '../lib/time.ts';
 import type { MemoryBucket } from '../server/system-detail-types.ts';
@@ -28,11 +29,16 @@ const gibLabel =
 // from 0 to the memory the System has, widened to a whole GiB from 10 GiB up
 // and a tenth of one below, so every label states its position. With no
 // bucket, the System's memory is unknown and the scale goes unlabelled.
+// `limitPercent` draws the limit the Hub judges memory by, as a share of it.
 export function MemoryPlot({
   buckets,
+  height = HEIGHT,
+  limitPercent,
   window,
 }: {
   buckets: readonly MemoryBucket[];
+  height?: number;
+  limitPercent?: number;
   window: Window;
 }) {
   const fill = usePlotGradientId();
@@ -42,17 +48,28 @@ export function MemoryPlot({
     <ScaledPlot
       domain={domain}
       format={gibLabel(domain[1])}
-      height={HEIGHT}
+      height={height}
       labelled={buckets.length > 0}
+      limits={
+        limitPercent === undefined || buckets.length === 0
+          ? []
+          : [
+              {
+                color: LEVEL_STROKE.note,
+                label: `${String(limitPercent)}% limit`,
+                value: (total * limitPercent) / 100,
+              },
+            ]
+      }
     >
       <PlotGradient color={PLOT_COLOR} id={fill} />
       <ChartContainer
         aria-label="Memory used"
         className="aspect-auto w-full"
         config={CONFIG}
-        initialDimension={{ height: HEIGHT, width: 1000 }}
+        initialDimension={{ height, width: 1000 }}
         role="img"
-        style={{ height: HEIGHT }}
+        style={{ height }}
       >
         <ComposedChart data={memoryRows(buckets, window)} margin={NO_MARGIN}>
           <XAxis

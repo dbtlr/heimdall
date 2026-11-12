@@ -5,6 +5,7 @@ import {
   costPlacement,
   formatGiB,
   headerLine,
+  loadRows,
   memoryHoldersView,
   memoryRows,
   processRows,
@@ -246,6 +247,12 @@ describe('chart rows', () => {
       { t: NOW - 10 * MINUTE + BUCKET / 2, used: null },
       { t: NOW - 5 * MINUTE + BUCKET / 2, used: null },
     ]);
+  });
+
+  test('give the 1-minute load per bucket, and null where a bucket has none, so the line breaks', () => {
+    expect(
+      loadRows([{ t: NOW - 15 * MINUTE, value: 2.5 }], window).map(({ value }) => value),
+    ).toEqual([null, 2.5, null, null]);
   });
 
   test('give each process its cores under its own key', () => {

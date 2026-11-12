@@ -80,13 +80,15 @@ export const readHomeJobs = async (
 // version that replaced another, every Service stop, and every Condition
 // raised or cleared at warning or alert. A version first seen, or one now
 // unknown, is no change, and one read as unknown in between is passed over, so
-// the change is from the last version known.
+// the change is from the last version known. With `system`, only that System's,
+// paired or not, since an unpaired System keeps its history.
 export const readChanges = async (
   sql: SQL,
-  { now, since }: { now: number; since: number },
+  { now, since, system: only }: { now: number; since: number; system?: string },
 ): Promise<Change[]> => {
   const from = new Date(since);
   const to = new Date(now);
+  const filter = only ?? null;
   const [versions, stops, transitions]: [
     {
       first_seen_at: Date;
@@ -108,7 +110,7 @@ export const readChanges = async (
     sql`
       SELECT v.system, v.service, v.version, v.first_seen_at, previous.version AS previous
       FROM service_versions v
-      JOIN paired_systems p ON p.system = v.system
+      LEFT JOIN paired_systems p ON p.system = v.system
       JOIN LATERAL (
         SELECT version FROM service_versions w
         WHERE w.system = v.system AND w.service = v.service AND w.first_seen_at < v.first_seen_at
@@ -116,14 +118,22 @@ export const readChanges = async (
         ORDER BY w.first_seen_at DESC LIMIT 1
       ) previous ON true
       WHERE v.first_seen_at >= ${from} AND v.first_seen_at <= ${to}
+        AND (${filter}::text IS NULL OR v.system = ${filter})
+        AND (${filter}::text IS NOT NULL OR p.system IS NOT NULL)
     `,
-    readServiceStops(sql, { includeUnpaired: false, since: from }),
+    readServiceStops(sql, {
+      includeUnpaired: only !== undefined,
+      since: from,
+      ...(only === undefined ? {} : { system: only }),
+    }),
     sql`
       SELECT c.id::text AS id, c.system, c.kind, c.subject, t.action, t.at
       FROM conditions c
-      JOIN paired_systems p ON p.system = c.system
+      LEFT JOIN paired_systems p ON p.system = c.system
       JOIN condition_transitions t ON t.condition = c.id
-      WHERE (c.raised_at >= ${from} OR c.cleared_at >= ${from})
+      WHERE (${filter}::text IS NULL OR c.system = ${filter})
+        AND (${filter}::text IS NOT NULL OR p.system IS NOT NULL)
+        AND (c.raised_at >= ${from} OR c.cleared_at >= ${from})
         AND t.action IN ('raised', 'cleared') AND t.level IN ('warning', 'alert')
         AND t.at >= ${from} AND t.at <= ${to}
     `,

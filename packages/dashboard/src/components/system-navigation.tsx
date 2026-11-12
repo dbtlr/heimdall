@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 
 import { statusWord } from '../lib/lane.ts';
 import { contentFrame } from '../lib/layout.ts';
-import { SYSTEM_TABS } from '../lib/system-search.ts';
+import { DESKTOP_TABS, desktopTab, SYSTEM_TABS } from '../lib/system-search.ts';
 import type { SystemTab } from '../lib/system-search.ts';
 import { cn } from '../lib/utils.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
@@ -121,9 +121,29 @@ export function SystemNavigationHeader({
             </Link>
           ))}
         </nav>
+        <nav aria-label="System views" className="hidden gap-6 lg:flex">
+          {DESKTOP_TABS.map((item) => (
+            <Link
+              aria-current={desktopTab(tab) === desktopTab(item.tab) ? 'page' : undefined}
+              className={cn(
+                'flex min-h-11 shrink-0 items-center border-b-2 border-transparent px-1.5 text-base text-muted-foreground sm:px-4',
+                desktopTab(tab) === desktopTab(item.tab) &&
+                  'border-select font-semibold text-foreground',
+              )}
+              from="/systems/$name"
+              hash=""
+              key={item.name}
+              resetScroll
+              search={(previous) => ({ ...previous, tab: item.tab })}
+              to="."
+            >
+              {item.name}
+            </Link>
+          ))}
+        </nav>
         <nav
           aria-label="System views"
-          className="flex justify-between gap-1 overflow-x-auto lg:justify-start lg:gap-6"
+          className="flex justify-between gap-1 overflow-x-auto lg:hidden"
         >
           {SYSTEM_TABS.map((item) => (
             <Link

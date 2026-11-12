@@ -18,7 +18,7 @@ const ROW_PX = 22;
 
 // As on the Fleet overview: solid when linked, a translucent fill with a
 // dashed edge when ambiguous, an outline when unmatched.
-const LINK_STYLE: Record<ProcessLink, string> = {
+export const LINK_STYLE: Record<ProcessLink, string> = {
   ambiguous:
     'border-[1.5px] border-dashed border-current bg-[color-mix(in_srgb,currentColor_30%,transparent)]',
   linked: 'bg-current',
@@ -38,20 +38,21 @@ const sessionSpan = (session: SessionRow, window: Window): Phrase => {
 };
 
 // Where a Session's cost sits, from where `costPlacement` puts it.
-const costStyle = (place: ReturnType<typeof costPlacement>, top: number) => {
+export const costStyle = (place: ReturnType<typeof costPlacement>, top: number) => {
   if ('right' in place) {
     return { right: `calc(${String(place.right)}% + 6px)`, top };
   }
   return { left: `calc(${String('over' in place ? place.over : place.left)}% + 6px)`, top };
 };
 
-const what = (session: SessionRow) =>
+export const what = (session: SessionRow) =>
   session.project ?? session.branch ?? `${harnessName(session.harness)} Session`;
 
-const key = (session: SessionRow) => `${session.harness}-${session.source}-${session.sessionId}`;
+export const sessionKey = (session: SessionRow) =>
+  `${session.harness}-${session.source}-${session.sessionId}`;
 
 // A link to the Session's page, its text the Session's name.
-function SessionLink({ session, system }: { session: SessionRow; system: string }) {
+export function SessionLink({ session, system }: { session: SessionRow; system: string }) {
   return (
     <Link
       className="hover:underline"
@@ -91,7 +92,7 @@ export function SessionRows({
           {sessions.map((session) => (
             <p
               className="flex items-center gap-1.5 truncate text-[12.5px]"
-              key={key(session)}
+              key={sessionKey(session)}
               style={{ height: ROW_PX }}
             >
               <SessionLink session={session} system={system} />
@@ -106,7 +107,7 @@ export function SessionRows({
             const top = row * ROW_PX + 3;
             const place = costPlacement(session, window);
             return (
-              <div key={key(session)} style={{ color: harnessColor(session.harness) }}>
+              <div key={sessionKey(session)} style={{ color: harnessColor(session.harness) }}>
                 {session.stretches.map((stretch) => {
                   const { left, width } = spanBox(
                     { end: stretch.endedAt, start: stretch.startedAt },
@@ -148,7 +149,7 @@ export function SessionRows({
       </div>
       <ul className="mt-1.5 sm:hidden">
         {sessions.map((session) => (
-          <li className="flex items-start gap-2 py-1 text-[13.5px]" key={key(session)}>
+          <li className="flex items-start gap-2 py-1 text-[13.5px]" key={sessionKey(session)}>
             <i
               className={cn(
                 'mt-[5px] inline-block h-2 w-3.5 flex-none rounded-[2px]',

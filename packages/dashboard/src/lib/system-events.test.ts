@@ -1,0 +1,159 @@
+import { describe, expect, test } from 'bun:test';
+
+import type { ConditionMark } from '../server/fleet-overview-types.ts';
+import type { Change } from '../server/home-types.ts';
+import { levelSegments, packRows, systemEvents } from './system-events.ts';
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const NOW = 1_800_000_000_000;
+const WINDOW = { from: NOW - 12 * HOUR, to: NOW };
+const at = (offset: number) => NOW - offset * HOUR;
+
+const mark = (overrides: Partial<ConditionMark> & Pick<ConditionMark, 'kind'>): ConditionMark => ({
+  clearedAt: undefined,
+  id: overrides.kind,
+  level: 'warning',
+  raisedAt: NOW - HOUR,
+  subject: '',
+  transitions: [],
+  ...overrides,
+});
+
+const version: Change = {
+  at: NOW - 2 * HOUR,
+  from: '1.8.2',
+  kind: 'version',
+  service: 'web',
+  system: 'server-1',
+  to: '1.8.3',
+};
+
+describe('systemEvents', () => {
+  test('lists Conditions and Service changes together, oldest first, and leaves out what other places show', () => {
+    const events = systemEvents(
+      {
+        changes: [
+          version,
+          {
+            at: version.at + MINUTE,
+            kind: 'stop',
+            ongoing: false,
+            service: 'web',
+            system: 'server-1',
+          },
+          {
+            action: 'raised',
+            at: NOW - HOUR,
+            condition: 'high_memory',
+            conditionId: 'c1',
+            kind: 'condition',
+            subject: '',
+            system: 'server-1',
+          },
+        ],
+        conditions: [
+          mark({ clearedAt: NOW - 30 * MINUTE, kind: 'high_memory', raisedAt: NOW - HOUR }),
+          mark({ kind: 'pending_update', level: 'note' }),
+          mark({ kind: 'service_restarted', level: 'note', subject: 'web' }),
+        ],
+      },
+      WINDOW,
+    );
+
+    expect(events).toEqual([
+      { at: version.at, kind: 'change', text: 'web 1.8.2 → 1.8.3, restarted' },
+      {
+        at: NOW - HOUR,
+        end: NOW - 30 * MINUTE,
+        kind: 'condition',
+        level: 'warning',
+        text: 'High memory, warning',
+      },
+    ]);
+  });
+
+  test('names a Condition by its subject and the highest level it reached', () => {
+    const [event] = systemEvents(
+      {
+        changes: [],
+        conditions: [
+          mark({
+            kind: 'job_failing',
+            level: 'warning',
+            subject: 'photos-sync',
+            transitions: [
+              { at: NOW - HOUR, backfilled: false, kind: 'raised', level: 'warning', reason: '' },
+              {
+                at: NOW - 20 * MINUTE,
+                backfilled: false,
+                kind: 'level_changed',
+                level: 'alert',
+                previousLevel: 'warning',
+                reason: '',
+              },
+            ],
+          }),
+        ],
+      },
+      WINDOW,
+    );
+
+    expect(event).toMatchObject({ level: 'alert', text: 'Job failing photos-sync, alert' });
+  });
+
+  test('leaves out a Condition that ended before the window', () => {
+    const events = systemEvents(
+      {
+        changes: [],
+        conditions: [
+          mark({ clearedAt: WINDOW.from - HOUR, kind: 'drift', raisedAt: WINDOW.from - 2 * HOUR }),
+        ],
+      },
+      WINDOW,
+    );
+
+    expect(events).toEqual([]);
+  });
+});
+
+describe('levelSegments', () => {
+  test('splits a Condition at its level changes and ends the last where it was cleared', () => {
+    const segments = levelSegments(
+      mark({
+        kind: 'high_cpu',
+        transitions: [
+          { at: at(3), backfilled: false, kind: 'raised', level: 'note', reason: '' },
+          {
+            at: at(2),
+            backfilled: false,
+            kind: 'level_changed',
+            level: 'warning',
+            previousLevel: 'note',
+            reason: '',
+          },
+          { at: at(1), backfilled: false, kind: 'cleared', level: 'warning', reason: '' },
+        ],
+      }),
+      at(1),
+    );
+
+    expect(segments).toEqual([
+      { end: at(2), level: 'note', start: at(3) },
+      { end: at(1), level: 'warning', start: at(2) },
+    ]);
+  });
+});
+
+describe('packRows', () => {
+  test('puts spans that overlap on rows of their own and reuses a row once its span has ended', () => {
+    expect(
+      packRows([
+        { end: 10, start: 0 },
+        { end: 20, start: 5 },
+        { end: 30, start: 12 },
+        { end: 40, start: 25 },
+      ]),
+    ).toEqual([0, 1, 0, 1]);
+  });
+});

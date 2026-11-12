@@ -1,5 +1,6 @@
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type {
+  LoadBucket,
   MemoryBucket,
   MemoryHolders,
   ProcessSeries,
@@ -169,6 +170,16 @@ export const memoryRows = (
 ): { t: number; used: number | null }[] => {
   const used = new Map(buckets.map((bucket) => [bucket.t, bucket.usedBytes / GIB]));
   return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, used: used.get(t) ?? null }));
+};
+
+// The load plot's points: the 1-minute load per bucket at its middle, null
+// where the Hub has no bucket.
+export const loadRows = (
+  buckets: readonly LoadBucket[],
+  window: Window,
+): { t: number; value: number | null }[] => {
+  const load = new Map(buckets.map((bucket) => [bucket.t, bucket.value]));
+  return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, value: load.get(t) ?? null }));
 };
 
 // The process plot's points: each process's cores per bucket at its middle

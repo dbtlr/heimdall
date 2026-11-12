@@ -1,10 +1,14 @@
-import { isMaintenanceNote, withoutNotesShownElsewhere } from '../lib/attention.ts';
+import { Link } from '@tanstack/react-router';
+
+import { evidenceWords, isMaintenanceNote, withoutNotesShownElsewhere } from '../lib/attention.ts';
 import { itemName } from '../lib/home.ts';
+import { MAINTENANCE_STATUS } from '../lib/sections.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import type { Attention } from '../server/attention-types.ts';
 import { AttentionLink } from './attention-link.tsx';
 import { AttentionList } from './attention-list.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
+import { PhraseText } from './date-time.tsx';
 
 export function SystemOpenConditions({ items, now }: { items: readonly Attention[]; now: number }) {
   const attention = withoutNotesShownElsewhere(items);
@@ -52,5 +56,41 @@ export function SystemMaintenance({ items, now }: { items: readonly Attention[];
         ))}
       </ul>
     </section>
+  );
+}
+
+// The same notes as one line under the charts on a wide screen, with a link to
+// the Services that can be updated. Nothing without a note.
+export function SystemMaintenanceLine({
+  items,
+  now,
+  system,
+}: {
+  items: readonly Attention[];
+  now: number;
+  system: string;
+}) {
+  const notes = items
+    .filter((item) => isMaintenanceNote(item))
+    .toSorted((a, b) => a.firstDetected - b.firstDetected);
+  if (notes.length === 0) {
+    return null;
+  }
+  return (
+    <p className="rounded-xl border border-dashed px-4 py-3 text-[13px] text-muted-foreground">
+      Maintenance:{' '}
+      {notes.map((item) => (
+        <span key={item.conditionId}>
+          <PhraseText phrase={evidenceWords(item, now).observedShort} /> ·{' '}
+        </span>
+      ))}
+      <Link
+        className="text-link hover:underline"
+        search={{ status: [...MAINTENANCE_STATUS], system: [system] }}
+        to="/services"
+      >
+        Maintenance →
+      </Link>
+    </p>
   );
 }

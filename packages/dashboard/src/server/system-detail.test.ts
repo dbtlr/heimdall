@@ -286,6 +286,53 @@ describe('readSystemDetail', () => {
     expect(found.gaps).toContainEqual({ from: NOW - 30 * MINUTE, to: NOW - 20 * MINUTE });
   });
 
+  test('carries the 1-minute load per bucket from the rollups', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { times: every15s(-3600, 0) });
+
+    const found = await detail(h, 'server-1', '6h');
+
+    expect(found.load[0]).toMatchObject({ t: NOW - HOUR });
+    expect(found.load[0]?.value).toBeCloseTo(1.2, 9);
+  });
+
+  test("carries this System's changes over the range, and no other System's or earlier ones", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '1.8.1', null, ${new Date(NOW - 30 * HOUR)}),
+        ('server-1', 'web', '1.8.2', null, ${new Date(NOW - 5 * HOUR)}),
+        ('server-1', 'web', '1.8.3', null, ${new Date(NOW - 2 * HOUR)}),
+        ('laptop-1', 'web', '1.8.1', null, ${new Date(NOW - 30 * HOUR)}),
+        ('laptop-1', 'web', '1.8.2', null, ${new Date(NOW - 2 * HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at) VALUES
+        ('server-1', 'web', ${new Date(NOW - 2 * HOUR + MINUTE)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)}),
+        ('laptop-1', 'web', ${new Date(NOW - 2 * HOUR)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)})
+    `;
+    await addCondition(h.db.sql, {
+      kind: 'drift',
+      raisedAt: -3600,
+      subject: '/etc/hosts',
+      system: 'server-1',
+    });
+
+    const { changes } = await detail(h, 'server-1', '6h');
+
+    expect(changes.map(({ kind }) => kind).toSorted()).toEqual([
+      'condition',
+      'stop',
+      'version',
+      'version',
+    ]);
+    expect(changes.every(({ system }) => system === 'server-1')).toBe(true);
+    expect((await detail(h, 'server-1', '24h')).changes).toHaveLength(4);
+  });
+
   test('labels a process in a linked worktree with its repository, in the history and at a sample', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { times: every15s(-3600, 0) });
@@ -883,6 +930,8 @@ describe('readSystemRecords', () => {
       system: 'server-1',
     });
 
+    await h.db.sql`UPDATE systems SET time_zone = 'UTC' WHERE name = 'server-1'`;
+
     const { recorded } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
 
     expect(recorded.jobs).toEqual([
@@ -893,6 +942,7 @@ describe('readSystemRecords', () => {
           started: Date.parse('2026-10-06T03:30:00Z'),
         },
         name: 'backup',
+        nextRunAt: Date.UTC(2026, 9, 7, 3, 30),
         open: ['job_failing'],
         schedule: [{ hour: 3, minute: 30 }],
       },

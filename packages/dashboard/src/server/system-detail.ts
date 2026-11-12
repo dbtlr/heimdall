@@ -16,6 +16,8 @@ import {
   toMark,
 } from './fleet-overview.ts';
 import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
+import { readChanges } from './home-cards.ts';
+import type { Change } from './home-types.ts';
 import {
   byCheck,
   field,
@@ -27,11 +29,13 @@ import {
 } from './hub-rows.ts';
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import { readMemoryHolders } from './memory-holders.ts';
+import { nextScheduledTime } from './next-run.ts';
 import { readSilencedUntil } from './silences.ts';
 import type {
   Disk,
   FileIssue,
   HarnessInstall,
+  LoadBucket,
   MemoryBucket,
   ProcessSeries,
   RecordedApplication,
@@ -106,6 +110,8 @@ type LatestRow = {
 };
 
 type MemoryRow = { bucket: Date; total: number; used: number };
+
+type LoadRow = { bucket: Date; load: number };
 
 export type CoresRow = {
   bucket: Date;
@@ -207,16 +213,30 @@ const readSystemDetailSnapshot = async (
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
   const firstBucket = new Date(bucketStart(from));
-  const [installs, latest, buckets, memory, cores, stretches, marks, open, silenced]: [
+  const [
+    installs,
+    latest,
+    buckets,
+    memory,
+    load,
+    cores,
+    stretches,
+    marks,
+    open,
+    silenced,
+    changes,
+  ]: [
     { installs: HarnessInstall[] }[],
     LatestRow[],
     BucketRow[],
     MemoryRow[],
+    LoadRow[],
     CoresRow[],
     StretchRow[],
     ConditionRow[],
     { n: number }[],
     Map<string, number>,
+    Change[],
   ] = await Promise.all([
     sql`SELECT installs FROM harness_installs WHERE system = ${name}`,
     sql`
@@ -234,6 +254,12 @@ const readSystemDetailSnapshot = async (
     `,
     sql`
       SELECT bucket, (memory_used_sum / samples)::float8 AS used, memory_total_max::float8 AS total
+      FROM vitals_rollups
+      WHERE system = ${name} AND bucket >= ${firstBucket} AND bucket < ${toAt}
+      ORDER BY bucket
+    `,
+    sql`
+      SELECT bucket, (load_1_sum / samples)::float8 AS load
       FROM vitals_rollups
       WHERE system = ${name} AND bucket >= ${firstBucket} AND bucket < ${toAt}
       ORDER BY bucket
@@ -270,6 +296,7 @@ const readSystemDetailSnapshot = async (
     `,
     sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL AND level <> 'note'`,
     readSilencedUntil(sql, { now, systems: [name] }),
+    readChanges(sql, { now, since: from, system: name }),
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
@@ -277,6 +304,7 @@ const readSystemDetailSnapshot = async (
   const sleeps = system.sleeps === true;
   const transitions = await readConditionTransitions(sql, marks);
   return {
+    changes,
     collectorVersion: system.collector_version ?? undefined,
     conditions: marks.map((row) => toMark(row, transitions.get(row.id) ?? [])),
     cpu,
@@ -305,6 +333,7 @@ const readSystemDetailSnapshot = async (
             t: newest.t.getTime(),
             uptimeSeconds: newest.uptime_seconds,
           },
+    load: load.map((row): LoadBucket => ({ t: row.bucket.getTime(), value: row.load })),
     memory: memory.map((row): MemoryBucket => ({
       t: row.bucket.getTime(),
       totalBytes: row.total,
@@ -572,12 +601,17 @@ const readSystemRecordsSnapshot = async (
   sql: SQL,
   { name, now }: { name: string; now: number },
 ): Promise<SystemRecords> => {
-  const [records, checks, runs, conditions]: [RecordRow[], ChecksRow[], RunRow[], ConditionRow[]] =
-    await Promise.all([
-      sql`SELECT kind, name, record FROM mirrored_records WHERE system = ${name} ORDER BY kind, name`,
-      sql`SELECT services, files, file_records FROM check_sets WHERE system = ${name}`,
-      sql`SELECT job, latest_run FROM mirrored_runs WHERE system = ${name}`,
-      sql`
+  const [records, checks, runs, conditions, zones]: [
+    RecordRow[],
+    ChecksRow[],
+    RunRow[],
+    ConditionRow[],
+    { time_zone: string | null }[],
+  ] = await Promise.all([
+    sql`SELECT kind, name, record FROM mirrored_records WHERE system = ${name} ORDER BY kind, name`,
+    sql`SELECT services, files, file_records FROM check_sets WHERE system = ${name}`,
+    sql`SELECT job, latest_run FROM mirrored_runs WHERE system = ${name}`,
+    sql`
       SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
       WHERE system = ${name}
@@ -585,7 +619,9 @@ const readSystemRecordsSnapshot = async (
       -- The Hub's occurrence order survives a step back in its clock.
       ORDER BY id DESC
     `,
-    ]);
+    sql`SELECT time_zone FROM systems WHERE name = ${name}`,
+  ]);
+  const timeZone = zones[0]?.time_zone ?? undefined;
   const of = (kind: string) => records.filter((row) => row.kind === kind);
   const serviceChecks = checks[0]?.services ?? [];
   const fileChecks = checks[0]?.files ?? [];
@@ -626,15 +662,22 @@ const readSystemRecordsSnapshot = async (
         };
       }),
       files,
-      jobs: of('job').map(({ name: job, record }): RecordedJob => ({
-        latestRun: runOf.get(job),
-        name: job,
-        open: openJobConditions
-          .filter((row) => row.subject === job)
-          .map((row) => row.kind)
-          .filter(isJobCondition),
-        schedule: scheduleOf(record.schedule),
-      })),
+      jobs: of('job').map(({ name: job, record }): RecordedJob => {
+        const schedule = scheduleOf(record.schedule);
+        return {
+          latestRun: runOf.get(job),
+          name: job,
+          nextRunAt:
+            timeZone === undefined
+              ? undefined
+              : nextScheduledTime({ after: now, schedule, timeZone }),
+          open: openJobConditions
+            .filter((row) => row.subject === job)
+            .map((row) => row.kind)
+            .filter(isJobCondition),
+          schedule,
+        };
+      }),
       services: of('service').map(({ name: service, record }) =>
         recordedService(service, record, serviceChecks),
       ),
