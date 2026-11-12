@@ -19,6 +19,7 @@ import { MARK_COLOR } from './attention-status.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { PhraseText } from './date-time.tsx';
 import { RECORD_DOT } from './recorded-panel.tsx';
+import { ServiceVersion } from './service-version.tsx';
 
 // One card of the right rail: an eyebrow heading with a count, and its body.
 function RailCard({
@@ -28,7 +29,7 @@ function RailCard({
   title,
 }: {
   children: ReactNode;
-  count: number;
+  count: number | string;
   id: string;
   title: string;
 }) {
@@ -105,8 +106,17 @@ export function RailServices({
   system: string;
 }) {
   const { services } = recorded;
+  const updates = services.filter((service) => service.update !== undefined).length;
   return (
-    <RailCard count={services.length} id="rail-services" title="Services">
+    <RailCard
+      count={
+        updates === 0
+          ? String(services.length)
+          : `${String(services.length)} · ${String(updates)} ${updates === 1 ? 'update' : 'updates'}`
+      }
+      id="rail-services"
+      title="Services"
+    >
       {services.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">Its provisioner recorded no Service.</p>
       ) : (
@@ -115,7 +125,7 @@ export function RailServices({
             const { state, text } = serviceLine(service, now);
             return (
               <li className={ROW} key={service.name}>
-                <span className="flex min-w-0 items-baseline gap-2">
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span
                     className={cn('size-2 flex-none self-center rounded-full', RECORD_DOT[state])}
                   />
@@ -126,8 +136,12 @@ export function RailServices({
                   >
                     {service.name}
                   </Link>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs whitespace-nowrap text-muted-foreground">
                     {SUPERVISOR_NAMES[service.supervisor] ?? service.supervisor}
+                  </span>
+                  {/* The version sits at the right, or under the name when the row is narrow. */}
+                  <span className="ml-auto">
+                    <ServiceVersion service={service} />
                   </span>
                 </span>
                 {state !== 'good' && (

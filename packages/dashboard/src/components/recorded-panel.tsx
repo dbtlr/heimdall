@@ -13,6 +13,7 @@ import { cn } from '../lib/utils.ts';
 import type { Recorded } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
+import { ServiceVersion } from './service-version.tsx';
 
 // The dot that shows how a recorded thing stands.
 export const RECORD_DOT: Record<RecordState, string> = {
@@ -27,10 +28,13 @@ function Row({
   name,
   state,
   system,
+  version,
 }: {
   children: ReactNode;
   name: string;
   state?: RecordState;
+  // A Service's installed version and available update beside its name.
+  version?: ReactNode;
   // The System of a Service, whose name then links to its page.
   system?: string;
 }) {
@@ -39,7 +43,7 @@ function Row({
       <span
         className={cn('size-2 self-center rounded-full', state !== undefined && RECORD_DOT[state])}
       />
-      <b className="min-w-0 font-semibold wrap-anywhere">
+      <b className="flex min-w-0 flex-wrap items-baseline gap-x-2 font-semibold wrap-anywhere">
         {system === undefined ? (
           name
         ) : (
@@ -51,6 +55,7 @@ function Row({
             {name}
           </Link>
         )}
+        {version}
       </b>
       <span className="col-start-2 min-w-0 wrap-anywhere text-muted-foreground sm:col-start-auto">
         {children}
@@ -102,7 +107,13 @@ export function RecordedPanel({
           {services.map((service) => {
             const { state, text } = serviceLine(service, now);
             return (
-              <Row key={service.name} name={service.name} state={state} system={system}>
+              <Row
+                key={service.name}
+                name={service.name}
+                state={state}
+                system={system}
+                version={<ServiceVersion service={service} />}
+              >
                 <PhraseText phrase={text} />
               </Row>
             );

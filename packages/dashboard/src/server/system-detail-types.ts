@@ -5,6 +5,8 @@
 
 import type { ConditionKind } from '@heimdall/schema';
 
+import type { DiskBands } from '../lib/disk-forecast.ts';
+import type { DiskGrowth } from '../lib/disk-growth.ts';
 import type {
   ConditionMark,
   CpuBucket,
@@ -48,6 +50,10 @@ export type SessionRow = {
 // One mount of the newest Vitals sample.
 export type Disk = { mount: string; totalBytes: number; usedBytes: number };
 
+// How fast a mount filled over the last 7 days, whatever the page's range;
+// growth is undefined with under a day of readings.
+export type DiskTrend = { growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined; mount: string };
+
 // One install of a Harness: which, its version, and the kind of place the
 // Collector found it in, such as npm or native.
 export type HarnessInstall = { harness: string; location: string; version: string };
@@ -59,6 +65,8 @@ export type SystemDetail = {
   collectorVersion: string | undefined;
   conditions: ConditionMark[];
   cpu: CpuBucket[];
+  // Each mount's growth over the last 7 days, for the mounts with readings.
+  diskTrends: DiskTrend[];
   from: number;
   gaps: Gap[];
   // Each installed Harness, as the Collector last found them: empty for a
@@ -80,7 +88,7 @@ export type SystemDetail = {
     | undefined;
   // The CPU and memory percent the Hub judges this System by, its own limits
   // else the fleet's; undefined while the Hub has stored none.
-  limitPercent: { cpu: number; memory: number } | undefined;
+  limitPercent: { cpu: number; disk: DiskBands; memory: number } | undefined;
   // The 1-minute load average per 5-minute bucket.
   load: LoadBucket[];
   memory: MemoryBucket[];
@@ -167,6 +175,14 @@ export type RecordedService = {
   supervisor: string;
 };
 
+// A recorded Service on its System's page: with the installed version the Hub
+// derived (null while unknown) and the newer one its upstream or package
+// manager offers, as the Services page finds it (undefined when none).
+export type ListedService = RecordedService & {
+  update: string | undefined;
+  version: string | null;
+};
+
 export type JobRun = { exitStatus: number; finished: number; started: number };
 
 export type ScheduleEntry = {
@@ -211,7 +227,7 @@ export type Recorded = {
   applications: RecordedApplication[];
   files: RecordedFiles[];
   jobs: RecordedJob[];
-  services: RecordedService[];
+  services: ListedService[];
 };
 
 // One occurrence and its transitions in the Hub's recording order.

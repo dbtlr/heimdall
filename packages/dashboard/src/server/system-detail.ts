@@ -4,6 +4,7 @@ import type { SQL } from 'bun';
 import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
+import { readDiskTrends } from './disk-trends.ts';
 import { isRange, RANGES } from './fleet-overview-types.ts';
 import type { Link, Range } from './fleet-overview-types.ts';
 import {
@@ -32,11 +33,14 @@ import {
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import { readMemoryHolders } from './memory-holders.ts';
 import { nextScheduledTime } from './next-run.ts';
+import { readServices } from './services.ts';
 import { readSilencedUntil } from './silences.ts';
 import type {
   Disk,
+  DiskTrend,
   FileIssue,
   HarnessInstall,
+  ListedService,
   LoadBucket,
   MemoryBucket,
   ProcessSeries,
@@ -228,6 +232,7 @@ const readSystemDetailSnapshot = async (
     silenced,
     changes,
     limits,
+    diskTrends,
   ]: [
     { installs: HarnessInstall[] }[],
     LatestRow[],
@@ -241,6 +246,7 @@ const readSystemDetailSnapshot = async (
     Map<string, number>,
     ServiceChange[],
     ConditionLimitSet | undefined,
+    DiskTrend[],
   ] = await Promise.all([
     sql`SELECT installs FROM harness_installs WHERE system = ${name}`,
     sql`
@@ -302,6 +308,7 @@ const readSystemDetailSnapshot = async (
     readSilencedUntil(sql, { now, systems: [name] }),
     readServiceChanges(sql, { now, since: from, system: name }),
     readConditionLimits(sql, name),
+    readDiskTrends(sql, { now, system: name }),
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
@@ -313,6 +320,7 @@ const readSystemDetailSnapshot = async (
     collectorVersion: system.collector_version ?? undefined,
     conditions: marks.map((row) => toMark(row, transitions.get(row.id) ?? [])),
     cpu,
+    diskTrends,
     from,
     gaps: findGaps(
       cpu.map(({ t }) => t),
@@ -339,7 +347,17 @@ const readSystemDetailSnapshot = async (
             uptimeSeconds: newest.uptime_seconds,
           },
     limitPercent:
-      limits === undefined ? undefined : { cpu: limits.cpu.percent, memory: limits.memory.percent },
+      limits === undefined
+        ? undefined
+        : {
+            cpu: limits.cpu.percent,
+            disk: {
+              alert: limits.disk.alert,
+              note: limits.disk.note,
+              warning: limits.disk.warning,
+            },
+            memory: limits.memory.percent,
+          },
     load: load.map((row): LoadBucket => ({ t: row.bucket.getTime(), value: row.load })),
     memory: memory.map((row): MemoryBucket => ({
       t: row.bucket.getTime(),
@@ -629,6 +647,11 @@ const readSystemRecordsSnapshot = async (
     sql`SELECT time_zone FROM systems WHERE name = ${name}`,
   ]);
   const timeZone = zones[0]?.time_zone ?? undefined;
+  // The Services page's own reader, for this System alone, so one rule says
+  // what counts as an available update.
+  const installedOf = new Map(
+    (await readServices(sql, now, name)).map((service) => [service.name, service]),
+  );
   const of = (kind: string) => records.filter((row) => row.kind === kind);
   const serviceChecks = checks[0]?.services ?? [];
   const fileChecks = checks[0]?.files ?? [];
@@ -685,9 +708,13 @@ const readSystemRecordsSnapshot = async (
           schedule,
         };
       }),
-      services: of('service').map(({ name: service, record }) =>
-        recordedService(service, record, serviceChecks),
-      ),
+      services: of('service').map(({ name: service, record }): ListedService => {
+        const installed = installedOf.get(service);
+        return Object.assign(recordedService(service, record, serviceChecks), {
+          update: installed?.update,
+          version: installed?.version ?? null,
+        });
+      }),
     },
     timeline,
   };

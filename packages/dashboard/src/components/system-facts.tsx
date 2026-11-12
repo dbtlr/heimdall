@@ -2,6 +2,8 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { ReactNode } from 'react';
 
 import { LEVEL_FILL } from '../lib/conditions.ts';
+import { diskForecast, forecastWords } from '../lib/disk-forecast.ts';
+import type { DiskBands } from '../lib/disk-forecast.ts';
 import { diskUsage, formatLoad } from '../lib/facts.ts';
 import { harnessName } from '../lib/lane.ts';
 import { whenAt } from '../lib/phrase.ts';
@@ -47,7 +49,21 @@ function SampleAsOf({ at, now }: { at: number; now: number }) {
   return now - at > QUIET_AFTER_MS ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
 }
 
-function DiskRow({ disk, level }: { disk: Disk; level: ConditionLevel | undefined }) {
+type DiskDetail = Pick<SystemDetail, 'conditions' | 'diskTrends' | 'limitPercent'>;
+
+// One mount: used of total with a tick at each band the Hub judges disks by,
+// and under it how fast it grows and when it reaches the next band.
+function DiskRow({
+  bands,
+  disk,
+  forecast,
+  level,
+}: {
+  bands: DiskBands | undefined;
+  disk: Disk;
+  forecast: string;
+  level: ConditionLevel | undefined;
+}) {
   const { percent, text } = diskUsage(disk);
   return (
     <li className="py-[3px]">
@@ -63,20 +79,67 @@ function DiskRow({ disk, level }: { disk: Disk; level: ConditionLevel | undefine
           {percent}%
         </span>
       </p>
-      <div
-        aria-label={`${disk.mount} used`}
-        aria-valuemax={100}
-        aria-valuemin={0}
-        aria-valuenow={percent}
-        className="mt-0.5 h-1 overflow-hidden rounded-sm bg-secondary"
-        role="meter"
-      >
+      <div className="relative mt-0.5">
         <div
-          className={cn('h-full', level === undefined ? 'bg-plot' : LEVEL_FILL[level])}
-          style={{ width: `${String(percent)}%` }}
-        />
+          aria-label={`${disk.mount} used`}
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={percent}
+          className="h-1 overflow-hidden rounded-sm bg-secondary"
+          role="meter"
+        >
+          <div
+            className={cn('h-full', level === undefined ? 'bg-plot' : LEVEL_FILL[level])}
+            style={{ width: `${String(percent)}%` }}
+          />
+        </div>
+        {bands !== undefined &&
+          [bands.note, bands.warning, bands.alert].map((band) => (
+            <span
+              className="absolute -top-0.5 h-2 w-px bg-muted-foreground"
+              data-band={band}
+              key={band}
+              style={{ left: `${String(band)}%` }}
+              title={`${String(band)}%`}
+            />
+          ))}
       </div>
+      <p className="mt-0.5 text-xs text-muted-foreground">{forecast}</p>
     </li>
+  );
+}
+
+// Each mount of the newest sample as a row, with its open Low disk level, its
+// growth over the last 7 days, and the next band it heads for.
+function DiskRows({ detail, disks }: { detail: DiskDetail; disks: readonly Disk[] }) {
+  const bands = detail.limitPercent?.disk;
+  return (
+    <ul>
+      {disks.map((disk, index) => (
+        // A mount can be listed twice.
+        // oxlint-disable-next-line react/no-array-index-key
+        <DiskRow
+          bands={bands}
+          disk={disk}
+          forecast={forecastWords(
+            diskForecast({
+              bands,
+              disk,
+              growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
+            }),
+          )}
+          key={`${disk.mount}-${String(index)}`}
+          level={
+            detail.conditions.find(
+              (condition) =>
+                condition.kind === 'low_disk' &&
+                condition.subject === disk.mount &&
+                condition.clearedAt === undefined,
+            )?.level
+          }
+        />
+      ))}
+    </ul>
   );
 }
 
@@ -106,7 +169,7 @@ function Harnesses({ installs }: { installs: readonly HarnessInstall[] }) {
 export function SystemFacts({
   detail,
 }: {
-  detail: Pick<SystemDetail, 'conditions' | 'harnesses' | 'latest' | 'now'>;
+  detail: DiskDetail & Pick<SystemDetail, 'harnesses' | 'latest' | 'now'>;
 }) {
   const { harnesses, latest, now } = detail;
   if (latest === undefined && harnesses === undefined) {
@@ -135,24 +198,7 @@ export function SystemFacts({
       {latest !== undefined && (
         <Fact asOf={asOf} grow={1.5} title="Disks">
           <div className="max-h-[30dvh] overflow-y-auto">
-            <ul>
-              {latest.disks.map((disk, index) => (
-                // A mount can be listed twice.
-                // oxlint-disable-next-line react/no-array-index-key
-                <DiskRow
-                  disk={disk}
-                  level={
-                    detail.conditions.find(
-                      (condition) =>
-                        condition.kind === 'low_disk' &&
-                        condition.subject === disk.mount &&
-                        condition.clearedAt === undefined,
-                    )?.level
-                  }
-                  key={`${disk.mount}-${String(index)}`}
-                />
-              ))}
-            </ul>
+            <DiskRows detail={detail} disks={latest.disks} />
           </div>
         </Fact>
       )}
@@ -176,13 +222,15 @@ const WIDE_CARD = 'min-w-0 card-surface rounded-xl border px-4 py-3.5';
 const WIDE_HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
 // The card of each disk's use, under the charts on a wide screen: used of
-// total, with the Low disk level when one is open on it, dated as the System
-// facts are when the sample is no longer current. Nothing without a sample.
+// total, with the Low disk level when one is open on it, its growth and
+// forecast, dated as the System facts are when the sample is no longer current.
+// Nothing without a sample.
 export function SystemDisks({
-  detail: { conditions, latest, now },
+  detail,
 }: {
-  detail: Pick<SystemDetail, 'conditions' | 'latest' | 'now'>;
+  detail: DiskDetail & Pick<SystemDetail, 'latest' | 'now'>;
 }) {
+  const { latest, now } = detail;
   if (latest === undefined) {
     return null;
   }
@@ -190,29 +238,13 @@ export function SystemDisks({
     <section aria-label="Disks" className={WIDE_CARD}>
       <h2 className={WIDE_HEADING}>
         Disks
-        <SampleAsOf at={latest.t} now={now} />
+        <SampleAsOf at={latest.t} now={now} />{' '}
+        <span className="font-normal tracking-normal normal-case">growth over 7 days</span>
       </h2>
       {latest.disks.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">The Collector reported no disk.</p>
       ) : (
-        <ul>
-          {latest.disks.map((disk, index) => (
-            // A mount can be listed twice.
-            // oxlint-disable-next-line react/no-array-index-key
-            <DiskRow
-              disk={disk}
-              key={`${disk.mount}-${String(index)}`}
-              level={
-                conditions.find(
-                  (condition) =>
-                    condition.kind === 'low_disk' &&
-                    condition.subject === disk.mount &&
-                    condition.clearedAt === undefined,
-                )?.level
-              }
-            />
-          ))}
-        </ul>
+        <DiskRows detail={detail} disks={latest.disks} />
       )}
     </section>
   );

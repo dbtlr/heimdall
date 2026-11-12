@@ -22,6 +22,7 @@ const detail: SystemDetail = {
   collectorVersion: '1.0.0',
   conditions: [],
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 5 * MINUTE }],
+  diskTrends: [],
   from: FROM,
   gaps: [],
   harnesses: [],

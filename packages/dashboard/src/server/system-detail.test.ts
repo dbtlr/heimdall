@@ -329,8 +329,62 @@ describe('readSystemDetail', () => {
       }),
     );
 
-    expect((await detail(h, 'server-1')).limitPercent).toEqual({ cpu: 60, memory: 70 });
-    expect((await detail(h, 'laptop-1')).limitPercent).toEqual({ cpu: 75, memory: 80 });
+    expect((await detail(h, 'server-1')).limitPercent).toMatchObject({ cpu: 60, memory: 70 });
+    expect((await detail(h, 'laptop-1')).limitPercent).toMatchObject({ cpu: 75, memory: 80 });
+  });
+
+  test('carries the disk bands the Hub judges this System by: its own, else the fleet', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await storeConditionLimits(
+      h.db.sql,
+      parseConditionLimits({
+        disk: { alert: 95, note: 75, warning: 85 },
+        systems: { 'server-1': { disk: { alert: 90, note: 60, warning: 80 } } },
+      }),
+    );
+
+    expect((await detail(h, 'server-1')).limitPercent?.disk).toEqual({
+      alert: 90,
+      note: 60,
+      warning: 80,
+    });
+    expect((await detail(h, 'laptop-1')).limitPercent?.disk).toEqual({
+      alert: 95,
+      note: 75,
+      warning: 85,
+    });
+  });
+
+  test("carries each mount's growth over the last 7 days whatever the range, from readings a day or more apart", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await h.db.sql`DELETE FROM disk_rollups`;
+    const rollup = (mount: string, daysAgo: number, usedGiB: number) =>
+      h.db.sql`
+        INSERT INTO disk_rollups (system, bucket, mount, used_max, total_max)
+        VALUES ('server-1', ${new Date(NOW - daysAgo * DAY)}, ${mount}, ${usedGiB * GIB}, ${100 * GIB})
+      `;
+    // `/` gains 2 GiB a day; the reading 9 days back is outside the window.
+    await Promise.all([
+      rollup('/', 9, 1),
+      rollup('/', 3, 44),
+      rollup('/', 2, 46),
+      rollup('/', 1, 48),
+      rollup('/', 0, 50),
+      rollup('/data', 3, 60),
+      rollup('/data', 0, 60),
+      rollup('/new', 0.5, 10),
+      rollup('/new', 0, 11),
+    ]);
+
+    const { diskTrends } = await detail(h, 'server-1', '6h');
+    const byMount = new Map(diskTrends.map((trend) => [trend.mount, trend.growth]));
+
+    expect(byMount.get('/')?.bytesPerDay).toBeCloseTo(2 * GIB, -3);
+    expect(byMount.get('/data')?.bytesPerDay).toBeCloseTo(0, -3);
+    expect(byMount.get('/new')).toBeUndefined();
   });
 
   test("carries this System's Service changes over the range, and no other System's, earlier ones, or Conditions", async () => {
@@ -959,7 +1013,36 @@ describe('readSystemRecords', () => {
         ],
         name: 'web',
         supervisor: 'systemd',
+        update: undefined,
+        version: null,
       },
+    ]);
+  });
+
+  test("reads a recorded Service's installed version and its available update, from the Services page's reader", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records });
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '1.0', 'github:owner/web', ${new Date(NOW)}),
+        ('laptop-1', 'web', '1.0', 'github:owner/other', ${new Date(NOW)})
+    `;
+    await h.db.sql`
+      INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, failure, next_check_at) VALUES
+        ('github:owner/web', '{"":"2.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)}),
+        ('github:owner/other', '{"":"1.0"}', ${new Date(NOW)}, ${new Date(NOW)}, null, ${new Date(NOW)})
+    `;
+
+    const server = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
+    const laptop = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+
+    expect(server.recorded.services.map(({ update, version }) => ({ update, version }))).toEqual([
+      { update: '2.0', version: '1.0' },
+    ]);
+    expect(laptop.recorded.services.map(({ update, version }) => ({ update, version }))).toEqual([
+      { update: undefined, version: '1.0' },
     ]);
   });
 

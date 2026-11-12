@@ -57,7 +57,10 @@ const currentChecks = (row: ServiceRow, now: number): boolean =>
 // `dated` reads what dates an available update: when each release of the
 // Service's upstream was found, and each upstream it has had. Without it both
 // come back null, so a caller that shows no date reads no history.
-const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<ServiceRow[]> => sql`
+const readServiceRows = (
+  sql: SQL,
+  { dated, system = null }: { dated: boolean; system?: string | null | undefined },
+): Promise<ServiceRow[]> => sql`
     SELECT r.system, r.name, c.services, c.received_at AS checks_received_at, s.last_seen_at, s.sleeps,
            down.raised_at AS down_since,
            EXISTS (
@@ -113,6 +116,7 @@ const readServiceRows = (sql: SQL, { dated }: { dated: boolean }): Promise<Servi
       FROM service_versions
       WHERE ${dated} AND system = r.system AND service = r.name
     ) history ON true
+    WHERE (${system}::text IS NULL OR r.system = ${system})
   `;
 
 // A row's checks of its own Service, however old.
@@ -120,9 +124,13 @@ const heldChecks = (row: ServiceRow) =>
   (row.services ?? []).filter(({ service }) => service === row.name);
 
 // Each Service's status, latest stop, installed version, and available update,
-// read in one statement from one snapshot.
-export const readServices = async (sql: SQL, now = Date.now()): Promise<ServiceSummary[]> => {
-  const rows = await readServiceRows(sql, { dated: false });
+// read in one statement from one snapshot; one System's when `system` names it.
+export const readServices = async (
+  sql: SQL,
+  now = Date.now(),
+  system?: string,
+): Promise<ServiceSummary[]> => {
+  const rows = await readServiceRows(sql, { dated: false, system });
   return sortServices(
     rows.map((row) => {
       const downSince = row.down_since?.getTime();

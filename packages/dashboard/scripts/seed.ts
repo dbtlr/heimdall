@@ -40,7 +40,8 @@ const UNPAIRED_SYSTEM = 'build-2';
 type Profile = {
   // How busy the System is at a time, in percent, before noise.
   cpu: (t: number) => number;
-  disks: { mount: string; totalGib: number; usedFraction: number }[];
+  // `growthGibPerDay` is how much a mount fills a day, ending at `usedFraction`.
+  disks: { growthGibPerDay?: number; mount: string; totalGib: number; usedFraction: number }[];
   memoryTotalBytes: number;
   name: string;
   platform: 'darwin' | 'linux';
@@ -77,8 +78,8 @@ const PROFILES: Profile[] = [
     cpu: (t) => (isWorkHour(t) ? 38 + 20 * Math.sin(t / (20 * MINUTE)) : 6),
     // Each mount has a different Hub level in the seeded Conditions.
     disks: [
-      { mount: '/', totalGib: 500, usedFraction: 0.82 },
-      { mount: '/data', totalGib: 3600, usedFraction: 0.72 },
+      { growthGibPerDay: 6, mount: '/', totalGib: 500, usedFraction: 0.82 },
+      { growthGibPerDay: 20, mount: '/data', totalGib: 3600, usedFraction: 0.72 },
       { mount: '/backup', totalGib: 4000, usedFraction: 0.97 },
     ],
     memoryTotalBytes: 32 * GIB,
@@ -98,7 +99,7 @@ const PROFILES: Profile[] = [
   },
   {
     cpu: () => 4,
-    disks: [{ mount: '/', totalGib: 500, usedFraction: 0.72 }],
+    disks: [{ growthGibPerDay: 1.5, mount: '/', totalGib: 500, usedFraction: 0.72 }],
     memoryTotalBytes: 4 * GIB,
     name: 'gateway-1',
     platform: 'linux',
@@ -194,11 +195,15 @@ const sendVitals = async (
         totalBytes: profile.memoryTotalBytes,
         usedBytes: Math.round(profile.memoryTotalBytes * (0.45 + 0.1 * random())),
       };
-      sample.disks = profile.disks.map(({ mount, totalGib, usedFraction }) => ({
-        mount,
-        totalBytes: totalGib * GIB,
-        usedBytes: Math.round(totalGib * GIB * usedFraction),
-      }));
+      sample.disks = profile.disks.map(
+        ({ growthGibPerDay = 0, mount, totalGib, usedFraction }) => ({
+          mount,
+          totalBytes: totalGib * GIB,
+          usedBytes: Math.round(
+            totalGib * GIB * usedFraction - (growthGibPerDay * GIB * (now - sample.t)) / DAY,
+          ),
+        }),
+      );
       sample.uptimeSeconds = (sample.t - (now - 7 * DAY)) / SECOND;
     }
     // oxlint-disable-next-line no-await-in-loop -- a week of Reports, in order.
