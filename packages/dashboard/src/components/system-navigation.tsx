@@ -143,7 +143,7 @@ export function SystemNavigationHeader({
               </Link>
             ))}
           </nav>
-          <RangePicker current={range} />
+          {desktopTab(tab) === 'overview' && <RangePicker current={range} />}
         </div>
         <nav
           aria-label="System views"
