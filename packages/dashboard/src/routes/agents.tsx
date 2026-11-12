@@ -51,7 +51,7 @@ function Agents() {
         <div>
           <h1 className="text-[24px] font-semibold sm:text-[28px]">Agents</h1>
           {ready && (
-            <p className="text-sm text-muted-foreground">
+            <p className="hidden text-sm text-muted-foreground sm:block">
               List price · {overview.sessions.length}{' '}
               {overview.sessions.length === 1 ? 'Session' : 'Sessions'} on {systems}{' '}
               {systems === 1 ? 'System' : 'Systems'}{' '}
@@ -59,7 +59,12 @@ function Agents() {
             </p>
           )}
         </div>
-        {ready && <AgentsFigures overview={overview} />}
+        {/* On a phone the range picker shares the title's row and the figures wrap under both. */}
+        {ready && (
+          <div className="order-last w-full sm:order-none sm:w-auto">
+            <AgentsFigures overview={overview} />
+          </div>
+        )}
         <AgentsRangePicker current={search.range} />
       </div>
       {!ready ? (

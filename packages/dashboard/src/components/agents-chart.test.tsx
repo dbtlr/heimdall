@@ -89,6 +89,24 @@ const overview: AgentsOverview = {
   usualByNow: 11.2,
 };
 
+// Seven projects in one bar: five with colors of their own, two merged into others.
+const many: AgentsOverview = {
+  ...overview,
+  chart: {
+    ...overview.chart,
+    cells: Array.from({ length: 7 }, (_, index) =>
+      cell({ pricedCostUsd: 10 - index, project: `project-${String(index)}` }),
+    ),
+  },
+  sessions: Array.from({ length: 7 }, (_, index) =>
+    session({
+      pricedCostUsd: 10 - index,
+      project: `project-${String(index)}`,
+      sessionId: String(index),
+    }),
+  ),
+};
+
 const render = async (
   element: ReactNode,
   entry = '/agents?range=7d&by=harness&zone=Europe%2FBerlin',
@@ -146,23 +164,21 @@ test('the usual-by-now mark sits on the last day bar only, and the hourly view h
   expect(hours).toContain('Cost per hour');
 });
 
+test('the usual-by-now mark stays on the scale when it is above every bar', async () => {
+  const html = await chart('project', undefined, { ...overview, usualByNow: 50 });
+  expect(html).toMatch(/data-usual-by-now="50" style="bottom:50%"/u);
+  expect(html).toContain('$100');
+});
+
+test('a 7- or 30-day first bar that starts before the period says when it counts from', async () => {
+  const first = overview.chart.buckets[0]?.start ?? 0;
+  const html = await chart('project', undefined, { ...overview, from: first + 6 * 3_600_000 });
+  expect(html).toContain('the first bar counts from 06:00, and today&#x27;s is partial');
+  expect(html).toContain('(from 06:00)');
+  expect(await chart('project')).toContain('today&#x27;s bar is partial');
+});
+
 test('keys past the fifth fold into a count, and a picked one among them opens the legend', async () => {
-  const many: AgentsOverview = {
-    ...overview,
-    chart: {
-      ...overview.chart,
-      cells: Array.from({ length: 7 }, (_, index) =>
-        cell({ pricedCostUsd: 10 - index, project: `project-${String(index)}` }),
-      ),
-    },
-    sessions: Array.from({ length: 7 }, (_, index) =>
-      session({
-        pricedCostUsd: 10 - index,
-        project: `project-${String(index)}`,
-        sessionId: String(index),
-      }),
-    ),
-  };
   const folded = await chart('project', undefined, many);
   expect(folded).toContain('project-4');
   expect(folded).not.toContain('project-5');
@@ -170,6 +186,15 @@ test('keys past the fifth fold into a count, and a picked one among them opens t
   const open = await chart('project', 'project-6', many);
   expect(open).toContain('project-6');
   expect(open).not.toContain('2 more');
+});
+
+test('the others segment stays lit when the pick is one of the others, and dims otherwise', async () => {
+  const others = await chart('project', 'project-6', many);
+  expect(others.match(/opacity:0\.25/gu)).toHaveLength(5);
+  expect(others.match(/opacity:1/gu)).toHaveLength(1);
+  const colored = await chart('project', 'project-0', many);
+  expect(colored.match(/opacity:0\.25/gu)).toHaveLength(5);
+  expect(colored.match(/opacity:1/gu)).toHaveLength(1);
 });
 
 test('a note says unpriced requests may change the shares, only when there are some', async () => {
@@ -206,16 +231,29 @@ test('the figures put Today against usual by now, the period total with at least
   expect(html).toContain('>1<');
 });
 
-test('the Today range shows one cost figure, and a Session is running for 5 minutes after its latest request', async () => {
+test('the Today range shows one cost figure', async () => {
   const today = await render(
     <AgentsFigures overview={{ ...overview, range: 'today', usualByNow: undefined }} />,
   );
   expect(today).not.toContain('7 days');
   expect(today).toContain('no usual by now yet');
-  const edge = session({ lastRequestAt: NOW - 5 * 60_000 });
-  const past = session({ lastRequestAt: NOW - 5 * 60_000 - 1, sessionId: 'past' });
-  const running = await render(
-    <AgentsFigures overview={{ ...overview, sessions: [edge, past] }} />,
+});
+
+test("Today reads at least when today's requests include unpriced ones", async () => {
+  const html = await render(
+    <AgentsFigures
+      overview={{
+        ...overview,
+        today: { pricedCostUsd: 8, requests: 3, unpricedRequests: 1 },
+        totals: { pricedCostUsd: 16, requests: 5, unpricedRequests: 0 },
+      }}
+    />,
   );
-  expect(running).toContain('>1<');
+  expect(html).toContain('at least · usual by now $11');
+  expect(html).toContain('at list price');
+});
+
+test('on a phone the figures show Today and Running now, and the period total only from 640 px', async () => {
+  const html = await render(<AgentsFigures overview={overview} />);
+  expect(html).toMatch(/<div class="hidden sm:block"><div[^>]*><p[^>]*>7 days</u);
 });

@@ -19,11 +19,13 @@ type CellRow = {
 };
 
 // What requests in the period cost in each of `buckets`, per Harness, System,
-// model, and working directory, summed in the database from the requests of
-// the Sessions with one in the period. The Sessions are the spans' (see
-// sessionSpans) and each request is read through its Session's key, so the
-// cost follows the period's length and not the archive's. Call it inside a
-// snapshot.
+// model, and working directory, in one statement however many Sessions there
+// are. As for the Session and model totals (ADR-0016), a Session whose
+// requests in the period all fall in one bucket takes its stored model totals;
+// only a Session crossing a bucket's edge or the period's is priced request by
+// request, and only its requests in that bucket, read through its key and
+// time. The Sessions are the spans' (see sessionSpans), so the cost follows
+// the period's Sessions and not the archive. Call it inside a snapshot.
 const readCells = async (
   sql: SQL,
   { from, to }: Period,
@@ -38,24 +40,43 @@ const readCells = async (
   );
   return sql`
     WITH windows AS MATERIALIZED (
-      SELECT *
+      SELECT j.i, greatest(j.start_at, ${from}) AS start_at, j.end_at
       FROM jsonb_to_recordset(${windows}::text::jsonb) AS j (i int, start_at timestamptz, end_at timestamptz)
     ),
-    spans AS MATERIALIZED (${sessionSpans(sql, { from, to })})
-    SELECT w.i AS bucket, k.harness, k.system, r.model,
-           s.repository, coalesce(s.last_cwd, s.first_cwd) AS cwd,
-           coalesce(sum(r.cost_usd), 0)::float8 AS priced_cost_usd,
-           count(*) FILTER (WHERE r.cost_usd IS NULL)::float8 AS unpriced_requests
-    FROM spans k
-    JOIN insight.sessions s
-      ON (s.harness, s.system, s.source, s.session_id)
-       = (k.harness, k.system, k.source, k.session_id)
-    CROSS JOIN windows w
-    JOIN insight.requests r
-      ON (r.harness, r.system, r.source, r.session_id)
-       = (k.harness, k.system, k.source, k.session_id)
-     AND r.at >= greatest(w.start_at, ${from}) AND r.at < w.end_at AND r.at <= ${to}
-    GROUP BY w.i, k.harness, k.system, r.model, s.repository, coalesce(s.last_cwd, s.first_cwd)
+    spans AS MATERIALIZED (
+      SELECT k.*, s.repository, coalesce(s.last_cwd, s.first_cwd) AS cwd
+      FROM (${sessionSpans(sql, { from, to })}) k
+      CROSS JOIN LATERAL (
+        SELECT x.repository, x.first_cwd, x.last_cwd
+        FROM insight.sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (k.harness, k.system, k.source, k.session_id)
+        OFFSET 0
+      ) s
+    )
+    SELECT w.i AS bucket, k.harness, k.system, t.model, k.repository, k.cwd,
+           coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
+           t.unpriced_requests::float8 AS unpriced_requests
+    FROM windows w
+    JOIN spans k ON k.last_request_at >= w.start_at AND k.first_request_at < w.end_at
+    CROSS JOIN LATERAL (
+      SELECT x.model, x.requests, x.priced_cost_usd, x.unpriced_requests
+      FROM insight.session_model_totals x
+      WHERE (x.harness, x.system, x.source, x.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+        AND k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
+        AND k.last_request_at <= ${to}
+      UNION ALL
+      SELECT r.model, count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL)
+      FROM insight.requests r
+      WHERE (r.harness, r.system, r.source, r.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+        AND NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
+                 AND k.last_request_at <= ${to})
+        AND r.at >= w.start_at AND r.at < w.end_at AND r.at <= ${to}
+      GROUP BY r.model
+    ) t
+    WHERE t.requests > 0
   `;
 };
 

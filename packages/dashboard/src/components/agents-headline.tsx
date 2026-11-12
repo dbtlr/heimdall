@@ -55,12 +55,14 @@ const runningProjects = ({ now, sessions }: AgentsOverview): string => {
 
 // The figures beside the page's title: what Today costs against what is
 // usually spent by now, the period's total, and how many Sessions run. The
-// Today range's total is Today's, so the two are one figure there.
+// Today range's total is Today's, so the two are one figure there. On a phone
+// they sit in a card under the title, Today and Running now side by side, as
+// in the picked mock; the period's total shows from 640 px up.
 export function AgentsFigures({ overview }: { overview: AgentsOverview }) {
   const { range, today, totals, usualByNow } = overview;
   const running = runningCount(overview.sessions, overview.now);
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-10">
+    <div className="card-surface grid grid-cols-2 gap-x-6 rounded-xl border p-4 sm:flex sm:flex-wrap sm:gap-x-10 sm:rounded-none sm:border-0 sm:bg-transparent sm:bg-none sm:p-0 sm:shadow-none">
       <Figure
         label="Today"
         note={`${today.unpricedRequests > 0 ? 'at least · ' : ''}${
@@ -69,15 +71,17 @@ export function AgentsFigures({ overview }: { overview: AgentsOverview }) {
         value={formatCost(today.pricedCostUsd)}
       />
       {range !== 'today' && (
-        <Figure
-          label={rangeName(range)}
-          note={
-            totals.unpricedRequests > 0
-              ? `at least · ${String(totals.unpricedRequests)} unpriced`
-              : 'at list price'
-          }
-          value={formatCost(totals.pricedCostUsd)}
-        />
+        <div className="hidden sm:block">
+          <Figure
+            label={rangeName(range)}
+            note={
+              totals.unpricedRequests > 0
+                ? `at least · ${String(totals.unpricedRequests)} unpriced`
+                : 'at list price'
+            }
+            value={formatCost(totals.pricedCostUsd)}
+          />
+        </div>
       )}
       <Figure
         className={running > 0 ? 'text-status-good' : undefined}

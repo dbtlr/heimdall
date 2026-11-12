@@ -32,6 +32,13 @@ const axisLabel = (overview: AgentsOverview, index: number): string | undefined 
     : undefined;
 };
 
+// The time the first day bar counts from when it starts before the period, as
+// a trailing 7- or 30-day period's first bar does; else undefined.
+const firstBarFrom = ({ chart, from }: AgentsOverview): number | undefined => {
+  const first = chart.buckets[0];
+  return chart.unit === 'day' && first !== undefined && first.start < from ? from : undefined;
+};
+
 // A bar's name for a hover and the chart's text alternative.
 const barName = (overview: AgentsOverview, index: number): string => {
   const { buckets, unit } = overview.chart;
@@ -39,7 +46,24 @@ const barName = (overview: AgentsOverview, index: number): string => {
   if (unit === 'hour') {
     return `${formatClock(start, overview.timeZone)}${index === buckets.length - 1 ? ' (so far)' : ''}`;
   }
-  return index === buckets.length - 1 ? 'Today (so far)' : formatDate(start, overview.timeZone);
+  if (index === buckets.length - 1) {
+    return 'Today (so far)';
+  }
+  const from = index === 0 ? firstBarFrom(overview) : undefined;
+  return from === undefined
+    ? formatDate(start, overview.timeZone)
+    : `${formatDate(start, overview.timeZone)} (from ${formatClock(from, overview.timeZone)})`;
+};
+
+// Which bars count only part of their hour or day, for the chart's heading.
+const partialNote = (overview: AgentsOverview): string => {
+  if (overview.chart.unit === 'hour') {
+    return 'the current hour is partial';
+  }
+  const from = firstBarFrom(overview);
+  return from === undefined
+    ? "today's bar is partial"
+    : `the first bar counts from ${formatClock(from, overview.timeZone)}, and today's is partial`;
 };
 
 // One bar: its segments stacked from the bottom, each as tall as its cost on
@@ -84,7 +108,9 @@ function Bar({
 
 // The cost of each local day, or for Today each local hour, split by `by`
 // into the keys of the legend, which sits above it. Today's bar is partial and
-// in the day views carries a dashed mark at what is usually spent by now.
+// in the day views carries a dashed mark at what is usually spent by now; the
+// first day bar of the 7- and 30-day periods is partial too, counting from
+// the period's start, and the heading says so.
 export function AgentsChart({
   by,
   overview,
@@ -115,7 +141,7 @@ export function AgentsChart({
       >
         Cost per {per}, by {SWITCH_LABELS[by]}
         <span className="text-sm font-normal text-muted-foreground">
-          {unit === 'hour' ? 'the current hour is partial' : "today's bar is partial"}
+          {partialNote(overview)}
           {usual === undefined ? '' : ' · dashed: usual by now'}
         </span>
       </h2>
