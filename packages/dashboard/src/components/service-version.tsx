@@ -7,7 +7,8 @@ export function InstalledVersion({ version }: { version: string | null }) {
 }
 
 // A Service's installed version and, when one is offered, the update to it in
-// the violet accent tag.
+// the violet accent tag. A long version, such as an image digest, wraps inside
+// a narrow card.
 export function ServiceVersion({
   service,
 }: {
@@ -15,13 +16,13 @@ export function ServiceVersion({
 }) {
   const { update, version } = service;
   return (
-    <span className="flex flex-none items-baseline gap-1.5">
-      <span className="font-mono text-xs text-muted-foreground tabular-nums">
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+      <span className="font-mono text-xs wrap-anywhere text-muted-foreground tabular-nums">
         <InstalledVersion version={version} />
       </span>
       {update !== undefined && (
         <span
-          className="rounded-md bg-select/15 px-1.5 font-mono text-xs text-select tabular-nums"
+          className="rounded-md bg-select/15 px-1.5 font-mono text-xs wrap-anywhere text-select tabular-nums"
           data-update={update}
         >
           → {update}
