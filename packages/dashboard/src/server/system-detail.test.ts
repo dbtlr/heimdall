@@ -381,12 +381,15 @@ describe('readSystemDetail', () => {
   test('fits a silent System over the 7 days up to its newest disk reading, not up to now', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
     await h.db.sql`DELETE FROM disk_rollups`;
     // Heard last 8 days ago, after a fortnight of gaining 2 GiB a day; a reading
-    // stamped after now is no reading yet.
+    // stamped after now is no reading yet. Another System still reporting today
+    // does not move this System's window.
     await Promise.all([
       ...Array.from({ length: 15 }, (_, day) => rollup(h, 'server-1', '/', 22 - day, 2 * day)),
       rollup(h, 'server-1', '/', -1, 99),
+      rollup(h, 'laptop-1', '/', 0, 10),
     ]);
 
     const { diskTrends } = await detail(h, 'server-1');
