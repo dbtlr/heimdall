@@ -65,13 +65,14 @@ describe('systemEvents', () => {
     ]);
   });
 
-  test('puts Conditions still open first, however long ago they were raised, then the rest by when they ended or happened', () => {
+  test('orders events by the latest time each shows, a cleared Condition by its clear and an open one by its raise, however long it has been open', () => {
     const events = systemEvents(
       {
         changes: [{ ...version, at: NOW - 10 * MINUTE }],
         conditions: [
           mark({ clearedAt: NOW - 5 * HOUR, kind: 'drift', raisedAt: NOW - 6 * HOUR }),
           mark({ kind: 'low_disk', raisedAt: WINDOW.from - 9 * HOUR, subject: '/backup' }),
+          mark({ kind: 'job_failing', raisedAt: NOW - 3 * HOUR, subject: 'backup' }),
           mark({ clearedAt: NOW - 20 * MINUTE, kind: 'high_cpu', raisedAt: NOW - 2 * HOUR }),
         ],
         paired: true,
@@ -80,10 +81,11 @@ describe('systemEvents', () => {
     );
 
     expect(events.map(({ text }) => text)).toEqual([
-      'Low disk /backup, warning',
       'web 1.8.2 → 1.8.3',
       'High CPU, warning',
+      'Job failing backup, warning',
       'Drift, warning',
+      'Low disk /backup, warning',
     ]);
   });
 

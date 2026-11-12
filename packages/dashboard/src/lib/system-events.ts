@@ -43,14 +43,17 @@ export const laneConditions = (
       (mark.clearedAt ?? window.to) >= window.from,
   );
 
-// When an event last mattered: a Condition still open matters now, one
-// cleared when it was cleared, and a change when it happened.
-const lastSeen = (event: SystemEvent): number =>
-  event.kind === 'condition' ? (event.end ?? Number.POSITIVE_INFINITY) : event.at;
+// The latest time the line shows for an event: when a cleared Condition was
+// cleared, when an open one was raised, and when a change happened. An open
+// Condition does not count as now, so a few long-open ones cannot crowd recent
+// changes off the line; the rail's Open Conditions lists them all anyway.
+const lastShown = (event: SystemEvent): number =>
+  event.kind === 'condition' ? (event.end ?? event.at) : event.at;
 
 // The Conditions open in the window, and the Service changes in it, as events,
-// the latest first: Conditions still open, then by when each was cleared or
-// happened. A Condition raised or cleared is its span, not a second event.
+// the latest first by the latest time each shows, so every event after the
+// first few is an earlier one. A Condition raised or cleared is its span, not
+// a second event.
 export const systemEvents = (
   {
     changes,
@@ -79,7 +82,7 @@ export const systemEvents = (
       text: `${changeWords(group).title}${restarted ? ', restarted' : ''}`,
     };
   });
-  return [...spans, ...moves].toSorted((a, b) => lastSeen(b) - lastSeen(a) || b.at - a.at);
+  return [...spans, ...moves].toSorted((a, b) => lastShown(b) - lastShown(a) || b.at - a.at);
 };
 
 // The stretches of a Condition's span at each level it held, from its raise to
