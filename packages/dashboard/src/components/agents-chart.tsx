@@ -135,7 +135,10 @@ export function AgentsChart({
     .map(({ total }, index) => `${barName(overview, index)} ${formatCost(total)}`)
     .join(', ');
   return (
-    <section aria-labelledby="agents-chart-heading" className="card-surface rounded-xl border p-4">
+    <section
+      aria-labelledby="agents-chart-heading"
+      className="card-surface flex flex-col rounded-xl border p-4"
+    >
       <h2
         className="flex flex-wrap items-baseline gap-x-3 text-base font-semibold"
         id="agents-chart-heading"
@@ -146,11 +149,15 @@ export function AgentsChart({
           {usual === undefined ? '' : ' · dashed: usual by now'}
         </span>
       </h2>
-      <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start">
-        <div className="shrink-0">
+      {/* On a narrow screen the legend's chips wrap onto several rows, so it
+          follows the chart there instead of pushing the chart off the screen. */}
+      <div className="mt-3 flex flex-col gap-3 max-lg:contents lg:flex-row lg:items-start">
+        <div className="shrink-0 max-lg:mt-3">
           <AgentsBreakdownSwitch current={by} />
         </div>
-        <AgentsLegend key={by} pick={pick} rows={rows} />
+        <div className="min-w-0 max-lg:order-last max-lg:mt-4">
+          <AgentsLegend key={by} pick={pick} rows={rows} />
+        </div>
       </div>
       <div className="mt-4">
         <ScaledPlot domain={domain} format={dollars} gutter height={190}>
