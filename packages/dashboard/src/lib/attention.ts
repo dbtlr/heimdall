@@ -869,8 +869,13 @@ export const nextSteps = (item: Attention): { short: string; steps: NextStep[] }
 // Service restarted notes on the Services page, and maintenance notes, a
 // Pending update or Reboot required at the note level, under Maintenance.
 // Undefined for every other item, which stays with the open Conditions; so do
-// all of an unpaired System's, whose history no other page lists.
-export const shownElsewhere = (item: Attention): 'maintenance' | 'services' | undefined => {
+// all of an unpaired System's, whose history no other page lists. The System
+// page's Conditions and changes lane leaves out the same Conditions.
+export const shownElsewhere = (item: {
+  kind: AttentionKind;
+  level?: ConditionLevel | undefined;
+  unpaired: boolean;
+}): 'maintenance' | 'services' | undefined => {
   if (item.unpaired) {
     return undefined;
   }

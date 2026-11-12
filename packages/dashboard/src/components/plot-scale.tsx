@@ -50,14 +50,22 @@ const BACKING = 'rounded-sm bg-card/85 px-0.5';
 
 // The labels of a plot's value scale, each `y` percent down the layer, the
 // same place the plot draws that value.
-function ScaleTicks({ domain, format }: { domain: Domain; format: (value: number) => string }) {
+function ScaleTicks({
+  beside = false,
+  domain,
+  format,
+}: {
+  beside?: boolean;
+  domain: Domain;
+  format: (value: number) => string;
+}) {
   return (
     <div aria-hidden="true" className="pointer-events-none absolute inset-0">
       {scaleTicks(domain).map(({ value, y }) => (
         <span
           className={cn(
-            'absolute left-1 text-xs leading-none text-dim tabular-nums',
-            BACKING,
+            'absolute text-xs leading-none text-dim tabular-nums',
+            beside ? 'right-full mr-1.5 whitespace-nowrap' : cn('left-1', BACKING),
             tickShift(y),
           )}
           data-scale-tick={value}
@@ -109,6 +117,7 @@ function LimitLines({ domain, limits }: { domain: Domain; limits: readonly PlotL
 // takes a `gutter` for it, left of the plot. A plot whose domain is a stand-in,
 // because it has no reading to scale, is not `labelled`.
 export function ScaledPlot({
+  beside = false,
   children,
   className,
   domain,
@@ -118,6 +127,8 @@ export function ScaledPlot({
   labelled = true,
   limits = [],
 }: {
+  // Draws the scale in the gutter the caller leaves left of the plot, right-aligned.
+  beside?: boolean;
   children: ReactNode;
   className?: string;
   domain: Domain;
@@ -131,7 +142,7 @@ export function ScaledPlot({
     return (
       <div className={cn('relative w-full', className)} style={{ height }}>
         {children}
-        {labelled && <ScaleTicks domain={domain} format={format} />}
+        {labelled && <ScaleTicks beside={beside} domain={domain} format={format} />}
         <LimitLines domain={domain} limits={limits} />
       </div>
     );

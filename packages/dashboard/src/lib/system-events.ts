@@ -1,0 +1,112 @@
+// What the System page's Conditions and changes lane says: each Condition
+// open in the window and each Service change as one line of events, and the
+// rows the Condition spans stack on.
+
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
+import type { ConditionLevel } from '@heimdall/schema';
+
+import type { ConditionMark } from '../server/fleet-overview-types.ts';
+import type { ServiceChange } from '../server/home-types.ts';
+import { shownElsewhere } from './attention.ts';
+import { changeWords, groupChanges } from './home-changes.ts';
+import type { Window } from './time.ts';
+
+export type SystemEvent =
+  | { at: number; end: number | undefined; kind: 'condition'; level: ConditionLevel; text: string }
+  | { at: number; kind: 'change'; text: string };
+
+const LEVEL_RANK: Record<ConditionLevel, number> = { alert: 2, note: 0, warning: 1 };
+
+// The highest level a Condition reached, which its current level alone does
+// not say once it has been cleared or has eased.
+export const peakLevel = (mark: ConditionMark): ConditionLevel =>
+  mark.transitions.reduce<ConditionLevel>(
+    (peak, { level }) => (LEVEL_RANK[level] > LEVEL_RANK[peak] ? level : peak),
+    mark.level,
+  );
+
+// The Conditions of `marks` that belong on the lane, each open at some time in
+// the window. A paired System's Conditions that its open Conditions leave to
+// another place stay off the lane too: a Pending update or Reboot required
+// that never rose above a note, which the Maintenance line shows, and Service
+// restarted, which the Service changes show. Judged by the highest level
+// reached, a span that once rose to warning stays as the history it is.
+export const laneConditions = (
+  marks: readonly ConditionMark[],
+  { paired, window }: { paired: boolean; window: Window },
+): ConditionMark[] =>
+  marks.filter(
+    (mark) =>
+      shownElsewhere({ kind: mark.kind, level: peakLevel(mark), unpaired: !paired }) ===
+        undefined &&
+      mark.raisedAt <= window.to &&
+      (mark.clearedAt ?? window.to) >= window.from,
+  );
+
+// The latest time the line shows for an event: when a cleared Condition was
+// cleared, when an open one was raised, and when a change happened. An open
+// Condition does not count as now, so a few long-open ones cannot crowd recent
+// changes off the line; the rail's Open Conditions lists them all anyway.
+const lastShown = (event: SystemEvent): number =>
+  event.kind === 'condition' ? (event.end ?? event.at) : event.at;
+
+// The Conditions open in the window, and the Service changes in it, as events,
+// the latest first by the latest time each shows, so every event after the
+// first few is an earlier one. A Condition raised or cleared is its span, not
+// a second event.
+export const systemEvents = (
+  {
+    changes,
+    conditions,
+    paired,
+  }: { changes: readonly ServiceChange[]; conditions: readonly ConditionMark[]; paired: boolean },
+  window: Window,
+): SystemEvent[] => {
+  const spans = laneConditions(conditions, { paired, window }).map((mark): SystemEvent => {
+    const level = peakLevel(mark);
+    const subject = mark.subject === '' ? '' : ` ${conditionSubject(mark)}`;
+    return {
+      at: mark.raisedAt,
+      end: mark.clearedAt,
+      kind: 'condition',
+      level,
+      text: `${CONDITION_KIND_NAMES[mark.kind]}${subject}, ${level}`,
+    };
+  });
+  const moves = groupChanges(changes, Number.POSITIVE_INFINITY).map((group): SystemEvent => {
+    const restarted =
+      group.change.kind === 'version' && Object.values(group.stops).some((count) => count > 0);
+    return {
+      at: group.at,
+      kind: 'change',
+      text: `${changeWords(group).title}${restarted ? ', restarted' : ''}`,
+    };
+  });
+  return [...spans, ...moves].toSorted((a, b) => lastShown(b) - lastShown(a) || b.at - a.at);
+};
+
+// The stretches of a Condition's span at each level it held, from its raise to
+// `end`, where it was cleared or the window ends.
+export const levelSegments = (
+  mark: ConditionMark,
+  end: number,
+): { end: number; level: ConditionLevel; start: number }[] =>
+  mark.transitions.length === 0
+    ? [{ end, level: mark.level, start: mark.raisedAt }]
+    : mark.transitions.flatMap(({ at, kind, level }, index) =>
+        kind === 'cleared'
+          ? []
+          : [{ end: mark.transitions[index + 1]?.at ?? end, level, start: at }],
+      );
+
+// The row each span takes when overlapping spans may not share one: the first
+// row whose last span has ended by the time this one starts.
+export const packRows = (spans: readonly { end: number; start: number }[]): number[] => {
+  const ends: number[] = [];
+  return spans.map(({ end, start }) => {
+    const free = ends.findIndex((last) => last <= start);
+    const row = free === -1 ? ends.length : free;
+    ends[row] = end;
+    return row;
+  });
+};

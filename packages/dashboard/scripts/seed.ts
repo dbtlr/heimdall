@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import {
   BUNDLED_PRICES,
   migrate,
+  parseConditionLimits,
   refreshSessionInsight,
   report,
   storeReport,
+  storeConditionLimits,
   storeToken,
   syncPrices,
   timeline,
@@ -1364,6 +1366,12 @@ const fill = async (sql: SQL) => {
   await migrate(sql);
   await sql.unsafe(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   await syncPrices(sql, { bundled: BUNDLED_PRICES, configured: [] });
+  // The limits a Hub stores when it starts: the defaults, and one System with
+  // a memory limit of its own.
+  await storeConditionLimits(
+    sql,
+    parseConditionLimits({ systems: { 'workstation-1': { memory: { percent: 80 } } } }),
+  );
   for (const { name } of PROFILES) {
     // oxlint-disable-next-line no-await-in-loop -- five Systems.
     await storeToken(sql, { pairedAt: now - 8 * DAY, system: name, token: `seed-token-${name}` });

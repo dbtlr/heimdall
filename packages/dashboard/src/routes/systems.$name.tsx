@@ -5,21 +5,20 @@ import { useEffect, useState } from 'react';
 import { PhraseText } from '../components/date-time.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
-import { SampleInspector } from '../components/sample-inspector.tsx';
 import { SampleSheet } from '../components/sample-sheet.tsx';
 import { SilenceBanner } from '../components/silence-line.tsx';
 import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
 import { SystemNavigationHeader } from '../components/system-navigation.tsx';
-import { SystemNowCards } from '../components/system-now-cards.tsx';
 import { SystemMaintenance, SystemOpenConditions } from '../components/system-open-conditions.tsx';
+import { SystemOverview } from '../components/system-overview.tsx';
 import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
-import { systemSearch } from '../lib/system-search.ts';
+import { desktopTab, systemSearch } from '../lib/system-search.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { getSample, getSystemDetail } from '../server/system-detail-fn.ts';
 import type { SampleInspection } from '../server/system-detail-types.ts';
@@ -110,6 +109,7 @@ function SystemPage() {
   const { failed, loading, sample } = useSample(detail.name, search.at, at, loadedSample);
   const header = headerLine(detail, detail.now);
   const charts = search.tab === 'vitals' || search.tab === 'sessions';
+  const overview = desktopTab(search.tab) === 'overview';
   const select = (t: number) => {
     void navigate({
       replace: true,
@@ -141,48 +141,55 @@ function SystemPage() {
         </p>
         {!detail.paired && <UnpairedBanner name={detail.name} />}
         <SilenceBanner now={detail.now} until={detail.silencedUntil} />
+        {overview && (
+          <div className="hidden lg:block">
+            <SystemOverview
+              at={search.at}
+              attention={attention}
+              detail={detail}
+              failed={failed}
+              loading={loading}
+              onSelect={select}
+              recorded={records.recorded}
+              sample={sample}
+            />
+          </div>
+        )}
+        {/* The phone keeps the Now, Vitals, and Sessions tabs; a wide screen has the Overview. */}
         {search.tab === 'now' && (
-          <>
-            <SystemNowCards detail={detail} items={attention} />
+          <div className="lg:hidden">
             <SystemOpenConditions items={attention} key={detail.name} now={detail.now} />
             <SystemMaintenance items={attention} now={detail.now} />
-            <div className="lg:hidden">
-              <SystemGlance detail={detail} />
-            </div>
-          </>
+            <SystemGlance detail={detail} />
+          </div>
         )}
         {charts && (
-          <>
+          <div className="lg:hidden">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-semibold">
                 {search.tab === 'vitals' ? 'Vitals' : 'Sessions'}
               </h2>
               <RangePicker current={detail.range} />
             </div>
-            <div className="grid min-w-0 gap-4 lg:grid-cols-[1fr_290px]">
-              <div className="min-w-0">
-                <SystemCharts
-                  detail={detail}
-                  onSelect={select}
-                  sample={sample}
-                  view={search.tab === 'vitals' ? 'vitals' : 'sessions'}
-                />
-                <button
-                  className="my-3 min-h-11 rounded-lg border px-3 text-base text-primary lg:hidden"
-                  onClick={() => select(sample?.t ?? detail.now)}
-                  type="button"
-                >
-                  Inspect sample
-                </button>
-              </div>
-              <div className="hidden lg:block">
-                <SampleInspector failed={failed} loading={loading} sample={sample} />
-              </div>
+            <div className="min-w-0">
+              <SystemCharts
+                detail={detail}
+                onSelect={select}
+                sample={sample}
+                view={search.tab === 'vitals' ? 'vitals' : 'sessions'}
+              />
+              <button
+                className="my-3 min-h-11 rounded-lg border px-3 text-base text-primary"
+                onClick={() => select(sample?.t ?? detail.now)}
+                type="button"
+              >
+                Inspect sample
+              </button>
             </div>
             {search.tab === 'vitals' && (
               <SystemFacts detail={{ ...detail, harnesses: undefined }} />
             )}
-          </>
+          </div>
         )}
         {search.tab === 'records' && (
           <>
@@ -200,7 +207,7 @@ function SystemPage() {
           </>
         )}
       </main>
-      {charts && (
+      {overview && (
         <SampleSheet
           failed={failed}
           loading={loading}

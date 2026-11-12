@@ -12,17 +12,20 @@ const ALIGN = { end: '-translate-x-full', middle: '-translate-x-1/2', start: '' 
 // The labels under the lanes at `ticks`, with any `children` over them. A
 // narrow screen drops the minor ones and any that would crowd an end's label.
 export function TimeAxis({
+  bare = false,
   children,
   ticks,
   window,
 }: {
+  // Without the empty label column of the lanes, for tracks that span their card.
+  bare?: boolean;
   children?: ReactNode;
   ticks: readonly Tick[];
   window: Window;
 }) {
   return (
-    <div className={cn(LANE_GRID, 'pt-0.5')}>
-      <div className="hidden sm:block" />
+    <div className={cn(!bare && LANE_GRID, 'pt-0.5')}>
+      {!bare && <div className="hidden sm:block" />}
       <div className="relative h-4 text-xs text-muted-foreground tabular-nums">
         {ticks.map((tick) => (
           <span

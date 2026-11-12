@@ -6,7 +6,7 @@ import type { SQL } from 'bun';
 
 import { homeJob, orderJobs } from '../lib/home-jobs.ts';
 import type { Attention } from './attention-types.ts';
-import type { Change, HeldPackages, HomeJob } from './home-types.ts';
+import type { Change, HeldPackages, HomeJob, ServiceChange } from './home-types.ts';
 import { conditionKind, scheduleOf, toRun } from './hub-rows.ts';
 import type { RunRow } from './hub-rows.ts';
 import { nextScheduledTime } from './next-run.ts';
@@ -76,18 +76,20 @@ export const readHomeJobs = async (
   );
 };
 
-// Each change on a paired System between `since` and `now`: every installed
-// version that replaced another, every Service stop, and every Condition
-// raised or cleared at warning or alert. A version first seen, or one now
+// Each Service change between `since` and `now`: every installed version that
+// replaced another, and every Service stop. A version first seen, or one now
 // unknown, is no change, and one read as unknown in between is passed over, so
-// the change is from the last version known.
-export const readChanges = async (
+// the change is from the last version known. With `system`, only that System's,
+// paired or not, since an unpaired System keeps its history; without it, every
+// paired System's.
+export const readServiceChanges = async (
   sql: SQL,
-  { now, since }: { now: number; since: number },
-): Promise<Change[]> => {
+  { now, since, system: only }: { now: number; since: number; system?: string },
+): Promise<ServiceChange[]> => {
   const from = new Date(since);
   const to = new Date(now);
-  const [versions, stops, transitions]: [
+  const filter = only ?? null;
+  const [versions, stops]: [
     {
       first_seen_at: Date;
       previous: string | null;
@@ -96,19 +98,11 @@ export const readChanges = async (
       version: string | null;
     }[],
     Awaited<ReturnType<typeof readServiceStops>>,
-    {
-      action: 'cleared' | 'raised';
-      at: Date;
-      id: string;
-      kind: string;
-      subject: string;
-      system: string;
-    }[],
   ] = await Promise.all([
     sql`
       SELECT v.system, v.service, v.version, v.first_seen_at, previous.version AS previous
       FROM service_versions v
-      JOIN paired_systems p ON p.system = v.system
+      LEFT JOIN paired_systems p ON p.system = v.system
       JOIN LATERAL (
         SELECT version FROM service_versions w
         WHERE w.system = v.system AND w.service = v.service AND w.first_seen_at < v.first_seen_at
@@ -116,20 +110,17 @@ export const readChanges = async (
         ORDER BY w.first_seen_at DESC LIMIT 1
       ) previous ON true
       WHERE v.first_seen_at >= ${from} AND v.first_seen_at <= ${to}
+        AND (${filter}::text IS NULL OR v.system = ${filter})
+        AND (${filter}::text IS NOT NULL OR p.system IS NOT NULL)
     `,
-    readServiceStops(sql, { includeUnpaired: false, since: from }),
-    sql`
-      SELECT c.id::text AS id, c.system, c.kind, c.subject, t.action, t.at
-      FROM conditions c
-      JOIN paired_systems p ON p.system = c.system
-      JOIN condition_transitions t ON t.condition = c.id
-      WHERE (c.raised_at >= ${from} OR c.cleared_at >= ${from})
-        AND t.action IN ('raised', 'cleared') AND t.level IN ('warning', 'alert')
-        AND t.at >= ${from} AND t.at <= ${to}
-    `,
+    readServiceStops(sql, {
+      includeUnpaired: only !== undefined,
+      since: from,
+      ...(only === undefined ? {} : { system: only }),
+    }),
   ]);
   return [
-    ...versions.flatMap(({ first_seen_at, previous, service, system, version }): Change[] =>
+    ...versions.flatMap(({ first_seen_at, previous, service, system, version }): ServiceChange[] =>
       previous === null || version === null || previous === version
         ? []
         : [
@@ -143,10 +134,45 @@ export const readChanges = async (
             },
           ],
     ),
-    ...stops.flatMap(({ ongoing, service, stoppedAt, system }): Change[] => {
+    ...stops.flatMap(({ ongoing, service, stoppedAt, system }): ServiceChange[] => {
       const at = Date.parse(stoppedAt);
       return at > now ? [] : [{ at, kind: 'stop', ongoing, service, system }];
     }),
+  ];
+};
+
+// Each change on a paired System between `since` and `now`: its Service
+// changes, and every Condition raised or cleared at warning or alert.
+export const readChanges = async (
+  sql: SQL,
+  { now, since }: { now: number; since: number },
+): Promise<Change[]> => {
+  const from = new Date(since);
+  const to = new Date(now);
+  const [services, transitions]: [
+    ServiceChange[],
+    {
+      action: 'cleared' | 'raised';
+      at: Date;
+      id: string;
+      kind: string;
+      subject: string;
+      system: string;
+    }[],
+  ] = await Promise.all([
+    readServiceChanges(sql, { now, since }),
+    sql`
+      SELECT c.id::text AS id, c.system, c.kind, c.subject, t.action, t.at
+      FROM conditions c
+      JOIN paired_systems p ON p.system = c.system
+      JOIN condition_transitions t ON t.condition = c.id
+      WHERE (c.raised_at >= ${from} OR c.cleared_at >= ${from})
+        AND t.action IN ('raised', 'cleared') AND t.level IN ('warning', 'alert')
+        AND t.at >= ${from} AND t.at <= ${to}
+    `,
+  ]);
+  return [
+    ...services,
     ...transitions.map(({ action, at, id, kind, subject, system }): Change => ({
       action,
       at: at.getTime(),

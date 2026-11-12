@@ -120,6 +120,9 @@ export type Change =
       system: string;
     };
 
+// A change to a Service: a version that replaced another, or a stop.
+export type ServiceChange = Extract<Change, { kind: 'stop' | 'version' }>;
+
 // Changes of one kind, about one Service or Condition, with one version
 // transition, or stops all ongoing or all over, that fell within CHANGE_WINDOW_MS of the first: `change` is the
 // newest, `at` its time, `systems` each System by name, and `stops` how many

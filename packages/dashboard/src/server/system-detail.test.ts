@@ -1,6 +1,15 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
+import {
+  NOW,
+  parseConditionLimits,
+  push,
+  report,
+  startHub,
+  storeConditionLimits,
+  timeline,
+  unpair,
+} from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { filesRecordDigest } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
@@ -284,6 +293,110 @@ describe('readSystemDetail', () => {
       usedBytes: 12_884_901_888,
     });
     expect(found.gaps).toContainEqual({ from: NOW - 30 * MINUTE, to: NOW - 20 * MINUTE });
+  });
+
+  test('carries the 1-minute load per bucket from the rollups, as the average of its samples', async () => {
+    await using h = await startHub();
+    // One bucket's samples at loads 1, 2, and 6: the average is 3, the high 6.
+    const loads = [1, 2, 6];
+    await hear(h, 'server-1', {
+      samples: loads.map((load, index) =>
+        Object.assign(sample(NOW - HOUR + index * 15 * SECOND), { load: [load, 0.9, 0.7] }),
+      ),
+      times: [],
+    });
+
+    const found = await detail(h, 'server-1', '6h');
+
+    expect(found.load).toHaveLength(1);
+    expect(found.load[0]).toMatchObject({ t: NOW - HOUR });
+    expect(found.load[0]?.value).toBeCloseTo(3, 9);
+  });
+
+  test('carries the CPU and memory limits the Hub judges this System by: its own, else the fleet, else none', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+
+    expect((await detail(h, 'server-1')).limitPercent).toBeUndefined();
+
+    await storeConditionLimits(
+      h.db.sql,
+      parseConditionLimits({
+        cpu: { percent: 75 },
+        memory: { percent: 80 },
+        systems: { 'server-1': { cpu: { percent: 60 }, memory: { percent: 70 } } },
+      }),
+    );
+
+    expect((await detail(h, 'server-1')).limitPercent).toEqual({ cpu: 60, memory: 70 });
+    expect((await detail(h, 'laptop-1')).limitPercent).toEqual({ cpu: 75, memory: 80 });
+  });
+
+  test("carries this System's Service changes over the range, and no other System's, earlier ones, or Conditions", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '1.8.1', null, ${new Date(NOW - 30 * HOUR)}),
+        ('server-1', 'web', '1.8.2', null, ${new Date(NOW - 12 * HOUR)}),
+        ('server-1', 'web', '1.8.3', null, ${new Date(NOW - 2 * HOUR)}),
+        ('laptop-1', 'web', '1.8.1', null, ${new Date(NOW - 30 * HOUR)}),
+        ('laptop-1', 'web', '1.8.2', null, ${new Date(NOW - 2 * HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at) VALUES
+        ('server-1', 'web', ${new Date(NOW - 2 * HOUR + MINUTE)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)}),
+        ('server-1', 'web', ${new Date(NOW - 10 * HOUR)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)}),
+        ('laptop-1', 'web', ${new Date(NOW - 2 * HOUR)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)})
+    `;
+    // Conditions show on the lane as spans, not as changes.
+    await addCondition(h.db.sql, {
+      kind: 'drift',
+      raisedAt: -3600,
+      subject: '/etc/hosts',
+      system: 'server-1',
+    });
+
+    const oldestFirst = async (range: '6h' | '24h') =>
+      (await detail(h, 'server-1', range)).changes.toSorted((a, b) => a.at - b.at);
+    const recent = await oldestFirst('6h');
+    const day = await oldestFirst('24h');
+
+    expect(recent.map(({ at, kind }) => [kind, NOW - at])).toEqual([
+      ['version', 2 * HOUR],
+      ['stop', 2 * HOUR - MINUTE],
+    ]);
+    expect(day.map(({ at, kind }) => [kind, NOW - at])).toEqual([
+      ['version', 12 * HOUR],
+      ['stop', 10 * HOUR],
+      ['version', 2 * HOUR],
+      ['stop', 2 * HOUR - MINUTE],
+    ]);
+    expect(day.every(({ system }) => system === 'server-1')).toBe(true);
+  });
+
+  test("keeps an unpaired System's Service changes on its own page", async () => {
+    await using h = await startHub();
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('laptop-1', 'web', '1.8.1', null, ${new Date(NOW - 30 * HOUR)}),
+        ('laptop-1', 'web', '1.8.2', null, ${new Date(NOW - 2 * HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at) VALUES
+        ('laptop-1', 'cache', ${new Date(NOW - HOUR)}, false, 0, ${new Date(NOW)}, ${new Date(NOW)})
+    `;
+    await unpair(h.db.sql, 'laptop-1');
+
+    const found = await detail(h, 'laptop-1', '6h');
+
+    expect(found.paired).toBe(false);
+    expect(found.changes.map(({ kind }) => kind).toSorted()).toEqual(['stop', 'version']);
   });
 
   test('labels a process in a linked worktree with its repository, in the history and at a sample', async () => {
@@ -883,6 +996,8 @@ describe('readSystemRecords', () => {
       system: 'server-1',
     });
 
+    await h.db.sql`UPDATE systems SET time_zone = 'UTC' WHERE name = 'server-1'`;
+
     const { recorded } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
 
     expect(recorded.jobs).toEqual([
@@ -893,6 +1008,7 @@ describe('readSystemRecords', () => {
           started: Date.parse('2026-10-06T03:30:00Z'),
         },
         name: 'backup',
+        nextRunAt: Date.UTC(2026, 9, 7, 3, 30),
         open: ['job_failing'],
         schedule: [{ hour: 3, minute: 30 }],
       },

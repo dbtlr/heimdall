@@ -397,6 +397,35 @@ describe('readHome', () => {
     );
   });
 
+  test("leaves an unpaired System's version changes, stops, and Conditions out of the changes", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1');
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '1.0', null, ${at(NOW - 30 * HOUR)}),
+        ('server-1', 'web', '1.1', null, ${at(NOW - 2 * HOUR)}),
+        ('laptop-1', 'api', '2.0', null, ${at(NOW - 30 * HOUR)}),
+        ('laptop-1', 'api', '2.1', null, ${at(NOW - 2 * HOUR)})
+    `;
+    await h.db.sql`
+      INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at) VALUES
+        ('laptop-1', 'cache', ${at(NOW - HOUR)}, false, 0, ${at(NOW)}, ${at(NOW)})
+    `;
+    await addCondition(h.db.sql, {
+      kind: 'drift',
+      raisedAt: -1800,
+      subject: '/etc/hosts',
+      system: 'laptop-1',
+    });
+    await unpair(h.db.sql, 'laptop-1');
+
+    const { changes } = await home(h);
+
+    expect(changes.map((group) => changeWords(group).title)).toEqual(['web 1.0 → 1.1']);
+  });
+
   test('passes over a version read as unknown between two others: an upgrade across it is a change, a return to the same version is none', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');

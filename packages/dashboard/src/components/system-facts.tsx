@@ -41,6 +41,12 @@ function Fact({
   );
 }
 
+// The rest of a heading that dates facts from a sample taken at `at`: ", as of
+// <when>" once the sample is no longer current, else nothing.
+function SampleAsOf({ at, now }: { at: number; now: number }) {
+  return now - at > QUIET_AFTER_MS ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
+}
+
 function DiskRow({ disk, level }: { disk: Disk; level: ConditionLevel | undefined }) {
   const { percent, text } = diskUsage(disk);
   return (
@@ -106,10 +112,7 @@ export function SystemFacts({
   if (latest === undefined && harnesses === undefined) {
     return null;
   }
-  const asOf =
-    latest !== undefined && now - latest.t > QUIET_AFTER_MS ? (
-      <PhraseText phrase={[', as of ', whenAt(latest.t, now)]} />
-    ) : undefined;
+  const asOf = latest === undefined ? undefined : <SampleAsOf at={latest.t} now={now} />;
   return (
     <section
       aria-label="System facts"
@@ -164,6 +167,71 @@ export function SystemFacts({
           )}
         </Fact>
       )}
+    </section>
+  );
+}
+
+const WIDE_CARD = 'min-w-0 card-surface rounded-xl border px-4 py-3.5';
+
+const WIDE_HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
+
+// The card of each disk's use, under the charts on a wide screen: used of
+// total, with the Low disk level when one is open on it, dated as the System
+// facts are when the sample is no longer current. Nothing without a sample.
+export function SystemDisks({
+  detail: { conditions, latest, now },
+}: {
+  detail: Pick<SystemDetail, 'conditions' | 'latest' | 'now'>;
+}) {
+  if (latest === undefined) {
+    return null;
+  }
+  return (
+    <section aria-label="Disks" className={WIDE_CARD}>
+      <h2 className={WIDE_HEADING}>
+        Disks
+        <SampleAsOf at={latest.t} now={now} />
+      </h2>
+      {latest.disks.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">The Collector reported no disk.</p>
+      ) : (
+        <ul>
+          {latest.disks.map((disk, index) => (
+            // A mount can be listed twice.
+            // oxlint-disable-next-line react/no-array-index-key
+            <DiskRow
+              disk={disk}
+              key={`${disk.mount}-${String(index)}`}
+              level={
+                conditions.find(
+                  (condition) =>
+                    condition.kind === 'low_disk' &&
+                    condition.subject === disk.mount &&
+                    condition.clearedAt === undefined,
+                )?.level
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+// The card of installed Harnesses, under the charts on a wide screen. Nothing
+// for a Collector that never said.
+export function SystemHarnesses({
+  harnesses,
+}: {
+  harnesses: readonly HarnessInstall[] | undefined;
+}) {
+  if (harnesses === undefined) {
+    return null;
+  }
+  return (
+    <section aria-label="Harnesses installed" className={WIDE_CARD}>
+      <h2 className={WIDE_HEADING}>Harnesses installed</h2>
+      <Harnesses installs={harnesses} />
     </section>
   );
 }

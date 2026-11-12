@@ -1,12 +1,15 @@
 import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { inWindow, xPercent } from '../lib/time.ts';
+import { steppedSample } from '../lib/detail.ts';
+import { formatDated, inWindow, pinnedX, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import { LANE_GRID } from './fleet-lane.tsx';
 
 type Axis = {
+  at: number | undefined;
   hovered: number | undefined;
   hover: (t: number | undefined) => void;
   select: (t: number) => void;
@@ -26,13 +29,16 @@ const useAxis = (): Axis => {
 
 // The shared time axis of the System detail stack: every track under it shows
 // the time the pointer is over, and selecting a time on any of them selects
-// it for the inspector.
+// it for the inspector. `selected` is the sample read for the pinned time `at`,
+// the stored one nearest it.
 export function DetailAxis({
+  at,
   children,
   onSelect,
   selected,
   window,
 }: {
+  at?: number | undefined;
   children: ReactNode;
   onSelect: (t: number) => void;
   selected: number | undefined;
@@ -40,21 +46,21 @@ export function DetailAxis({
 }) {
   const [hovered, hover] = useState<number | undefined>();
   return (
-    <AxisContext.Provider value={{ hover, hovered, select: onSelect, selected, window }}>
+    <AxisContext.Provider value={{ at, hover, hovered, select: onSelect, selected, window }}>
       {children}
     </AxisContext.Provider>
   );
 }
 
-// A vertical mark across a track at `t`.
-function Mark({ className, t, window }: { className: string; t: number; window: Window }) {
-  return inWindow(t, window) ? (
+// A vertical mark across a track `x` percent from its left, or none.
+function Mark({ className, x }: { className: string; x: number | undefined }) {
+  return x === undefined ? null : (
     <div
       aria-hidden="true"
       className={cn('pointer-events-none absolute inset-y-0', className)}
-      style={{ left: `${String(xPercent(t, window))}%` }}
+      style={{ left: `${String(x)}%` }}
     />
-  ) : null;
+  );
 }
 
 // The time under the pointer in a track.
@@ -76,6 +82,7 @@ export function DetailTrack({
   onSelect?: ((t: number) => void) | undefined;
 }) {
   const { hover, hovered, select, selected, window } = useAxis();
+  const selectedX = selected === undefined ? undefined : pinnedX(selected, window);
   return (
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- the pointer picks a time; the inspector also opens on the newest sample.
     <div
@@ -85,10 +92,44 @@ export function DetailTrack({
       onMouseMove={(event) => hover(timeAt(event, window))}
     >
       {children}
-      {selected !== undefined && (
-        <Mark className="w-[5px] -translate-x-1/2 bg-select/25" t={selected} window={window} />
+      <Mark className="w-[5px] -translate-x-1/2 bg-select/25" x={selectedX} />
+      <Mark className="w-px -translate-x-1/2 bg-select" x={selectedX} />
+      {hovered !== undefined && inWindow(hovered, window) && (
+        <Mark className="w-px bg-white/30" x={xPercent(hovered, window)} />
       )}
-      {hovered !== undefined && <Mark className="w-px bg-white/30" t={hovered} window={window} />}
+    </div>
+  );
+}
+
+// The keyboard's way to pin a sample: `children`, the axis's time labels, as a
+// slider over the window. The arrow keys move the pinned time a bucket, an hour
+// with Shift or Page Up and Page Down, and Home and End move it to the window's
+// ends; with none pinned it stands at the newest time. It steps from the pinned
+// time, not the sample nearest it, so presses carry on across a gap in the
+// samples, and it never stands outside the window.
+export function SampleSlider({ children }: { children: ReactNode }) {
+  const { at: pinned, select, selected, window } = useAxis();
+  const timeZone = useTimeZone();
+  const at = Math.min(window.to, Math.max(window.from, pinned ?? selected ?? window.to));
+  return (
+    <div
+      aria-label="Pinned sample"
+      aria-valuemax={window.to}
+      aria-valuemin={window.from}
+      aria-valuenow={at}
+      aria-valuetext={timeZone === undefined ? undefined : formatDated(at, window.to, timeZone)}
+      className="rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      onKeyDown={(event) => {
+        const next = steppedSample(event, at, window);
+        if (next !== undefined) {
+          event.preventDefault();
+          select(next);
+        }
+      }}
+      role="slider"
+      tabIndex={0}
+    >
+      {children}
     </div>
   );
 }

@@ -2,8 +2,12 @@ import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
 import { OpenNow } from './open-now.tsx';
-import { renderRouted } from './render-routed.tsx';
-import { SystemMaintenance, SystemOpenConditions } from './system-open-conditions.tsx';
+import { linksIn, renderRouted } from './render-routed.tsx';
+import {
+  SystemMaintenance,
+  SystemMaintenanceLine,
+  SystemOpenConditions,
+} from './system-open-conditions.tsx';
 
 const restarted: Attention = {
   checkedAt: 0,
@@ -120,4 +124,18 @@ test("Compare's Open now leaves out maintenance notes and keeps a warning and a 
   expect(html).not.toContain('/conditions/reboot');
   expect(html).toContain('/conditions/update-warning');
   expect(html).toContain('/conditions/restart');
+});
+
+test("the wide Maintenance line links each note to its Condition page, and Service updates to the System's Services", async () => {
+  const html = await renderRouted(
+    <SystemMaintenanceLine items={[update('note'), reboot, down]} now={1000} system="server-1" />,
+  );
+  const links = linksIn(html);
+
+  expect(links.map(({ href }) => href)).toEqual([
+    '/systems/server-1/conditions/update-note',
+    '/systems/server-1/conditions/reboot',
+    expect.stringMatching(/^\/services\?.*updates.*server-1/u),
+  ]);
+  expect(links.at(-1)?.label).toBe('Service updates →');
 });

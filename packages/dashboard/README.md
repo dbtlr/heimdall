@@ -123,7 +123,7 @@ HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packag
 
 ## Browser interaction tests
 
-The Service filter sheet's and the jump box's DOM tests use a Chromium executable without extra packages.
+The Service filter sheet's, the jump box's, and the System overview's DOM tests use a Chromium executable without extra packages.
 Set `HEIMDALL_TEST_BROWSER` to its path, or put `chromium` or `google-chrome` on `PATH`:
 
 ```sh
@@ -132,6 +132,7 @@ HEIMDALL_TEST_BROWSER=/path/to/chromium bun test packages/dashboard/src/componen
 
 The root verification also runs these tests when a browser is available; otherwise it skips them.
 The filter sheet's cover draft selection, Escape and backdrop dismissal, applying filters, reopening, and clearing URL parameters.
+The System overview's cover the keys that move the pinned sample along its time axis and the date on an old sample's disks.
 The jump box's cover the `/` shortcut, which a hidden box leaves to the browser, the combobox and listbox roles, arrow keys, Enter, Escape, and the page each kind of match opens.
 
 ## Layout

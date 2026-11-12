@@ -27,6 +27,12 @@ test('a pending sample read reports loading instead of claiming there is no samp
   expect(html).not.toContain('No Vitals sample to inspect');
 });
 
+test('states memory in GiB, the unit the memory chart beside it uses', () => {
+  const html = renderToStaticMarkup(<SampleInspector failed={false} sample={inspected} />);
+  expect(html).toContain('15.0 / 16.0 GiB');
+  expect(html).not.toMatch(/\bGB\b/u);
+});
+
 test('names the processes holding the most memory when a sample carries them, and shows no heading when none does', () => {
   const memoryHolders = { processes: [{ name: 'postgres', pid: 7, rssBytes: 4 * GIB }], t: NOW };
   const html = renderToStaticMarkup(

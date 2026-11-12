@@ -67,7 +67,7 @@ export function SampleInspector({
   return (
     <aside
       aria-busy={loading}
-      className="mt-2.5 max-h-[70dvh] self-start overflow-y-auto card-surface rounded-xl border-l-[3px] border-l-select px-4 py-3.5"
+      className="max-h-[70dvh] self-start overflow-y-auto card-surface rounded-xl border-l-[3px] border-l-select px-4 py-3.5"
     >
       {loading && <p role="status">Reading sample…</p>}
       {sample === null && !loading && (
@@ -79,22 +79,42 @@ export function SampleInspector({
       )}
       {sample !== null && (
         <>
-          <p className="mb-2 text-[12.5px] text-muted-foreground">
-            <PhraseText phrase={['Sample at ', clockSecondsAt(sample.t)]} />
+          <p className="mb-2 flex items-baseline gap-2">
+            <b className="text-[17px] font-semibold tabular-nums">
+              <PhraseText phrase={[clockSecondsAt(sample.t)]} />
+            </b>
+            <span className="text-[12.5px] text-muted-foreground">pinned sample</span>
           </p>
-          <p className="mb-0.5 text-[19px] font-semibold">CPU {percent(sample.cpuBusyPercent)}</p>
-          <p className="text-muted-foreground">
-            {sample.bucket !== undefined &&
-              `5-minute high ${percent(sample.bucket.high)}, average ${percent(sample.bucket.average)}. `}
-            Memory {formatGiB(sample.memoryUsedBytes)} of {formatGiB(sample.memoryTotalBytes)} GiB.
-            Load {sample.load1.toFixed(1)}.
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13.5px]">
+            <dt className="text-muted-foreground">CPU busy</dt>
+            <dd>
+              <b className="font-semibold">{percent(sample.cpuBusyPercent)}</b>
+              {sample.bucket !== undefined && (
+                <span className="block text-xs text-muted-foreground">
+                  bucket avg {Math.round(sample.bucket.average)}, high{' '}
+                  {Math.round(sample.bucket.high)}
+                </span>
+              )}
+            </dd>
+            <dt className="text-muted-foreground">Memory</dt>
+            <dd>
+              <b className="font-semibold">
+                {formatGiB(sample.memoryUsedBytes)} / {formatGiB(sample.memoryTotalBytes)} GiB
+              </b>
+              {sample.memoryTotalBytes > 0 && (
+                <span className="block text-xs text-muted-foreground">
+                  {percent((sample.memoryUsedBytes / sample.memoryTotalBytes) * 100)} used
+                </span>
+              )}
+            </dd>
+            <dt className="text-muted-foreground">Load (1 min)</dt>
+            <dd>
+              <b className="font-semibold">{sample.load1.toFixed(1)}</b>
+            </dd>
+          </dl>
+          <p className="mt-3.5 mb-2 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase">
+            Harness processes
           </p>
-          {holders !== undefined && (
-            <div className="mt-3.5">
-              <MemoryHolders holders={holders} />
-            </div>
-          )}
-          <p className="mt-3.5 mb-2 text-[12.5px] text-muted-foreground">Running then</p>
           {sample.processes.length === 0 && sample.unlinked.length === 0 ? (
             <p className="text-[13.5px] text-muted-foreground">No Harness process or Session.</p>
           ) : (
@@ -122,6 +142,11 @@ export function SampleInspector({
                 ))}
               </ul>
             </MoreItems>
+          )}
+          {holders !== undefined && (
+            <div className="mt-3.5">
+              <MemoryHolders holders={holders} />
+            </div>
           )}
         </>
       )}

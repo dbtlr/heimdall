@@ -23,14 +23,16 @@ const coresLabel =
 // unless `bucketMs` says otherwise, one line per process in its Harness's
 // color over a gradient fill, on a scale from 0 to the busiest, widened to a
 // tenth of a core so every label states its position. With no reading, the
-// scale goes unlabelled.
+// scale goes unlabelled. `scaleBeside` draws the scale in the gutter left of it.
 export function ProcessPlot({
   bucketMs,
   processes,
+  scaleBeside = false,
   window,
 }: {
   bucketMs?: number;
   processes: readonly ProcessSeries[];
+  scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
@@ -40,6 +42,7 @@ export function ProcessPlot({
   const domain = niceDomain([0, Math.max(1, ...readings)], 0.1);
   return (
     <ScaledPlot
+      beside={scaleBeside}
       domain={domain}
       format={coresLabel(domain[1])}
       height={HEIGHT}

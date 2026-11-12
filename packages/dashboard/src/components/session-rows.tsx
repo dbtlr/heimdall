@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router';
+import type { ReactNode } from 'react';
 
 import { costPlacement } from '../lib/detail.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
@@ -48,10 +49,11 @@ const costStyle = (place: ReturnType<typeof costPlacement>, top: number) => {
 const what = (session: SessionRow) =>
   session.project ?? session.branch ?? `${harnessName(session.harness)} Session`;
 
-const key = (session: SessionRow) => `${session.harness}-${session.source}-${session.sessionId}`;
+const sessionKey = (session: SessionRow) =>
+  `${session.harness}-${session.source}-${session.sessionId}`;
 
 // A link to the Session's page, its text the Session's name.
-function SessionLink({ session, system }: { session: SessionRow; system: string }) {
+export function SessionLink({ session, system }: { session: SessionRow; system: string }) {
   return (
     <Link
       className="hover:underline"
@@ -68,6 +70,67 @@ function SessionLink({ session, system }: { session: SessionRow; system: string 
   );
 }
 
+// One row per Session on the window's axis, in its Harness's color, with a bar
+// for each of its stretches and `label` beside the last, where the cost fits.
+// Goes inside a track, which it makes tall enough for its rows.
+export function SessionBars({
+  label,
+  labelClassName,
+  sessions,
+  window,
+}: {
+  label: (session: SessionRow) => ReactNode;
+  labelClassName?: string;
+  sessions: readonly SessionRow[];
+  window: Window;
+}) {
+  const timeZone = useTimeZone();
+  return (
+    <>
+      {sessions.map((session, row) => {
+        const top = row * ROW_PX + 3;
+        const place = costPlacement(session, window);
+        return (
+          <div key={sessionKey(session)} style={{ color: harnessColor(session.harness) }}>
+            {session.stretches.map((stretch) => {
+              const { left, width } = spanBox(
+                { end: stretch.endedAt, start: stretch.startedAt },
+                window,
+              );
+              return (
+                <div
+                  className={cn('absolute h-4 min-w-[3px] rounded-[2px]', LINK_STYLE[stretch.link])}
+                  key={stretch.startedAt}
+                  style={{ left: `${String(left)}%`, top, width: `${String(width)}%` }}
+                  title={phraseTitle(
+                    [
+                      `${what(session)}, ${harnessName(session.harness)}, `,
+                      ...clockSpan(stretch.startedAt, stretch.endedAt),
+                      `, process ${stretch.link}`,
+                    ],
+                    timeZone,
+                  )}
+                />
+              );
+            })}
+            <span
+              className={cn(
+                'absolute text-xs whitespace-nowrap text-muted-foreground tabular-nums',
+                labelClassName,
+                'over' in place && 'rounded-[3px] bg-background px-1',
+              )}
+              style={costStyle(place, top)}
+            >
+              {label(session)}
+            </span>
+          </div>
+        );
+      })}
+      <div style={{ height: sessions.length * ROW_PX }} />
+    </>
+  );
+}
+
 // One row per agent Session on the stack's axis, with a bar for each of its
 // stretches and its cost beside the last, each named by a link to its page. A
 // phone lists them under the bars.
@@ -80,7 +143,6 @@ export function SessionRows({
   system: string;
   window: Window;
 }) {
-  const timeZone = useTimeZone();
   if (sessions.length === 0) {
     return null;
   }
@@ -91,7 +153,7 @@ export function SessionRows({
           {sessions.map((session) => (
             <p
               className="flex items-center gap-1.5 truncate text-[12.5px]"
-              key={key(session)}
+              key={sessionKey(session)}
               style={{ height: ROW_PX }}
             >
               <SessionLink session={session} system={system} />
@@ -102,53 +164,17 @@ export function SessionRows({
           ))}
         </div>
         <DetailTrack className="overflow-hidden">
-          {sessions.map((session, row) => {
-            const top = row * ROW_PX + 3;
-            const place = costPlacement(session, window);
-            return (
-              <div key={key(session)} style={{ color: harnessColor(session.harness) }}>
-                {session.stretches.map((stretch) => {
-                  const { left, width } = spanBox(
-                    { end: stretch.endedAt, start: stretch.startedAt },
-                    window,
-                  );
-                  return (
-                    <div
-                      className={cn(
-                        'absolute h-4 min-w-[3px] rounded-[2px]',
-                        LINK_STYLE[stretch.link],
-                      )}
-                      key={stretch.startedAt}
-                      style={{ left: `${String(left)}%`, top, width: `${String(width)}%` }}
-                      title={phraseTitle(
-                        [
-                          `${what(session)}, ${harnessName(session.harness)}, `,
-                          ...clockSpan(stretch.startedAt, stretch.endedAt),
-                          `, process ${stretch.link}`,
-                        ],
-                        timeZone,
-                      )}
-                    />
-                  );
-                })}
-                <span
-                  className={cn(
-                    'absolute hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums sm:block',
-                    'over' in place && 'rounded-[3px] bg-background px-1',
-                  )}
-                  style={costStyle(place, top)}
-                >
-                  {formatCost(session.costUsd)}
-                </span>
-              </div>
-            );
-          })}
-          <div style={{ height: sessions.length * ROW_PX }} />
+          <SessionBars
+            label={(session) => formatCost(session.costUsd)}
+            labelClassName="hidden sm:block"
+            sessions={sessions}
+            window={window}
+          />
         </DetailTrack>
       </div>
       <ul className="mt-1.5 sm:hidden">
         {sessions.map((session) => (
-          <li className="flex items-start gap-2 py-1 text-[13.5px]" key={key(session)}>
+          <li className="flex items-start gap-2 py-1 text-[13.5px]" key={sessionKey(session)}>
             <i
               className={cn(
                 'mt-[5px] inline-block h-2 w-3.5 flex-none rounded-[2px]',

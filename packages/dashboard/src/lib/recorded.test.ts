@@ -25,8 +25,8 @@ const service = (record: Parameters<typeof serviceLine>[0]) => {
   const line = serviceLine(record, NOW);
   return { ...line, text: utc(line.text) };
 };
-const job = (record: Parameters<typeof jobLine>[0]) => {
-  const line = jobLine(record, NOW);
+const job = (record: Omit<Parameters<typeof jobLine>[0], 'nextRunAt'>) => {
+  const line = jobLine({ ...record, nextRunAt: undefined }, NOW);
   return { ...line, text: utc(line.text) };
 };
 const files = (record: Parameters<typeof filesLine>[0]) => {

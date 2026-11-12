@@ -5,10 +5,12 @@ import {
   costPlacement,
   formatGiB,
   headerLine,
+  loadRows,
   memoryHoldersView,
   memoryRows,
   processRows,
   sampleProcessLine,
+  steppedSample,
   timelineWhen,
   unlinkedLine,
 } from './detail.ts';
@@ -248,6 +250,12 @@ describe('chart rows', () => {
     ]);
   });
 
+  test('give the 1-minute load per bucket, and null where a bucket has none, so the line breaks', () => {
+    expect(
+      loadRows([{ t: NOW - 15 * MINUTE, value: 2.5 }], window).map(({ value }) => value),
+    ).toEqual([null, 2.5, null, null]);
+  });
+
   test('give each process its cores under its own key', () => {
     const rows = processRows(
       [
@@ -299,4 +307,46 @@ describe('costPlacement', () => {
       over: 0,
     });
   });
+});
+
+const NO_MODIFIERS = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+
+test('a key on the time axis moves the pinned sample a bucket, an hour with Shift or a page key, or to an end, within the window', () => {
+  const window = { from: 0, to: 12 * 60 * MINUTE };
+  const at = 6 * 60 * MINUTE;
+  const step = (key: string, shift = false, selected = at) =>
+    steppedSample({ ...NO_MODIFIERS, key, shiftKey: shift }, selected, window);
+
+  expect([step('ArrowRight'), step('ArrowUp'), step('ArrowLeft'), step('ArrowDown')]).toEqual([
+    at + 5 * MINUTE,
+    at + 5 * MINUTE,
+    at - 5 * MINUTE,
+    at - 5 * MINUTE,
+  ]);
+  expect([
+    step('ArrowRight', true),
+    step('ArrowLeft', true),
+    step('PageUp'),
+    step('PageDown'),
+  ]).toEqual([at + 60 * MINUTE, at - 60 * MINUTE, at + 60 * MINUTE, at - 60 * MINUTE]);
+  expect([step('Home'), step('End')]).toEqual([window.from, window.to]);
+  // With none pinned it starts from the newest; it never leaves the window.
+  expect(steppedSample({ ...NO_MODIFIERS, key: 'ArrowLeft' }, undefined, window)).toBe(
+    window.to - 5 * MINUTE,
+  );
+  expect(step('ArrowRight', false, window.to - MINUTE)).toBe(window.to);
+  expect(step('PageDown', false, window.from + MINUTE)).toBe(window.from);
+  expect(step('Enter')).toBeUndefined();
+});
+
+test('a key held with Alt, Ctrl, or Meta moves no pinned sample, so the browser keeps its shortcut', () => {
+  const window = { from: 0, to: 12 * 60 * MINUTE };
+  const held = (modifier: 'altKey' | 'ctrlKey' | 'metaKey', key: string) =>
+    steppedSample({ ...NO_MODIFIERS, [modifier]: true, key }, 6 * 60 * MINUTE, window);
+
+  expect([
+    held('altKey', 'ArrowLeft'),
+    held('ctrlKey', 'Home'),
+    held('metaKey', 'ArrowRight'),
+  ]).toEqual([undefined, undefined, undefined]);
 });

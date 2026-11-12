@@ -13,10 +13,15 @@ import type {
   Link,
   Range,
 } from './fleet-overview-types.ts';
+import type { ServiceChange } from './home-types.ts';
 
 // One 5-minute Vitals rollup bucket, starting at `t`: memory used on average,
 // and the memory the System had.
 export type MemoryBucket = { t: number; totalBytes: number; usedBytes: number };
+
+// One 5-minute Vitals rollup bucket, starting at `t`: the 1-minute load average
+// over its samples.
+export type LoadBucket = { t: number; value: number };
 
 // One Harness process over the window: the CPU cores its process tree kept
 // busy in each 5-minute bucket, null where the bucket before is missing.
@@ -48,6 +53,8 @@ export type Disk = { mount: string; totalBytes: number; usedBytes: number };
 export type HarnessInstall = { harness: string; location: string; version: string };
 
 export type SystemDetail = {
+  // The System's Service changes over the range: versions and stops.
+  changes: ServiceChange[];
   // The Collector's version, undefined until a Report from it is stored.
   collectorVersion: string | undefined;
   conditions: ConditionMark[];
@@ -71,6 +78,11 @@ export type SystemDetail = {
         uptimeSeconds: number;
       }
     | undefined;
+  // The CPU and memory percent the Hub judges this System by, its own limits
+  // else the fleet's; undefined while the Hub has stored none.
+  limitPercent: { cpu: number; memory: number } | undefined;
+  // The 1-minute load average per 5-minute bucket.
+  load: LoadBucket[];
   memory: MemoryBucket[];
   name: string;
   now: number;
@@ -168,6 +180,9 @@ export type ScheduleEntry = {
 export type RecordedJob = {
   latestRun: JobRun | undefined;
   name: string;
+  // When the job is next due after the page's time, in its System's time zone;
+  // undefined when the zone is unknown or the schedule names no time.
+  nextRunAt: number | undefined;
   // The job Conditions open on it now.
   open: Extract<ConditionKind, 'job_failing' | 'job_overdue'>[];
   schedule: ScheduleEntry[];

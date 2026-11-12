@@ -12,3 +12,16 @@ export const systemSearch = (search: Record<string, unknown>) => {
     tab: SYSTEM_TABS.find((tab) => tab === search.tab) ?? (at === undefined ? 'now' : 'vitals'),
   };
 };
+
+// From `lg` the page has one Overview where the phone has Now, Vitals, and
+// Sessions; `tab` is the phone tab a link to each opens.
+export const DESKTOP_TABS = [
+  { name: 'Overview', tab: 'now' },
+  { name: 'Records', tab: 'records' },
+  { name: 'Timeline', tab: 'timeline' },
+] as const satisfies readonly { name: string; tab: SystemTab }[];
+
+export type DesktopTab = 'overview' | 'records' | 'timeline';
+
+export const desktopTab = (tab: SystemTab): DesktopTab =>
+  tab === 'records' || tab === 'timeline' ? tab : 'overview';

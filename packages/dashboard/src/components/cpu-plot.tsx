@@ -12,6 +12,7 @@ import {
   ScaledPlot,
   usePlotGradientId,
 } from './plot-scale.tsx';
+import type { PlotLimit } from './plot-scale.tsx';
 import { ChartContainer, ChartTooltip } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
 
@@ -60,18 +61,22 @@ export function CpuPlot({
   bucketMs = BUCKET_MS,
   buckets,
   height = 46,
+  limits = [],
   label,
+  scaleBeside = false,
   window,
 }: {
   bucketMs?: number;
   buckets: readonly CpuBucket[];
   height?: number;
+  limits?: readonly PlotLimit[];
   label: string;
+  scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
   return (
-    <ScaledPlot domain={PERCENT_DOMAIN} height={height}>
+    <ScaledPlot beside={scaleBeside} domain={PERCENT_DOMAIN} height={height} limits={limits}>
       <PlotGradient color={PLOT_COLOR} id={fill} />
       <ChartContainer
         aria-label={label}
