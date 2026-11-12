@@ -2,8 +2,9 @@ import type { ReactNode } from 'react';
 
 import { axisTicks } from '../lib/axis.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
-import { formatGiB } from '../lib/detail.ts';
+import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
 import { inWindow, xPercent } from '../lib/time.ts';
+import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import type { Attention } from '../server/attention-types.ts';
@@ -11,10 +12,12 @@ import type { Recorded, SampleInspection, SystemDetail } from '../server/system-
 import { ChangesLane, ChangesLegend } from './changes-lane.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
 import { DateTime } from './date-time.tsx';
-import { DetailAxis, DetailTrack } from './detail-track.tsx';
+import { DetailAxis, DetailTrack, SampleSlider } from './detail-track.tsx';
 import { GapShades } from './gap-shades.tsx';
 import { LoadPlot } from './load-plot.tsx';
 import { MemoryPlot } from './memory-plot.tsx';
+import { MoreItems } from './more-items.tsx';
+import { ProcessPlot } from './process-plot.tsx';
 import { SampleInspector } from './sample-inspector.tsx';
 import { HarnessLegend, SessionLanes } from './session-lanes.tsx';
 import { SystemDisks, SystemHarnesses } from './system-facts.tsx';
@@ -60,6 +63,38 @@ const percent = (value: number) => `${String(Math.round(value))}%`;
 // nothing while the Hub has stored no limits.
 const limitWords = (limit: number | undefined) =>
   limit === undefined ? [] : [`limit ${String(limit)}%`];
+
+// The System's Harness process plots, closed until asked for: CPU cores per
+// process tree for the busy ones, then the idle ones folded under them, as on
+// the phone. Each plot keeps the gutter, so it stays on the shared axis.
+function HarnessProcesses({
+  processes,
+  window,
+}: {
+  processes: SystemDetail['processes'];
+  window: Window;
+}) {
+  const { active, idle } = splitIdleProcesses(processes);
+  return (
+    <MoreItems label="Harness processes" scrolls={false}>
+      <section aria-label="Harness processes" className={cn(GUTTER, 'pt-1')}>
+        <p className="mb-1.5 text-[13px] text-muted-foreground">CPU cores per process tree</p>
+        <DetailTrack>
+          <ProcessPlot scaleBeside processes={active} window={window} />
+        </DetailTrack>
+      </section>
+      {idle.length > 0 && (
+        <MoreItems label={idleProcessesLabel(idle.length)} scrolls={false}>
+          <div className={cn(GUTTER, 'pt-1')}>
+            <DetailTrack>
+              <ProcessPlot scaleBeside processes={idle} window={window} />
+            </DetailTrack>
+          </div>
+        </MoreItems>
+      )}
+    </MoreItems>
+  );
+}
 
 // The wide System page: one card stacking CPU busy, the agent Sessions, memory,
 // load, and the Conditions and changes on one time axis, with the pinned sample
@@ -131,6 +166,7 @@ export function SystemOverview({
               <Chart aside={<HarnessLegend sessions={detail.sessions} />} title="Agent Sessions">
                 <SessionLanes sessions={detail.sessions} system={detail.name} window={window} />
               </Chart>
+              <HarnessProcesses processes={detail.processes} window={window} />
               <Chart
                 note={[
                   ...(total === undefined ? [] : [`of ${total} GiB`]),
@@ -158,24 +194,26 @@ export function SystemOverview({
                 <ChangesLane detail={detail} window={window} />
               </Chart>
               <div className={GUTTER}>
-                <TimeAxis
-                  bare
-                  ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
-                  window={window}
-                >
-                  {sample !== null && inWindow(sample.t, window) && (
-                    <span
-                      className={cn(
-                        'absolute -top-px rounded bg-select px-2 font-semibold text-background',
-                        sampleX > 90 && '-translate-x-full',
-                        sampleX >= 10 && sampleX <= 90 && '-translate-x-1/2',
-                      )}
-                      style={{ left: `${String(sampleX)}%` }}
-                    >
-                      <DateTime at={sample.t} format="clock" />
-                    </span>
-                  )}
-                </TimeAxis>
+                <SampleSlider>
+                  <TimeAxis
+                    bare
+                    ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
+                    window={window}
+                  >
+                    {sample !== null && inWindow(sample.t, window) && (
+                      <span
+                        className={cn(
+                          'absolute -top-px rounded bg-select px-2 font-semibold text-background',
+                          sampleX > 90 && '-translate-x-full',
+                          sampleX >= 10 && sampleX <= 90 && '-translate-x-1/2',
+                        )}
+                        style={{ left: `${String(sampleX)}%` }}
+                      >
+                        <DateTime at={sample.t} format="clock" />
+                      </span>
+                    )}
+                  </TimeAxis>
+                </SampleSlider>
               </div>
             </DetailAxis>
             {latest !== undefined && (

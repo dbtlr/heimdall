@@ -29,7 +29,8 @@ const gibLabel =
 // from 0 to the memory the System has, widened to a whole GiB from 10 GiB up
 // and a tenth of one below, so every label states its position. With no
 // bucket, the System's memory is unknown and the scale goes unlabelled.
-// `limitPercent` draws the limit the Hub judges memory by, as a share of it.
+// `limitPercent` draws the limit the Hub judges memory by, as a share of the
+// memory the System has, not of the scale, which never ends below 1 GiB.
 export function MemoryPlot({
   buckets,
   height = HEIGHT,
@@ -44,7 +45,8 @@ export function MemoryPlot({
   window: Window;
 }) {
   const fill = usePlotGradientId();
-  const total = Math.max(1, ...buckets.map((bucket) => bucket.totalBytes / GIB));
+  const capacity = Math.max(0, ...buckets.map((bucket) => bucket.totalBytes / GIB));
+  const total = Math.max(1, capacity);
   const domain = niceDomain([0, total], total >= 10 ? 1 : 0.1);
   return (
     <ScaledPlot
@@ -60,7 +62,7 @@ export function MemoryPlot({
               {
                 color: LEVEL_STROKE.note,
                 label: `${String(limitPercent)}% limit`,
-                value: (total * limitPercent) / 100,
+                value: (capacity * limitPercent) / 100,
               },
             ]
       }

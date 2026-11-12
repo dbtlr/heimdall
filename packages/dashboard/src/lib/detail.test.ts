@@ -10,6 +10,7 @@ import {
   memoryRows,
   processRows,
   sampleProcessLine,
+  steppedSample,
   timelineWhen,
   unlinkedLine,
 } from './detail.ts';
@@ -306,4 +307,32 @@ describe('costPlacement', () => {
       over: 0,
     });
   });
+});
+
+test('a key on the time axis moves the pinned sample a bucket, an hour with Shift or a page key, or to an end, within the window', () => {
+  const window = { from: 0, to: 12 * 60 * MINUTE };
+  const at = 6 * 60 * MINUTE;
+  const step = (key: string, shift = false, selected = at) =>
+    steppedSample({ key, shiftKey: shift }, selected, window);
+
+  expect([step('ArrowRight'), step('ArrowUp'), step('ArrowLeft'), step('ArrowDown')]).toEqual([
+    at + 5 * MINUTE,
+    at + 5 * MINUTE,
+    at - 5 * MINUTE,
+    at - 5 * MINUTE,
+  ]);
+  expect([
+    step('ArrowRight', true),
+    step('ArrowLeft', true),
+    step('PageUp'),
+    step('PageDown'),
+  ]).toEqual([at + 60 * MINUTE, at - 60 * MINUTE, at + 60 * MINUTE, at - 60 * MINUTE]);
+  expect([step('Home'), step('End')]).toEqual([window.from, window.to]);
+  // With none pinned it starts from the newest; it never leaves the window.
+  expect(steppedSample({ key: 'ArrowLeft', shiftKey: false }, undefined, window)).toBe(
+    window.to - 5 * MINUTE,
+  );
+  expect(step('ArrowRight', false, window.to - MINUTE)).toBe(window.to);
+  expect(step('PageDown', false, window.from + MINUTE)).toBe(window.from);
+  expect(step('Enter')).toBeUndefined();
 });

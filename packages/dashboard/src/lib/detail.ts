@@ -204,6 +204,64 @@ export const processRows = (
   );
 };
 
+const isBusy = (process: ProcessSeries) =>
+  process.points.some(({ cores }) => cores !== null && cores > 0);
+
+// The Harness processes that kept a core busy in the window, and the idle rest,
+// which the plots fold away.
+export const splitIdleProcesses = (
+  processes: readonly ProcessSeries[],
+): { active: ProcessSeries[]; idle: ProcessSeries[] } => ({
+  active: processes.filter((process) => isBusy(process)),
+  idle: processes.filter((process) => !isBusy(process)),
+});
+
+// The disclosure that holds the idle processes' plot: "2 idle processes in this range".
+export const idleProcessesLabel = (count: number): string =>
+  `${String(count)} idle ${count === 1 ? 'process' : 'processes'} in this range`;
+
+// The pinned sample's big step on the time axis: an hour of buckets.
+const LARGE_STEP_MS = 12 * BUCKET_MS;
+
+// Where a key on the time axis moves the pinned sample from `selected`, the
+// newest time when none is pinned: a bucket for an arrow, an hour with Shift or
+// for Page Up and Page Down, the window's ends for Home and End, and never past
+// either end. Undefined for a key that moves nothing.
+export const steppedSample = (
+  { key, shiftKey }: { key: string; shiftKey: boolean },
+  selected: number | undefined,
+  { from, to }: Window,
+): number | undefined => {
+  const at = selected ?? to;
+  const step = shiftKey ? LARGE_STEP_MS : BUCKET_MS;
+  const moved = (by: number) => Math.min(to, Math.max(from, at + by));
+  switch (key) {
+    case 'ArrowRight':
+    case 'ArrowUp': {
+      return moved(step);
+    }
+    case 'ArrowLeft':
+    case 'ArrowDown': {
+      return moved(-step);
+    }
+    case 'PageUp': {
+      return moved(LARGE_STEP_MS);
+    }
+    case 'PageDown': {
+      return moved(-LARGE_STEP_MS);
+    }
+    case 'Home': {
+      return from;
+    }
+    case 'End': {
+      return to;
+    }
+    default: {
+      return undefined;
+    }
+  }
+};
+
 // A label beside a Session's bars: after its last stretch, or before its
 // first when the last ends too near the right edge to leave room, or over its
 // first when neither side has room. In percent of the window from the left

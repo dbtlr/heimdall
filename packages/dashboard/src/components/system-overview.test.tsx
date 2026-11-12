@@ -8,7 +8,10 @@ const GIB = 1024 ** 3;
 const NOW = 1_800_000_000_000;
 const FROM = NOW - 6 * 3_600_000;
 
-const detail = (limitPercent: SystemDetail['limitPercent']): SystemDetail => ({
+const detail = (
+  limitPercent: SystemDetail['limitPercent'],
+  overrides: Partial<SystemDetail> = {},
+): SystemDetail => ({
   changes: [],
   collectorVersion: '1.0.0',
   conditions: [],
@@ -40,13 +43,17 @@ const detail = (limitPercent: SystemDetail['limitPercent']): SystemDetail => ({
   sleeps: false,
   status: 'up',
   to: NOW,
+  ...overrides,
 });
 
-const render = (limitPercent: SystemDetail['limitPercent']) =>
+const render = (
+  limitPercent: SystemDetail['limitPercent'],
+  overrides: Partial<SystemDetail> = {},
+) =>
   renderRouted(
     <SystemOverview
       attention={[]}
-      detail={detail(limitPercent)}
+      detail={detail(limitPercent, overrides)}
       failed={false}
       loading={false}
       onSelect={() => {}}
@@ -76,4 +83,36 @@ test('draws and names no limit while the Hub has stored none', async () => {
   expect(limitLines(html)).toEqual([]);
   expect(html).not.toContain('% limit');
   expect(html).not.toContain('limit ');
+});
+
+test("draws the memory limit at its share of the System's own memory when that is under the scale's 1 GiB floor", async () => {
+  const MIB = 1024 ** 2;
+  const html = await render(
+    { cpu: 60, memory: 80 },
+    { memory: [{ t: NOW - 300_000, totalBytes: 512 * MIB, usedBytes: 256 * MIB }] },
+  );
+
+  // 80% of 512 MiB is 0.4 GiB, not 80% of the 1 GiB scale.
+  expect(limitLines(html)).toEqual([60, 0.4]);
+});
+
+// A Harness process that kept `cores` busy in the window's last bucket.
+const harnessProcess = (processId: number, cores: number) => ({
+  harness: 'claude-code',
+  pid: processId,
+  points: [{ cores, t: NOW - 300_000 }],
+  processId,
+  project: undefined,
+});
+
+test('keeps the Harness process plots in a closed disclosure under the Session lanes, with idle processes folded', async () => {
+  const html = await render(undefined, {
+    processes: [harnessProcess(1, 0.5), harnessProcess(2, 0)],
+  });
+  const [, disclosure = ''] = html.split('aria-label="Agent Sessions"');
+
+  expect(disclosure).toMatch(/<details[^>]*><summary[^>]*>Harness processes/u);
+  expect(disclosure).not.toMatch(/<details[^>]*\bopen\b[^>]*><summary[^>]*>Harness processes/u);
+  expect(disclosure).toContain('aria-label="CPU cores per Harness process"');
+  expect(disclosure).toContain('1 idle process in this range');
 });

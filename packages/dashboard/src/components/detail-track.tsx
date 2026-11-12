@@ -1,8 +1,10 @@
 import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { inWindow, xPercent } from '../lib/time.ts';
+import { steppedSample } from '../lib/detail.ts';
+import { formatDated, inWindow, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
 import { LANE_GRID } from './fleet-lane.tsx';
 
@@ -92,6 +94,37 @@ export function DetailTrack({
         </>
       )}
       {hovered !== undefined && <Mark className="w-px bg-white/30" t={hovered} window={window} />}
+    </div>
+  );
+}
+
+// The keyboard's way to pin a sample: `children`, the axis's time labels, as a
+// slider over the window. The arrow keys move the pin a bucket, an hour with
+// Shift or Page Up and Page Down, and Home and End move it to the window's
+// ends; with none pinned it stands at the newest time.
+export function SampleSlider({ children }: { children: ReactNode }) {
+  const { select, selected, window } = useAxis();
+  const timeZone = useTimeZone();
+  const at = selected ?? window.to;
+  return (
+    <div
+      aria-label="Pinned sample"
+      aria-valuemax={window.to}
+      aria-valuemin={window.from}
+      aria-valuenow={at}
+      aria-valuetext={timeZone === undefined ? undefined : formatDated(at, window.to, timeZone)}
+      className="rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      onKeyDown={(event) => {
+        const next = steppedSample(event, selected, window);
+        if (next !== undefined) {
+          event.preventDefault();
+          select(next);
+        }
+      }}
+      role="slider"
+      tabIndex={0}
+    >
+      {children}
     </div>
   );
 }

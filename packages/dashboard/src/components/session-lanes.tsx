@@ -43,9 +43,14 @@ function Lanes({
   );
 }
 
+// When a Session last worked: the end of its last stretch, which for one still
+// going is the newest time the Hub holds.
+const lastActive = (session: SessionRow) => session.stretches.at(-1)?.endedAt ?? 0;
+
 // The agent Sessions of the window, one lane each in their Harness's color:
 // solid where a process is linked, dashed where ambiguous, outlined where
-// unmatched. Beyond the first few, the rest open from a disclosure.
+// unmatched. The most recently active few show, in the order they started;
+// the rest open from a disclosure.
 export function SessionLanes({
   sessions,
   system,
@@ -58,12 +63,20 @@ export function SessionLanes({
   if (sessions.length === 0) {
     return <p className="py-3 text-[13px] text-muted-foreground">No Session in this range.</p>;
   }
+  const recent = new Set(
+    sessions.toSorted((a, b) => lastActive(b) - lastActive(a)).slice(0, LANES_SHOWN),
+  );
+  const folded = sessions.filter((session) => !recent.has(session));
   return (
     <>
-      <Lanes sessions={sessions.slice(0, LANES_SHOWN)} system={system} window={window} />
-      {sessions.length > LANES_SHOWN && (
-        <MoreItems label={`Show ${String(sessions.length - LANES_SHOWN)} more Sessions`}>
-          <Lanes sessions={sessions.slice(LANES_SHOWN)} system={system} window={window} />
+      <Lanes
+        sessions={sessions.filter((session) => recent.has(session))}
+        system={system}
+        window={window}
+      />
+      {folded.length > 0 && (
+        <MoreItems label={`Show ${String(folded.length)} more Sessions`}>
+          <Lanes sessions={folded} system={system} window={window} />
         </MoreItems>
       )}
     </>

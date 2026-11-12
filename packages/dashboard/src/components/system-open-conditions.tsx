@@ -59,8 +59,9 @@ export function SystemMaintenance({ items, now }: { items: readonly Attention[];
   );
 }
 
-// The same notes as one line under the charts on a wide screen, with a link to
-// the Services that can be updated. Nothing without a note.
+// The same notes as one line under the charts on a wide screen, each linking to
+// its Condition page, then a link of its own to the System's Services that
+// have an update. Nothing without a note.
 export function SystemMaintenanceLine({
   items,
   now,
@@ -81,7 +82,10 @@ export function SystemMaintenanceLine({
       Maintenance:{' '}
       {notes.map((item) => (
         <span key={item.conditionId}>
-          <PhraseText phrase={evidenceWords(item, now).observedShort} /> ·{' '}
+          <AttentionLink className="text-link hover:underline" item={item}>
+            <PhraseText phrase={evidenceWords(item, now).observedShort} />
+          </AttentionLink>{' '}
+          ·{' '}
         </span>
       ))}
       <Link
@@ -89,7 +93,7 @@ export function SystemMaintenanceLine({
         search={{ status: [...MAINTENANCE_STATUS], system: [system] }}
         to="/services"
       >
-        Maintenance →
+        Service updates →
       </Link>
     </p>
   );
