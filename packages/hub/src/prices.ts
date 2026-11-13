@@ -27,11 +27,13 @@
 // `contextWindow` is the model's window in tokens, which Claude Code
 // transcripts do not record.
 //
-// Sources, read on 2026-10-12:
+// Sources, read on 2026-10-12; Claude Fable 5.2 and Claude Mythos 5.2 on
+// 2026-11-13:
 // - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing. Cache
 //   writes are 1.25x the input price at the 5-minute TTL and 2x at the 1-hour
-//   TTL; cache reads are 0.1x, except Claude Fable 5.1, Claude Mythos 5.1
-//   (0.025x), Claude Opus 5.5, and Claude Sonnet 5.5 (0.05x). Claude 4.6 and
+//   TTL; cache reads are 0.1x, except Claude Fable 5.2, Claude Mythos 5.2,
+//   Claude Fable 5.1, Claude Mythos 5.1 (0.025x), Claude Opus 5.5, and Claude
+//   Sonnet 5.5 (0.05x). Claude 4.6 and
 //   later models except Claude Haiku 5.5 include the 1M window at standard
 //   pricing. Claude Haiku 5.5 alone is priced by prompt length ("Long context
 //   pricing"). The page lists no long-context rate and no 1M window for Claude
@@ -102,6 +104,26 @@ const longPromptModel = (base: PriceEntry): PriceEntry[] => [base, overLongPromp
 
 export const BUNDLED_PRICES: readonly PriceEntry[] = [
   // Anthropic
+  {
+    cacheRead: 0.2,
+    cacheWrite1h: 16,
+    cacheWrite5m: 10,
+    contextWindow: MILLION,
+    input: 8,
+    model: 'claude-fable-5-2',
+    output: 40,
+    validFrom: '2026-01-01',
+  },
+  {
+    cacheRead: 0.2,
+    cacheWrite1h: 16,
+    cacheWrite5m: 10,
+    contextWindow: MILLION,
+    input: 8,
+    model: 'claude-mythos-5-2',
+    output: 40,
+    validFrom: '2026-01-01',
+  },
   {
     cacheRead: 0.25,
     cacheWrite1h: 20,
