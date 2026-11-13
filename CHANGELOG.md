@@ -10,6 +10,12 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.11.1 - 2026-11-13
+
+### Fixes
+
+- **The Hub prices Claude Fable 5.2 and Claude Mythos 5.2** (HMD-239). Their requests showed no cost because the bundled price table did not list them. Both are now priced at $8 input, $40 output, $0.20 cache reads, and $10 or $16 cache writes per million tokens, with a 1M context window.
+
 ## v0.11.0 - 2026-11-12
 
 ### Features
