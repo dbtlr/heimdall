@@ -1,0 +1,1 @@
+- **A job that was removed and recorded again no longer shows missed runs for the time it was gone** (HMD-259). The Jobs page counts its missed runs from when it was recorded again, once the Hub has seen it removed.

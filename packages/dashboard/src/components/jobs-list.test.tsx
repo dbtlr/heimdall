@@ -115,7 +115,14 @@ describe('the Jobs list', () => {
       'unknown',
       'unknown',
     ]);
-    expect(html).toContain(RECORD_DOT.unknown);
+    // Hollow: a ring in the muted colour and no fill, on the dot itself.
+    const dots = [...html.matchAll(/<span[^>]*data-level="unknown"[^>]*>/gu)].map(([tag]) => tag);
+    expect(dots.length).toBeGreaterThan(0);
+    for (const dot of dots) {
+      expect(dot).toContain(RECORD_DOT.unknown);
+      expect(dot).toContain('border-muted-foreground');
+      expect(dot).not.toMatch(/\bbg-/u);
+    }
     expect(html).toContain('Not run yet');
     expect(html).not.toContain('>OK<');
     expect(html).toContain('no runs yet');

@@ -203,6 +203,41 @@ describe('readJobs', () => {
     expect(strip).toEqual(['ok', 'ok', 'ok', 'ok']);
   });
 
+  test("shows a gap in a job's first Report as missed, though every run was received as the record was first mirrored", async () => {
+    await using h = await startHub();
+    await addSystem(h, 'server-1');
+    await recordJob(h, 'server-1', 'backup', { mirroredDaysAgo: 2 });
+    for (const days of [10, 9, 8, 7, 6, 4, 3, 2, 1, 0]) {
+      // oxlint-disable-next-line no-await-in-loop -- one row per run.
+      await storeRun(h, 'server-1', 'backup', daysAgo(days), 0, NOW - 2 * DAY);
+    }
+
+    const { jobs } = await readJobs(h.db.sql, NOW);
+
+    const strip = kinds(jobs.find(({ name }) => name === 'backup')?.strip);
+    expect(strip).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'missed', 'ok', 'ok', 'ok', 'ok', 'ok']);
+  });
+
+  test('starts a job with no first-mirrored row at its oldest stored run, even one older than the 90 days a Collector sends', async () => {
+    await using h = await startHub();
+    await addSystem(h, 'server-1');
+    await recordJob(h, 'server-1', 'weekly', { schedule: [{ hour: 3, minute: 0, weekday: 2 }] });
+    await h.db
+      .sql`DELETE FROM records_first_mirrored WHERE system = 'server-1' AND name = 'weekly'`;
+    // Thirteen weeks of runs, and an older one the Collector kept: fourteen
+    // runs, so the history speaks for every week since the oldest.
+    for (let week = 0; week < 13; week += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one row per run.
+      await addRun(h, 'server-1', 'weekly', 7 * week);
+    }
+    await addRun(h, 'server-1', 'weekly', 203);
+
+    const { jobs } = await readJobs(h.db.sql, NOW);
+
+    const strip = kinds(jobs.find(({ name }) => name === 'weekly')?.strip);
+    expect(strip).toEqual(['missed', ...Array(13).fill('ok')]);
+  });
+
   test('calls no time missed before the history it holds, for a weekly or monthly job with fewer than 14 runs', async () => {
     await using h = await startHub();
     await addSystem(h, 'server-1');

@@ -1,7 +1,10 @@
 // What the Jobs page reads. Three statements over every paired System, so
 // their count does not grow with Systems or jobs. Each job's runs are its
-// newest STRIP_RUNS only, found by the key of the run table, so the read
-// follows the strip and not the 90 days of runs the Hub keeps.
+// newest STRIP_RUNS only, found by the key of the run table. One lookup, the
+// oldest run received since the job was last first mirrored, reads a job's
+// stored runs, so its cost grows with the runs the Hub keeps for that job,
+// bounded by the 90-day prune (measured at about 10-30 ms for a job with
+// 130,000 runs).
 
 import { latestScheduledTime, nextScheduledTime } from '@heimdall/schema';
 import type { SQL } from 'bun';
@@ -157,11 +160,18 @@ const jobRow = (
     overdueSince,
     system: row.system,
   });
-  // The job existed from when the Hub first mirrored it, or from an earlier
-  // run its Collector sent with that first Report. A run the Hub stored before
-  // a record was forgotten and recorded again (a Report left it out, a later
-  // one listed it, and `forget` kept its runs) does not count: the gap is not
-  // the job's missed times.
+  // The job existed from when the Hub first mirrored it, or from any run the
+  // Hub received since then, such as the Collector's first backlog, which can
+  // span several Reports. A run the Hub stored before a record was forgotten
+  // and recorded again (a Report left it out, a later one listed it, and
+  // `forget` kept its runs) does not count: the gap is not the job's missed
+  // times. Two limits are known. (a) When a forget and the re-record both
+  // happen before the Hub sees a Report without the record (inside one Report
+  // window, or while the Collector cannot reach the Hub), the Hub never resets
+  // the mirror start, and the gap still counts as missed. (b) Runs the Hub
+  // received before it first mirrored the job's record (for example while the
+  // records section was over budget) do not lower the floor, so a miss among
+  // them is not shown.
   const earlierRuns =
     row.first_mirrored_at === null
       ? history.map(({ started }) => started)
