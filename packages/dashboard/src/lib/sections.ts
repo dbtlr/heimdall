@@ -26,8 +26,9 @@ export type PhoneTab = (typeof PHONE_TABS)[number]['key'];
 export const MAINTENANCE_STATUS = ['updates'] as const;
 
 // The section a page belongs to: a System or Condition page to Systems, a
-// Service page to Services, a Session page to Agents, and the Maintenance page
-// to Maintenance. The More page and unknown paths belong to none.
+// Service page and the Jobs page to Services, a Session page to Agents, and
+// the Maintenance page to Maintenance. The More page and unknown paths belong
+// to none.
 export const sectionOf = (path: string): Section | undefined => {
   const parts = path.split('/').filter((part) => part !== '');
   const [first, , kind] = parts;
@@ -40,7 +41,7 @@ export const sectionOf = (path: string): Section | undefined => {
     }
     return kind === 'sessions' ? 'agents' : 'systems';
   }
-  if (first === 'services') {
+  if (first === 'services' || first === 'jobs') {
     return 'services';
   }
   if (first === 'agents') {

@@ -152,9 +152,11 @@ describe('the Jobs card', () => {
       'ok',
       'ok',
     ]);
-    expect(linksIn(html)[0]?.href).toBe('/systems/db-1?tab=records');
+    expect(linksIn(html).find(({ label }) => label.startsWith('backup'))?.href).toBe(
+      '/systems/db-1?tab=records',
+    );
     expect(html).toContain('+1 more');
-    expect(html).not.toContain('All jobs');
+    expect(linksIn(html).find(({ label }) => label === 'All jobs →')?.href).toBe('/jobs');
   });
 
   test('says when no job is recorded', async () => {

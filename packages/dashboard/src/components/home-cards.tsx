@@ -251,12 +251,20 @@ const JOB_COLOR: Record<JobState, string> = {
 
 // Home's Jobs card: every recorded job, failing first, then overdue, then the
 // most recent run, at most JOBS_SHOWN of them, each linking to its System's
-// Records tab.
+// Records tab, and the card to the Jobs page.
 export function JobsCard({ jobs, now }: { jobs: readonly HomeJob[]; now: number }) {
   const shown = jobs.slice(0, JOBS_SHOWN);
   const more = jobs.length - shown.length;
   return (
-    <HomeCard id="home-jobs" title="Jobs">
+    <HomeCard
+      id="home-jobs"
+      link={
+        <Link className={CARD_LINK} to="/jobs">
+          All jobs →
+        </Link>
+      }
+      title="Jobs"
+    >
       {jobs.length === 0 ? (
         <Empty>No job is recorded.</Empty>
       ) : (

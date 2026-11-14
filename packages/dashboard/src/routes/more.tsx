@@ -63,6 +63,11 @@ function More() {
           </Link>
         </li>
         <li>
+          <Link className={ROW} to="/jobs">
+            <RowLink label="Jobs">Runs, failures, and when each is next due</RowLink>
+          </Link>
+        </li>
+        <li>
           <Link className={ROW} to="/maintenance">
             <RowLink label="Maintenance">Packages, reboots, and Service updates</RowLink>
           </Link>

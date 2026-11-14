@@ -178,3 +178,44 @@ export const nextScheduledTime = ({
   }
   return found;
 };
+
+// Every time `schedule` names from `from` to `to` (epoch milliseconds, both
+// included), oldest first, reading its entries as wall-clock times in
+// `timeZone`. Throws a RangeError for a zone this runtime does not know. Each
+// time on the span's days is converted once, so a reader that needs many
+// consecutive times lists them with one call rather than one search each. No
+// clock skips more than a day, so the days from the one before `from` to the
+// one after `to` hold every time in the span; two minutes a clock change
+// resolves to one instant count once.
+export const scheduledTimesBetween = ({
+  from,
+  schedule,
+  timeZone,
+  to,
+}: {
+  from: number;
+  schedule: readonly CalendarEntry[];
+  timeZone: string;
+  to: number;
+}): number[] => {
+  if (to < from) {
+    return [];
+  }
+  const dateAt = (ms: number) =>
+    Temporal.Instant.fromEpochMilliseconds(ms).toZonedDateTimeISO(timeZone).toPlainDate();
+  const last = dateAt(to).add({ days: 1 });
+  const times = new Set<number>();
+  for (
+    let date = dateAt(from).subtract({ days: 1 });
+    Temporal.PlainDate.compare(date, last) <= 0;
+    date = date.add({ days: 1 })
+  ) {
+    for (const minute of new Set(schedule.filter((e) => firesOn(e, date)).flatMap(minutesOfDay))) {
+      const instant = instantOf(date, minute, timeZone);
+      if (instant >= from && instant <= to) {
+        times.add(instant);
+      }
+    }
+  }
+  return [...times].toSorted((a, b) => a - b);
+};

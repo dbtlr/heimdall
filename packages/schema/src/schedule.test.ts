@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 
-import { latestScheduledTime, nextScheduledTime } from './schedule.ts';
+import { latestScheduledTime, nextScheduledTime, scheduledTimesBetween } from './schedule.ts';
 
 const at = (iso: string) => Date.parse(iso);
 
@@ -499,5 +499,85 @@ describe('nextScheduledTime', () => {
         });
       }
     }
+  });
+});
+
+// The times `schedule` names from `from` to `to`, read in `timeZone`, as ISO strings.
+const between = (
+  timeZone: string,
+  schedule: Parameters<typeof scheduledTimesBetween>[0]['schedule'],
+  from: string,
+  to: string,
+) =>
+  scheduledTimesBetween({ from: at(from), schedule, timeZone, to: at(to) }).map((t) =>
+    new Date(t).toISOString(),
+  );
+
+describe('scheduledTimesBetween', () => {
+  test('lists every time in the span, oldest first, both ends included', () => {
+    expect(
+      between(
+        'America/New_York',
+        [
+          { hour: 15, minute: 0 },
+          { hour: 3, minute: 30 },
+        ],
+        '2026-10-10T07:30:00Z',
+        '2026-10-11T07:30:00Z',
+      ),
+    ).toEqual(['2026-10-10T07:30:00.000Z', '2026-10-10T19:00:00.000Z', '2026-10-11T07:30:00.000Z']);
+  });
+
+  test('names a minute a clock change skips once, where it falls, and a repeated minute the first time', () => {
+    // New York skips 02:00 to 03:00 on 8 March 2026 and repeats 01:00 to 02:00
+    // on 1 November 2026.
+    const schedule = [
+      { hour: 2, minute: 30 },
+      { hour: 3, minute: 30 },
+      { hour: 1, minute: 30 },
+    ];
+    expect(
+      between('America/New_York', schedule, '2026-03-08T00:00:00Z', '2026-03-08T23:59:00Z'),
+    ).toEqual(['2026-03-08T06:30:00.000Z', '2026-03-08T07:30:00.000Z']);
+    expect(
+      between('America/New_York', schedule, '2026-11-01T00:00:00Z', '2026-11-01T23:59:00Z'),
+    ).toEqual(['2026-11-01T05:30:00.000Z', '2026-11-01T07:30:00.000Z', '2026-11-01T08:30:00.000Z']);
+  });
+
+  test('finds a time the clock names on the day before `from`', () => {
+    // Nuuk skips from 23:00 on 28 March to 00:00 the next day, so 28 March's
+    // 23:30 falls at 01:30 UTC, when the clock already reads 29 March.
+    expect(
+      between(
+        'America/Nuuk',
+        [{ hour: 23, minute: 30 }],
+        '2026-03-29T01:20:00Z',
+        '2026-03-29T01:40:00Z',
+      ),
+    ).toEqual(['2026-03-29T01:30:00.000Z']);
+  });
+
+  test('converts each time on the days it spans once, however often the schedule fires', () => {
+    const conversions = spyOn(Temporal.PlainDateTime.prototype, 'toZonedDateTime');
+    const everyMinute = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday }));
+    const listed = scheduledTimesBetween({
+      from: at('2026-10-10T12:00:00Z'),
+      schedule: everyMinute,
+      timeZone: 'UTC',
+      to: at('2026-10-10T12:13:00Z'),
+    });
+    expect(listed).toHaveLength(14);
+    // The day before, the day, and the day after.
+    expect(conversions.mock.calls.length).toBeLessThanOrEqual(3 * 1440);
+    conversions.mockRestore();
+  });
+
+  test('lists nothing for an empty span, and throws for a zone it does not know', () => {
+    expect(between('UTC', [{ minute: 0 }], '2026-10-10T12:00:00Z', '2026-10-10T11:00:00Z')).toEqual(
+      [],
+    );
+    expect(() =>
+      between('Mars/Olympus', [{ minute: 0 }], '2026-10-10T11:00:00Z', '2026-10-10T12:00:00Z'),
+    ).toThrow(RangeError);
   });
 });
