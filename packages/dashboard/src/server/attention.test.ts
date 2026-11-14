@@ -776,6 +776,26 @@ test('update attention reads actual observations independently of fresh Vitals a
   ).toEqual([['pending_update', 'warning']]);
 });
 
+test('a malformed update or reboot observation leaves Attention readable, its evidence old', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await addCondition(h.db.sql, {
+    kind: 'pending_update',
+    level: 'warning',
+    raisedAt: -3600,
+    reason: '1 APT package is out of date.',
+    subject: '["apt","system"]',
+    system: 'server-1',
+  });
+  await h.db
+    .sql`INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+    VALUES ('server-1', 'apt', 'system', ${new Date(NOW)}, '{"manager":"apt"}'::jsonb)`;
+  await h.db.sql`INSERT INTO reboot_observations (system, observed_at, observation)
+    VALUES ('server-1', ${new Date(NOW)}, '{"kind":"nonsense"}'::jsonb)`;
+
+  expect(await only(h, 'pending_update')).toMatchObject({ evidence: 'old' });
+});
+
 test.each([
   { evidence: 'current', label: 'a Report at the 10-minute edge', receivedAt: NOW - 10 * MINUTE },
   { evidence: 'old', label: 'no Report for over 10 minutes', receivedAt: NOW - 10 * MINUTE - 1000 },

@@ -227,3 +227,38 @@ test('a System with several package sources has a current check only when every 
   });
   expect(checks.get('mini-1')).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
 });
+
+test('a malformed package observation leaves its source with no current check and every other System intact', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [{ name: 'openssl:amd64', security: true }]);
+  await hear(h, 'laptop-1', [], { sources: [source('homebrew', '/opt/homebrew', CURRENT)] });
+  await h.db.sql`
+    UPDATE update_managers SET observation = '{"manager":"homebrew"}'::jsonb
+    WHERE system = 'laptop-1' AND manager = 'homebrew'
+  `;
+
+  const { systems } = await readMaintenance(h.db.sql, NOW);
+  const byName = new Map(systems.map((s) => [s.system, s]));
+
+  expect(byName.get('laptop-1')?.check).toEqual({ kind: 'unreadable', manager: 'Homebrew' });
+  expect(byName.get('server-1')?.check).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
+  expect(byName.get('server-1')?.packages).toHaveLength(1);
+});
+
+test("a package reads by its short name with its full identity kept, and an APT architecture is dropped when it is the System's own", async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [
+    { name: 'openssl:amd64', security: null },
+    { name: 'bash:amd64', security: null },
+    { name: 'libc6:i386', security: null },
+  ]);
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+  const labels = system?.packages.map(({ label, name }) => [name, label]);
+
+  expect(labels?.toSorted()).toEqual([
+    ['bash:amd64', 'bash'],
+    ['libc6:i386', 'libc6:i386'],
+    ['openssl:amd64', 'openssl'],
+  ]);
+});

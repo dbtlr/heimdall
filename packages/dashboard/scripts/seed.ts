@@ -339,6 +339,15 @@ type Scenario = ReturnType<typeof scenarioOf>;
 // A package-manager observation for each source, with `packages` pending of
 // which the first `security` are security updates, and whether a reboot is
 // required, as a Collector reports them.
+// The identity each manager reports: APT names carry an architecture (one
+// foreign package among them), Homebrew names a formula or cask prefix.
+const seededPackageName = (manager: 'apt' | 'homebrew', index: number) => {
+  if (manager === 'homebrew') {
+    return `${index % 4 === 3 ? 'cask' : 'formula'}:package-${String(index + 1)}`;
+  }
+  return `package-${String(index + 1)}:${index === 4 ? 'i386' : 'amd64'}`;
+};
+
 const updatesSection = (
   now: number,
   sources: {
@@ -359,7 +368,7 @@ const updatesSection = (
       updates: Array.from({ length: packages }, (_, index) => ({
         available: `1.${String(index)}.1`,
         installed: `1.${String(index)}.0`,
-        name: `package-${String(index + 1)}`,
+        name: seededPackageName(manager, index),
         security: index < security,
       })),
     },

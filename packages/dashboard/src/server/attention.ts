@@ -2,7 +2,6 @@ import {
   CLOCK_OFFSET_FRESH_MS,
   ConditionLevelSchema,
   FUTURE_SAMPLE_TOLERANCE_MS,
-  UpdateManagerSchema,
   updateSourceSubject,
   RebootObservationSchema,
   freshUpdateTime,
@@ -33,6 +32,7 @@ import {
 } from './hub-rows.ts';
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import type { Disk } from './system-detail-types.ts';
+import { parseUpdateObservations } from './update-observations.ts';
 
 export type ConditionRow = {
   id: string;
@@ -479,15 +479,17 @@ const heldOf = (
   conditions: rows.conditions.get(name) ?? [],
   jobRuns: new Map((rows.runs.get(name) ?? []).map((row) => [row.job, row])),
   lastSeenAt: rows.systems.get(name)?.[0]?.last_seen_at?.getTime(),
-  reboot: rows.reboots
-    .get(name)
-    ?.map(({ observation }) => RebootObservationSchema.parse(observation))[0],
+  reboot: rows.reboots.get(name)?.flatMap(({ observation }) => {
+    const parsed = RebootObservationSchema.safeParse(observation);
+    return parsed.success ? [parsed.data] : [];
+  })[0],
   records: rows.records.get(name) ?? [],
   runSet: rows.runSets.get(name)?.[0],
   sample: rows.samples.get(name)?.[0],
   sleeps: rows.systems.get(name)?.[0]?.sleeps === true,
-  updateManagers: (rows.updateManagers.get(name) ?? []).map(({ observation }) =>
-    UpdateManagerSchema.parse(observation),
+  // A malformed observation is left out, so its source has no current check.
+  updateManagers: parseUpdateObservations(
+    (rows.updateManagers.get(name) ?? []).map(({ observation }) => observation),
   ),
 });
 

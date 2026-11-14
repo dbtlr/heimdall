@@ -66,6 +66,9 @@ const whyUnknown = (check: Exclude<MaintenanceCheck, { kind: 'current' }>, now: 
   if (check.kind === 'failed') {
     return `the ${check.manager} check failed (${check.reason.replace(/\.$/u, '')})`;
   }
+  if (check.kind === 'unreadable') {
+    return `the ${check.manager} check was stored in a form this page cannot read`;
+  }
   if (check.kind === 'old') {
     return `${check.manager} was last checked ${ago(check.at, now)} ago`;
   }

@@ -10,7 +10,9 @@ const NOW = 1_800_000_000_000;
 
 const pkg = (name: string, security = false): MaintenancePackage => ({
   available: '3.0.15-1',
+  cask: false,
   installed: '3.0.13-1',
+  label: name,
   manager: 'APT',
   name,
   security,

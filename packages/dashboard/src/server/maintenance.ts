@@ -13,6 +13,7 @@ import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { orderMaintenance } from '../lib/maintenance.ts';
+import { ownArchitecture, packageLabel } from '../lib/package-names.ts';
 import { inSnapshot } from './fleet-overview.ts';
 import { bySystem } from './hub-rows.ts';
 import type {
@@ -22,10 +23,11 @@ import type {
   MaintenanceSystem,
 } from './maintenance-types.ts';
 import { readServiceGlance } from './services.ts';
+import { parseUpdateObservations } from './update-observations.ts';
 
 type SystemRow = { first_required_at: Date | null; system: string };
 
-type SourceRow = { observation: unknown; system: string };
+type SourceRow = { installation: string; manager: string; observation: unknown; system: string };
 
 type PackageRow = {
   manager: string;
@@ -45,7 +47,7 @@ const readSystems = (sql: SQL): Promise<SystemRow[]> => sql`
 
 // The latest check of each package source on each paired System.
 const readSources = (sql: SQL): Promise<SourceRow[]> => sql`
-  SELECT u.system, u.observation
+  SELECT u.system, u.manager, u.installation, u.observation
   FROM update_managers u
   JOIN paired_systems p ON p.system = u.system
   WHERE NOT u.withdrawn
@@ -59,17 +61,24 @@ const readPackages = (sql: SQL): Promise<PackageRow[]> => sql`
   JOIN paired_systems p ON p.system = u.system
 `;
 
-const toPackage = (row: PackageRow): MaintenancePackage => {
+const toPackage = (row: PackageRow, own: string | undefined): MaintenancePackage => {
   const { available, installed, security } = PendingUpdateSchema.parse(row.pending_update);
   return {
     available,
     installed,
     manager: updateManagerName(row.manager),
     name: row.name,
+    ...packageLabel(row.name, own),
     security,
     securitySince: row.security_since?.getTime() ?? null,
   };
 };
+
+// A source whose stored observation does not parse.
+const unreadableCheck = (row: SourceRow): MaintenanceCheck => ({
+  kind: 'unreadable',
+  manager: updateManagerName(row.manager),
+});
 
 // What one source's latest check shows at `now`, by the rule the Hub clears a
 // pending package by: a check within a day that succeeded on metadata no
@@ -90,21 +99,26 @@ const sourceCheck = (source: UpdateManager, now: number): MaintenanceCheck => {
 };
 
 // What a System's sources show together: current only when each is, at the
-// oldest of their checks; else the first, by manager, that is not.
-const systemCheck = (sources: readonly UpdateManager[], now: number): MaintenanceCheck => {
-  const checks = sources
-    .toSorted(
-      (a, b) => a.manager.localeCompare(b.manager) || a.installation.localeCompare(b.installation),
-    )
-    .map((source) => sourceCheck(source, now));
+// oldest of their checks; else the first, by manager, that is not. A source
+// whose stored observation no longer parses has no current check, and says so.
+const systemCheck = (rows: readonly SourceRow[], now: number): MaintenanceCheck => {
+  const sources = rows.toSorted(
+    (a, b) => a.manager.localeCompare(b.manager) || a.installation.localeCompare(b.installation),
+  );
+  const checks = sources.map((row) => {
+    const parsed = UpdateManagerSchema.safeParse(row.observation);
+    return parsed.success
+      ? { check: sourceCheck(parsed.data, now), observedAt: parsed.data.observedAt }
+      : { check: unreadableCheck(row), observedAt: now };
+  });
   if (checks.length === 0) {
     return { kind: 'none' };
   }
-  const failing = checks.find(({ kind }) => kind !== 'current');
+  const failing = checks.find(({ check }) => check.kind !== 'current');
   if (failing !== undefined) {
-    return failing;
+    return failing.check;
   }
-  return { at: Math.min(...sources.map(({ observedAt }) => observedAt)), kind: 'current' };
+  return { at: Math.min(...checks.map(({ observedAt }) => observedAt)), kind: 'current' };
 };
 
 // Each paired System with what its package checks show, the packages the Hub
@@ -124,15 +138,20 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
     now,
     systems: orderMaintenance(
       systems.map((row): MaintenanceSystem => {
-        const checked = (sourcesOf.get(row.system) ?? []).map(({ observation }) =>
-          UpdateManagerSchema.parse(observation),
-        );
-        const held = (packagesOf.get(row.system) ?? []).map(toPackage);
+        const sourceRows = sourcesOf.get(row.system) ?? [];
+        const heldRows = packagesOf.get(row.system) ?? [];
+        const own = ownArchitecture([
+          ...heldRows.map(({ name }) => name),
+          ...sourceRows.flatMap(
+            ({ observation }) => parseUpdateObservations([observation])[0]?.installed?.names ?? [],
+          ),
+        ]);
+        const held = heldRows.map((pkg) => toPackage(pkg, own));
         return {
-          check: systemCheck(checked, now),
+          check: systemCheck(sourceRows, now),
           managers: [
             ...new Set([
-              ...checked.map(({ manager }) => updateManagerName(manager)),
+              ...sourceRows.map(({ manager }) => updateManagerName(manager)),
               ...held.map(({ manager }) => manager),
             ]),
           ].toSorted(),

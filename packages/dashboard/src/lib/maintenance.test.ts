@@ -18,7 +18,9 @@ import {
 
 const pkg = (name: string, security = false): MaintenancePackage => ({
   available: '2',
+  cask: false,
   installed: '1',
+  label: name,
   manager: 'apt',
   name,
   security,
