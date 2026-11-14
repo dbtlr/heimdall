@@ -66,7 +66,7 @@ const readPackages = (sql: SQL): Promise<PackageRow[]> => sql`
 
 const toPackage = (row: PackageRow, own: string | undefined): MaintenancePackage => ({
   ...pendingPackageOf(row),
-  ...packageLabel(row.name, own),
+  ...packageLabel(row.name, row.manager, own),
   manager: updateManagerName(row.manager),
 });
 
@@ -140,10 +140,17 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
       systems.map((row): MaintenanceSystem => {
         const checked = (sourcesOf.get(row.system) ?? []).map(sourceOf);
         const heldRows = packagesOf.get(row.system) ?? [];
-        const own = ownArchitecture([
-          ...heldRows.map(({ name }) => name),
-          ...checked.flatMap(({ observation }) => observation?.installed?.names ?? []),
-        ]);
+        // The installed census decides when there is one; pending names are
+        // the fallback, since a System can have more foreign updates pending
+        // than native ones.
+        const census = checked.flatMap(({ observation }) =>
+          observation?.manager === 'apt' ? (observation.installed?.names ?? []) : [],
+        );
+        const own = ownArchitecture(
+          census.length > 0
+            ? census
+            : heldRows.filter(({ manager }) => manager === 'apt').map(({ name }) => name),
+        );
         const held = heldRows.map((pkg) => toPackage(pkg, own));
         return {
           check: systemCheck(checked, now),

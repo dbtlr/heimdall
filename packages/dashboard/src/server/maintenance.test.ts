@@ -291,6 +291,28 @@ test("an APT package built for every architecture drops its suffix, and the cens
   ]);
 });
 
+test("the census alone decides the System's own architecture, however many foreign packages are pending", async () => {
+  await using h = await startHub();
+  await hear(
+    h,
+    'server-1',
+    [
+      { name: 'libc6:i386', security: null },
+      { name: 'zlib1g:i386', security: null },
+      { name: 'libgcc-s1:i386', security: null },
+    ],
+    { installed: ['bash:amd64', 'coreutils:amd64'] },
+  );
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+
+  expect(system?.packages.map(({ label }) => label).toSorted()).toEqual([
+    'libc6:i386',
+    'libgcc-s1:i386',
+    'zlib1g:i386',
+  ]);
+});
+
 test('a malformed held package stays listed with its versions unknown, and every other System still shows', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', [{ name: 'openssl:amd64', security: true }]);
