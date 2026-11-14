@@ -97,6 +97,25 @@ describe('the Maintenance cards', () => {
     expect(html).toContain('2 Systems have no current package check.');
   });
 
+  test('a System with something pending under a check that is not current says its list may be out of date, and why', async () => {
+    const html = await render([
+      system('server-1', {
+        check: { kind: 'failed', manager: 'APT', reason: 'apt timed out' },
+        packages: [pkg('curl')],
+        rebootSince: NOW - 4 * DAY,
+      }),
+      system('laptop-1', { packages: [pkg('git')] }),
+    ]);
+
+    expect(html).toContain(
+      'What is listed may be out of date: the APT check failed (apt timed out).',
+    );
+    // Only server-1's card says so; laptop-1's check is current.
+    expect(html.split('may be out of date')).toHaveLength(2);
+    expect(html.indexOf('may be out of date')).toBeLessThan(html.indexOf('laptop-1'));
+    expect(html).toContain('1 System has no current package check.');
+  });
+
   test('a System whose only pending item is a reboot is not called up to date', async () => {
     const html = await render([system('server-1', { rebootSince: NOW - 4 * DAY })]);
 

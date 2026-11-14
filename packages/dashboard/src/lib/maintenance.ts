@@ -1,5 +1,5 @@
 // What the Maintenance page says: its Systems in order, the packages it shows
-// of each, what a card with nothing pending says, and the summary above them.
+// of each, what a card says of its package checks, and the summary above them.
 // All of it can wait; nothing here is tinted as a problem.
 
 import type {
@@ -58,26 +58,36 @@ export const splitPackages = (
 // How long before `now`, in its largest unit: "4 d".
 export const ago = (at: number, now: number): string => formatSpanShort(Math.max(0, now - at));
 
-// What the card of a System with nothing pending says: up to date and when
-// it was checked, or, when its checks cannot show that, why not.
-export const checkSentence = (check: MaintenanceCheck, now: number): string => {
-  if (check.kind === 'current') {
-    return `Up to date. Checked ${ago(check.at, now)} ago.`;
-  }
-  const unknown = 'Not known to be up to date:';
+// Why a System's checks cannot show what is pending on it.
+const whyUnknown = (check: Exclude<MaintenanceCheck, { kind: 'current' }>, now: number): string => {
   if (check.kind === 'none') {
-    return `${unknown} no package check has reported.`;
+    return 'no package check has reported';
   }
   if (check.kind === 'failed') {
-    return `${unknown} the ${check.manager} check failed (${check.reason.replace(/\.$/u, '')}).`;
+    return `the ${check.manager} check failed (${check.reason.replace(/\.$/u, '')})`;
   }
   if (check.kind === 'old') {
-    return `${unknown} ${check.manager} was last checked ${ago(check.at, now)} ago.`;
+    return `${check.manager} was last checked ${ago(check.at, now)} ago`;
   }
   return check.at === null
-    ? `${unknown} ${check.manager}'s package metadata is of unknown age.`
-    : `${unknown} ${check.manager}'s package metadata is ${ago(check.at, now)} old.`;
+    ? `${check.manager}'s package metadata is of unknown age`
+    : `${check.manager}'s package metadata is ${ago(check.at, now)} old`;
 };
+
+// What the card of a System with nothing pending says: up to date and when
+// it was checked, or, when its checks cannot show that, why not.
+export const checkSentence = (check: MaintenanceCheck, now: number): string =>
+  check.kind === 'current'
+    ? `Up to date. Checked ${ago(check.at, now)} ago.`
+    : `Not known to be up to date: ${whyUnknown(check, now)}.`;
+
+// What the card of a System with something pending says of its checks:
+// nothing when they are current, else that what it lists may be out of date,
+// and why.
+export const pendingCheckNote = (check: MaintenanceCheck, now: number): string | undefined =>
+  check.kind === 'current'
+    ? undefined
+    : `What is listed may be out of date: ${whyUnknown(check, now)}.`;
 
 const counted = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
 

@@ -11,6 +11,7 @@ import {
   maintenanceSummary,
   orderMaintenance,
   PACKAGES_SHOWN,
+  pendingCheckNote,
   splitPackages,
   upstreamName,
 } from './maintenance.ts';
@@ -155,6 +156,20 @@ describe('checkSentence', () => {
     ).toBe("Not known to be up to date: Homebrew's package metadata is 9 d old.");
     expect(checkSentence({ at: null, kind: 'metadata', manager: 'Homebrew' }, NOW)).toBe(
       "Not known to be up to date: Homebrew's package metadata is of unknown age.",
+    );
+  });
+});
+
+describe('pendingCheckNote', () => {
+  const NOW = 10 * 86_400_000;
+
+  test('says nothing of a current check, and otherwise that the list may be out of date and why', () => {
+    expect(pendingCheckNote({ at: NOW - 40 * 60_000, kind: 'current' }, NOW)).toBeUndefined();
+    expect(pendingCheckNote({ kind: 'failed', manager: 'APT', reason: 'apt timed out' }, NOW)).toBe(
+      'What is listed may be out of date: the APT check failed (apt timed out).',
+    );
+    expect(pendingCheckNote({ at: NOW - 3 * 86_400_000, kind: 'old', manager: 'APT' }, NOW)).toBe(
+      'What is listed may be out of date: APT was last checked 3 d ago.',
     );
   });
 });

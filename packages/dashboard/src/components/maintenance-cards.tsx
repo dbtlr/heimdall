@@ -7,6 +7,7 @@ import {
   isUpToDate,
   maintenanceSummary,
   nothingPending,
+  pendingCheckNote,
   splitPackages,
   upstreamName,
 } from '../lib/maintenance.ts';
@@ -99,10 +100,14 @@ function ServiceUpdateRow({ now, update }: { now: number; update: MaintenanceSer
 // reboot and how long it has been required, its packages, and its Services
 // with an update. A System with none of them is a short card saying when it
 // was last checked, or why its checks cannot show it is up to date; only an
-// up to date one is quiet. All of it can wait, so nothing here is tinted as a
+// up to date one is quiet. A card that lists something under a check that is
+// not current says why the list may be out of date. All of it can wait, so nothing here is tinted as a
 // problem beyond the notes' own color.
 function SystemCard({ now, system }: { now: number; system: MaintenanceSystem }) {
   const id = `maintenance-${system.system}`;
+  const checkNote = nothingPending(system)
+    ? checkSentence(system.check, now)
+    : pendingCheckNote(system.check, now);
   return (
     <section
       aria-labelledby={id}
@@ -128,10 +133,8 @@ function SystemCard({ now, system }: { now: number; system: MaintenanceSystem })
           </span>
         )}
       </div>
-      {nothingPending(system) && (
-        <p className="mt-3 text-[13.5px] break-words text-muted-foreground">
-          {checkSentence(system.check, now)}
-        </p>
+      {checkNote !== undefined && (
+        <p className="mt-3 text-[13.5px] break-words text-muted-foreground">{checkNote}</p>
       )}
       {system.packages.length > 0 && <Packages now={now} packages={system.packages} />}
       {system.updates.length > 0 && (

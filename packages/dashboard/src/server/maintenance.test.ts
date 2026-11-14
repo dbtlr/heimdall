@@ -21,8 +21,8 @@ const at = (ms: number) => new Date(ms);
 type Pending = { name: string; security: boolean | null };
 
 // One Report from `system` received at NOW, with an APT source holding
-// `pending` (or reporting `result` instead) and a reboot marker, as a
-// Collector sends them.
+// `pending` (or reporting `result` instead), any `sources` beside it, and a
+// reboot marker, as a Collector sends them.
 const hear = async (
   h: Hub,
   system: string,
@@ -31,7 +31,13 @@ const hear = async (
     reboot = false,
     result,
     services = [],
-  }: { reboot?: boolean; result?: UpdateManager['result']; services?: string[] } = {},
+    sources = [],
+  }: {
+    reboot?: boolean;
+    result?: UpdateManager['result'];
+    services?: string[];
+    sources?: UpdateManager[];
+  } = {},
 ) => {
   h.clock.now = NOW;
   const response = await push(
@@ -63,6 +69,7 @@ const hear = async (
               })),
             },
           },
+          ...sources,
         ],
         reboot: { kind: 'available', observedAt: NOW - 20 * MINUTE, required: reboot },
       },
@@ -166,4 +173,57 @@ test('a System whose package check failed, read old metadata, or never reported 
     kind: 'old',
     manager: 'APT',
   });
+});
+
+// A package source checked as the Collector checks APT in `hear`, reporting
+// `result`.
+const source = (
+  manager: UpdateManager['manager'],
+  installation: string,
+  result: UpdateManager['result'],
+): UpdateManager => ({ installation, manager, observedAt: NOW - 20 * MINUTE, result });
+
+const CURRENT: UpdateManager['result'] = {
+  kind: 'available',
+  metadataAt: NOW - 2 * HOUR,
+  updates: [],
+};
+
+test('a System with several package sources has a current check only when every one of them is current', async () => {
+  await using h = await startHub();
+  await storeToken(h.db.sql, { pairedAt: NOW, system: 'mini-1', token: 'mini-token' });
+  await hear(h, 'server-1', [], {
+    sources: [
+      source('homebrew', '/opt/homebrew', { kind: 'unavailable', reason: 'brew timed out' }),
+    ],
+  });
+  await hear(h, 'laptop-1', [], {
+    sources: [
+      source('homebrew', '/opt/homebrew', CURRENT),
+      source('homebrew', '/usr/local', {
+        kind: 'available',
+        metadataAt: NOW - 8 * DAY,
+        updates: [],
+      }),
+    ],
+  });
+  await hear(h, 'mini-1', [], { sources: [source('homebrew', '/opt/homebrew', CURRENT)] });
+
+  const checks = new Map(
+    (await readMaintenance(h.db.sql, NOW)).systems.map(({ check, system }) => [system, check]),
+  );
+
+  // APT, sorted first, is current; Homebrew's failure still decides.
+  expect(checks.get('server-1')).toEqual({
+    kind: 'failed',
+    manager: 'Homebrew',
+    reason: 'brew timed out',
+  });
+  // One Homebrew installation is current, the other read old metadata.
+  expect(checks.get('laptop-1')).toEqual({
+    at: NOW - 8 * DAY,
+    kind: 'metadata',
+    manager: 'Homebrew',
+  });
+  expect(checks.get('mini-1')).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
 });
