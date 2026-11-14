@@ -36,7 +36,9 @@ const condition = (over: Partial<ConditionActivity> = {}): ConditionActivity => 
 const stop = (over: Partial<StopActivity> = {}): StopActivity => ({
   at: T,
   kind: 'stop',
+  lasted: 4000,
   ongoing: false,
+  restarts: 0,
   service: 'caddy',
   system: 'server-1',
   ...over,
@@ -107,7 +109,7 @@ test('a line says its sentence, the other changes it holds, and that an alert wa
   expect(words.title).toBe('Service down');
   expect(words.subject).toBe('caddy');
   expect(words.level).toBe('alert');
-  expect(words.detail).toBe('Exited with status 1. · caddy restarted');
+  expect(words.detail).toBe('Exited with status 1. · caddy stopped for 4 s');
   expect(words.alert).toEqual({ at: T + MIN, recoveredAt: T + 2 * MIN });
   expect(words.open).toBe(true);
 });
@@ -223,7 +225,7 @@ test('filtering by kind happens before grouping, so a hidden kind never joins a 
   expect(lines[0]?.events.map((event) => event.kind)).toEqual(['alert']);
 });
 
-test('each chip counts what it would show, constrained by the other filter only', () => {
+test('each chip counts the lines it would show, constrained by the other filter only', () => {
   const events: ActivityEvent[] = [
     condition(),
     stop(),
@@ -233,6 +235,37 @@ test('each chip counts what it would show, constrained by the other filter only'
   const counts = activityCounts(events, { kind: 'stop', system: 'laptop-1' });
   expect(counts.kind).toEqual({ alert: 0, condition: 0, drift: 0, stop: 1, version: 1 });
   expect(counts.system).toEqual({ 'laptop-1': 1, 'server-1': 1 });
+});
+
+test('the chips count merged lines, not the changes inside them', () => {
+  const events: ActivityEvent[] = [
+    condition({ at: T }),
+    stop({ at: T + MIN }),
+    version({ at: T + MIN }),
+    stop({ at: T + 10 * MIN }),
+    stop({ at: T + 11 * MIN }),
+  ];
+  const counts = activityCounts(events, {});
+  expect(counts.total).toBe(groupActivity(events).length);
+  expect(counts.total).toBe(2);
+  // Three stops, but the last two merge into one line when only stops show.
+  expect(counts.kind.stop).toBe(groupActivity(filterActivity(events, { kind: 'stop' })).length);
+  expect(counts.kind.stop).toBe(2);
+  expect(counts.system['server-1']).toBe(2);
+});
+
+const stopTitleOf = (over: Partial<StopActivity>) => {
+  const [line] = groupActivity([stop(over)]);
+  return lineWords(line!).title;
+};
+
+test('a finished stop reads as a stop with its length, and a stop under way as stopped', () => {
+  expect(stopTitleOf({ lasted: 90_000 })).toBe('caddy stopped for 1 min');
+  expect(stopTitleOf({ lasted: 90_000, restarts: 3 })).toBe(
+    'caddy stopped for 1 min (restarted 3 times)',
+  );
+  expect(stopTitleOf({ lasted: undefined })).toBe('caddy stopped, end unknown');
+  expect(stopTitleOf({ lasted: undefined, ongoing: true })).toBe('caddy stopped');
 });
 
 test('the search keeps a known kind, range, and System and drops the rest', () => {

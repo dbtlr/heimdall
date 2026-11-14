@@ -184,6 +184,51 @@ describe('the totals', () => {
   });
 });
 
+describe('a stop whose end is unknown', () => {
+  // Stopped at 08:00 on 23 Oct; the System's Reports resume at 09:00.
+  const lost = stopAt(Date.UTC(2026, 9, 23, 8), 0, { startedAt: null });
+  const gap = [
+    { from: NOW - 91 * DAY, to: Date.UTC(2026, 9, 23, 8, 1) },
+    { from: Date.UTC(2026, 9, 23, 9), to: NOW },
+  ];
+
+  test('is downtime until the System next reports, so the percent is below 100', () => {
+    const found = totals({ reported: gap, stops: [lost] });
+    // The downtime fills the reporting gap, so all 90 days are known time.
+    expect(found.percent).toBeCloseTo((1 - 1 / (90 * 24)) * 100, 6);
+    expect(percentWords(found.percent)).not.toBe('100.00%');
+  });
+
+  test('lasts until the next Report while the System kept reporting, not until its next gap', () => {
+    // Stopped 40 days ago; Reports ran on, with a 10-minute gap 10 days ago.
+    const kept = stop(40 * DAY, 0, { startedAt: null });
+    const reported = [
+      { from: NOW - 91 * DAY, to: NOW - 10 * DAY },
+      { from: NOW - 10 * DAY + 10 * MINUTE, to: NOW },
+    ];
+    // The next bucket of Reports began 5 minutes after the stop.
+    expect(totals({ reported, stops: [kept] }).percent).toBeCloseTo(
+      (1 - 5 / (90 * 24 * 60 - 10)) * 100,
+      6,
+    );
+    const restarted = states(days({ reported, stops: [kept] })).filter(
+      (state) => state === 'restarted',
+    );
+    expect(restarted).toEqual(['restarted']);
+  });
+
+  test('is downtime to the end of its day when no Report came after it', () => {
+    const found = totals({
+      reported: [{ from: NOW - 91 * DAY, to: Date.UTC(2026, 9, 23, 8, 1) }],
+      stops: [lost],
+    });
+    expect(found.percent).toBeLessThan(100);
+    // 08:00 to midnight is 16 hours of downtime; the known time ends with it,
+    // 12 hours before now.
+    expect(found.percent).toBeCloseTo((1 - 16 / (90 * 24 - 12)) * 100, 6);
+  });
+});
+
 describe('availability percent', () => {
   test('is the share of the observed time not stopped or down, overlaps counted once', () => {
     const found = totals({

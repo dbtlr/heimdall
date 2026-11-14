@@ -38,7 +38,9 @@ describe('systemEvents', () => {
           {
             at: version.at + MINUTE,
             kind: 'stop',
+            lasted: 4000,
             ongoing: false,
+            restarts: 0,
             service: 'web',
             system: 'server-1',
           },

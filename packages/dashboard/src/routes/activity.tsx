@@ -89,11 +89,7 @@ function ActivityPage() {
         </p>
       </header>
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <KindChips
-          counts={counts.kind}
-          current={kind}
-          total={Object.values(counts.kind).reduce((sum, count) => sum + count, 0)}
-        />
+        <KindChips counts={counts} current={kind} />
         <SystemSelect
           counts={counts.system}
           current={system}

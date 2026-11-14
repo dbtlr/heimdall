@@ -113,7 +113,17 @@ export type HomeMaintenance = { packages: PendingPackages[]; updates: AvailableU
 // run again, or a Condition at warning or alert being raised or cleared.
 export type Change =
   | { at: number; from: string; kind: 'version'; service: string; system: string; to: string }
-  | { at: number; kind: 'stop'; ongoing: boolean; service: string; system: string }
+  | {
+      at: number;
+      kind: 'stop';
+      // How long it lasted, undefined while under way or when its end is unknown.
+      lasted: number | undefined;
+      ongoing: boolean;
+      // How many times the Service restarted before it ran steadily.
+      restarts: number;
+      service: string;
+      system: string;
+    }
   | {
       action: 'cleared' | 'raised';
       at: number;

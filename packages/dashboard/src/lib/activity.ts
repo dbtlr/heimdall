@@ -11,6 +11,7 @@ import type {
   ActivityRange,
   AlertActivity,
   ConditionActivity,
+  StopActivity,
 } from '../server/activity-types.ts';
 import { pinFromSearch } from './activity-moment.ts';
 import { knownValues, stringList } from './filter-search.ts';
@@ -84,8 +85,11 @@ export const filterActivity = (
   filters: ActivityFilters,
 ): ActivityEvent[] => events.filter((event) => matches(event, filters));
 
-// Each kind and System chip counts the changes it would show, constrained by
-// the other filter only.
+const lineCount = (kept: readonly ActivityEvent[]): number => groupActivity(kept).length;
+
+// Each chip counts the lines it would show: its changes filtered by the other
+// filter only, then merged by the grouping rule. `total` is the All chip's,
+// the lines of every kind.
 export const activityCounts = (events: readonly ActivityEvent[], filters: ActivityFilters) => {
   const kind: Record<ActivityKind, number> = {
     alert: 0,
@@ -94,18 +98,29 @@ export const activityCounts = (events: readonly ActivityEvent[], filters: Activi
     stop: 0,
     version: 0,
   };
-  const system: Record<string, number> = Object.fromEntries(
-    events.map((event) => [event.system, 0]),
-  );
+  for (const each of ACTIVITY_KINDS) {
+    kind[each] = lineCount(
+      events.filter((event) => event.kind === each && matches(event, filters, 'kind')),
+    );
+  }
+  const bySystem = new Map<string, ActivityEvent[]>();
   for (const event of events) {
-    if (matches(event, filters, 'kind')) {
-      kind[event.kind] += 1;
-    }
-    if (matches(event, filters, 'system')) {
-      system[event.system] = (system[event.system] ?? 0) + 1;
+    const group = bySystem.get(event.system);
+    if (group === undefined) {
+      bySystem.set(event.system, [event]);
+    } else {
+      group.push(event);
     }
   }
-  return { kind, system };
+  const system: Record<string, number> = {};
+  for (const [each, own] of bySystem) {
+    system[each] = lineCount(own.filter((event) => matches(event, filters, 'system')));
+  }
+  return {
+    kind,
+    system,
+    total: lineCount(events.filter((event) => matches(event, filters, 'kind'))),
+  };
 };
 
 // The search parameters Activity keeps: a known kind, a known range, one
@@ -181,6 +196,21 @@ const isOpen = (event: ActivityEvent): boolean => {
   }
 };
 
+// A stop in words: still under way, or finished with how long it lasted, if
+// known, and how often the Service restarted meanwhile.
+const stopTitle = (event: StopActivity): string => {
+  if (event.ongoing) {
+    return `${event.service} stopped`;
+  }
+  const restarts =
+    event.restarts > 0
+      ? ` (restarted ${String(event.restarts)} ${event.restarts === 1 ? 'time' : 'times'})`
+      : '';
+  return event.lasted === undefined
+    ? `${event.service} stopped, end unknown${restarts}`
+    : `${event.service} stopped for ${formatSpan(event.lasted)}${restarts}`;
+};
+
 // The words of a change that leads a line.
 const sentence = (event: ActivityEvent): { detail: string; title: string } => {
   switch (event.kind) {
@@ -190,7 +220,7 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
     case 'stop': {
       return {
         detail: '',
-        title: event.ongoing ? `${event.service} stopped` : `${event.service} restarted`,
+        title: stopTitle(event),
       };
     }
     case 'alert': {

@@ -23,7 +23,9 @@ const stop = (
 ): Change => ({
   at,
   kind: 'stop',
+  lasted: 4000,
   ongoing,
+  restarts: 0,
   service,
   system,
 });
