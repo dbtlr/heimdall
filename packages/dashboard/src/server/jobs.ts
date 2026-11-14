@@ -3,8 +3,8 @@
 // newest STRIP_RUNS only, found by the key of the run table. One lookup, the
 // oldest run received since the job was last first mirrored, reads a job's
 // stored runs, so its cost grows with the runs the Hub keeps for that job,
-// bounded by the 90-day prune (measured at about 10-30 ms for a job with
-// 130,000 runs).
+// bounded by the 90-day prune (tens of milliseconds for a job with 130,000
+// runs).
 
 import { latestScheduledTime, nextScheduledTime } from '@heimdall/schema';
 import type { SQL } from 'bun';
