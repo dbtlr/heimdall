@@ -147,9 +147,99 @@ function ChangesColumn({ events, pin }: { events: readonly ActivityEvent[]; pin:
   );
 }
 
-// The card under the axis: what the pinned moment holds. From `sm` three
-// columns, the changes within 15 minutes, the Sessions running with their
-// cost, and one System's Vitals; a phone gets the summary and the link.
+// What the pinned card holds once the viewer's zone is known: its heading, and
+// the read's state or its columns. From `sm` three columns, the changes within
+// 15 minutes, the Sessions running with their cost, and one System's Vitals; a
+// phone gets the summary and the link.
+export function PinnedMomentBody({
+  events,
+  now,
+  onClear,
+  pin,
+  read,
+  timeZone,
+}: {
+  events: readonly ActivityEvent[];
+  now: number;
+  onClear: () => void;
+  pin: Pin;
+  read: MomentRead;
+  timeZone: string;
+}) {
+  const lines = groupActivity(changesNear(events, pin));
+  return (
+    <>
+      <header className="flex flex-wrap items-baseline gap-x-3">
+        <h2 className="text-sm font-semibold">Pinned · {formatDated(pin.at, now, timeZone)}</h2>
+        <span className="hidden text-[13px] text-dim sm:inline">
+          drag the line or pick a change
+        </span>
+        <button
+          className="ml-auto inline-flex min-h-11 items-center text-sm text-primary"
+          onClick={onClear}
+          type="button"
+        >
+          Clear
+        </button>
+      </header>
+      {read.state === 'loading' && (
+        <p aria-live="polite" className="text-sm text-muted-foreground">
+          Reading the Sessions…
+        </p>
+      )}
+      {read.state === 'failed' && (
+        <p className="text-sm text-status-critical">Could not read this moment.</p>
+      )}
+      {read.state === 'ready' && (
+        <>
+          <div className="hidden gap-x-8 sm:grid sm:grid-cols-3">
+            <div>
+              <h3 className={HEADING}>Changes within 15 min</h3>
+              <ChangesColumn events={events} pin={pin} />
+            </div>
+            <div>
+              <h3 className={HEADING}>{sessionsSummary(read.moment.sessions)}</h3>
+              <SessionRows sessions={read.moment.sessions} />
+            </div>
+            {pin.system !== undefined && (
+              <div>
+                <h3 className={HEADING}>
+                  {pin.system} at {formatClock(pin.at, timeZone)}
+                </h3>
+                <VitalsColumn
+                  now={now}
+                  system={pin.system}
+                  timeZone={timeZone}
+                  vitals={read.moment.vitals}
+                />
+              </div>
+            )}
+          </div>
+          <div className="text-sm sm:hidden">
+            {lines[0] !== undefined && (
+              <p>
+                <b className="font-semibold">{lineWords(lines[0]).title}</b>{' '}
+                <span className="text-muted-foreground">on {lines[0].system}</span>
+              </p>
+            )}
+            <p className="text-muted-foreground">{sessionsSummary(read.moment.sessions)}</p>
+            {pin.system !== undefined && read.moment.vitals !== undefined && (
+              <SampleLink
+                className="inline-flex min-h-11 items-center text-primary"
+                now={now}
+                system={pin.system}
+                vitals={read.moment.vitals}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// The card under the axis: what the pinned moment holds, or with no pin, how to
+// set one.
 export function PinnedMomentCard({
   events,
   now,
@@ -180,80 +270,16 @@ export function PinnedMomentCard({
       className="card-surface mt-3 rounded-xl border border-select/60 px-4 py-3"
     >
       <InZone>
-        {(timeZone) => {
-          const lines = groupActivity(changesNear(events, pin));
-          return (
-            <>
-              <header className="flex flex-wrap items-baseline gap-x-3">
-                <h2 className="text-sm font-semibold">
-                  Pinned · {formatDated(pin.at, now, timeZone)}
-                </h2>
-                <span className="hidden text-[13px] text-dim sm:inline">
-                  drag the line or pick a change
-                </span>
-                <button
-                  className="ml-auto inline-flex min-h-11 items-center text-sm text-primary"
-                  onClick={onClear}
-                  type="button"
-                >
-                  Clear
-                </button>
-              </header>
-              {read.state === 'loading' && (
-                <p aria-live="polite" className="text-sm text-muted-foreground">
-                  Reading the Sessions…
-                </p>
-              )}
-              {read.state === 'failed' && (
-                <p className="text-sm text-status-critical">Could not read this moment.</p>
-              )}
-              {read.state === 'ready' && (
-                <>
-                  <div className="hidden gap-x-8 sm:grid sm:grid-cols-3">
-                    <div>
-                      <h3 className={HEADING}>Changes within 15 min</h3>
-                      <ChangesColumn events={events} pin={pin} />
-                    </div>
-                    <div>
-                      <h3 className={HEADING}>{sessionsSummary(read.moment.sessions)}</h3>
-                      <SessionRows sessions={read.moment.sessions} />
-                    </div>
-                    {pin.system !== undefined && (
-                      <div>
-                        <h3 className={HEADING}>
-                          {pin.system} at {formatClock(pin.at, timeZone)}
-                        </h3>
-                        <VitalsColumn
-                          now={now}
-                          system={pin.system}
-                          timeZone={timeZone}
-                          vitals={read.moment.vitals}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-sm sm:hidden">
-                    {lines[0] !== undefined && (
-                      <p>
-                        <b className="font-semibold">{lineWords(lines[0]).title}</b>{' '}
-                        <span className="text-muted-foreground">on {lines[0].system}</span>
-                      </p>
-                    )}
-                    <p className="text-muted-foreground">{sessionsSummary(read.moment.sessions)}</p>
-                    {pin.system !== undefined && read.moment.vitals !== undefined && (
-                      <SampleLink
-                        className="inline-flex min-h-11 items-center text-primary"
-                        now={now}
-                        system={pin.system}
-                        vitals={read.moment.vitals}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-            </>
-          );
-        }}
+        {(timeZone) => (
+          <PinnedMomentBody
+            events={events}
+            now={now}
+            onClear={onClear}
+            pin={pin}
+            read={read}
+            timeZone={timeZone}
+          />
+        )}
       </InZone>
     </section>
   );

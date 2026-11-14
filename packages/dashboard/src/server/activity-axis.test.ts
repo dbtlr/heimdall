@@ -55,3 +55,33 @@ test('each System gets a lane of CPU in axis buckets and its Session stretches, 
     { average: 90, high: 90, low: 90 },
   ]);
 });
+
+test('a lane joins the stretches of one Harness closer than the axis tells apart, and keeps the rest apart', async () => {
+  await using h = await startHub();
+  const { sql } = h.db;
+  await push(h.hub, report('server-1', [NOW - HOUR]), { token: 'server-token' });
+  // Over 24 hours the axis tells apart stretches 2 minutes apart: these two
+  // Sessions' stretches lie 1 minute apart, with a Codex one between them.
+  await addSession(sql, { id: 'a', requests: [-4 * 3600, -4 * 3600 + 60], system: 'server-1' });
+  await addSession(sql, {
+    id: 'b',
+    requests: [-4 * 3600 + 120, -4 * 3600 + 180],
+    system: 'server-1',
+  });
+  await addSession(sql, {
+    harness: 'codex',
+    id: 'c',
+    requests: [-4 * 3600 + 90, -4 * 3600 + 100],
+    system: 'server-1',
+  });
+  // An hour earlier, far enough apart to draw on its own.
+  await addSession(sql, { id: 'd', requests: [-5 * 3600, -5 * 3600 + 60], system: 'server-1' });
+
+  const page = await readActivityPage(sql, { now: NOW, range: '24h' });
+
+  expect(page.lanes.find(({ system }) => system === 'server-1')?.stretches).toEqual([
+    { endedAt: NOW - 5 * HOUR + MINUTE, harness: 'claude-code', startedAt: NOW - 5 * HOUR },
+    { endedAt: NOW - 4 * HOUR + 3 * MINUTE, harness: 'claude-code', startedAt: NOW - 4 * HOUR },
+    { endedAt: NOW - 4 * HOUR + 100_000, harness: 'codex', startedAt: NOW - 4 * HOUR + 90_000 },
+  ]);
+});

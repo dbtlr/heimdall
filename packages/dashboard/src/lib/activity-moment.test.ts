@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
 
+import { ACTIVITY_RANGE_MS } from '../server/activity-types.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
 import type { MomentSession } from '../server/pinned-moment-types.ts';
 import {
   changesNear,
+  MOMENT_SLACK_MS,
   momentInput,
   pinFromSearch,
   pinWithin,
@@ -84,14 +86,27 @@ test('a pin off the shown window is no pin', () => {
   expect(pinWithin(undefined, window)).toBeUndefined();
 });
 
-test('the pinned-moment read takes a time within the longest Activity range, and no older', () => {
+test('the pinned-moment read takes a time within the longest Activity range and a day of slack, and no older', () => {
   const DAY = 24 * 60 * MIN;
-  expect(momentInput({ at: T - 30 * DAY, system: 'server-1' }, T)).toEqual({
-    at: T - 30 * DAY,
+  const oldest = T - 30 * DAY - MOMENT_SLACK_MS;
+  expect(momentInput({ at: oldest, system: 'server-1' }, T)).toEqual({
+    at: oldest,
     system: 'server-1',
   });
   expect(momentInput({ at: T, system: 5 }, T)).toEqual({ at: T, system: undefined });
-  expect(() => momentInput({ at: T - 30 * DAY - 1 }, T)).toThrow(RangeError);
+  expect(() => momentInput({ at: oldest - 1 }, T)).toThrow(RangeError);
   expect(() => momentInput({ at: 0 }, T)).toThrow(RangeError);
   expect(() => momentInput({ at: 'soon' }, T)).toThrow(TypeError);
+});
+
+test('a pin at the start of the 30 d window still reads after the page has been open a while', () => {
+  const loadedAt = T;
+  const from = loadedAt - ACTIVITY_RANGE_MS['30d'];
+  // The left edge of the axis, as a drag past it pins.
+  const at = timeAtFraction(-0.5, { from, to: loadedAt });
+  const window = { from, to: loadedAt };
+  expect(pinWithin(pin(at), window)).toEqual(pin(at));
+  for (const later of [5_000, 30 * MIN, 12 * 60 * MIN]) {
+    expect(momentInput(pin(at), loadedAt + later)).toEqual(pin(at));
+  }
 });

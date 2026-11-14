@@ -67,12 +67,21 @@ export const pinWithin = <P extends { at: number }>(
   { from, to }: Window,
 ): P | undefined => (pin !== undefined && pin.at >= from && pin.at <= to ? pin : undefined);
 
+// How much older than Activity's longest range a pin may be. The page sets its
+// window when it loads and keeps it while open, so a pin at the window's start
+// reaches the server later than the window's `now`, by the clocks' skew and by
+// however long the page has been open.
+export const MOMENT_SLACK_MS = 24 * 60 * 60_000;
+
 // The oldest moment the pinned-moment read answers, at `now`: the start of
-// Activity's longest range, so its cost follows that range and not the archive.
-const oldestMoment = (now: number) => now - Math.max(...Object.values(ACTIVITY_RANGE_MS));
+// Activity's longest range, less the slack, so its cost follows that range and
+// not the archive.
+const oldestMoment = (now: number) =>
+  now - Math.max(...Object.values(ACTIVITY_RANGE_MS)) - MOMENT_SLACK_MS;
 
 // What a pinned-moment request asks for, at the server's `now`: a time no older
-// than Activity's longest range, and the System it was pinned on, if any.
+// than Activity's longest range and the slack, and the System it was pinned
+// on, if any.
 export const momentInput = (
   input: unknown,
   now: number,
@@ -83,7 +92,7 @@ export const momentInput = (
     throw new TypeError('The pinned moment needs a time.');
   }
   if (at < oldestMoment(now)) {
-    throw new RangeError('The pinned moment is older than the longest Activity range.');
+    throw new RangeError('The pinned moment is older than the longest Activity range and a day.');
   }
   return { at, system: typeof system === 'string' ? system : undefined };
 };

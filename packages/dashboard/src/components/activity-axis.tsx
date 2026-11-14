@@ -26,6 +26,9 @@ const LANE_HEIGHT = 44;
 const UNPAIRED_DIVIDER =
   'mt-2 flex items-center gap-3 text-[12.5px] font-normal text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed';
 
+// The unpaired Systems' lanes, greyed.
+const UNPAIRED_LANES = 'text-muted-foreground saturate-50 [&_svg]:opacity-60';
+
 // One bar per stretch of an agent Session under a lane's CPU, colored by
 // Harness: a color that means nothing else.
 function Stretches({ lane, window }: { lane: AxisLane; window: Window }) {
@@ -212,13 +215,11 @@ function Lane({
         aria-label={`${lane.system}: drag or use the arrow keys to pin a moment`}
         className="relative min-w-0 cursor-col-resize touch-pan-y outline-none focus-visible:ring-2 focus-visible:ring-select"
         onKeyDown={step}
-        onPointerCancel={pointer.onPointerCancel}
-        onPointerDown={pointer.onPointerDown}
-        onPointerMove={pointer.onPointerMove}
-        onPointerUp={pointer.onPointerUp}
         ref={track}
         role="group"
         tabIndex={0}
+        // Every handler trackPointer makes, so none is left unattached.
+        {...pointer}
       >
         <div className="relative">
           <CpuPlot
@@ -301,30 +302,28 @@ function AxisLegend() {
   );
 }
 
-// A lane for each System on one time axis over the range that ends now: CPU
-// busy, the Sessions running, and a mark for each change. A pinned moment is
-// the line across every lane.
-export function ActivityAxis({
-  bucketMs,
-  lanes,
-  lines,
-  onPin,
-  pin,
-  window,
-}: {
+type AxisProps = {
   bucketMs: number;
   lanes: readonly AxisLane[];
   lines: readonly ActivityLine[];
   onPin: (pin: Pin) => void;
   pin: Pin | undefined;
   window: Window;
-}) {
-  const timeZone = useTimeZone();
+};
+
+// The axis once the viewer's zone is known: the paired Systems' lanes, then
+// the unpaired ones greyed below a divider, the ticks, and the legend.
+export function ActivityAxisBody({
+  bucketMs,
+  lanes,
+  lines,
+  onPin,
+  pin,
+  timeZone,
+  window,
+}: AxisProps & { timeZone: string }) {
   // While a drag is under way the line follows it; the pin lands on release.
   const [drag, setDrag] = useState<number | undefined>();
-  if (timeZone === undefined) {
-    return <div style={{ height: lanes.length * (LANE_HEIGHT + 16) }} />;
-  }
   const linesOf = Map.groupBy(lines, (line) => line.system);
   const laneOf = (lane: AxisLane) => (
     <Lane
@@ -348,13 +347,23 @@ export function ActivityAxis({
       {unpaired.length > 0 && (
         <>
           <h3 className={UNPAIRED_DIVIDER}>Unpaired, history kept</h3>
-          <div className="text-muted-foreground saturate-50 [&_svg]:opacity-60">
-            {unpaired.map(laneOf)}
-          </div>
+          <div className={UNPAIRED_LANES}>{unpaired.map(laneOf)}</div>
         </>
       )}
       <TimeAxis ticks={spanTicks(window, timeZone)} window={window} />
       <AxisLegend />
     </div>
+  );
+}
+
+// A lane for each System on one time axis over the range that ends now: CPU
+// busy, the Sessions running, and a mark for each change. A pinned moment is
+// the line across every lane. Until the zone is known it holds the lanes' room.
+export function ActivityAxis(props: AxisProps) {
+  const timeZone = useTimeZone();
+  return timeZone === undefined ? (
+    <div style={{ height: props.lanes.length * (LANE_HEIGHT + 16) }} />
+  ) : (
+    <ActivityAxisBody {...props} timeZone={timeZone} />
   );
 }
