@@ -9,14 +9,6 @@ import { RECORD_NAME, REPORTED_RUN_SCHEMA } from './records.ts';
 // rides the next Reports.
 export const MAX_JOB_RUNS_PER_REPORT = 1000;
 
-// How long the Hub keeps a job run, counted from its `started`, unless the run
-// is among its job's latest runs (ADR-0023).
-export const JOB_RUN_RETENTION_DAYS = 90;
-
-// How many of each job's latest runs the Hub keeps however old they are, so a
-// job that runs weekly or less often still shows its recent runs (ADR-0023).
-export const JOB_RUNS_KEPT_PER_JOB = 14;
-
 // One run of a job as the job recorded it with `heimdall-collector record run`,
 // with the job it belongs to. The job and `started` key the run. A field only a
 // newer Collector knows is dropped rather than rejecting the Report (ADR-0004).

@@ -65,6 +65,7 @@ const setup = async (
     maxRecordsBytes,
     maxRunsBytes,
     open = () => openRecords({ stateDir: dir.path }),
+    paired,
     respond,
     stops,
   }: {
@@ -76,6 +77,7 @@ const setup = async (
     maxRecordsBytes?: number;
     maxRunsBytes?: number;
     open?: () => Promise<RecordStore>;
+    paired?: () => Promise<boolean>;
     respond?: (report: Report) => Delivery;
     stops?: StopLog;
   } = {},
@@ -97,6 +99,7 @@ const setup = async (
     ...(maxRunsBytes === undefined ? {} : { maxRunsBytes }),
     now: () => now,
     open,
+    ...(paired === undefined ? {} : { paired }),
     ...(stops === undefined ? {} : { stops }),
   });
   let t = 0;
@@ -1253,4 +1256,83 @@ test('pairing holds the runs the Hub took again', async () => {
   collector.close();
 
   expect(repaired[0]?.jobRuns?.runs).toHaveLength(1);
+});
+
+// ADR-0023: a delivered Report settles a run only if its count of changes is
+// still the one read for the section.
+test('a run recorded again while a Report carrying it is in flight is sent again', async () => {
+  await using dir = await tempStateDir();
+  const run = minutesAgo(5);
+  const rerecorded = { ...run, exitStatus: 1 };
+  await seededRuns(dir, run);
+  const other = await openRecords({ stateDir: dir.path });
+  let inFlight = true;
+  const collector = await setup(dir, {
+    respond: () => {
+      if (inFlight) {
+        other.putRun('backup', rerecorded);
+        inFlight = false;
+      }
+      return { kind: 'delivered' };
+    },
+  });
+
+  const first = await collector.push();
+  const next = await collector.push();
+  const after = await collector.push();
+  collector.close();
+  other.close();
+
+  expect(first[0]?.jobRuns).toEqual({ runs: [{ ...run, job: 'backup' }] });
+  expect(next[0]?.jobRuns).toEqual({ runs: [{ ...rerecorded, job: 'backup' }] });
+  expect(after[0]?.jobRuns).toBeUndefined();
+});
+
+test('pairing while a Report carrying the runs is in flight holds them again', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  const other = await openRecords({ stateDir: dir.path });
+  let inFlight = true;
+  const collector = await setup(dir, {
+    respond: () => {
+      if (inFlight) {
+        other.holdAllRuns();
+        inFlight = false;
+      }
+      return { kind: 'delivered' };
+    },
+  });
+
+  await collector.push();
+  const next = await collector.push();
+  collector.close();
+  other.close();
+
+  expect(next[0]?.jobRuns?.runs).toHaveLength(1);
+});
+
+// The daemon reads its identity once, at start, so after `pair` stores another
+// it still sends to the old Hub, which must not settle the runs held for the new one.
+test('a daemon whose identity was replaced sends no job runs and keeps them held, warning once', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  let current = true;
+  const collector = await setup(dir, { paired: () => Promise.resolve(current) });
+  await collector.push();
+
+  await elsewhere(dir.path, (other) => other.holdAllRuns());
+  current = false;
+  const repaired = await collector.push();
+  const later = await collector.push();
+  collector.close();
+
+  const held = await openRecords({ stateDir: dir.path });
+  const kept = held.heldRuns().runs;
+  held.close();
+  expect(repaired[0]?.jobRuns).toBeUndefined();
+  expect(later[0]?.jobRuns).toBeUndefined();
+  expect(kept).toHaveLength(1);
+  expect(collector.warnings.filter((m) => m.includes('job runs'))).toEqual([
+    expect.stringContaining('until it restarts'),
+  ]);
 });

@@ -80,12 +80,13 @@ export type RecordStore = {
   // held runs alone. Runs the job runs section cannot carry are left out and
   // no longer held until they are recorded again.
   heldRuns: () => HeldRuns;
-  // Holds every kept run again, as pairing with a Hub does.
+  // Holds every kept run again, as pairing with a Hub does. It counts as a
+  // change to each run, so a Report read before it settles none of them.
   holdAllRuns: () => void;
   // A number that differs from its last value after another connection, such as
   // a `record` process, committed a write to the database. This connection's
-  // own writes do not change it, so only a daemon that never writes can use it
-  // to spot changes cheaply.
+  // own writes do not change it, so a caller that writes, as the reporter does
+  // when it settles job runs, must not rely on it to see those writes.
   version: () => number;
 };
 
@@ -148,9 +149,10 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
   );
 
-  // `revision` counts the changes to a run and `settled` is the revision the
-  // Hub last took, so a run is held while `revision > settled`, and one
-  // recorded again after a Report carried it is sent again (ADR-0023). Runs kept
+  // `revision` counts the changes to a run, pairing included, and `settled` is
+  // the revision the Hub last took, so a run is held while `revision > settled`,
+  // and one recorded again, or held again by pairing, after a Report read it is
+  // sent again (ADR-0023). Runs kept
   // before these columns existed have revision 1 and settled 0, so they are held.
   addColumn(db, 'runs', 'revision', 'INTEGER NOT NULL DEFAULT 1');
   addColumn(db, 'runs', 'settled', 'INTEGER NOT NULL DEFAULT 0');
@@ -183,7 +185,7 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
   const settleRun = db.query(
     'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started',
   );
-  const holdAll = db.query('UPDATE runs SET settled = 0');
+  const holdAll = db.query('UPDATE runs SET revision = revision + 1');
   // `IS NOT` matches every row when the job has no success, where `!=` would match none.
   const prune = db.query(
     'DELETE FROM runs WHERE job = $job AND startedMs < $cutoff AND startedMs IS NOT (SELECT max(startedMs) FROM runs WHERE job = $job AND exitStatus = 0)',

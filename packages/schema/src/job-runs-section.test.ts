@@ -40,7 +40,7 @@ const runsOfOneJob = (count: number): SentJobRun[] =>
 const parsedRuns = (runs: unknown[]) => ReportSchema.safeParse(report({ jobRuns: { runs } }));
 
 describe('a Report', () => {
-  test('carries job runs oldest first, with and without an output file', () => {
+  test('carries runs of one job and of another job started at the same time, with and without an output file', () => {
     const jobRuns: JobRunsSection = {
       runs: [SUCCEEDED, FAILED, { ...FAILED, job: 'rotate-logs' }],
     };
@@ -75,12 +75,6 @@ describe('a Report', () => {
     expect(parsed.error?.issues).toContainEqual(
       expect.objectContaining({ message: 'duplicate job run', path: ['jobRuns', 'runs'] }),
     );
-  });
-
-  test('accepts another run of the same job and another job started at the same time', () => {
-    const runs = [SUCCEEDED, FAILED, { ...FAILED, job: 'rotate-logs' }];
-
-    expect(parsedRuns(runs).data?.jobRuns).toEqual({ runs });
   });
 
   // The Collector sends the oldest first, which the Hub does not check.

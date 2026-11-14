@@ -98,6 +98,17 @@ test('a run sent again is stored once and replaced whole, unless an older Report
   ]);
 });
 
+// A held run claiming a time later than the Hub's clock came from a clock that
+// ran ahead, so the next Report replaces it even though it was sent earlier.
+test('a run first sent from a clock an hour ahead is replaced once the clock is right', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+  await send(h, [jobRun(started, { exitStatus: 1 })], { receivedAt: NOW, sentAt: NOW + 3600_000 });
+  await send(h, [jobRun(started, { exitStatus: 0 })], { sentAt: NOW + 60_000 });
+
+  expect(await stored(h)).toMatchObject([{ exit_status: 0, sent_at: new Date(NOW + 60_000) }]);
+});
+
 test('runs from year 0000 to 9999 are stored in any order, even without a mirrored job', async () => {
   await using h = await startHub();
   await send(h, [
@@ -137,4 +148,16 @@ test('pruning drops runs older than 90 days only when 14 later runs of the job e
     ['laptop-1', 'weekly', 3],
     ['server-1', 'busy', 1],
   ]);
+});
+
+test('pruning keeps a run exactly 90 days old even when 14 later runs of its job exist', async () => {
+  await using h = await startHub();
+  const cutoff = NOW - 90 * DAY;
+  await send(
+    h,
+    Array.from({ length: 15 }, (_, i) => jobRun(cutoff + i * DAY)),
+  );
+
+  expect(await pruneJobRuns(h.db.sql, NOW)).toBe(0);
+  expect(await stored(h)).toHaveLength(15);
 });

@@ -33,6 +33,7 @@ Which runs the Hub has not taken is a mark on the runs the Collector already kee
 Finding the marked runs is an index lookup over them alone, so its cost does not grow with the runs already taken.
 Runs kept before the Collector sent the section count as not taken, so the Hub's history starts with the Collector's 90 days.
 Pairing marks every kept run as not taken again, so a Hub the Collector pairs with, new or the same, gets every run the Collector still keeps.
+Pairing counts as a change to each run, so a Report read before it settles none of them, and a running Collector whose identity `pair` replaced sends no job runs until it restarts, so the Hub it started with never takes the runs held for the next.
 Forgetting a job removes its runs, taken or not.
 
 **The Hub keeps 90 days of runs, and each job's latest 14.**

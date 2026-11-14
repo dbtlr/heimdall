@@ -203,7 +203,8 @@ export const runAction: ActionHandler<typeof run> = async ({
       signal,
     });
     const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
-    // The daemon only reads the store; `record` and `forget` write it. The
+    // The daemon writes the store only to settle the job runs the Hub took;
+    // `record`, `forget`, and `pair` write the rest. The
     // checks and the reporter each open it on first use, through a connection
     // of their own, so a store that will not open costs only the checks, the
     // records, and the runs. The file checks hash on their own schedule and the
@@ -251,6 +252,16 @@ export const runAction: ActionHandler<typeof run> = async ({
       log: runtime,
       now: Date.now,
       open: () => openRecords({ stateDir }),
+      // `pair` may store another identity while this daemon runs; the job runs
+      // it then holds are for the Hub of that identity, not this one (ADR-0023).
+      paired: async () => {
+        const read = await readIdentity(stateDir);
+        return (
+          read.kind === 'paired' &&
+          read.identity.token === token &&
+          read.identity.hub === options.hub.origin
+        );
+      },
       ...(stops === undefined ? {} : { stops }),
       updates,
     });
