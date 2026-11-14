@@ -11,7 +11,7 @@ import {
 import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { orderMaintenance } from '../lib/maintenance.ts';
+import { orderMaintenance, withoutServicePackages } from '../lib/maintenance.ts';
 import { ownArchitecture, packageLabel } from '../lib/package-names.ts';
 import { inSnapshot } from './fleet-overview.ts';
 import { bySystem } from './hub-rows.ts';
@@ -152,7 +152,7 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
             : heldRows.filter(({ manager }) => manager === 'apt').map(({ name }) => name),
         );
         const held = heldRows.map((pkg) => toPackage(pkg, own));
-        return {
+        return withoutServicePackages({
           check: systemCheck(checked, now),
           managers: [
             ...new Set([
@@ -168,11 +168,12 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
               available: version,
               installed,
               name,
+              security: false,
               since,
               upstream,
             }),
           ),
-        };
+        });
       }),
     ),
   };

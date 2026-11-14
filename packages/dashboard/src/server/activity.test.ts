@@ -179,6 +179,30 @@ test('an alert shows the recovery the Hub recorded sending, whether its System i
   );
 });
 
+test('a finished stop carries how long it lasted and its restarts, and one whose end is unknown no length', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`
+    INSERT INTO service_stops
+      (system, service, stopped_at, started_at, ongoing, restarts, sent_at, received_at)
+    VALUES
+      ('server-1', 'web', ${at(ago(3 * HOUR))}, ${at(ago(3 * HOUR - 4 * 60_000))}, false, 2,
+       ${at(0)}, ${at(0)}),
+      ('server-1', 'ntfy', ${at(ago(2 * HOUR))}, NULL, false, 0, ${at(0)}, ${at(0)})
+  `;
+
+  const { events } = await readActivity(h.db.sql, { now: NOW, range: '24h' });
+
+  expect(
+    events
+      .filter((event) => event.kind === 'stop')
+      .map(({ lasted, restarts, service }) => ({ lasted, restarts, service })),
+  ).toEqual([
+    { lasted: undefined, restarts: 0, service: 'ntfy' },
+    { lasted: 4 * 60_000, restarts: 2, service: 'web' },
+  ]);
+});
+
 test("a System's Activity holds its own changes alone", async () => {
   await using h = await startHub();
   await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });

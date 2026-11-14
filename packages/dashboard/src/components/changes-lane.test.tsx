@@ -25,7 +25,9 @@ const mark = (overrides: Partial<ConditionMark> & Pick<ConditionMark, 'kind'>): 
 const restart = {
   at: NOW - 10 * MINUTE,
   kind: 'stop',
+  lasted: 4000,
   ongoing: false,
+  restarts: 0,
   service: 'db',
   system: 'server-1',
 } as const;

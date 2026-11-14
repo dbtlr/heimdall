@@ -14,6 +14,7 @@ import {
   pendingCheckNote,
   splitPackages,
   upstreamName,
+  withoutServicePackages,
 } from './maintenance.ts';
 
 const pkg = (name: string, security = false): MaintenancePackage => ({
@@ -37,6 +38,7 @@ const update = (name: string): MaintenanceServiceUpdate => ({
   available: '2',
   installed: '1',
   name,
+  security: false,
   since: undefined,
   upstream: null,
 });
@@ -201,5 +203,45 @@ describe('upstreamName', () => {
     expect(upstreamName('apt:caddy')).toBe('APT');
     expect(upstreamName('brew:node')).toBe('Homebrew');
     expect(upstreamName(null)).toBeUndefined();
+  });
+});
+
+describe('withoutServicePackages', () => {
+  test('a package of a Service on an apt: or brew: upstream is counted once, as the Service update', () => {
+    const apt = { ...pkg('caddy:amd64'), manager: 'APT' };
+    const brew = { ...pkg('formula:ntfy'), manager: 'Homebrew' };
+    const other = pkg('curl:amd64');
+    const held = system('server-1', {
+      packages: [apt, brew, other],
+      updates: [
+        { ...update('caddy'), upstream: 'apt:caddy' },
+        { ...update('ntfy'), upstream: 'brew:ntfy' },
+        { ...update('web'), upstream: 'github:owner/web' },
+      ],
+    });
+    const kept = withoutServicePackages(held);
+    expect(kept.packages).toEqual([other]);
+    expect(kept.updates).toEqual(held.updates);
+    expect(maintenanceSummary([kept])).toBe(
+      '1 package update on 1 System. 3 Service updates available.',
+    );
+  });
+
+  test("a Service's package that is a security update keeps its System's security count and order", () => {
+    const server = withoutServicePackages(
+      system('server-1', {
+        packages: [pkg('caddy:amd64', true)],
+        updates: [{ ...update('web'), upstream: 'apt:caddy' }],
+      }),
+    );
+    const laptop = system('laptop-1', { packages: [pkg('curl:amd64')] });
+    expect(server.updates.map(({ security }) => security)).toEqual([true]);
+    expect(maintenanceSummary([server, laptop])).toBe(
+      '1 package update on 1 System. 1 Service update available, 1 of them security.',
+    );
+    expect(orderMaintenance([laptop, server]).map(({ system: name }) => name)).toEqual([
+      'server-1',
+      'laptop-1',
+    ]);
   });
 });

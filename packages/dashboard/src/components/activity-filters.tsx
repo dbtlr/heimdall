@@ -17,16 +17,15 @@ const RANGE_NAMES: Record<ActivityRange, string> = { '24h': '24 h', '30d': '30 d
 const CHIP = 'flex min-h-11 items-center rounded-full border px-3 text-sm';
 const CHOSEN = 'border-select bg-select/15 text-select';
 
-// A chip per kind, with a count of what it would show, and All; the kind lives
-// in the URL, so a link to a kind shares it.
+// A chip per kind, with a count of what it would show, and All with its own
+// count of the lines every kind shows, which is not the kinds' sum when a line
+// merges kinds; the kind lives in the URL, so a link to a kind shares it.
 export function KindChips({
   counts,
   current,
-  total,
 }: {
-  counts: Record<ActivityKind, number>;
+  counts: { kind: Record<ActivityKind, number>; total: number };
   current: ActivityKind | undefined;
-  total: number;
 }) {
   return (
     <nav aria-label="Kind" className="flex flex-wrap gap-2">
@@ -37,7 +36,7 @@ export function KindChips({
         search={(previous) => ({ ...previous, kind: undefined })}
         to="."
       >
-        All <span className="ml-1.5 text-xs tabular-nums">{total}</span>
+        All <span className="ml-1.5 text-xs tabular-nums">{counts.total}</span>
       </Link>
       {ACTIVITY_KINDS.map((kind) => (
         <Link
@@ -45,14 +44,15 @@ export function KindChips({
           className={cn(
             CHIP,
             kind === current ? CHOSEN : 'bg-secondary',
-            counts[kind] === 0 && kind !== current && 'opacity-40',
+            counts.kind[kind] === 0 && kind !== current && 'opacity-40',
           )}
           key={kind}
           resetScroll={false}
           search={(previous) => ({ ...previous, kind })}
           to="."
         >
-          {KIND_NAMES[kind]} <span className="ml-1.5 text-xs tabular-nums">{counts[kind]}</span>
+          {KIND_NAMES[kind]}{' '}
+          <span className="ml-1.5 text-xs tabular-nums">{counts.kind[kind]}</span>
         </Link>
       ))}
     </nav>

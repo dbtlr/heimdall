@@ -19,7 +19,9 @@ const T = Date.UTC(2026, 10, 14, 12, 0);
 const stop = (at: number, system = 'server-1'): ActivityEvent => ({
   at,
   kind: 'stop',
+  lasted: 4000,
   ongoing: false,
+  restarts: 0,
   service: 'caddy',
   system,
 });

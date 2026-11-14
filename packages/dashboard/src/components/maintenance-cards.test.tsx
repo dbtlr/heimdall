@@ -43,6 +43,7 @@ describe('the Maintenance cards', () => {
             available: '2.9.1',
             installed: '2.8.4',
             name: 'caddy',
+            security: false,
             since: NOW - 5 * DAY,
             upstream: 'github:example/caddy',
           },
@@ -78,6 +79,22 @@ describe('the Maintenance cards', () => {
     expect(html).toMatch(/title="cask:firefox">firefox<span[^>]*>cask<\/span>/u);
     expect(html).not.toMatch(/title="formula:wget">wget<span/u);
     expect(html).not.toContain('>formula:wget<');
+  });
+
+  test('a Service update whose own package is a security update is marked security', async () => {
+    const update = { available: '2.9.1', installed: '2.8.4', since: undefined };
+    const html = await render([
+      system('server-1', {
+        updates: [
+          { ...update, name: 'web', security: true, upstream: 'apt:caddy' },
+          { ...update, name: 'ntfy', security: false, upstream: 'brew:ntfy' },
+        ],
+      }),
+    ]);
+
+    expect(html.match(/>security</gu)).toHaveLength(1);
+    expect(html.indexOf('>security<')).toBeGreaterThan(html.indexOf('web'));
+    expect(html.indexOf('>security<')).toBeLessThan(html.indexOf('ntfy'));
   });
 
   test('packages past the first few wait behind a "+N more" expander', async () => {

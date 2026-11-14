@@ -88,24 +88,69 @@ const coveredMs = (spans: readonly Window[], window: Window): number => {
 type Evidence = {
   downs: readonly ServiceDownTransition[];
   now: number;
-  // The spans in which the System sent Vitals.
+  // The spans in which the System sent Vitals, in time order, each a run of
+  // 5-minute rollup buckets.
   reported: readonly Window[];
   stops: readonly ServiceStop[];
 };
 
-const spansOf = ({ downs, now, stops }: Evidence) => {
+// The end of the UTC day holding `t`: where an unknown end falls back to when
+// the percentage, which needs no time zone, has no better.
+const utcDayEnd = (t: number): number => Math.floor(t / DAY_MS) * DAY_MS + DAY_MS;
+
+// The Hub's Vitals rollup bucket, the unit the `reported` spans are made of.
+const BUCKET_MS = 5 * 60_000;
+
+// When the System next reported after `t`: the start of the next 5-minute
+// bucket holding its Vitals, within the span `t` falls in while the System
+// kept reporting, else the start of the next span. Undefined when none came.
+const nextReport = (reported: readonly Window[], t: number): number | undefined => {
+  for (const { from, to } of reported) {
+    if (from > t) {
+      return from;
+    }
+    const next = from + (Math.floor((t - from) / BUCKET_MS) + 1) * BUCKET_MS;
+    if (next < to) {
+      return next;
+    }
+  }
+  return undefined;
+};
+
+// What a stop cost: its own span, or, when its end is unknown (the Service
+// ran again, but the Hub never heard when), from the stop to the System's next
+// Report, or to `dayEnd` of the stop when none came, never past now. A
+// finished stop whose end is lost is downtime, not no time at all.
+const downtimeSpan = (
+  stop: ServiceStop,
+  { now, reported }: Evidence,
+  dayEnd: (t: number) => number,
+): Window => {
+  const span = stopSpan(stop, now);
+  if (stop.startedAt !== null || stop.ongoing) {
+    return span;
+  }
+  const next = nextReport(reported, span.from);
+  return { from: span.from, to: Math.min(now, next ?? dayEnd(span.from)) };
+};
+
+const spansOf = (evidence: Evidence, dayEnd: (t: number) => number) => {
+  const { downs, now, stops } = evidence;
   const down = downSpans(downs, now);
   return {
     down,
-    stops: stops.map((stop) => ({ down: isDownStop(stop, down, now), span: stopSpan(stop, now) })),
+    stops: stops.map((stop) => ({
+      down: isDownStop(stop, down, now),
+      span: downtimeSpan(stop, evidence, dayEnd),
+    })),
   };
 };
 
 // The counts and the percentage over the 90 days before `now`, which need no
-// time zone.
+// time zone: a stop of unknown end with no later Report ends at the UTC day's end.
 export const availabilityTotals = (evidence: Evidence): AvailabilityTotals => {
   const window = { from: evidence.now - WINDOW_MS, to: evidence.now };
-  const spans = spansOf(evidence);
+  const spans = spansOf(evidence, utcDayEnd);
   const stopped = [...spans.down, ...spans.stops.map(({ span }) => span)];
   const knownMs = coveredMs([...evidence.reported, ...stopped], window);
   return {
@@ -133,7 +178,9 @@ export const stripCalendar = (now: number, timeZone: string): Window[] => {
 // restarted when a stop did, else quiet when the System sent no Vitals in it,
 // else up. Stops and Service down spans count even on a day with no Vitals.
 export const stripDays = (evidence: Evidence & { timeZone: string }): StripDay[] => {
-  const spans = spansOf(evidence);
+  const spans = spansOf(evidence, (t) =>
+    localMidnight(localMidnight(t, evidence.timeZone) + 36 * HOUR_MS, evidence.timeZone),
+  );
   return stripCalendar(evidence.now, evidence.timeZone).map((day): StripDay => {
     const touching = (span: Window) => touches(span, day);
     let state: DayState = 'up';

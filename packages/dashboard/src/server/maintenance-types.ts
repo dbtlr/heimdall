@@ -32,10 +32,13 @@ export type MaintenanceCheck =
 
 // A Service with a newer version available: `since` is when its upstream's
 // releases first found it, undefined for an update a package manager reports.
+// `security` is whether its own pending package, for an apt: or brew:
+// upstream, is a security update.
 export type MaintenanceServiceUpdate = {
   available: string;
   installed: string | null;
   name: string;
+  security: boolean;
   since: number | undefined;
   upstream: string | null;
 };

@@ -139,10 +139,13 @@ export const readServiceChanges = async (
             },
           ],
     ),
-    ...stops.flatMap(({ ongoing, service, stoppedAt, system }): ServiceChange[] => {
-      const at = Date.parse(stoppedAt);
-      return at > now ? [] : [{ at, kind: 'stop', ongoing, service, system }];
-    }),
+    ...stops.flatMap(
+      ({ ongoing, restarts, service, startedAt, stoppedAt, system }): ServiceChange[] => {
+        const at = Date.parse(stoppedAt);
+        const lasted = startedAt === null ? undefined : Math.max(0, Date.parse(startedAt) - at);
+        return at > now ? [] : [{ at, kind: 'stop', lasted, ongoing, restarts, service, system }];
+      },
+    ),
   ];
 };
 

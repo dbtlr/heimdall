@@ -83,7 +83,7 @@ const hear = async (
   expect(response.status).toBe(200);
 };
 
-test("reads each paired System's pending packages with their security, its pending reboot, and Service updates dated by their upstream, and leaves out an unpaired System", async () => {
+test("reads each paired System's pending packages with their security, its pending reboot, and Service updates dated by their upstream, and leaves out an unpaired System and a Service's own package", async () => {
   await using h = await startHub();
   await storeToken(h.db.sql, { pairedAt: NOW, system: 'mini-1', token: 'mini-token' });
   await storeToken(h.db.sql, { pairedAt: NOW, system: 'old-1', token: 'old-token' });
@@ -91,10 +91,11 @@ test("reads each paired System's pending packages with their security, its pendi
     h,
     'server-1',
     [
+      { name: 'caddy:amd64', security: true },
       { name: 'curl', security: false },
       { name: 'openssl', security: true },
     ],
-    { reboot: true, services: ['web'] },
+    { reboot: true, services: ['caddy', 'web'] },
   );
   await hear(h, 'laptop-1', [{ name: 'git', security: null }]);
   await hear(h, 'mini-1', []);
@@ -103,7 +104,9 @@ test("reads each paired System's pending packages with their security, its pendi
   await h.db.sql`DELETE FROM service_versions`;
   await h.db.sql`
     INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
-    VALUES ('server-1', 'web', '1.0', 'github:owner/web', ${at(NOW - 10 * DAY)})
+    VALUES
+      ('server-1', 'web', '1.0', 'github:owner/web', ${at(NOW - 10 * DAY)}),
+      ('server-1', 'caddy', '1', 'apt:caddy', ${at(NOW - 10 * DAY)})
   `;
   await h.db.sql`
     INSERT INTO upstream_checks (upstream, releases, checked_at, succeeded_at, next_check_at)
@@ -128,11 +131,22 @@ test("reads each paired System's pending packages with their security, its pendi
   ]);
   expect(server?.managers).toEqual(['APT']);
   expect(server?.rebootSince).toBe(NOW);
+  // Caddy's package shows only as its Service's update, which keeps its
+  // security mark.
   expect(server?.updates).toEqual([
+    {
+      available: '2',
+      installed: '1',
+      name: 'caddy',
+      security: true,
+      since: undefined,
+      upstream: 'apt:caddy',
+    },
     {
       available: '2.0',
       installed: '1.0',
       name: 'web',
+      security: false,
       since: NOW - 5 * DAY,
       upstream: 'github:owner/web',
     },

@@ -79,8 +79,9 @@ function Packages({ now, packages }: { now: number; packages: readonly Maintenan
   );
 }
 
-// A Service with a newer version: its versions, and when its upstream's
-// releases found the update, and which upstream.
+// A Service with a newer version: its versions, when its upstream's releases
+// found the update, which upstream, and a chip when its package is a security
+// update.
 function ServiceUpdateRow({ now, update }: { now: number; update: MaintenanceServiceUpdate }) {
   const found = [
     update.since === undefined ? undefined : `found ${ago(update.since, now)} ago`,
@@ -94,6 +95,9 @@ function ServiceUpdateRow({ now, update }: { now: number; update: MaintenanceSer
       </span>
       {found.length > 0 && (
         <span className="ml-auto text-xs text-muted-foreground">{found.join(' · ')}</span>
+      )}
+      {update.security && (
+        <span className={cn(CHIP, MARK_COLOR.note, found.length === 0 && 'ml-auto')}>security</span>
       )}
     </li>
   );

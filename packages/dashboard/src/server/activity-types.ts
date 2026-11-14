@@ -67,7 +67,10 @@ export type VersionActivity = {
 export type StopActivity = {
   at: number;
   kind: 'stop';
+  // How long the stop lasted, undefined while under way or when its end is unknown.
+  lasted: number | undefined;
   ongoing: boolean;
+  restarts: number;
   service: string;
   system: string;
 };

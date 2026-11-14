@@ -2,9 +2,12 @@
 // of each, what a card says of its package checks, and the summary above them.
 // All of it can wait; nothing here is tinted as a problem.
 
+import { packageMatchesUpstream } from '@heimdall/schema';
+
 import type {
   MaintenanceCheck,
   MaintenancePackage,
+  MaintenanceServiceUpdate,
   MaintenanceSystem,
 } from '../server/maintenance-types.ts';
 import { isSecurityUpdate } from './condition-detail.ts';
@@ -13,8 +16,15 @@ import { formatSpanShort } from './time.ts';
 // The packages a System's card shows before its "more" expander.
 export const PACKAGES_SHOWN = 5;
 
-const securityCount = (system: MaintenanceSystem) =>
+const packageSecurityCount = (system: MaintenanceSystem) =>
   system.packages.filter(isSecurityUpdate).length;
+
+const updateSecurityCount = (system: MaintenanceSystem) =>
+  system.updates.filter(({ security }) => security).length;
+
+// Its security updates: its packages', and its Services' own packages'.
+const securityCount = (system: MaintenanceSystem) =>
+  packageSecurityCount(system) + updateSecurityCount(system);
 
 // Whether a System has nothing pending that the Hub holds: no package, no
 // reboot, and no Service update. Its card is the short one.
@@ -96,30 +106,34 @@ export const pendingCheckNote = (check: MaintenanceCheck, now: number): string |
 
 const counted = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
 
+const ofThemSecurity = (n: number) => (n === 0 ? '' : `, ${String(n)} of them security`);
+
 // The sentence under the heading: how many package updates on how many
 // Systems and how many of them security updates, the reboots pending, the
-// Services with an update, and the Systems whose checks cannot show what is
-// pending; each part left out when it is zero.
+// Services with an update and how many of those are security updates, and the
+// Systems whose checks cannot show what is pending; each part left out when it
+// is zero.
 export const maintenanceSummary = (systems: readonly MaintenanceSystem[]): string => {
   if (systems.length === 0) {
     return 'No paired System.';
   }
-  const packages = systems.reduce((sum, { packages: held }) => sum + held.length, 0);
-  const security = systems.reduce((sum, system) => sum + securityCount(system), 0);
+  const sum = (count: (system: MaintenanceSystem) => number) =>
+    systems.reduce((total, system) => total + count(system), 0);
+  const packages = sum(({ packages: held }) => held.length);
+  const security = sum(packageSecurityCount);
   const reboots = systems.filter(({ rebootSince }) => rebootSince !== undefined).length;
-  const updates = systems.reduce((sum, { updates: held }) => sum + held.length, 0);
+  const updates = sum(({ updates: held }) => held.length);
+  const updatesSecurity = sum(updateSecurityCount);
   const withPackages = systems.filter(({ packages: held }) => held.length > 0).length;
   const unchecked = systems.filter(({ check }) => check.kind !== 'current').length;
   const pending = [
     packages === 0
       ? undefined
-      : `${counted(packages, 'package update', 'package updates')} on ${counted(withPackages, 'System', 'Systems')}${
-          security === 0 ? '' : `, ${String(security)} of them security`
-        }.`,
+      : `${counted(packages, 'package update', 'package updates')} on ${counted(withPackages, 'System', 'Systems')}${ofThemSecurity(security)}.`,
     reboots === 0 ? undefined : `${counted(reboots, 'reboot', 'reboots')} pending.`,
     updates === 0
       ? undefined
-      : `${counted(updates, 'Service update', 'Service updates')} available.`,
+      : `${counted(updates, 'Service update', 'Service updates')} available${ofThemSecurity(updatesSecurity)}.`,
   ].filter((part) => part !== undefined);
   if (unchecked === 0) {
     return pending.length === 0 ? 'Every System is up to date.' : pending.join(' ');
@@ -142,3 +156,23 @@ const UPSTREAM_NAMES: Record<string, string> = {
 // `github:owner/repo`. Undefined for none or one of another source.
 export const upstreamName = (upstream: string | null): string | undefined =>
   upstream === null ? undefined : UPSTREAM_NAMES[upstream.split(':')[0] ?? ''];
+
+// The System with the packages of its Services left out: a Service whose
+// upstream is an apt: or brew: package shows its update once, as a Service
+// update marked security when its package is a security update, and its
+// package is neither counted nor listed.
+export const withoutServicePackages = (system: MaintenanceSystem): MaintenanceSystem => {
+  const packagesOf = ({ upstream }: MaintenanceServiceUpdate) =>
+    upstream === null
+      ? []
+      : system.packages.filter(({ name }) => packageMatchesUpstream(upstream, name));
+  const owned = new Set(system.updates.flatMap(packagesOf));
+  return {
+    ...system,
+    packages: system.packages.filter((pkg) => !owned.has(pkg)),
+    updates: system.updates.map((update) => ({
+      ...update,
+      security: update.security || packagesOf(update).some(isSecurityUpdate),
+    })),
+  };
+};
