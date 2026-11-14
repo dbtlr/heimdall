@@ -50,7 +50,7 @@ export const sectionOf = (path: string): Section | undefined => {
   if (first === 'maintenance') {
     return 'maintenance';
   }
-  return first === 'timeline' ? 'activity' : undefined;
+  return first === 'activity' ? 'activity' : undefined;
 };
 
 // The bottom-bar tab a page belongs to: its section's own tab, else More,

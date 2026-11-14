@@ -99,13 +99,13 @@ A System's health is its worst open level. Notes alone leave it healthy. Old or 
 
 An open Condition keeps its identity, System, kind, and subject, through level changes. Its occurrence starts when raised and ends when cleared. A later recurrence starts another occurrence. The Hub stores raised, level-changed, and cleared transitions in the same transaction as the current level. Each transition carries its level, reason, and time. A level change also carries its previous level. Reason-only updates add no transition.
 
-The Timeline groups transitions by occurrence, with the most recently raised occurrence first in recording order. Level changes never reorder occurrences. Transitions within an occurrence keep their recording order, even when their times are equal. Each transition time is at least the previous transition's time, including clearing after a clock reversal.
+A Condition's history groups transitions by occurrence, with the most recently raised occurrence first in recording order. Level changes never reorder occurrences. Transitions within an occurrence keep their recording order, even when their times are equal. Each transition time is at least the previous transition's time, including clearing after a clock reversal.
 
 The level migration preserves existing occurrence IDs, kinds, subjects, times, and reasons. Legacy disk occurrences receive alert; other kinds receive their fixed levels. Their historical levels are explicitly backfilled, not observed. Normal evaluation subsequently grades existing open disk occurrences without replacing them. See [ADR-0017](decisions/0017-the-hub-sets-condition-levels.md).
 
 ### Job Conditions
 
-The Hub judges every System's recorded jobs once a minute, from the records and latest runs it mirrors, the System's time zone, and the System's Vitals. Each job Condition is about one job and names it on the dashboard and in the Timeline.
+The Hub judges every System's recorded jobs once a minute, from the records and latest runs it mirrors, the System's time zone, and the System's Vitals. Each job Condition is about one job and names it on the dashboard and in Activity.
 
 - **Job failing** is raised when the job's latest run exited with a status other than 0, and its reason names the run's start and exit status. A later failing run replaces the reason. It clears when the latest run succeeds.
 - **Job overdue** is raised when one of the job's scheduled times passed, the System was then awake for the job's grace period, and no successful run started at or after that scheduled time. Its reason names the scheduled time in the System's local time, and it clears once such a run is reported. A job can be failing and overdue at once.
@@ -439,9 +439,9 @@ The Hub stores each stop by System, Service, and `stoppedAt`, with the Report's 
 
 Once a minute, after Service down, the Hub judges Service stops under each System's row lock, for every System that holds a stop or an open note, paired or not. **Service restarted** is one Condition per System and Service, with the Service's name as its subject and a fixed **note** level. The note stays open for 24 hours from the earlier of the latest stop's `stoppedAt` and the time the Hub last stored that stop. It clears after those 24 hours unless a newer stop has arrived, even without another Report and while the System is unpaired. A stop delivered later than that is stored but raises nothing. A current Service record or a failed check is not required, and forgetting a record does not end the note early.
 
-The reason counts the latest run of stops, going back from the latest stop while each gap is at most 24 hours. It gives the first and last stop's `stoppedAt` in UTC, or the one time for a single stop. The latest result reads as stopped cleanly for `success`, failed with the result and exit status for any other result, or unknown when no check saw the Service stopped. An unknown exit status stays unknown, and a stop still under way says it is still stopped. Nonzero automatic restarts are counted across that run. Further stops and updates that end a stop change the reason without a Timeline transition. The note never steps up and is never delivered. The dashboard marks restarted Services on the Services tab and links each Service page to the note with the Hub's reason and advice to read the Service's log.
+The reason counts the latest run of stops, going back from the latest stop while each gap is at most 24 hours. It gives the first and last stop's `stoppedAt` in UTC, or the one time for a single stop. The latest result reads as stopped cleanly for `success`, failed with the result and exit status for any other result, or unknown when no check saw the Service stopped. An unknown exit status stays unknown, and a stop still under way says it is still stopped. Nonzero automatic restarts are counted across that run. Further stops and updates that end a stop change the reason without a Condition transition. The note never steps up and is never delivered. The dashboard marks restarted Services on the Services tab and links each Service page to the note with the Hub's reason and advice to read the Service's log.
 
-The Hub prunes ended stops whose `stopped_at` is older than 90 days. Ongoing stops stay until they end. Pruning stops leaves their Conditions and Timeline intact.
+The Hub prunes ended stops whose `stopped_at` is older than 90 days. Ongoing stops stay until they end. Pruning stops leaves their Conditions and transitions intact.
 
 ## Alert delivery
 
@@ -791,7 +791,7 @@ Cost is list-price cost (glossary): what a request's tokens would cost at the mo
 
 - its row, with its Last seen and Collector details
 - its Vitals samples and rollups, and its disk rollups
-- its Conditions, with their Timeline, their deliveries, and its stored limits. `serve` stores the limits again when it starts, if `hub.toml` still names the System.
+- its Conditions, with their transitions, their deliveries, and its stored limits. `serve` stores the limits again when it starts, if `hub.toml` still names the System.
 - its load and hot-process evaluations
 - its mirrored records, runs, checks, and Service stops
 - its Harness installs and Harness processes
@@ -803,7 +803,7 @@ The System's transcripts stay, with the [Session insight](#session-insight) deri
 
 ## Purging a forgotten Service
 
-`heimdall-hub purge service <system> <service>` deletes the Service stops and the [Service down](#service-down) and [Service restarted](#service-stops) Conditions the Hub holds for a Service on one System, with their Timeline and their deliveries, so the Service leaves the System's history, the Timeline, and its Condition pages. It works whether the System is paired or not, and leaves every other Condition alone, including one of another kind whose subject has the same name.
+`heimdall-hub purge service <system> <service>` deletes the Service stops and the [Service down](#service-down) and [Service restarted](#service-stops) Conditions the Hub holds for a Service on one System, with their transitions and their deliveries, so the Service leaves the System's history, Activity, and its Condition pages. It works whether the System is paired or not, and leaves every other Condition alone, including one of another kind whose subject has the same name.
 
 The provisioner forgets the Service first, with `heimdall-collector forget service <service>` on the System. A stop under way when the Service is forgotten ends at the Collector's next Service check and is sent in its next Report, so the purge follows that Report. A purge before that Report is followed by that stop and a new Service restarted note, which purging again removes. The purge refuses while the Hub's copy of the System's records still holds a `service` record of that name, and exits 1. An unreadable `service` record does not hold it back, although it holds back clearing Service down. Open Service down and Service restarted Conditions are deleted too, and no recovered message follows. The purge runs in one transaction, in order with the System's Reports, and waits out an [alert delivery](#alert-delivery) pass in progress, as a silence does. Stops alone or a Service restarted note alone count as something held. It exits 1 when the Hub holds nothing for the Service on that System, so a mistyped name purges nothing. Like `serve`, the command first applies any pending database migrations.
 

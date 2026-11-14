@@ -3,7 +3,6 @@ import { beforeAll, expect, test } from 'bun:test';
 import type { PendingUpdate, UpdateManager, UpdatesSection } from '@heimdall/schema';
 
 import { readAttention } from '../../dashboard/src/server/attention.ts';
-import { readFleetTimeline } from '../../dashboard/src/server/fleet-timeline.ts';
 import { parseConditionLimits } from './condition-limits.ts';
 import { unpair } from './pairing.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
@@ -245,12 +244,10 @@ test('security limit overrides apply per System and unpairing clears update Cond
   );
   await unpair(h.db.sql, 'laptop-1');
   expect(await evaluate(h)).toEqual([]);
-  const timeline = await readFleetTimeline(h.db.sql, { now: h.clock.now });
-  expect(
-    timeline.entries
-      .toSorted((a, b) => a.kind.localeCompare(b.kind))
-      .map(({ kind, clearedAt }) => [kind, clearedAt]),
-  ).toEqual([
+  const occurrences: { cleared_at: Date | null; kind: string }[] = await h.db.sql`
+    SELECT kind, cleared_at FROM conditions ORDER BY kind
+  `;
+  expect(occurrences.map(({ kind, cleared_at }) => [kind, cleared_at?.getTime()])).toEqual([
     ['pending_update', h.clock.now],
     ['reboot_required', h.clock.now],
   ]);
@@ -295,8 +292,10 @@ test('fresh recoveries received between judgments end both occurrences before a 
       { firstDetected: h.clock.now, level: 'note' },
     ],
   );
-  const timeline = await readFleetTimeline(h.db.sql, { now: h.clock.now });
-  expect(timeline.entries.filter(({ clearedAt }) => clearedAt === recoveredAt)).toHaveLength(2);
+  const cleared: { id: string }[] = await h.db.sql`
+    SELECT id FROM conditions WHERE cleared_at = ${new Date(recoveredAt)}
+  `;
+  expect(cleared).toHaveLength(2);
 });
 
 test('a re-paired System can reconfirm cached positive evidence with a new occurrence and age', async () => {

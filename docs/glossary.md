@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Timeline, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -148,9 +148,9 @@ _Avoid_: mute, snooze, acknowledgement
 The most recent time the Hub heard from a System under that System's token, whether it stored the Report, rejected it, or took a transcript upload. A sleeping System shows its last-seen time and a gap.
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
-**Timeline**:
-A System's history of Conditions being raised, changing level, and being cleared, grouped by each raised Condition with the most recently raised first. A recurrence forms a separate group, while the dashboard shows where the System stands now.
-_Avoid_: event feed, event log (a Report is never an event)
+**Activity**:
+The dashboard's list of what changed across the fleet, newest first under day headings: Conditions raised and cleared, Drift, Service version changes, Service stops, and alerts sent. Changes on one System within 2 minutes share one line. Changes to recorded files and Harness installs are not listed, since neither is kept as history. It replaces the Timeline, which listed only Conditions.
+_Avoid_: Timeline (retired), event feed, event log (a Report is never an event)
 
 **Pairing**:
 How a Collector gets its identity: once per System, an operator has the Hub issue a Pairing code bound to the System's name and redeems it on that System, and the Collector keeps the System name and token the Hub returns. Pairing again rotates the token; unpairing revokes it, hides the System from the dashboard's overview and the records read, and keeps its history, which the dashboard's unpaired lanes (`/?unpaired`, shown for any value but `false`) and its page still show; the records read needs exactly `?unpaired=include` to add its last records. Purging an unpaired System deletes that history, keeping its transcripts unless asked.

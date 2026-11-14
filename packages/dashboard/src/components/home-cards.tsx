@@ -185,7 +185,7 @@ function ChangeTarget({
     }
     default: {
       return (
-        <Link className={className} to="/timeline">
+        <Link className={className} to="/activity">
           {children}
         </Link>
       );
@@ -201,7 +201,7 @@ export function ChangesCard({ changes, now }: { changes: readonly ChangeGroup[];
     <HomeCard
       id="home-changes"
       link={
-        <Link className={CARD_LINK} to="/timeline">
+        <Link className={CARD_LINK} to="/activity">
           Activity →
         </Link>
       }

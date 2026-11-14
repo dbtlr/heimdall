@@ -49,7 +49,7 @@ test('System chips show at every width and keep the tab and range between System
 });
 
 // The header for server-1 on `tab`, rendered to markup.
-const renderHeader = async (tab: 'now' | 'records' | 'timeline'): Promise<string> => {
+const renderHeader = async (tab: 'now' | 'records' | 'activity'): Promise<string> => {
   const root = createRootRoute({ component: Outlet });
   const route = createRoute({
     component: () => (
@@ -72,8 +72,8 @@ const renderHeader = async (tab: 'now' | 'records' | 'timeline'): Promise<string
   return renderToStaticMarkup(<RouterProvider router={router} />);
 };
 
-test('the desktop range picker shows on the overview and not on Records or Timeline, which the range does not change', async () => {
+test('the desktop range picker shows on the overview and not on Records or Activity, which the range does not change', async () => {
   expect(await renderHeader('now')).toContain('aria-label="Range"');
   expect(await renderHeader('records')).not.toContain('aria-label="Range"');
-  expect(await renderHeader('timeline')).not.toContain('aria-label="Range"');
+  expect(await renderHeader('activity')).not.toContain('aria-label="Range"');
 });

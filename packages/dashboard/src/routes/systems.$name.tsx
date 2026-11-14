@@ -200,9 +200,9 @@ function SystemPage() {
             <RecordedPanel now={detail.now} recorded={records.recorded} system={detail.name} />
           </>
         )}
-        {search.tab === 'timeline' && (
+        {search.tab === 'activity' && (
           <>
-            <h2 className="text-lg font-semibold">Timeline</h2>
+            <h2 className="text-lg font-semibold">Activity</h2>
             <TimelineRail entries={records.timeline} now={detail.now} system={detail.name} />
           </>
         )}

@@ -10,8 +10,8 @@ export const ServiceAttentionCount = createContext(0);
 
 const TAB_ICONS = { activity: History, agents: Bot, home: House, more: Ellipsis, services: Cog };
 
-const TAB_PATHS: Record<PhoneTab, '/' | '/agents' | '/more' | '/services' | '/timeline'> = {
-  activity: '/timeline',
+const TAB_PATHS: Record<PhoneTab, '/' | '/agents' | '/more' | '/services' | '/activity'> = {
+  activity: '/activity',
   agents: '/agents',
   home: '/',
   more: '/more',

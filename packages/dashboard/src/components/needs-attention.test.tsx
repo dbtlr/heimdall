@@ -148,7 +148,7 @@ describe('the attention card', () => {
     );
     expect(html).toContain('href="/systems/edge-1/conditions/12"');
     expect(html).toContain('Alert · open 4 min');
-    expect(html).toContain('href="/timeline?status=%5B%22open%22%5D"');
+    expect(html).toContain('href="/activity?kind=condition&amp;range=30d"');
   });
 
   test('a High memory lead shows its chart against the limit, and the processes holding the most memory', async () => {
@@ -296,7 +296,9 @@ describe('the attention card', () => {
 
       expect(html).toContain('/srv/file-4');
       expect(html).not.toContain('/srv/file-5');
-      expect(html).toMatch(/<a[^>]*href="\/timeline\?status=%5B%22open%22%5D"[^>]*>\+3 more<\/a>/u);
+      expect(html).toMatch(
+        /<a[^>]*href="\/activity\?kind=condition&amp;range=30d"[^>]*>\+3 more<\/a>/u,
+      );
     });
   });
 });

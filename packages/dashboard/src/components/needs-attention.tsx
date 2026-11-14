@@ -237,8 +237,8 @@ function OtherItems({ items, now }: { items: readonly Attention[]; now: number }
         <li>
           <Link
             className="flex min-h-9 items-center text-xs text-link tabular-nums hover:underline"
-            search={{ status: ['open'] }}
-            to="/timeline"
+            search={{ kind: 'condition', range: '30d' }}
+            to="/activity"
           >
             +{more} more
           </Link>
@@ -329,8 +329,8 @@ export function NeedsAttention({
           </h2>
           <Link
             className="text-xs text-link hover:underline"
-            search={{ status: ['open'] }}
-            to="/timeline"
+            search={{ kind: 'condition', range: '30d' }}
+            to="/activity"
           >
             All Conditions →
           </Link>

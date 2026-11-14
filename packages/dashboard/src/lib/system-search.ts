@@ -1,15 +1,17 @@
 import { atFromSearch, rangeFromSearch } from './range.ts';
 
-export const SYSTEM_TABS = ['now', 'vitals', 'sessions', 'records', 'timeline'] as const;
+export const SYSTEM_TABS = ['now', 'vitals', 'sessions', 'records', 'activity'] as const;
 export type SystemTab = (typeof SYSTEM_TABS)[number];
 
 // Existing sample links predate tabs and should still show the selected sample.
+// The Activity tab was once called Timeline, and links to it still open it.
 export const systemSearch = (search: Record<string, unknown>) => {
   const at = atFromSearch(search);
+  const named = search.tab === 'timeline' ? 'activity' : search.tab;
   return {
     at,
     range: rangeFromSearch(search, '12h'),
-    tab: SYSTEM_TABS.find((tab) => tab === search.tab) ?? (at === undefined ? 'now' : 'vitals'),
+    tab: SYSTEM_TABS.find((tab) => tab === named) ?? (at === undefined ? 'now' : 'vitals'),
   };
 };
 
@@ -18,10 +20,10 @@ export const systemSearch = (search: Record<string, unknown>) => {
 export const DESKTOP_TABS = [
   { name: 'Overview', tab: 'now' },
   { name: 'Records', tab: 'records' },
-  { name: 'Timeline', tab: 'timeline' },
+  { name: 'Activity', tab: 'activity' },
 ] as const satisfies readonly { name: string; tab: SystemTab }[];
 
-export type DesktopTab = 'overview' | 'records' | 'timeline';
+export type DesktopTab = 'overview' | 'records' | 'activity';
 
 export const desktopTab = (tab: SystemTab): DesktopTab =>
-  tab === 'records' || tab === 'timeline' ? tab : 'overview';
+  tab === 'records' || tab === 'activity' ? tab : 'overview';

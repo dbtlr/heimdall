@@ -12,9 +12,9 @@ import { JumpBox } from './jump-box.tsx';
 
 const SECTION_PATHS: Record<
   Section,
-  '/' | '/agents' | '/maintenance' | '/services' | '/systems' | '/timeline'
+  '/' | '/activity' | '/agents' | '/maintenance' | '/services' | '/systems'
 > = {
-  activity: '/timeline',
+  activity: '/activity',
   agents: '/agents',
   home: '/',
   maintenance: '/maintenance',

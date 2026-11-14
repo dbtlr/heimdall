@@ -112,7 +112,7 @@ describe('the What changed card', () => {
     const links = linksIn(html);
 
     expect(links.map(({ href }) => href)).toEqual([
-      '/timeline',
+      '/activity',
       '/services?system=%5B%22server-1%22%2C%22server-2%22%5D',
       '/systems/server-1/conditions/51',
     ]);
