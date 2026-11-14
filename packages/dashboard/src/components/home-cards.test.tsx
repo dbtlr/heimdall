@@ -25,7 +25,7 @@ describe('the Maintenance card', () => {
             systems: [{ conditionId: '41', system: 'db-1' }],
             text: '1 System needs a reboot',
           },
-          updates: { longest: 'ntfy 5 d', text: '4 Services have an update' },
+          updates: { longest: 'ntfy 5 d', security: 1, text: '4 Services have an update' },
         }}
       />,
     );
@@ -40,6 +40,7 @@ describe('the Maintenance card', () => {
     expect(html).toContain('oldest 6 d');
     expect(links.find(({ label }) => label === 'db-1')?.href).toBe('/systems/db-1/conditions/41');
     expect(links.find(({ label }) => label.startsWith('4 Services'))?.href).toBe('/maintenance');
+    expect(html).toContain('1 security');
     expect(links.find(({ label }) => label === 'Plan →')?.href).toBe('/maintenance');
   });
 
@@ -53,7 +54,7 @@ describe('the Maintenance card', () => {
             text: '2 packages on 1 System',
           },
           reboots: undefined,
-          updates: undefined,
+          updates: { longest: 'ntfy 5 d', security: 0, text: '1 Service has an update' },
         }}
       />,
     );

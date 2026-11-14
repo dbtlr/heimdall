@@ -14,6 +14,7 @@ import type {
   Change,
   HeldPackages,
   HomeJob,
+  HomeServiceUpdate,
   ServiceChange,
 } from './home-types.ts';
 import { bySystem, conditionKind, scheduleOf, toRun } from './hub-rows.ts';
@@ -33,31 +34,35 @@ type HeldRow = {
 // The packages the Hub holds as pending in each package source of each paired
 // System, which a failed or stale check leaves in place, and the security
 // updates among them: a package the latest check calls one, or one the Hub has
-// held as one since an earlier check. A Service updated from its own package
-// is left out, by the rule Maintenance lists packages by: `updates` are the
-// Services with an update.
+// held as one since an earlier check. By the rule Maintenance lists packages
+// by, a Service updated from its own package is left out of `held`, and its
+// update in `updates` is a security update when its package is one.
 export const readHeldPackages = async (
   sql: SQL,
-  updates: readonly AvailableUpdate[],
-): Promise<HeldPackages[]> => {
+  available: readonly AvailableUpdate[],
+): Promise<{ held: HeldPackages[]; updates: HomeServiceUpdate[] }> => {
   const rows: HeldRow[] = await sql`
     SELECT u.system, u.manager, u.installation, u.name, u.pending_update, u.security_since
     FROM update_subjects u
     JOIN paired_systems p ON p.system = u.system
   `;
   const held = new Map<string, HeldPackages>();
+  const secure = new Set<string>();
   for (const [system, systemRows] of bySystem(rows)) {
-    const { packages } = withoutServicePackages({
+    const { packages, updates } = withoutServicePackages({
       packages: systemRows.map((row) =>
         Object.assign(pendingPackageOf(row), {
           installation: row.installation,
           manager: row.manager,
         }),
       ),
-      updates: updates
+      updates: available
         .filter((update) => update.system === system)
-        .map(({ upstream }) => ({ security: false, upstream })),
+        .map(({ name, upstream }) => ({ name, security: false, upstream })),
     });
+    for (const { name } of updates.filter(({ security }) => security)) {
+      secure.add(JSON.stringify([system, name]));
+    }
     for (const pkg of packages) {
       const key = JSON.stringify([system, pkg.manager, pkg.installation]);
       const before = held.get(key);
@@ -70,7 +75,13 @@ export const readHeldPackages = async (
       });
     }
   }
-  return [...held.values()];
+  return {
+    held: [...held.values()],
+    updates: available.map((update) => ({
+      ...update,
+      security: secure.has(JSON.stringify([update.system, update.name])),
+    })),
+  };
 };
 
 type JobRow = {

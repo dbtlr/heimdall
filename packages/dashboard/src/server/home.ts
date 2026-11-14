@@ -152,14 +152,15 @@ const readHomeSnapshot = async (
   const { attention } = tiles;
   const { lead } = pickAttention(attention);
   const { now, timeZone } = input;
-  const [evidence, lastCleared, agents, held, jobs, changes] = await Promise.all([
-    readLeadEvidence(sql, lead, now),
-    lead === undefined ? readLastCleared(sql) : undefined,
-    timeZone === undefined ? undefined : readHomeAgents(sql, { now, timeZone }),
-    readHeldPackages(sql, updates),
-    readHomeJobs(sql, { attention, now }),
-    readChanges(sql, { now, since: now - CHANGES_SINCE_MS }),
-  ]);
+  const [evidence, lastCleared, agents, { held, updates: counted }, jobs, changes] =
+    await Promise.all([
+      readLeadEvidence(sql, lead, now),
+      lead === undefined ? readLastCleared(sql) : undefined,
+      timeZone === undefined ? undefined : readHomeAgents(sql, { now, timeZone }),
+      readHeldPackages(sql, updates),
+      readHomeJobs(sql, { attention, now }),
+      readChanges(sql, { now, since: now - CHANGES_SINCE_MS }),
+    ]);
   return {
     ...tiles,
     agents,
@@ -167,7 +168,7 @@ const readHomeSnapshot = async (
     jobs,
     lastCleared,
     lead: evidence,
-    maintenance: { packages: pendingPackages(attention, held), updates },
+    maintenance: { packages: pendingPackages(attention, held), updates: counted },
   };
 };
 

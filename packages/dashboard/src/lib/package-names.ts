@@ -32,6 +32,10 @@ const DPKG_ARCHITECTURES: Readonly<Record<string, string>> = {
   arm: 'armhf',
   arm64: 'arm64',
   ia32: 'i386',
+  loong64: 'loong64',
+  ppc64: 'ppc64el',
+  riscv64: 'riscv64',
+  s390x: 's390x',
   x64: 'amd64',
 };
 

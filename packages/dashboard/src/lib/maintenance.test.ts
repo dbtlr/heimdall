@@ -10,6 +10,7 @@ import {
   checkSentence,
   maintenanceSummary,
   orderMaintenance,
+  packageKey,
   PACKAGES_SHOWN,
   pendingCheckNote,
   splitPackages,
@@ -112,6 +113,18 @@ describe('splitPackages', () => {
     );
 
     expect(shown.map(({ label }) => label)).toEqual(['act', 'bat-app', 'curl', 'git', 'zoom']);
+  });
+});
+
+describe('packageKey', () => {
+  test('tells one package in two installations apart, and stays unambiguous when an installation or a name holds a slash', () => {
+    const git = brew('formula:git');
+    expect(packageKey({ ...git, installation: '/opt/homebrew' })).not.toBe(
+      packageKey({ ...git, installation: '/usr/local' }),
+    );
+    expect(packageKey({ ...git, installation: '/opt/a/b', name: 'c' })).not.toBe(
+      packageKey({ ...git, installation: '/opt/a', name: 'b/c' }),
+    );
   });
 });
 
@@ -257,5 +270,20 @@ describe('withoutServicePackages', () => {
       }),
     );
     expect(kept.updates.map(({ name }) => name)).toEqual(['web', 'api']);
+  });
+
+  test("an upstream claims only its own manager's packages: apt: no Homebrew formula, brew: no APT package", () => {
+    const formula = { ...brew('formula:git'), manager: 'Homebrew', security: true };
+    const apt = { ...pkg('formula:ntfy', true), manager: 'APT' };
+    for (const [held, upstream] of [
+      [formula, 'apt:formula'],
+      [apt, 'brew:ntfy'],
+    ] as const) {
+      const kept = withoutServicePackages(
+        system('laptop-1', { packages: [held], updates: [{ ...update('web'), upstream }] }),
+      );
+      expect(kept.packages).toEqual([held]);
+      expect(kept.updates.map(({ security }) => security)).toEqual([false]);
+    }
   });
 });

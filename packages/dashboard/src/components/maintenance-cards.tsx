@@ -26,9 +26,9 @@ const CHIP = 'flex-none rounded-full bg-status-warning/15 px-2 py-0.5 text-xs wh
 
 const HEADING = 'text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
-// A package: its name, its installation when its manager has several on the
-// System, the versions it would move between, and for a security update a chip
-// and how long the Hub has held it as one.
+// A package: its name, its installation when the System's packages of its
+// manager are pending in more than one, the versions it would move between,
+// and for a security update a chip and how long the Hub has held it as one.
 function PackageRow({
   now,
   pkg,

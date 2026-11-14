@@ -352,7 +352,7 @@ test('without a census or a known architecture no suffix is hidden', async () =>
       { name: 'openssl:amd64', security: null },
       { name: 'bash:amd64', security: null },
     ],
-    { arch: 'riscv64' },
+    { arch: 'mips' },
   );
 
   const [system] = (await readMaintenance(h.db.sql, NOW)).systems;

@@ -5,7 +5,7 @@
 import { parseUpdateSubject } from '@heimdall/schema';
 
 import type { Attention } from '../server/attention-types.ts';
-import type { AvailableUpdate, HeldPackages, PendingPackages } from '../server/home-types.ts';
+import type { HeldPackages, HomeServiceUpdate, PendingPackages } from '../server/home-types.ts';
 import { formatSpanShort } from './time.ts';
 
 // An open Condition of `kind` on a paired System.
@@ -17,7 +17,9 @@ const isOpenOnPaired = (
 // For each paired System with an open Pending update Condition, at any level,
 // the packages the Hub holds as pending in the sources those Conditions name,
 // as their Condition pages list them; its row links to the Condition whose
-// source holds the most. The most packages first, then by name.
+// source holds the most. A source that holds none is left out, and so is a
+// System whose sources hold none, as Maintenance counts only a System with a
+// package. The most packages first, then by name.
 export const pendingPackages = (
   attention: readonly Attention[],
   held: readonly HeldPackages[],
@@ -33,14 +35,17 @@ export const pendingPackages = (
         system === item.system &&
         manager === source?.manager &&
         installation === source.installation,
-    ) ?? { packages: 0, security: 0 };
+    );
+    if (pending === undefined || pending.packages === 0) {
+      continue;
+    }
     const before = bySystem.get(item.system);
     bySystem.set(item.system, {
       conditionId:
         before === undefined || pending.packages > before.most
           ? item.conditionId
           : before.conditionId,
-      most: Math.max(before?.most ?? -1, pending.packages),
+      most: Math.max(before?.most ?? 0, pending.packages),
       packages: (before?.packages ?? 0) + pending.packages,
       security: (before?.security ?? 0) + pending.security,
       system: item.system,
@@ -63,7 +68,7 @@ export type MaintenanceCard = {
   reboots:
     | { oldest: string; systems: { conditionId: string; system: string }[]; text: string }
     | undefined;
-  updates: { longest: string; text: string } | undefined;
+  updates: { longest: string; security: number; text: string } | undefined;
 };
 
 // The packages row: "38 packages on 4 Systems" with the security updates
@@ -101,11 +106,11 @@ const rebootsRow = (attention: readonly Attention[], now: number): MaintenanceCa
   };
 };
 
-// The updates row: "4 Services have an update" and the Service whose update
-// has waited longest with how long, or the first by name when no release
-// dates any.
+// The updates row: "4 Services have an update", the security updates among
+// them, and the Service whose update has waited longest with how long, or the
+// first by name when no release dates any.
 const updatesRow = (
-  updates: readonly AvailableUpdate[],
+  updates: readonly HomeServiceUpdate[],
   now: number,
 ): MaintenanceCard['updates'] => {
   const [longest] = updates.toSorted(
@@ -122,6 +127,7 @@ const updatesRow = (
       longest.since === undefined
         ? longest.name
         : `${longest.name} ${formatSpanShort(Math.max(0, now - longest.since))}`,
+    security: updates.filter(({ security }) => security).length,
     text:
       updates.length === 1
         ? '1 Service has an update'
@@ -138,7 +144,7 @@ export const maintenanceCard = (
   }: {
     attention: readonly Attention[];
     packages: readonly PendingPackages[];
-    updates: readonly AvailableUpdate[];
+    updates: readonly HomeServiceUpdate[];
   },
   now: number,
 ): MaintenanceCard => ({

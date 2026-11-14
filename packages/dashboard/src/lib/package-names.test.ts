@@ -56,7 +56,11 @@ test("a Collector's architecture maps to dpkg's name for it, and an unknown one 
   expect(dpkgArchitecture('arm64')).toBe('arm64');
   expect(dpkgArchitecture('ia32')).toBe('i386');
   expect(dpkgArchitecture('arm')).toBe('armhf');
-  expect(dpkgArchitecture('riscv64')).toBeUndefined();
+  expect(dpkgArchitecture('riscv64')).toBe('riscv64');
+  expect(dpkgArchitecture('ppc64')).toBe('ppc64el');
+  expect(dpkgArchitecture('s390x')).toBe('s390x');
+  expect(dpkgArchitecture('loong64')).toBe('loong64');
+  expect(dpkgArchitecture('mips')).toBeUndefined();
   expect(dpkgArchitecture(null)).toBeUndefined();
   expect(dpkgArchitecture(undefined)).toBeUndefined();
 });

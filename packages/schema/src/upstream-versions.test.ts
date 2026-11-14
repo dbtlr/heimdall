@@ -9,6 +9,7 @@ import {
   packageAvailableVersion,
   packageMatchesUpstream,
   parseVersion,
+  upstreamPackageManager,
 } from './upstream-versions.ts';
 
 test('loose versions retain their numeric core, channel, and suffix numbers', () => {
@@ -166,6 +167,15 @@ test.each([
   ['npm:nginx', 'nginx', false],
 ])('package identity %s matches %s: %s', (upstream, packageName, matches) => {
   expect(packageMatchesUpstream(upstream, packageName)).toBe(matches);
+});
+
+test.each<[string, ReturnType<typeof upstreamPackageManager>]>([
+  ['apt:nginx', 'apt'],
+  ['brew:nginx', 'homebrew'],
+  ['npm:nginx', undefined],
+  ['github:owner/nginx', undefined],
+])('upstream %s is a package of manager %s', (upstream, manager) => {
+  expect(upstreamPackageManager(upstream)).toBe(manager);
 });
 
 const now = 10 * UPDATE_METADATA_MAX_AGE_MS;

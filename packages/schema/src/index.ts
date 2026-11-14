@@ -161,6 +161,7 @@ export {
   packageAvailableVersion,
   packageMatchesUpstream,
   parseVersion,
+  upstreamPackageManager,
 } from './upstream-versions.ts';
 export type { ParsedVersion, UpdateStatus } from './upstream-versions.ts';
 export { latestScheduledTime, nextScheduledTime, scheduledTimesBetween } from './schedule.ts';
