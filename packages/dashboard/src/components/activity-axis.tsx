@@ -52,8 +52,8 @@ function Stretches({ lane, window }: { lane: AxisLane; window: Window }) {
   );
 }
 
-// A button over the plot for each change line of the System: the list's glyph
-// at the line's time. Picking one pins its moment.
+// A button above the plot for each change line of the System: the list's
+// glyph at the line's time. Picking one pins its moment.
 function Marks({
   lines,
   onPin,
@@ -143,7 +143,7 @@ export const trackPointer = ({ at, onDrag, onPin }: Drag) => {
 };
 
 // A System's lane: CPU busy with the Session stretches under it and the
-// change marks over it. Dragging across it, or arrow keys on it, pins a moment
+// change marks above it. Dragging across it, or arrow keys on it, pins a moment
 // on this System.
 function Lane({
   bucketMs,

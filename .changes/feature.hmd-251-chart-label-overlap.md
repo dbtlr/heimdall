@@ -1,1 +1,0 @@
-- **Chart scales stay readable** (HMD-251). A dashed limit line now starts right of a plot's scale labels instead of running through the 100 label, and the Activity axis puts change marks in a strip above each lane's plot, with the System name above the lane on a phone.

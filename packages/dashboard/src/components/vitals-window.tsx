@@ -12,7 +12,7 @@ import { TimeAxis } from './time-axis.tsx';
 
 const PLOT_HEIGHT = 56;
 
-// The shade over a plot at `shade`, in the selection color. A span too short to
+// The shade behind a plot at `shade`, in the selection color. A span too short to
 // see, such as a restart of a few seconds, is drawn as wide as a hairline.
 function Shade({ shade, window }: { shade: Window; window: Window }) {
   const { left, width } = spanBox({ end: shade.to, start: shade.from }, window);
@@ -20,6 +20,7 @@ function Shade({ shade, window }: { shade: Window; window: Window }) {
     <div
       aria-hidden="true"
       className="pointer-events-none absolute inset-y-0 min-w-0.5 border-x border-select/50 bg-select/20"
+      data-shade
       style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
     />
   );
@@ -56,8 +57,9 @@ export function VitalsWindowCard({
                 <span className="tabular-nums">{max}</span>
               </p>
               <div className="relative mt-0.5">
-                <ConditionChart chart={chart} height={PLOT_HEIGHT} />
+                {/* The shade comes first, so it lies under the plot's scale labels, not through them. */}
                 <Shade shade={shade} window={view.window} />
+                <ConditionChart chart={chart} height={PLOT_HEIGHT} />
               </div>
             </div>
           ))}

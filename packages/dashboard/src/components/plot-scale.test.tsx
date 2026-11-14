@@ -95,11 +95,27 @@ test('a limit line starts right of the scale labels laid over the plot, so it ne
   expect(clear(scaleOf([0, 100]))).toBe('calc(3ch + 0.875rem)');
 });
 
-test('a limit line runs the full width when the scale sits in a gutter', () => {
+const gib = (value: number) => `${String(value)} GiB`;
+
+test('a limit line clears the widest scale label, whatever its unit', () => {
+  const limits = [{ color: 'red', label: 'limit', value: 64 }];
   const html = renderToStaticMarkup(
-    <ScaledPlot domain={[0, 100]} gutter height={40} limits={[LIMIT]}>
+    <ScaledPlot domain={[0, 128]} format={gib} height={40} limits={limits}>
       <svg />
     </ScaledPlot>,
   );
-  expect(html).not.toMatch(/data-limit-lines="true" style=/u);
+  expect(clear(html)).toBe('calc(7ch + 0.875rem)');
+  expect(clear(scaleOf([0, 2], limits))).toBe('calc(1ch + 0.875rem)');
+});
+
+test('a limit line runs the full width when the scale sits in a gutter or beside the plot, or there is none', () => {
+  for (const props of [{ gutter: true }, { beside: true }, { labelled: false }]) {
+    const html = renderToStaticMarkup(
+      <ScaledPlot domain={[0, 100]} height={40} limits={[LIMIT]} {...props}>
+        <svg />
+      </ScaledPlot>,
+    );
+    expect(html).toContain('data-limit-lines="true"');
+    expect(html).not.toMatch(/data-limit-lines="true" style=/u);
+  }
 });
