@@ -1,10 +1,11 @@
-import type { JobRecord } from '@heimdall/schema';
+import type { JobRecord } from './records.ts';
 
 type CalendarEntry = JobRecord['schedule'][number];
 
 // How far back the search looks before it gives up: a little over four years,
 // so an entry for 29 February still finds its last leap day.
 const MAX_DAYS_BACK = 1500;
+const MAX_DAYS_AHEAD = 1500;
 
 // Whether `entry` fires on `date`. As in cron, an entry that names both a day
 // of the month and a weekday fires on either, and the month always applies.
@@ -39,11 +40,22 @@ const minutesOfDay = (entry: CalendarEntry) =>
 // The instant (epoch milliseconds) at which a wall-clock minute of `date`
 // falls in `timeZone`, as Temporal's `compatible` resolves it: a minute a
 // clock change skips falls as much later as the clock skips, and one it
-// repeats falls the first time.
+// repeats falls the first time. `skipped` says the minute was one a clock
+// change skips.
+const resolveMinute = (date: Temporal.PlainDate, minuteOfDay: number, timeZone: string) => {
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  const zoned = date
+    .toPlainDateTime({ hour, minute })
+    .toZonedDateTime(timeZone, { disambiguation: 'compatible' });
+  return {
+    instant: zoned.epochMilliseconds,
+    skipped: zoned.hour !== hour || zoned.minute !== minute,
+  };
+};
+
 const instantOf = (date: Temporal.PlainDate, minuteOfDay: number, timeZone: string) =>
-  date
-    .toPlainDateTime({ hour: Math.floor(minuteOfDay / 60), minute: minuteOfDay % 60 })
-    .toZonedDateTime(timeZone, { disambiguation: 'compatible' }).epochMilliseconds;
+  resolveMinute(date, minuteOfDay, timeZone).instant;
 
 // The latest of `date`'s scheduled times at or before `atOrBefore`, as an
 // instant, or undefined when it has none.
@@ -111,4 +123,52 @@ export const latestScheduledTime = ({
     date = date.subtract({ days: 1 });
   }
   return latest !== undefined && latest >= notBefore ? latest : undefined;
+};
+
+// The first time `schedule` names after `after` (epoch milliseconds), reading
+// its entries as wall-clock times in `timeZone`; undefined when it names none,
+// or the zone is unknown. The search starts a day early, since a clock change
+// can put a minute of the day before after `after`.
+//
+// Within a day the minutes are tried in order and the scan stops at the first
+// instant after `after`, because later minutes fall no earlier, unless that
+// minute is one a clock change skips: it falls as much later as the clock
+// skips, so a later minute can still come first.
+export const nextScheduledTime = ({
+  after,
+  schedule,
+  timeZone,
+}: {
+  after: number;
+  schedule: readonly CalendarEntry[];
+  timeZone: string;
+}): number | undefined => {
+  let date: Temporal.PlainDate;
+  try {
+    date = Temporal.Instant.fromEpochMilliseconds(after)
+      .toZonedDateTimeISO(timeZone)
+      .toPlainDate()
+      .subtract({ days: 1 });
+  } catch {
+    return undefined;
+  }
+  let found: number | undefined;
+  for (let days = 0; days <= MAX_DAYS_AHEAD; days += 1) {
+    const minutes = [...new Set(schedule.filter((e) => firesOn(e, date)).flatMap(minutesOfDay))];
+    for (const minute of minutes.toSorted((a, b) => a - b)) {
+      const { instant, skipped } = resolveMinute(date, minute, timeZone);
+      if (instant > after && (found === undefined || instant < found)) {
+        found = instant;
+      }
+      if (instant > after && !skipped) {
+        break;
+      }
+    }
+    // No clock skips more than a day, so a time found two days back is the first.
+    if (found !== undefined && instantOf(date, 0, timeZone) > found) {
+      return found;
+    }
+    date = date.add({ days: 1 });
+  }
+  return found;
 };

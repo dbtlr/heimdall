@@ -2,6 +2,7 @@
 // statement over every paired System, so the count of statements does not
 // grow with Systems, Services, jobs, or changes.
 
+import { nextScheduledTime } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { homeJob, orderJobs } from '../lib/home-jobs.ts';
@@ -9,7 +10,6 @@ import type { Attention } from './attention-types.ts';
 import type { Change, HeldPackages, HomeJob, ServiceChange } from './home-types.ts';
 import { conditionKind, scheduleOf, toRun } from './hub-rows.ts';
 import type { RunRow } from './hub-rows.ts';
-import { nextScheduledTime } from './next-run.ts';
 import { readServiceStops } from './service-stops.ts';
 
 // The packages the Hub holds as pending in each package source of each paired

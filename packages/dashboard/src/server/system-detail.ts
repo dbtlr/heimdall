@@ -1,3 +1,4 @@
+import { nextScheduledTime } from '@heimdall/schema';
 import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
@@ -32,7 +33,6 @@ import {
 } from './hub-rows.ts';
 import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import { readMemoryHolders } from './memory-holders.ts';
-import { nextScheduledTime } from './next-run.ts';
 import { readServices } from './services.ts';
 import { readSilencedUntil } from './silences.ts';
 import type {

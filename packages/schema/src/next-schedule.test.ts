@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { nextScheduledTime } from './next-run.ts';
+import { nextScheduledTime } from './schedule.ts';
 
 // Tuesday 2026-10-06 16:00 UTC.
 const NOW = Date.UTC(2026, 9, 6, 16, 0);
@@ -40,4 +40,18 @@ test('no schedule, or an unknown zone, has no next time', () => {
   expect(
     nextScheduledTime({ after: NOW, schedule: [{ minute: 0 }], timeZone: 'Nowhere/Else' }),
   ).toBeUndefined();
+});
+
+test('a time a clock change skips does not hide a later time that falls first', () => {
+  // New York skips 02:00 to 03:00 on 2026-03-08, so 02:30 falls at 03:30 EDT, after 03:10 EDT.
+  expect(
+    nextScheduledTime({
+      after: Date.UTC(2026, 2, 8, 6, 0),
+      schedule: [
+        { hour: 2, minute: 30 },
+        { hour: 3, minute: 10 },
+      ],
+      timeZone: 'America/New_York',
+    }),
+  ).toBe(Date.UTC(2026, 2, 8, 7, 10));
 });
