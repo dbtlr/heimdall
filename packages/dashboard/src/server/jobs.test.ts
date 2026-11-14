@@ -205,6 +205,30 @@ describe('readJobs', () => {
     expect(kinds(jobs.find(({ name }) => name === 'monthly')?.strip)).toEqual(['ok', 'ok', 'ok']);
   });
 
+  test('calls no time missed before the 90 days a Collector sends, though it kept an older success', async () => {
+    await using h = await startHub();
+    await addSystem(h, 'server-1');
+    await recordJob(h, 'server-1', 'weekly', {
+      mirroredDaysAgo: 365,
+      schedule: [{ hour: 3, minute: 0, weekday: 2 }],
+    });
+    // Twelve failed weeks, and the success the Collector keeps past its 90 days
+    // because it is the job's latest; the runs between them it pruned unsent.
+    for (let week = 0; week < 12; week += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one row per run.
+      await addRun(h, 'server-1', 'weekly', 7 * week, 1);
+    }
+    await addRun(h, 'server-1', 'weekly', 203);
+
+    const { jobs } = await readJobs(h.db.sql, NOW);
+
+    expect(kinds(jobs.find(({ name }) => name === 'weekly')?.strip)).toEqual([
+      'ok',
+      'missed',
+      ...Array(12).fill('failed'),
+    ]);
+  });
+
   test('gives a job that never ran on a System that sends history its missed times, and a System that sends none no strip', async () => {
     await using h = await startHub();
     await addSystem(h, 'server-1');

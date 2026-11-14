@@ -89,8 +89,10 @@ const toStoredRun = (row: StoredRunRow): JobRun => ({
 // The earliest time a job's strip can call a scheduled time missed: no earlier
 // than the job existed, and no earlier than the history speaks for. The
 // history speaks for every scheduled time since its oldest run when it holds
-// STRIP_RUNS of them, since it keeps all later runs; with fewer, it has pruned
-// none and speaks for its 90 days, not for a time before them.
+// STRIP_RUNS of them, since it keeps all later runs; with fewer, it speaks for
+// the 90 days a Collector sends and no further back, even when it holds an
+// older run: a Collector keeps a job's latest success past its 90 days, but
+// pruned the runs around it unsent.
 const missedSince = ({
   existed,
   history,
@@ -102,7 +104,7 @@ const missedSince = ({
 }): number => {
   const starts = history.map(({ started }) => started);
   const held =
-    history.length >= STRIP_RUNS ? Math.min(...starts) : Math.min(now - HISTORY_MS, ...starts);
+    history.length >= STRIP_RUNS ? Math.min(...starts) : now - HISTORY_MS;
   return Math.max(existed, held);
 };
 
