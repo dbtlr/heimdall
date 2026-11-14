@@ -649,6 +649,30 @@ describe('evidenceNote', () => {
     );
   });
 
+  test('says a package or reboot observation that arrived but cannot be read is why the evidence is old, not that none arrived', () => {
+    const update = attention(
+      { kind: 'pending_update', reason: '1 package', unreadable: true },
+      { checkedAt: undefined, evidence: 'old' },
+    );
+    expect(zoneFreeText(evidenceNote(update, NOW) ?? [])).toBe(
+      'The latest package-manager observation was stored in a form this page cannot read, so this may be out of date. A current package query must be within 24 hours, with repository metadata within 7 days.',
+    );
+    const reboot = attention(
+      { kind: 'reboot_required', reason: 'Reboot required', unreadable: true },
+      { checkedAt: undefined, evidence: 'old' },
+    );
+    expect(zoneFreeText(evidenceNote(reboot, NOW) ?? [])).toBe(
+      'The latest reboot observation was stored in a form this page cannot read, so this may be out of date. A current reboot observation must be within 24 hours.',
+    );
+    const none = attention(
+      { kind: 'pending_update', reason: '1 package' },
+      { checkedAt: undefined, evidence: 'old' },
+    );
+    expect(zoneFreeText(evidenceNote(none, NOW) ?? [])).toStartWith(
+      'No package-manager observation has arrived',
+    );
+  });
+
   test('says why a Service check cannot tell', () => {
     const item = attention(
       { checks: [], kind: 'service_down', reason: 'x', service: undefined },

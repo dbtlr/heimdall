@@ -63,6 +63,23 @@ describe('the Maintenance cards', () => {
     expect(html).toContain('found 5 d ago · GitHub');
   });
 
+  test('a package reads by its short name, keeps its full identity as a title, and a cask is marked', async () => {
+    const html = await render([
+      system('workstation-1', {
+        managers: ['Homebrew'],
+        packages: [
+          { ...pkg('formula:wget'), label: 'wget', manager: 'Homebrew' },
+          { ...pkg('cask:firefox'), cask: true, label: 'firefox', manager: 'Homebrew' },
+        ],
+      }),
+    ]);
+
+    expect(html).toContain('title="formula:wget">wget<');
+    expect(html).toMatch(/title="cask:firefox">firefox<span[^>]*>cask<\/span>/u);
+    expect(html).not.toMatch(/title="formula:wget">wget<span/u);
+    expect(html).not.toContain('>formula:wget<');
+  });
+
   test('packages past the first few wait behind a "+N more" expander', async () => {
     const html = await render([
       system('server-1', {

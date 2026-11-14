@@ -336,18 +336,20 @@ const scenarioOf = (now: number) => {
 };
 type Scenario = ReturnType<typeof scenarioOf>;
 
-// A package-manager observation for each source, with `packages` pending of
-// which the first `security` are security updates, and whether a reboot is
-// required, as a Collector reports them.
 // The identity each manager reports: APT names carry an architecture (one
-// foreign package among them), Homebrew names a formula or cask prefix.
+// built for every architecture and one foreign package among them), Homebrew
+// names a formula or cask prefix.
 const seededPackageName = (manager: 'apt' | 'homebrew', index: number) => {
   if (manager === 'homebrew') {
     return `${index % 4 === 3 ? 'cask' : 'formula'}:package-${String(index + 1)}`;
   }
-  return `package-${String(index + 1)}:${index === 4 ? 'i386' : 'amd64'}`;
+  const architecture = ['amd64', 'amd64', 'all', 'amd64', 'i386'][index] ?? 'amd64';
+  return `package-${String(index + 1)}:${architecture}`;
 };
 
+// A package-manager observation for each source, with `packages` pending of
+// which the first `security` are security updates, and whether a reboot is
+// required, as a Collector reports them.
 const updatesSection = (
   now: number,
   sources: {

@@ -17,10 +17,12 @@ const held = (parts: Partial<Held> = {}): Held => ({
   jobRuns: new Map(),
   lastSeenAt: undefined,
   reboot: undefined,
+  rebootUnreadable: false,
   records: [],
   runSet: undefined,
   sample: undefined,
   sleeps: false,
+  unreadableUpdates: new Set(),
   updateManagers: [],
   ...parts,
 });

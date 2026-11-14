@@ -27,6 +27,12 @@ const pkg = (name: string, security = false): MaintenancePackage => ({
   securitySince: security ? 1 : null,
 });
 
+// A Homebrew package by its full identity, such as `cask:zoom`.
+const brew = (name: string): MaintenancePackage => {
+  const [kind = '', label = ''] = name.split(':');
+  return { ...pkg(name), cask: kind === 'cask', label };
+};
+
 const update = (name: string): MaintenanceServiceUpdate => ({
   available: '2',
   installed: '1',
@@ -96,6 +102,14 @@ describe('splitPackages', () => {
     expect(splitPackages(plain).shown).toHaveLength(PACKAGES_SHOWN);
     expect(splitPackages(plain).more).toHaveLength(1);
   });
+
+  test('orders packages by the name shown, so Homebrew casks fall among formulas', () => {
+    const { shown } = splitPackages(
+      ['formula:git', 'cask:zoom', 'formula:act', 'cask:bat-app', 'formula:curl'].map(brew),
+    );
+
+    expect(shown.map(({ label }) => label)).toEqual(['act', 'bat-app', 'curl', 'git', 'zoom']);
+  });
 });
 
 describe('maintenanceSummary', () => {
@@ -158,6 +172,9 @@ describe('checkSentence', () => {
     ).toBe("Not known to be up to date: Homebrew's package metadata is 9 d old.");
     expect(checkSentence({ at: null, kind: 'metadata', manager: 'Homebrew' }, NOW)).toBe(
       "Not known to be up to date: Homebrew's package metadata is of unknown age.",
+    );
+    expect(checkSentence({ kind: 'unreadable', manager: 'Homebrew' }, NOW)).toBe(
+      'Not known to be up to date: the Homebrew check was stored in a form this page cannot read.',
     );
   });
 });
