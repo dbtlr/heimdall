@@ -1,11 +1,11 @@
 import { createServerFn } from '@tanstack/react-start';
 
+import { readActivityPage } from './activity-axis.ts';
 import { isActivityRange } from './activity-types.ts';
 import type { ActivityRange } from './activity-types.ts';
-import { readActivity } from './activity.ts';
 import { database } from './database.ts';
 
-// Every change over `range`, read at the server's clock.
+// The Activity page over `range`, read at the server's clock.
 export const getActivity = createServerFn({ method: 'GET' })
   .validator((input: { range: ActivityRange }) => {
     if (!isActivityRange(input.range)) {
@@ -14,5 +14,5 @@ export const getActivity = createServerFn({ method: 'GET' })
     return input;
   })
   .handler(async ({ data }) =>
-    readActivity(await database(), { now: Date.now(), range: data.range }),
+    readActivityPage(await database(), { now: Date.now(), range: data.range }),
   );

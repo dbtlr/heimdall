@@ -3,15 +3,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import type { Lane, Range } from './fleet-overview-types.ts';
-import {
-  findGaps,
-  laneStatus,
-  parseOverviewInput,
-  projectOf,
-  readFleetGlance,
-  readFleetOverview,
-} from './fleet-overview.ts';
+import { findGaps, laneStatus, projectOf, readFleetGlance } from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -24,15 +16,15 @@ const BUCKET = 5 * MINUTE;
 const HOUR = 12 * BUCKET;
 
 // Seconds after NOW, as the Hub's fixtures take them.
-const { addCondition, addProcess, addSession } = timeline(NOW);
+const { addCondition } = timeline(NOW);
 const seconds = (ms: number) => ms / 1000;
 
-const overview = (h: Hub, range: Range = '24h', now = NOW, unpaired = false) =>
-  readFleetOverview(h.db.sql, { now, range, unpaired });
+const overview = (h: Hub, now = NOW, unpaired = false) =>
+  readFleetGlance(h.db.sql, { now, unpaired });
 
 // The lane of `name`, which the test has paired.
-const lane = async (h: Hub, name: string, now = NOW, range: Range = '24h') => {
-  const found = (await overview(h, range, now)).lanes.find((l) => l.name === name);
+const lane = async (h: Hub, name: string, now = NOW) => {
+  const found = (await overview(h, now)).lanes.find((l) => l.name === name);
   if (found === undefined) {
     throw new Error(`no lane for ${name}`);
   }
@@ -66,25 +58,6 @@ const hear = async (
   );
   expect(response.status).toBe(200);
 };
-
-describe('parseOverviewInput', () => {
-  test('takes the range of the input, and 24h when it names none', () => {
-    expect(parseOverviewInput({ range: '7d' }).range).toBe('7d');
-    expect(parseOverviewInput({}).range).toBe('24h');
-    expect(parseOverviewInput(undefined).range).toBe('24h');
-  });
-
-  test('refuses a range that is not offered', () => {
-    expect(() => parseOverviewInput({ range: '3d' })).toThrow('3d');
-    expect(() => parseOverviewInput({ range: 24 })).toThrow('24');
-  });
-
-  test('asks for unpaired Systems only when the input says so', () => {
-    expect(parseOverviewInput({ unpaired: true }).unpaired).toBe(true);
-    expect(parseOverviewInput({ unpaired: false }).unpaired).toBe(false);
-    expect(parseOverviewInput({}).unpaired).toBe(false);
-  });
-});
 
 describe('projectOf', () => {
   test("names a project by its repository's last folder, else its working directory's", () => {
@@ -131,50 +104,6 @@ describe('findGaps', () => {
     expect(findGaps([], { from: from + MINUTE, now: from + 2 * BUCKET })).toEqual([
       { from, to: from + 2 * BUCKET },
     ]);
-  });
-});
-
-describe('buckets', () => {
-  test('averages, lows, and highs the CPU of the samples pushed into each 5-minute bucket', async () => {
-    await using h = await startHub();
-    const times = [NOW - 10 * MINUTE, NOW - 10 * MINUTE + 15_000, NOW - 10 * MINUTE + 30_000];
-    await hear(h, 'server-1', { cpu: [10, 40, 25], times });
-
-    const server = await lane(h, 'server-1');
-
-    expect(server.buckets).toEqual([{ average: 25, high: 40, low: 10, t: NOW - 10 * MINUTE }]);
-  });
-
-  test('keeps only buckets inside the range', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1', { times: [NOW - 7 * HOUR, NOW - 5 * HOUR, NOW - HOUR] });
-
-    const sixHours = await overview(h, '6h');
-    const day = await overview(h, '24h');
-
-    const starts = (o: typeof sixHours) => o.lanes[1]?.buckets.map(({ t }) => t);
-    expect(starts(sixHours)).toEqual([NOW - 5 * HOUR, NOW - HOUR]);
-    expect(starts(day)).toEqual([NOW - 7 * HOUR, NOW - 5 * HOUR, NOW - HOUR]);
-    expect([sixHours.from, sixHours.to]).toEqual([NOW - 6 * HOUR, NOW]);
-  });
-});
-
-describe('gaps', () => {
-  test('reports the stretch inside the range where no Vitals arrived, not the bucket still filling', async () => {
-    await using h = await startHub();
-    const now = NOW + 2 * MINUTE;
-    // Vitals in the 6 hours before NOW except one stretch of 3 buckets, and none yet in the bucket holding `now`.
-    const times = [];
-    for (let t = NOW - 6 * HOUR; t < NOW; t += BUCKET) {
-      if (t < NOW - 4 * HOUR || t >= NOW - 4 * HOUR + 3 * BUCKET) {
-        times.push(t);
-      }
-    }
-    await hear(h, 'server-1', { receivedAt: now, times });
-
-    const server = await lane(h, 'server-1', now, '6h');
-
-    expect(server.gaps).toEqual([{ from: NOW - 4 * HOUR, to: NOW - 4 * HOUR + 3 * BUCKET }]);
   });
 });
 
@@ -266,172 +195,7 @@ describe('latest', () => {
   });
 });
 
-// Prices `priced-model` at $1 per input token and $2 per output token.
-const price = (h: Hub) => h.db.sql`
-  INSERT INTO model_prices (
-    model, valid_from, source, input_per_mtok, output_per_mtok, context_window
-  )
-  VALUES ('priced-model', '2020-01-01', 'bundled', 1000000, 2000000, 100000)
-`;
-
-describe('stretches', () => {
-  test('carries the Session, its project and branch, its cost, and its link to a process', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await price(h);
-    await addProcess(h.db.sql, {
-      cwd: '/srv/work/api',
-      end: -1000,
-      pid: 10,
-      start: -4000,
-      system: 'server-1',
-    });
-    await addSession(h.db.sql, {
-      gitBranch: 'feature/lanes',
-      id: 's1',
-      lastCwd: '/srv/work/api',
-      model: 'priced-model',
-      requests: [-3500, -2000],
-      system: 'server-1',
-    });
-
-    expect((await lane(h, 'server-1')).stretches).toEqual([
-      {
-        branch: 'feature/lanes',
-        costUsd: 10,
-        endedAt: NOW - 2000_000,
-        harness: 'claude-code',
-        link: 'linked',
-        project: 'api',
-        sessionId: 's1',
-        startedAt: NOW - 3500_000,
-      },
-    ]);
-  });
-
-  test("names a stretch's project for the repository its working directory belongs to", async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await addProcess(h.db.sql, {
-      cwd: '/srv/trees/feature',
-      end: -1000,
-      pid: 10,
-      repository: '/srv/work/api',
-      start: -4000,
-      system: 'server-1',
-    });
-    await addSession(h.db.sql, {
-      id: 's1',
-      lastCwd: '/srv/trees/feature',
-      requests: [-3500, -2000],
-      system: 'server-1',
-    });
-
-    expect((await lane(h, 'server-1')).stretches[0]?.project).toBe('api');
-  });
-
-  test("gives each of a Session's stretches the Session's whole cost, keeping sources apart", async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await price(h);
-    await addProcess(h.db.sql, { end: -5000, pid: 10, start: -9000, system: 'server-1' });
-    await addProcess(h.db.sql, { end: -1000, pid: 12, start: -4000, system: 'server-1' });
-    await addSession(h.db.sql, {
-      id: 's1',
-      model: 'priced-model',
-      requests: [-8500, -6000, -3500, -2000],
-      system: 'server-1',
-    });
-    await addSession(h.db.sql, {
-      id: 's1',
-      model: 'priced-model',
-      requests: [-700],
-      source: 'other',
-      system: 'server-1',
-    });
-
-    const stretches = (await lane(h, 'server-1')).stretches;
-
-    expect(stretches.map(({ costUsd, startedAt }) => [startedAt, costUsd])).toEqual([
-      [NOW - 8500_000, 20],
-      [NOW - 3500_000, 20],
-      [NOW - 700_000, 5],
-    ]);
-  });
-
-  test('is ambiguous when two processes of the Harness in its directory may have run it', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await addProcess(h.db.sql, { end: -1000, pid: 10, start: -4000, system: 'server-1' });
-    await addProcess(h.db.sql, { end: -1000, pid: 11, start: -4000, system: 'server-1' });
-    await addSession(h.db.sql, { id: 's1', requests: [-3500, -2000], system: 'server-1' });
-
-    expect((await lane(h, 'server-1')).stretches[0]?.link).toBe('ambiguous');
-  });
-
-  test('has no cost for a Session with an unpriced request, and no project or branch it never recorded', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await addSession(h.db.sql, { id: 's1', requests: [-3500, -2000], system: 'server-1' });
-
-    const [stretch] = (await lane(h, 'server-1')).stretches;
-
-    expect(stretch).toMatchObject({
-      branch: undefined,
-      costUsd: undefined,
-      link: 'unmatched',
-      project: 'my-project',
-    });
-  });
-
-  test('leaves out stretches that end before the range, start after it, or ran on another System', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await hear(h, 'laptop-1');
-    const day = 24 * 3600;
-    await addSession(h.db.sql, {
-      id: 'before',
-      requests: [-day - 600, -day - 60],
-      system: 'server-1',
-    });
-    await addSession(h.db.sql, { id: 'after', requests: [60, 600], system: 'server-1' });
-    await addSession(h.db.sql, { id: 'elsewhere', requests: [-600, -60], system: 'laptop-1' });
-    await addSession(h.db.sql, {
-      id: 'straddles',
-      requests: [-day - 600, -day + 600],
-      system: 'server-1',
-    });
-
-    const stretches = (await lane(h, 'server-1')).stretches.map(({ sessionId }) => sessionId);
-
-    expect(stretches).toEqual(['straddles']);
-  });
-});
-
-describe('conditions', () => {
-  test('includes a level change in the range when its occurrence was raised before the range', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await addCondition(h.db.sql, {
-      kind: 'low_disk',
-      level: 'note',
-      raisedAt: -2 * 86_400,
-      subject: '/',
-      system: 'server-1',
-      transitions: [{ at: -1800, level: 'alert', reason: '90% used' }],
-    });
-    const marks = (await lane(h, 'server-1', NOW, '6h')).conditions;
-    expect(marks).toMatchObject([
-      {
-        level: 'alert',
-        transitions: [
-          { at: NOW - 2 * 86_400_000, kind: 'raised', level: 'note' },
-          { at: NOW - 1800_000, kind: 'level_changed', level: 'alert' },
-        ],
-      },
-    ]);
-  });
-
+describe('notes', () => {
   test('notes stay visible without making a System need you, while an old alert still does', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { times: [NOW - 3 * HOUR] });
@@ -460,49 +224,6 @@ describe('conditions', () => {
       evidence: 'old',
       level: 'alert',
     });
-  });
-
-  test('marks those raised or cleared inside the range, with the times that fall outside it', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await hear(h, 'laptop-1');
-    const day = 24 * 3600;
-    const db = h.db.sql;
-    await addCondition(db, {
-      clearedAt: -day / 2,
-      kind: 'service_down',
-      raisedAt: -2 * day,
-      subject: 'a',
-      system: 'server-1',
-    });
-    await addCondition(db, {
-      clearedAt: -day - 60,
-      kind: 'service_down',
-      raisedAt: -2 * day,
-      subject: 'b',
-      system: 'server-1',
-    });
-    await addCondition(db, { kind: 'drift', raisedAt: -3600, system: 'server-1' });
-    await addCondition(db, { kind: 'low_disk', raisedAt: -3600, system: 'laptop-1' });
-
-    const marks = (await lane(h, 'server-1')).conditions;
-
-    expect(marks).toMatchObject([
-      {
-        clearedAt: NOW - (day / 2) * 1000,
-        kind: 'service_down',
-        level: 'alert',
-        raisedAt: NOW - 2 * day * 1000,
-        subject: 'a',
-      },
-      {
-        clearedAt: undefined,
-        kind: 'drift',
-        level: 'warning',
-        raisedAt: NOW - 3600_000,
-        subject: '',
-      },
-    ]);
   });
 });
 
@@ -580,12 +301,11 @@ describe('unpaired Systems', () => {
     await using h = await startHub();
     await unpairedLaptop(h);
 
-    const found = await overview(h, '24h', NOW, true);
+    const found = await overview(h, NOW, true);
 
     expect(found.lanes.map(({ name }) => name)).toEqual(['server-1']);
     expect(found.unpairedLanes).toMatchObject([
       {
-        buckets: [{ average: 42, t: NOW - 10 * MINUTE }],
         lastSeenAt: NOW,
         latest: { cpuBusyPercent: 42, t: NOW - 10 * MINUTE },
         name: 'laptop-1',
@@ -608,7 +328,7 @@ describe('unpaired Systems', () => {
   test('do not include a paired System that was never seen', async () => {
     await using h = await startHub();
 
-    const found = await overview(h, '24h', NOW, true);
+    const found = await overview(h, NOW, true);
 
     expect(found.unpairedCount).toBe(0);
     expect(found.unpairedLanes).toEqual([]);
@@ -623,7 +343,7 @@ describe('unpaired Systems', () => {
     await unpairedLaptop(h);
     await unpair(h.db.sql, 'server-1');
 
-    const found = await overview(h, '24h', NOW, true);
+    const found = await overview(h, NOW, true);
 
     expect(found.lanes).toEqual([]);
     expect(found.unpairedCount).toBe(2);
@@ -679,7 +399,7 @@ describe('silences', () => {
     await silence(h, 'server-1', NOW + 2 * HOUR);
     await unpair(h.db.sql, 'server-1');
 
-    const found = await overview(h, '24h', NOW, true);
+    const found = await overview(h, NOW, true);
 
     expect(found.unpairedLanes.map((l) => l.silencedUntil)).toEqual([undefined]);
   });
@@ -706,46 +426,5 @@ describe('silences', () => {
     }
     expect(silenced).toEqual(expected);
     expect(silenced.lanes.find((l) => l.name === 'server-1')?.status).toBe('needs_you');
-  });
-});
-
-// What a Fleet tile draws of a lane.
-const glanceOf = ({ lastSeenAt, latest, name, silencedUntil, sleeps, status }: Lane) => ({
-  lastSeenAt,
-  latest,
-  name,
-  silencedUntil,
-  sleeps,
-  status,
-});
-
-describe('readFleetGlance', () => {
-  test('agrees with the overview on all the Fleet tiles draw, and reads no timeline', async () => {
-    await using h = await startHub();
-    await unpairedLaptop(h);
-    await addCondition(h.db.sql, {
-      kind: 'low_disk',
-      level: 'alert',
-      raisedAt: -3600,
-      subject: '/',
-      system: 'server-1',
-    });
-    await silence(h, 'server-1', NOW + 2 * HOUR);
-    await h.db.sql`UPDATE delivery_status SET failing_since = ${new Date(NOW - 30 * MINUTE)}`;
-
-    const agrees = async (unpaired: boolean) => {
-      const full = await overview(h, '24h', NOW, unpaired);
-      expect(await readFleetGlance(h.db.sql, { now: NOW, unpaired })).toEqual({
-        attention: full.attention,
-        deliveryFailingSince: NOW - 30 * MINUTE,
-        lanes: full.lanes.map(glanceOf),
-        now: NOW,
-        unpairedCount: 1,
-        unpairedLanes: full.unpairedLanes.map(glanceOf),
-      });
-    };
-
-    await agrees(false);
-    await agrees(true);
   });
 });

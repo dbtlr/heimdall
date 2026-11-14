@@ -2,11 +2,11 @@ import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { steppedSample } from '../lib/detail.ts';
+import { LANE_GRID } from '../lib/layout.ts';
 import { formatDated, inWindow, pinnedX, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { cn } from '../lib/utils.ts';
-import { LANE_GRID } from './fleet-lane.tsx';
 
 type Axis = {
   at: number | undefined;

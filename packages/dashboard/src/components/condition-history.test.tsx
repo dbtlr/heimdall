@@ -6,7 +6,6 @@ import { groupActivity } from '../lib/activity.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
 import { ActivityListBody } from './activity-list.tsx';
-import { ConditionMarks } from './condition-marks.tsx';
 import { ConditionSpans } from './condition-spans.tsx';
 import { renderRouted } from './render-routed.tsx';
 
@@ -29,24 +28,6 @@ const occurrence: ConditionMark = {
     },
   ],
 };
-
-test('a raised glyph keeps its initial level and a level change has its own mark', () => {
-  const html = renderToStaticMarkup(
-    <ConditionMarks conditions={[occurrence]} now={100} window={{ from: 0, to: 100 }} />,
-  );
-  expect(html).toContain('fill-status-warning');
-  expect(html).toContain('fill-status-critical');
-  expect(html).toContain('left:0%');
-  expect(html).toContain('left:50%');
-});
-
-test('a level change inside the window is drawn even when the occurrence was raised earlier', () => {
-  const html = renderToStaticMarkup(
-    <ConditionMarks conditions={[occurrence]} now={100} window={{ from: 25, to: 100 }} />,
-  );
-  expect(html).not.toContain('fill-status-warning');
-  expect(html).toContain('fill-status-critical');
-});
 
 test('a Condition bar keeps the level that applied to each part of its span', () => {
   const html = renderToStaticMarkup(

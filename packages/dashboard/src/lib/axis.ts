@@ -137,13 +137,13 @@ const dayStep = ({ from, to }: Window): number => {
 };
 
 // Ticks at the local midnights of a window of days: each day, every second
-// day, each Monday, or every few Mondays. Up to a week apart they are labeled
-// by weekday, and further apart by date.
+// day, each Monday, or every few Mondays. Daily and every-other-day ticks are
+// labeled by weekday; Monday ticks by date, since every one is a Monday.
 const dayTicks = (window: Window, timeZone: string): Tick[] => {
   const { from, to } = window;
   const step = dayStep(window);
   const offset = step % 7 === 0 ? MONDAY_DAY_NUMBER : 0;
-  const label = step > 7 ? formatDate : formatWeekday;
+  const label = step >= 7 ? formatDate : formatWeekday;
   const ticks: Tick[] = [];
   let midnight = localMidnight(from, timeZone);
   while (midnight < to) {
@@ -190,13 +190,13 @@ const clockTicks = (window: Window, timeZone: string, label: (t: number) => stri
 // two days the ends are clock times (with seconds under 10 minutes) and the
 // round times are clock times, every other one minor. Longer windows tick local
 // midnights by weekday, and the ends add the weekday to their clock time. A
-// window whose ticks are more than a week apart labels ticks and ends by date.
+// window whose ticks fall on Mondays labels ticks and ends by date.
 export const spanTicks = (window: Window, timeZone: string): Tick[] => {
   const { from, to } = window;
   const length = to - from;
   const daily = length > SPAN_MINUTE_TICKS_UP_TO_MS;
   const clock = length < SPAN_SECONDS_BELOW_MS ? formatClockSeconds : formatClock;
-  const day = daily && dayStep(window) > 7 ? formatDate : formatWeekday;
+  const day = daily && dayStep(window) >= 7 ? formatDate : formatWeekday;
   const endLabel = (t: number): string =>
     daily ? `${day(t, timeZone)} ${formatClock(t, timeZone)}` : clock(t, timeZone);
   return [

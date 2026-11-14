@@ -1,7 +1,7 @@
-// The data the Fleet pages render: every paired System, the unpaired Systems
-// when asked for, and what needs the operator now. The Fleet page's tiles read
-// a glance; Compare reads the overview, which draws each System as a lane on
-// one time axis. Times are epoch milliseconds.
+// The data the fleet pages render: every paired System, the unpaired Systems
+// when asked for, and what needs the operator now, which Home's and the
+// Systems page's tiles read as a glance; and the ranges a System page shows.
+// Times are epoch milliseconds.
 
 import type { ConditionKind, ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
@@ -12,6 +12,14 @@ export const RANGES = ['6h', '12h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];
 
 export const isRange = (value: unknown): value is Range => RANGES.some((range) => range === value);
+
+const DAY_MS = 24 * 60 * 60_000;
+export const RANGE_MS: Record<Range, number> = {
+  '12h': DAY_MS / 2,
+  '24h': DAY_MS,
+  '6h': DAY_MS / 4,
+  '7d': 7 * DAY_MS,
+};
 
 // A System not heard from for longer than this is quiet: asleep, if it sleeps,
 // and its newest Vitals are no longer shown as current.
@@ -35,20 +43,6 @@ export type CpuBucket = { average: number; high: number; low: number; t: number 
 export type Gap = { from: number; to: number };
 
 export type Link = 'linked' | 'ambiguous' | 'unmatched';
-
-// One stretch of an agent Session, with the facts of its Session for the tooltip.
-export type Stretch = {
-  branch: string | undefined;
-  // The Session's cost at list price, undefined when any request is unpriced.
-  costUsd: number | undefined;
-  endedAt: number;
-  harness: string;
-  link: Link;
-  // The last directory name of the Session's working directory.
-  project: string | undefined;
-  sessionId: string;
-  startedAt: number;
-};
 
 // A Condition raised or cleared within the range; either time may fall
 // outside it.
@@ -78,14 +72,6 @@ export type SystemGlance = {
   status: LaneStatus;
 };
 
-// A System's glance with its history over the range, drawn on Compare.
-export type Lane = SystemGlance & {
-  buckets: CpuBucket[];
-  conditions: ConditionMark[];
-  gaps: Gap[];
-  stretches: Stretch[];
-};
-
 export type FleetGlance<L extends SystemGlance = SystemGlance> = {
   // Everything that needs the operator on the Systems shown, with the evidence
   // behind it: newest first detected first, those on paired Systems first.
@@ -101,5 +87,3 @@ export type FleetGlance<L extends SystemGlance = SystemGlance> = {
   // The unpaired Systems' lanes, empty unless they were asked for.
   unpairedLanes: L[];
 };
-
-export type FleetOverview = FleetGlance<Lane> & { from: number; range: Range; to: number };

@@ -17,7 +17,6 @@ test('the top bar names six sections in order', () => {
 test('every route marks the section it belongs to, and the phone tab that holds it', () => {
   const cases: [string, Section | undefined, PhoneTab | undefined][] = [
     ['/', 'home', 'home'],
-    ['/compare', 'home', 'home'],
     ['/systems', 'systems', 'more'],
     ['/systems/', 'systems', 'more'],
     ['/systems/server-1', 'systems', 'more'],

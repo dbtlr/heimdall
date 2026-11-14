@@ -25,7 +25,7 @@ import { filesRecordDigest, updateSourceSubject } from '@heimdall/schema';
 import type { SentServiceStop } from '@heimdall/schema';
 import { SQL } from 'bun';
 
-import { readFleetOverview } from '../src/server/fleet-overview.ts';
+import { readFleetGlance } from '../src/server/fleet-overview.ts';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -1451,15 +1451,9 @@ const fill = async (sql: SQL) => {
   await unpair(sql, UNPAIRED_SYSTEM);
   // Stores the seeded Sessions' stretches and totals, as a running Hub would.
   await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
-  const overview = await readFleetOverview(sql, {
-    now,
-    range: '24h',
-    unpaired: true,
-  });
+  const overview = await readFleetGlance(sql, { now, unpaired: true });
   for (const lane of [...overview.lanes, ...overview.unpairedLanes]) {
-    console.log(
-      `${lane.name}: ${lane.status}, ${lane.buckets.length} buckets, ${lane.gaps.length} gaps, ${lane.stretches.length} stretches, ${lane.conditions.length} Condition marks`,
-    );
+    console.log(`${lane.name}: ${lane.status}`);
   }
   const confirmed = overview.attention.filter(({ evidence }) => evidence === 'current');
   console.log(

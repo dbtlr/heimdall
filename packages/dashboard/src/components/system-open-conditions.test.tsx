@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 
 import type { Attention } from '../server/attention-types.ts';
-import { OpenNow } from './open-now.tsx';
 import { linksIn, renderRouted } from './render-routed.tsx';
 import {
   SystemMaintenance,
@@ -50,14 +49,6 @@ test('restart notes alone leave System Open Conditions empty', async () => {
   const html = await renderRouted(<SystemOpenConditions items={[restarted]} now={1000} />);
   expect(html).toContain('No open Condition or uncertain evidence.');
   expect(html).not.toContain('<details');
-});
-
-test('the Fleet unpaired section keeps Service restarted notes', async () => {
-  const html = await renderRouted(
-    <OpenNow items={[{ ...restarted, unpaired: true }]} now={1000} />,
-  );
-  expect(html).toContain('Service restarted');
-  expect(html).toContain('/conditions/restart');
 });
 
 const update = (level: 'alert' | 'note' | 'warning'): Attention => ({
@@ -113,17 +104,6 @@ test('a Pending update at warning stays in Open Conditions, and no Maintenance s
 
   expect(html).toContain('/conditions/update-warning');
   expect(await renderRouted(<SystemMaintenance items={items} now={1000} />)).toBe('');
-});
-
-test("Compare's Open now leaves out maintenance notes and keeps a warning and a Service restarted note", async () => {
-  const html = await renderRouted(
-    <OpenNow items={[update('note'), reboot, update('warning'), restarted]} now={1000} />,
-  );
-
-  expect(html).not.toContain('/conditions/update-note');
-  expect(html).not.toContain('/conditions/reboot');
-  expect(html).toContain('/conditions/update-warning');
-  expect(html).toContain('/conditions/restart');
 });
 
 test("the wide Maintenance line links each note to its Condition page, and Service updates to the System's Services", async () => {

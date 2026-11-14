@@ -177,11 +177,18 @@ describe('spanTicks', () => {
     expect(gaps.slice(1).every((gap) => gap === 48 * HOUR)).toBe(true);
   });
 
-  test('a window of weeks ticks each Monday midnight', () => {
+  test('a window of weeks ticks each Monday midnight, labeled by date so the weeks differ', () => {
+    // Tuesday 13 October 05:00 for 30 days, the Activity page's longest range.
     const from = Date.UTC(2026, 9, 13, 5, 0, 0);
-    const ticks = spanTicks({ from, to: from + 60 * 24 * HOUR }, 'UTC');
-    expect(ticks.length).toBeLessThanOrEqual(10);
-    expect(labels(ticks.slice(1, -1)).every((label) => label === 'Mon')).toBe(true);
+    const ticks = spanTicks({ from, to: from + 30 * 24 * HOUR }, 'UTC');
+    expect(labels(ticks)).toEqual([
+      '13 Oct 05:00',
+      '19 Oct',
+      '26 Oct',
+      '2 Nov',
+      '9 Nov',
+      '12 Nov 05:00',
+    ]);
   });
 
   test('a window of months ticks every few Mondays, about 8 of them, labeled by date', () => {
