@@ -1,17 +1,7 @@
-import { CONDITION_KIND_NAMES } from '@heimdall/schema';
-
-import type {
-  ConditionMark,
-  CpuBucket,
-  Gap,
-  Lane,
-  LaneStatus,
-  Stretch,
-} from '../server/fleet-overview-types.ts';
-import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
-import { clockSpan, whenAt } from './phrase.ts';
+import type { ConditionMark, CpuBucket, Gap, LaneStatus } from '../server/fleet-overview-types.ts';
+import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
-import { formatCost, spanBox } from './time.ts';
+import { spanBox } from './time.ts';
 import type { Window } from './time.ts';
 
 const BUCKET_MS = 5 * 60_000;
@@ -67,43 +57,6 @@ const STATUS_WORDS: Record<LaneStatus, string> = {
 
 export const statusWord = (status: LaneStatus): string => STATUS_WORDS[status];
 
-const vitalsText = ({
-  cpuBusyPercent,
-  memoryUsedPercent,
-}: {
-  cpuBusyPercent: number;
-  memoryUsedPercent: number | undefined;
-}) =>
-  `CPU ${String(Math.round(cpuBusyPercent))}%, memory ${memoryUsedPercent === undefined ? 'unknown' : `${String(Math.round(memoryUsedPercent))}%`}`;
-
-const vitalsPhrase = (latest: Lane['latest'], now: number): Phrase =>
-  latest === undefined
-    ? ['no Vitals']
-    : [`${vitalsText(latest)} · sample time `, whenAt(latest.t, now)];
-
-// Last seen can advance without new Vitals, and sample times use the System's
-// clock. Date readings by their sample time without inferring freshness.
-export const nowLine = (lane: Lane, now: number): Phrase => {
-  if (lane.status === 'unpaired') {
-    if (lane.lastSeenAt === undefined) {
-      return ['never seen'];
-    }
-    return ['last seen ', whenAt(lane.lastSeenAt, now), ', ', ...vitalsPhrase(lane.latest, now)];
-  }
-  if (lane.status === 'never_seen') {
-    return ['never seen'];
-  }
-  if (lane.status === 'asleep') {
-    return lane.lastSeenAt === undefined
-      ? ['asleep']
-      : ['asleep since ', whenAt(lane.lastSeenAt, now)];
-  }
-  if (lane.lastSeenAt !== undefined && now - lane.lastSeenAt > QUIET_AFTER_MS) {
-    return ['silent since ', whenAt(lane.lastSeenAt, now)];
-  }
-  return vitalsPhrase(lane.latest, now);
-};
-
 const HARNESS_NAMES: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 const HARNESS_COLORS: Record<string, string> = {
@@ -122,26 +75,6 @@ export const ownHarnessColor = (harness: string): string | undefined => HARNESS_
 export const harnessColor = (harness: string): string =>
   ownHarnessColor(harness) ?? 'var(--chart-3)';
 
-// A Session stretch's tooltip: "fleet on main, Codex, 07:40 to 08:15, $4.05,
-// process linked".
-export const stretchTitle = (stretch: Stretch): Phrase => {
-  const what =
-    stretch.project !== undefined && stretch.branch !== undefined
-      ? `${stretch.project} on ${stretch.branch}`
-      : (stretch.project ?? stretch.branch ?? 'Session');
-  return [
-    `${what}, ${harnessName(stretch.harness)}, `,
-    ...clockSpan(stretch.startedAt, stretch.endedAt),
-    `, ${formatCost(stretch.costUsd)}, process ${stretch.link}`,
-  ];
-};
-
-// A Condition's raised mark: "Job failing, photos-sync, since 03:04".
-export const raisedTitle = (mark: ConditionMark, now: number): Phrase => [
-  `${CONDITION_KIND_NAMES[mark.kind]}, ${mark.subject}, since `,
-  whenAt(mark.raisedAt, now),
-];
-
 // When a Condition was raised and cleared, "Tue 03:04 to 03:40", or "... to
 // now" while it is open.
 export const markSpan = (mark: ConditionMark, now: number): Phrase => [
@@ -149,7 +82,3 @@ export const markSpan = (mark: ConditionMark, now: number): Phrase => [
   ' to ',
   mark.clearedAt === undefined ? 'now' : whenAt(mark.clearedAt, now),
 ];
-
-// A Condition's cleared mark: "Service down cleared for ollama."
-export const clearedTitle = (mark: ConditionMark): string =>
-  `${CONDITION_KIND_NAMES[mark.kind]} cleared for ${mark.subject}.`;

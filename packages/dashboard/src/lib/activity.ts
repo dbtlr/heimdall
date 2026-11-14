@@ -12,6 +12,7 @@ import type {
   AlertActivity,
   ConditionActivity,
 } from '../server/activity-types.ts';
+import { pinFromSearch } from './activity-moment.ts';
 import { knownValues, stringList } from './filter-search.ts';
 import { formatSpan } from './time.ts';
 
@@ -107,12 +108,18 @@ export const activityCounts = (events: readonly ActivityEvent[], filters: Activi
   return { kind, system };
 };
 
-// The search parameters Activity keeps: a known kind, a known range, one System.
-export const activitySearch = (search: Record<string, unknown>) => ({
-  kind: knownValues(search.kind, ACTIVITY_KINDS)?.[0],
-  range: isActivityRange(search.range) ? search.range : DEFAULT_ACTIVITY_RANGE,
-  system: stringList(search.system)[0],
-});
+// The search parameters Activity keeps: a known kind, a known range, one
+// System, and the moment pinned on the axis with the System it was pinned on.
+export const activitySearch = (search: Record<string, unknown>) => {
+  const pin = pinFromSearch(search);
+  return {
+    kind: knownValues(search.kind, ACTIVITY_KINDS)?.[0],
+    pin: pin?.at,
+    pinOn: pin?.system,
+    range: isActivityRange(search.range) ? search.range : DEFAULT_ACTIVITY_RANGE,
+    system: stringList(search.system)[0],
+  };
+};
 
 // Where the retired Timeline address leads: Activity, keeping a System chosen.
 export const timelineRedirect = (

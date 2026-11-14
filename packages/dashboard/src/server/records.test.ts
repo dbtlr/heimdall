@@ -20,7 +20,7 @@ import type {
 } from '@heimdall/schema';
 
 import { Route } from '../routes/api.v1.records.ts';
-import { readFleetOverview } from './fleet-overview.ts';
+import { readFleetGlance } from './fleet-overview.ts';
 import { recordsAnswer } from './records.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -795,10 +795,7 @@ describe('reading the records', () => {
       }),
     );
 
-    const { lanes } = await readFleetOverview(h.db.sql, {
-      now: NOW,
-      range: '24h',
-    });
+    const { lanes } = await readFleetGlance(h.db.sql, { now: NOW });
     expect((await read(h)).map((entry) => entry.system)).toEqual(lanes.map((lane) => lane.name));
   });
 

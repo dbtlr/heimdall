@@ -7,7 +7,7 @@ import { filesRecordDigest } from '@heimdall/schema';
 import { readActivity } from './activity.ts';
 import type { Attention, AttentionKind } from './attention-types.ts';
 import { readAttention } from './attention.ts';
-import { readFleetOverview } from './fleet-overview.ts';
+import { readFleetGlance } from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -130,9 +130,8 @@ test('a hot process keeps its stored level while a newer sample awaits evaluatio
     level: 'warning',
     reason: 'compiler (PID 42) above 0.5 cores for 120 minutes in 240 minutes.',
   });
-  const fleet = await readFleetOverview(h.db.sql, { now: NOW, range: '6h' });
+  const fleet = await readFleetGlance(h.db.sql, { now: NOW });
   expect(fleet.lanes.find(({ name }) => name === 'server-1')).toMatchObject({
-    conditions: [{ kind: 'hot_process', level: 'warning' }],
     status: 'needs_you',
   });
   const activity = await readActivity(h.db.sql, { now: NOW, range: '24h', system: 'server-1' });
@@ -764,7 +763,7 @@ test('update attention reads actual observations independently of fresh Vitals a
     evidence: 'unknown',
     level: 'note',
   });
-  const fleet = await readFleetOverview(h.db.sql, { now: NOW, range: '6h' });
+  const fleet = await readFleetGlance(h.db.sql, { now: NOW });
   expect(fleet.lanes.find(({ name }) => name === 'server-1')).toMatchObject({
     status: 'needs_you',
   });

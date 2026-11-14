@@ -36,20 +36,6 @@ export type Gap = { from: number; to: number };
 
 export type Link = 'linked' | 'ambiguous' | 'unmatched';
 
-// One stretch of an agent Session, with the facts of its Session for the tooltip.
-export type Stretch = {
-  branch: string | undefined;
-  // The Session's cost at list price, undefined when any request is unpriced.
-  costUsd: number | undefined;
-  endedAt: number;
-  harness: string;
-  link: Link;
-  // The last directory name of the Session's working directory.
-  project: string | undefined;
-  sessionId: string;
-  startedAt: number;
-};
-
 // A Condition raised or cleared within the range; either time may fall
 // outside it.
 export type ConditionMark = {
@@ -78,14 +64,6 @@ export type SystemGlance = {
   status: LaneStatus;
 };
 
-// A System's glance with its history over the range, drawn on Compare.
-export type Lane = SystemGlance & {
-  buckets: CpuBucket[];
-  conditions: ConditionMark[];
-  gaps: Gap[];
-  stretches: Stretch[];
-};
-
 export type FleetGlance<L extends SystemGlance = SystemGlance> = {
   // Everything that needs the operator on the Systems shown, with the evidence
   // behind it: newest first detected first, those on paired Systems first.
@@ -101,5 +79,3 @@ export type FleetGlance<L extends SystemGlance = SystemGlance> = {
   // The unpaired Systems' lanes, empty unless they were asked for.
   unpairedLanes: L[];
 };
-
-export type FleetOverview = FleetGlance<Lane> & { from: number; range: Range; to: number };

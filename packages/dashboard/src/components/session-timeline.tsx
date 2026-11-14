@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { spanTicks } from '../lib/axis.ts';
 import { harnessColor } from '../lib/lane.ts';
+import { LANE_GRID } from '../lib/layout.ts';
 import { modelColor, modelFamily, modelName } from '../lib/session-format.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
 import { commandMarks } from '../lib/session.ts';
@@ -14,7 +15,6 @@ import type { SessionRequest, SessionView } from '../server/session-view-types.t
 import { CpuPlot } from './cpu-plot.tsx';
 import { DateTime } from './date-time.tsx';
 import { DetailAxis, DetailRow, DetailTrack } from './detail-track.tsx';
-import { LANE_GRID } from './fleet-lane.tsx';
 import { ProcessLinkBar } from './process-link-bar.tsx';
 import { ProcessPlot } from './process-plot.tsx';
 import { RequestInspector } from './request-inspector.tsx';

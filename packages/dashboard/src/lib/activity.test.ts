@@ -236,14 +236,18 @@ test('each chip counts what it would show, constrained by the other filter only'
 });
 
 test('the search keeps a known kind, range, and System and drops the rest', () => {
-  expect(activitySearch({ kind: 'stop', range: '30d', system: 'server-1' })).toEqual({
+  expect(activitySearch({ kind: 'stop', range: '30d', system: 'server-1' })).toMatchObject({
     kind: 'stop',
     range: '30d',
     system: 'server-1',
   });
-  expect(activitySearch({ kind: 'nope', range: '1y', system: 5 })).toEqual({
+  expect(activitySearch({ kind: 'nope', range: '1y', system: 5 })).toMatchObject({
     kind: undefined,
     range: '7d',
     system: '5',
+  });
+  expect(activitySearch({ pin: '1700000000000', pinOn: 'server-1' })).toMatchObject({
+    pin: 1_700_000_000_000,
+    pinOn: 'server-1',
   });
 });

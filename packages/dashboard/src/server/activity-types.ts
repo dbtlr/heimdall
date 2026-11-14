@@ -3,6 +3,8 @@
 
 import type { ConditionKind, ConditionLevel } from '@heimdall/schema';
 
+import type { CpuBucket } from './fleet-overview-types.ts';
+
 export const ACTIVITY_RANGES = ['24h', '7d', '30d'] as const;
 export type ActivityRange = (typeof ACTIVITY_RANGES)[number];
 
@@ -72,11 +74,27 @@ export type StopActivity = {
 
 export type ActivityEvent = AlertActivity | ConditionActivity | StopActivity | VersionActivity;
 
-// `systems` names every System the events or the Hub's pairings hold, and
-// `unpaired` the ones whose history is kept.
+// One stretch of an agent Session on a System, drawn on the shared axis.
+export type AxisStretch = { endedAt: number; harness: string; startedAt: number };
+
+// What the shared axis draws for one System: its CPU busy in `bucketMs`
+// buckets, the CPU limit the Hub judges it by, and the stretches of its
+// Sessions that overlap the range.
+export type AxisLane = {
+  buckets: CpuBucket[];
+  cpuLimit: number | undefined;
+  stretches: AxisStretch[];
+  system: string;
+};
+
+// `systems` names every System the events, the Sessions, or the Hub's
+// pairings hold, and `unpaired` the ones whose history is kept. `lanes` holds
+// the axis of each of them, whose CPU buckets are `bucketMs` wide.
 export type Activity = {
+  bucketMs: number;
   events: ActivityEvent[];
   from: number;
+  lanes: AxisLane[];
   now: number;
   range: ActivityRange;
   systems: string[];

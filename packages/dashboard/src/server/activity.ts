@@ -3,6 +3,7 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { shownElsewhere } from '../lib/attention.ts';
+import { axisBucketMs, readAxisLanes, readAxisStretches } from './activity-axis.ts';
 import { ACTIVITY_RANGE_MS } from './activity-types.ts';
 import type {
   Activity,
@@ -91,7 +92,7 @@ type ActivityInput = { now: number; range: ActivityRange; system?: string | unde
 
 // Every change in the range that ends at `now`, in a snapshot `tx` holds:
 // Condition transitions, Drift, Service version changes and stops, and alerts
-// sent, on paired Systems and on unpaired ones, whose history is kept. With
+// sent, with each System's CPU and Session stretches for the shared axis, on paired Systems and on unpaired ones, whose history is kept. With
 // `system`, that System's alone. Each source is found by time through an
 // index, so a read costs what its window holds. Changes to recorded files and
 // Harness installs are not listed, as neither keeps a history.
@@ -102,11 +103,12 @@ export const readActivitySnapshot = async (
   const from = now - ACTIVITY_RANGE_MS[range];
   const [start, end] = [new Date(from), new Date(now)];
   const only = system ?? null;
-  const [transitions, deliveries, pairings, services]: [
+  const [transitions, deliveries, pairings, services, stretches]: [
     TransitionRow[],
     DeliveryRow[],
     { system: string }[],
     Awaited<ReturnType<typeof readServiceChanges>>,
+    Awaited<ReturnType<typeof readAxisStretches>>,
   ] = await Promise.all([
     tx`
       SELECT c.id::text AS id, c.system, c.kind, c.subject, c.raised_at, c.cleared_at,
@@ -130,6 +132,7 @@ export const readActivitySnapshot = async (
       since: from,
       ...(system === undefined ? {} : { system }),
     }),
+    readAxisStretches(tx, { from: start, only, to: end }),
   ]);
   const paired = new Set(pairings.map((row) => row.system));
   const events: ActivityEvent[] = [
@@ -140,13 +143,18 @@ export const readActivitySnapshot = async (
   const systems = new Set([
     ...(system === undefined ? paired : []),
     ...events.map((event) => event.system),
+    ...stretches.keys(),
   ]);
+  const names = [...systems].toSorted((a, b) => a.localeCompare(b));
+  const bucketMs = axisBucketMs(now - from);
   return {
+    bucketMs,
     events,
     from,
+    lanes: await readAxisLanes(tx, { from, stretches, systems: names, to: now, widthMs: bucketMs }),
     now,
     range,
-    systems: [...systems].toSorted((a, b) => a.localeCompare(b)),
+    systems: names,
     unpaired: [...systems].filter((name) => !paired.has(name)).toSorted(),
   };
 };

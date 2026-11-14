@@ -9,6 +9,11 @@ const FRAME_WIDTH = {
 
 export type FrameWidth = keyof typeof FRAME_WIDTH;
 
+// A grid that gives the label column a fixed width beside the track, and
+// stacks them on a phone. A page with longer labels widens the column by
+// setting --lane-label on an element around its lanes.
+export const LANE_GRID = 'grid gap-1.5 sm:grid-cols-[var(--lane-label,176px)_1fr] sm:gap-4';
+
 // `phonePaddingOnly` keeps the 14px side padding at every width, for the one
 // page that never widened it.
 export const contentFrame = (width: FrameWidth, phonePaddingOnly = false): string =>

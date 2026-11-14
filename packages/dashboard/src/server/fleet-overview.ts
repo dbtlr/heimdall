@@ -4,19 +4,15 @@ import type { SQL } from 'bun';
 
 import type { Attention } from './attention-types.ts';
 import { readAttention } from './attention.ts';
-import { readConditionTransitions } from './condition-transitions.ts';
-import { isRange, QUIET_AFTER_MS, RANGES } from './fleet-overview-types.ts';
+import { QUIET_AFTER_MS } from './fleet-overview-types.ts';
 import type {
   ConditionMark,
   CpuBucket,
   FleetGlance,
-  FleetOverview,
   Gap,
-  Lane,
   LaneStatus,
   Link,
   Range,
-  Stretch,
   SystemGlance,
 } from './fleet-overview-types.ts';
 import { bySystem, conditionKind, field } from './hub-rows.ts';
@@ -26,16 +22,6 @@ import { readSilencedUntil } from './silences.ts';
 export const parseGlanceInput = (input: unknown): { unpaired: boolean } => ({
   unpaired: field(input, 'unpaired') === true,
 });
-
-// What an overview request asks for: its `range`, 24h when it names none, and
-// whether it wants the unpaired Systems too.
-export const parseOverviewInput = (input: unknown): { range: Range; unpaired: boolean } => {
-  const asked = field(input, 'range');
-  if (asked !== undefined && !isRange(asked)) {
-    throw new Error(`The range ${JSON.stringify(asked)} is not one of ${RANGES.join(', ')}.`);
-  }
-  return { range: asked ?? '24h', ...parseGlanceInput(input) };
-};
 
 const MINUTE_MS = 60_000;
 export const BUCKET_MS = 5 * MINUTE_MS;
@@ -169,24 +155,6 @@ export const toBucket = (row: BucketRow): CpuBucket => ({
   low: row.cpu_busy_min,
   t: row.bucket.getTime(),
 });
-
-const toStretch = (row: StretchRow): Stretch => {
-  if (!isLink(row.link)) {
-    throw new Error(
-      `The Hub holds a stretch with link ${row.link}, which the dashboard does not know.`,
-    );
-  }
-  return {
-    branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
-    costUsd: row.cost_usd === null ? undefined : Number(row.cost_usd),
-    endedAt: row.ended_at.getTime(),
-    harness: row.harness,
-    link: row.link,
-    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
-    sessionId: row.session_id,
-    startedAt: row.started_at.getTime(),
-  };
-};
 
 export const toMark = (row: ConditionRow, transitions: ConditionTransition[]): ConditionMark => ({
   clearedAt: row.cleared_at?.getTime(),
@@ -366,60 +334,6 @@ export const readGlanceSnapshot = async (
   };
 };
 
-// The glance with every System drawn as a lane on one time axis over the
-// `range` that ends at `now`. Read-only.
-const readFleetOverviewSnapshot = async (
-  sql: SQL,
-  { now, range, unpaired = false }: { now: number; range: Range; unpaired?: boolean },
-): Promise<FleetOverview> => {
-  const glance = await readGlanceSnapshot(sql, { now, unpaired });
-  const from = now - RANGE_MS[range];
-  const [fromAt, toAt] = [new Date(from), new Date(now)];
-  const names = [...glance.lanes, ...glance.unpairedLanes].map(({ name }) => name);
-  if (names.length === 0) {
-    return { ...glance, from, lanes: [], range, to: now, unpairedLanes: [] };
-  }
-  const [buckets, stretches, marks]: [BucketRow[], StretchRow[], ConditionRow[]] =
-    await Promise.all([
-      readCpuBuckets(sql, { from, names, to: now }),
-      readStretches(sql, { from, systems: names, to: now }),
-      sql`
-        SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
-        FROM conditions
-        WHERE system IN ${sql(names)}
-          AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
-        ORDER BY raised_at, id
-      `,
-    ]);
-  const bucketsOf = bySystem(buckets);
-  const stretchesOf = bySystem(stretches);
-  const marksOf = bySystem(marks);
-  const transitions = await readConditionTransitions(sql, marks);
-  const laneOf = (system: SystemGlance): Lane => {
-    const own = (bucketsOf.get(system.name) ?? []).map(toBucket);
-    return {
-      ...system,
-      buckets: own,
-      conditions: (marksOf.get(system.name) ?? []).map((row) =>
-        toMark(row, transitions.get(row.id) ?? []),
-      ),
-      gaps: findGaps(
-        own.map(({ t }) => t),
-        { from, now },
-      ),
-      stretches: (stretchesOf.get(system.name) ?? []).map(toStretch),
-    };
-  };
-  return {
-    ...glance,
-    from,
-    lanes: glance.lanes.map(laneOf),
-    range,
-    to: now,
-    unpairedLanes: glance.unpairedLanes.map(laneOf),
-  };
-};
-
 // Each read sees one snapshot, so a System's status agrees with the attention
 // beside it, and current levels with their transitions.
 export const inSnapshot =
@@ -428,5 +342,3 @@ export const inSnapshot =
     sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => read(tx, input));
 
 export const readFleetGlance = inSnapshot(readGlanceSnapshot);
-
-export const readFleetOverview = inSnapshot(readFleetOverviewSnapshot);

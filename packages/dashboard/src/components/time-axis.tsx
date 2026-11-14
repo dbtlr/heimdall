@@ -2,10 +2,10 @@ import type { ReactNode } from 'react';
 
 import { crowdsAnEndWhenNarrow } from '../lib/axis.ts';
 import type { Tick } from '../lib/axis.ts';
+import { LANE_GRID } from '../lib/layout.ts';
 import { xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
-import { LANE_GRID } from './fleet-lane.tsx';
 
 const ALIGN = { end: '-translate-x-full', middle: '-translate-x-1/2', start: '' } as const;
 

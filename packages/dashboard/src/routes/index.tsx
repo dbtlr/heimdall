@@ -96,10 +96,9 @@ function Home() {
       </div>
       <Link
         className="mt-2 inline-flex min-h-11 items-center text-base text-primary underline underline-offset-4"
-        search={{ unpaired: showUnpaired || undefined }}
-        to="/compare"
+        to="/activity"
       >
-        Compare on one time axis →
+        Activity on one time axis →
       </Link>
       {showUnpaired && (
         <section className="mt-4">

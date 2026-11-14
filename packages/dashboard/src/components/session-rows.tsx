@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { costPlacement } from '../lib/detail.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
+import { LANE_GRID } from '../lib/layout.ts';
 import { clockSpan, phraseTitle } from '../lib/phrase.ts';
 import type { Phrase } from '../lib/phrase.ts';
 import { formatCost, spanBox } from '../lib/time.ts';
@@ -13,7 +14,6 @@ import type { Link as ProcessLink } from '../server/fleet-overview-types.ts';
 import type { SessionRow } from '../server/system-detail-types.ts';
 import { PhraseText } from './date-time.tsx';
 import { DetailTrack } from './detail-track.tsx';
-import { LANE_GRID } from './fleet-lane.tsx';
 
 const ROW_PX = 22;
 

@@ -1,13 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { atFromSearch, rangeFromSearch, rangeLead } from './range.ts';
-
-test.each([['24h', 'Last 24 hours']] as const)(
-  'the %s range title leads with %s',
-  (range, lead) => {
-    expect(rangeLead(range)).toBe(lead);
-  },
-);
+import { atFromSearch, rangeFromSearch } from './range.ts';
 
 test('the range comes from the search, defaulting to 24h', () => {
   expect(rangeFromSearch({ range: '7d' })).toBe('7d');
