@@ -18,7 +18,7 @@ import type { ReportIdentity } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { fileReader } from './harness-installs.ts';
 import { startHarnessScan } from './harness-scan.ts';
-import { readIdentity, stillPaired } from './identity.ts';
+import { daemonStillPaired, readIdentity } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { systemReader } from './processes/loop.ts';
 import { openProcessNames } from './processes/names.ts';
@@ -203,9 +203,10 @@ export const runAction: ActionHandler<typeof run> = async ({
       signal,
     });
     const stopCapture = startCapture({ capture, log: runtime, now: Date.now, signal });
-    // The daemon writes the store only to settle the job runs the Hub took;
-    // `record`, `forget`, and `pair` write the rest. The
-    // checks and the reporter each open it on first use, through a connection
+    // The daemon writes the store only to settle job runs: the ones the Hub
+    // took, and the held runs the reporter skips because the section cannot
+    // carry them (`heldRuns()` settles those as it reads). `record`, `forget`,
+    // and `pair` write the rest. The checks and the reporter each open it on first use, through a connection
     // of their own, so a store that will not open costs only the checks, the
     // records, and the runs. The file checks hash on their own schedule and the
     // Service checks run every minute, each in a loop of its own, and the
@@ -254,7 +255,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       open: () => openRecords({ stateDir }),
       // `pair` may store another identity while this daemon runs; the job runs
       // it then holds are for the Hub of that identity, not this one (ADR-0023).
-      paired: () => stillPaired({ hub: options.hub.origin, stateDir, token }),
+      paired: daemonStillPaired({ hub: options.hub, stateDir, token }),
       ...(stops === undefined ? {} : { stops }),
       updates,
     });

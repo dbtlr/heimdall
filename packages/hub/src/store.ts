@@ -1,4 +1,4 @@
-import { mirrorChecks, mirrorRecords, mirrorRuns } from '@heimdall/schema';
+import { mirrorChecks, mirrorRecords, mirrorRuns, takeJobRuns } from '@heimdall/schema';
 import type {
   ChecksSection,
   ConditionKind,
@@ -7,7 +7,7 @@ import type {
   RecordsSection,
   Report,
   RunsSection,
-  JobRunsSection,
+  ReportedJobRunsSection,
   ServiceStopsSection,
   TranscriptsSection,
 } from '@heimdall/schema';
@@ -37,7 +37,11 @@ export const seeSystem = async (sql: SQL, { at, system }: { at: number; system: 
 // unless the Hub already holds one for the same System and time (ADR-0004).
 export const storeReport = (
   sql: SQL,
-  { receivedAt, report }: { receivedAt: number; report: Report },
+  {
+    onWarn,
+    receivedAt,
+    report,
+  }: { onWarn?: ((message: string) => void) | undefined; receivedAt: number; report: Report },
 ): Promise<StoreResult> =>
   sql.begin(async (tx) => {
     const seenAt = new Date(receivedAt);
@@ -196,7 +200,13 @@ export const storeReport = (
       await storeServiceStops(tx, { receivedAt: seenAt, report, section: report.serviceStops });
     }
     if (report.jobRuns !== undefined) {
-      await storeJobRuns(tx, { receivedAt: seenAt, report, section: report.jobRuns });
+      await storeJobRuns(tx, {
+        arrival: receivedAt,
+        onWarn,
+        receivedAt: seenAt,
+        report,
+        section: report.jobRuns,
+      });
     }
     if (report.updates !== undefined) {
       await storeUpdates(tx, { receivedAt, section: report.updates, system: report.system });
@@ -457,15 +467,46 @@ const storeServiceStops = async (
   `;
 };
 
+// The longest a dropped run's job or start is shown in a warning.
+const MAX_SHOWN = 200;
+
+const shown = (text: string) => (text.length > MAX_SHOWN ? `${text.slice(0, MAX_SHOWN)}…` : text);
+
 // Each run is the whole run, so a run sent again replaces its row, `output`
 // included, under the same sent-time guard as Service stops. Times convert from
 // epoch milliseconds as for stops, since PostgreSQL does not read year 0000 as
-// text, and the section accepts years 0000 to 9999.
+// text. The Hub takes the entries one at a time (ADR-0004): a run it drops is
+// warned about and never touches the row it would have replaced.
 const storeJobRuns = async (
   sql: SQL,
-  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: JobRunsSection },
+  {
+    arrival,
+    onWarn,
+    receivedAt,
+    report,
+    section,
+  }: {
+    arrival: number;
+    onWarn: ((message: string) => void) | undefined;
+    receivedAt: Date;
+    report: Report;
+    section: ReportedJobRunsSection;
+  },
 ) => {
-  const runs = section.runs.map(({ exitStatus, finished, job, output, started }) => ({
+  const { dropped, taken } = takeJobRuns(section.runs, arrival);
+  for (const { job, reason, started } of dropped) {
+    const named = [
+      job === undefined ? undefined : `job ${shown(job)}`,
+      started === undefined ? undefined : `started ${shown(started)}`,
+    ].filter((part) => part !== undefined);
+    onWarn?.(
+      `Dropped a job run from ${report.system}${named.length > 0 ? ` (${named.join(', ')})` : ''}: ${shown(reason)}.`,
+    );
+  }
+  if (taken.length === 0) {
+    return;
+  }
+  const runs = taken.map(({ exitStatus, finished, job, output, started }) => ({
     exitStatus,
     finished: Date.parse(finished),
     job,

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ChecksSectionSchema } from './checks-section.ts';
 import { HarnessProcessesSectionSchema } from './harness-processes-section.ts';
 import { HarnessesSectionSchema } from './harnesses-section.ts';
-import { JobRunsSectionSchema } from './job-runs-section.ts';
+import { ReportedJobRunsSectionSchema } from './job-runs-section.ts';
 import { ProcessObservationSchema } from './process-observation.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
@@ -104,8 +104,9 @@ export const ReportSchema = z.object({
   // another arrives.
   harnesses: HarnessesSectionSchema.optional(),
   // While the Collector holds job runs the Hub has not taken; each run rides
-  // Reports until one carrying it is delivered (ADR-0023).
-  jobRuns: JobRunsSectionSchema.optional(),
+  // Reports until one carrying it is delivered (ADR-0023). The Hub checks each run
+  // itself, so a bad run costs only that run (ADR-0004).
+  jobRuns: ReportedJobRunsSectionSchema.optional(),
   // Only when the Collector's record set changed, it started, or an hour
   // passed; the Hub keeps the System's mirror until another arrives (ADR-0011).
   records: RecordsSectionSchema.optional(),

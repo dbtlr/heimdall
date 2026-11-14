@@ -4,7 +4,7 @@ import type { SentJobRun } from '@heimdall/schema';
 
 import { pruneJobRuns } from './retention.ts';
 import { storeReport } from './store.ts';
-import { NOW, report, startHub } from './testing/hub.ts';
+import { NOW, push, report, startHub } from './testing/hub.ts';
 import { plainRows } from './testing/postgres.ts';
 
 const DAY = 86_400_000;
@@ -18,6 +18,8 @@ const jobRun = (startedAt: number, extra: Partial<SentJobRun> = {}): SentJobRun 
   started: whole(startedAt),
   ...extra,
 });
+
+const MINUTE = 60_000;
 
 const send = (
   h: Awaited<ReturnType<typeof startHub>>,
@@ -111,10 +113,15 @@ test('a run first sent from a clock an hour ahead is replaced once the clock is 
 
 test('runs from year 0000 to 9999 are stored in any order, even without a mirrored job', async () => {
   await using h = await startHub();
-  await send(h, [
-    jobRun(Date.parse('9999-12-31T23:59:50Z'), { job: 'late' }),
-    jobRun(Date.parse('0000-01-01T00:00:00Z'), { job: 'early' }),
-  ]);
+  // The Hub's clock is in year 9999 too, so the late run is not ahead of it.
+  await send(
+    h,
+    [
+      jobRun(Date.parse('9999-12-31T23:59:50Z'), { job: 'late' }),
+      jobRun(Date.parse('0000-01-01T00:00:00Z'), { job: 'early' }),
+    ],
+    { receivedAt: Date.parse('9999-12-31T23:59:59Z') },
+  );
 
   expect(await stored(h)).toMatchObject([
     { job: 'early', started_at: new Date(Date.parse('0000-01-01T00:00:00Z')) },
@@ -160,4 +167,137 @@ test('pruning keeps a run exactly 90 days old even when 14 later runs of its job
 
   expect(await pruneJobRuns(h.db.sql, NOW)).toBe(0);
   expect(await stored(h)).toHaveLength(15);
+});
+
+const sendBody = (h: Awaited<ReturnType<typeof startHub>>, jobRuns: unknown, extra = {}) =>
+  push(h.hub, { ...report('laptop-1', [NOW]), ...extra, jobRuns }, { token: 'laptop-token' });
+
+test('a Report with a bad run among good ones stores the good runs and the other sections', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+  const response = await sendBody(
+    h,
+    {
+      runs: [jobRun(started), jobRun(started + 1000, { exitStatus: 256 }), jobRun(started + 2000)],
+    },
+    {
+      records: {
+        records: [
+          {
+            kind: 'job',
+            name: 'backup',
+            record: {
+              label: 'com.example.backup',
+              name: 'backup',
+              schedule: [{ hour: 3 }],
+              scheduler: 'launchd',
+            },
+          },
+        ],
+        unreadable: [],
+      },
+      runs: {
+        jobs: [{ job: 'backup', latestRun: jobRun(started), latestSuccess: null }],
+        unreadable: [],
+      },
+    },
+  );
+
+  expect(response.status).toBe(200);
+  expect(await stored(h)).toMatchObject([
+    { started_at: new Date(started) },
+    { started_at: new Date(started + 2000) },
+  ]);
+  const mirrored: { name: string }[] = await h.db.sql`SELECT name FROM mirrored_records`;
+  expect(mirrored.map((row) => row.name)).toEqual(['backup']);
+  const latest: { job: string }[] = await h.db.sql`SELECT job FROM mirrored_runs`;
+  expect(latest.map((row) => row.job)).toEqual(['backup']);
+  expect(await h.db.sql`SELECT 1 FROM conditions WHERE kind = 'reports_rejected'`).toHaveLength(0);
+});
+
+test('a null and a string entry are dropped and the runs around them stored', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+
+  const response = await sendBody(h, { runs: [null, jobRun(started), 'backup'] });
+
+  expect(response.status).toBe(200);
+  expect(await stored(h)).toHaveLength(1);
+  expect(h.warnings).toHaveLength(2);
+});
+
+test('the first run of a key is kept, and an invalid run of the key does not shadow a later valid one', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+
+  await sendBody(h, {
+    runs: [jobRun(started, { exitStatus: 7 }), jobRun(started, { exitStatus: 8 })],
+  });
+  await sendBody(h, {
+    runs: [jobRun(started + 1000, { exitStatus: 999 }), jobRun(started + 1000, { exitStatus: 2 })],
+  });
+
+  expect(await stored(h)).toMatchObject([
+    { exit_status: 7, started_at: new Date(started) },
+    { exit_status: 2, started_at: new Date(started + 1000) },
+  ]);
+});
+
+test('a run more than 5 minutes ahead of the Hub clock at arrival is dropped and one exactly 5 minutes ahead kept', async () => {
+  await using h = await startHub();
+
+  const response = await sendBody(h, {
+    runs: [jobRun(NOW + 5 * MINUTE), jobRun(NOW + 5 * MINUTE + 1000, { job: 'ahead' })],
+  });
+
+  expect(response.status).toBe(200);
+  expect(await stored(h)).toMatchObject([
+    { job: 'backup', started_at: new Date(NOW + 5 * MINUTE) },
+  ]);
+  expect(h.warnings).toHaveLength(1);
+});
+
+test('a dropped replacement leaves the run stored earlier as it was', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+  await send(h, [jobRun(started, { exitStatus: 1 })]);
+
+  await sendBody(h, { runs: [jobRun(started, { exitStatus: 300 })] }, { sentAt: NOW + 1000 });
+
+  expect(await stored(h)).toMatchObject([{ exit_status: 1, sent_at: new Date(NOW) }]);
+});
+
+test.each([
+  ['a jobRuns that is not an object', 'runs'],
+  ['a runs that is not an array', { runs: {} }],
+  ['1,001 entries', { runs: Array.from({ length: 1001 }, () => null) }],
+])('%s answers 422 and stores nothing', async (_, jobRuns) => {
+  await using h = await startHub();
+
+  const response = await sendBody(h, jobRuns);
+
+  expect(response.status).toBe(422);
+  expect(await stored(h)).toEqual([]);
+});
+
+test('each dropped run logs one warning naming the System, the job and start when known, and why', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+
+  await sendBody(h, {
+    runs: [
+      jobRun(started, { exitStatus: 256 }),
+      null,
+      jobRun(started + 1000),
+      jobRun(started + 1000),
+    ],
+  });
+
+  expect(h.warnings).toHaveLength(3);
+  expect(h.warnings[0]).toContain('laptop-1');
+  expect(h.warnings[0]).toContain('backup');
+  expect(h.warnings[0]).toContain(whole(started));
+  expect(h.warnings[0]).toContain('exitStatus');
+  expect(h.warnings[1]).toContain('laptop-1');
+  expect(h.warnings[2]).toContain('repeats');
 });

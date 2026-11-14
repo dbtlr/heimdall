@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   ChecksSectionSchema,
   filesRecordDigest,
+  JobRunsSectionSchema,
   RecordsSectionSchema,
   RunsSectionSchema,
 } from '@heimdall/schema';
@@ -16,6 +17,7 @@ import type {
   JobRecord,
   Report,
   RunRecord,
+  SentJobRun,
 } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
@@ -150,6 +152,10 @@ const minutesAgo = (minutes: number, exitStatus = 0): RunRecord => {
 };
 
 // Applies `change` through a connection of its own, as `record` and `forget` do.
+// The job runs a Report carries, which the Collector built with the strict schema.
+const sentRuns = (sent: Report | undefined): SentJobRun[] =>
+  sent?.jobRuns === undefined ? [] : JobRunsSectionSchema.parse(sent.jobRuns).runs;
+
 const elsewhere = async (
   stateDir: string,
   change: (store: Awaited<ReturnType<typeof openRecords>>) => void,
@@ -639,7 +645,7 @@ test('a job whose name the section cannot carry is left out of the runs and warn
   expect(warned[0]).toContain('../escape');
   expect(warned[0]).toContain('has space');
   // The job runs report leaves them out and says so, once, however often it is read.
-  expect(report?.jobRuns?.runs.map(({ job }) => job)).toEqual(['backup']);
+  expect(sentRuns(report).map(({ job }) => job)).toEqual(['backup']);
   expect(collector.warnings.filter((m) => m.includes('job runs report'))).toHaveLength(1);
 });
 
@@ -1251,8 +1257,8 @@ test('a run recorded after a delivery is sent, and a run recorded again is sent 
   const again = await collector.push();
   collector.close();
 
-  expect(next[0]?.jobRuns?.runs.map(({ started }) => started)).toEqual([newer.started]);
-  expect(again[0]?.jobRuns?.runs.map(({ started }) => started)).toEqual([newer.started]);
+  expect(sentRuns(next[0]).map(({ started }) => started)).toEqual([newer.started]);
+  expect(sentRuns(again[0]).map(({ started }) => started)).toEqual([newer.started]);
 });
 
 test('a rejected Report keeps the job runs, warns once, and sends them after the hourly refresh', async () => {
@@ -1451,4 +1457,40 @@ test('pairing that lands while the daemon reads its identity keeps the runs held
   expect(first[0]?.jobRuns?.runs).toHaveLength(1);
   expect(later[0]?.jobRuns).toBeUndefined();
   expect(kept).toHaveLength(1);
+});
+
+// A held row the Hub could not take is left out, settled, and warned about once,
+// while the valid run behind it is sent (ADR-0023).
+test('held runs the section cannot carry are settled and warned about, and the valid run still goes', async () => {
+  await using dir = await tempStateDir();
+  const [odd, good, wrongBody] = [minutesAgo(30), minutesAgo(20), minutesAgo(10)] as const;
+  await seededRuns(dir, good);
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  const insert = db.query(
+    'INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES (?, ?, ?, ?, ?)',
+  );
+  // A job name the strict section schema rejects, and a body that starts at
+  // another time than its key.
+  insert.run('Not A Name', odd.started, Date.parse(odd.started), 0, JSON.stringify(odd));
+  insert.run(
+    'backup',
+    wrongBody.started,
+    Date.parse(wrongBody.started),
+    0,
+    JSON.stringify(minutesAgo(1)),
+  );
+  db.close();
+  const collector = await setup(dir);
+
+  const first = await collector.push();
+  const second = await collector.push();
+  collector.close();
+
+  expect(first[0]?.jobRuns).toEqual({ runs: [{ ...good, job: 'backup' }] });
+  expect(second[0]?.jobRuns).toBeUndefined();
+  // The runs section warns about the job name too; the job runs report warns once.
+  const warned = collector.warnings.filter((line) => line.includes('job runs report'));
+  expect(warned).toHaveLength(1);
+  expect(warned[0]).toContain('Not A Name');
+  expect(warned[0]).toContain(wrongBody.started);
 });

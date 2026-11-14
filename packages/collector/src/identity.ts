@@ -193,3 +193,11 @@ export const stillPaired = async ({
   }
   return read.kind === 'paired' && read.identity.token === token && read.identity.hub === hub;
 };
+
+// The check a daemon hands its reporter: whether the identity in `stateDir` is
+// still the one it started with, a token the Hub at `hub` issued. The Hub's
+// identity is its origin, so a Hub URL with a path still matches.
+export const daemonStillPaired =
+  ({ hub, stateDir, token }: { hub: URL; stateDir: string; token: string }) =>
+  (): Promise<boolean> =>
+    stillPaired({ hub: hub.origin, stateDir, token });
