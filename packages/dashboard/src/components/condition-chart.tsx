@@ -1,6 +1,6 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
-import type { ChartView } from '../lib/condition-detail.ts';
+import type { PlotView } from '../lib/condition-detail.ts';
 import { isLone } from '../lib/condition-detail.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { PLOT_COLOR, PlotGradient, ScaledPlot, usePlotGradientId } from './plot-scale.tsx';
@@ -26,7 +26,7 @@ export function ConditionChart({
   color = PLOT_COLOR,
   height = HEIGHT,
 }: {
-  chart: ChartView;
+  chart: PlotView;
   color?: string | undefined;
   height?: number | undefined;
 }) {

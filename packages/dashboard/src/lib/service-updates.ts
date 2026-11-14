@@ -1,7 +1,7 @@
 import { availableUpdate, newestPerChannel, packageAvailableVersion } from '@heimdall/schema';
 import type { UpdateManager } from '@heimdall/schema';
 
-import { WINDOW_DAYS } from './service-detail.ts';
+import { WINDOW_DAYS } from './service-availability.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

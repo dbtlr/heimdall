@@ -7,6 +7,7 @@ import {
 import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { aroundSpan } from '../lib/vitals-window.ts';
 import { readAttention } from './attention.ts';
 import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
 import { readConditionLimits } from './condition-limits.ts';
@@ -14,6 +15,7 @@ import { readConditionTransitions } from './condition-transitions.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
 import { readMemoryHoldersAsOf } from './memory-holders.ts';
+import { readPlatform, readVitalsWindow } from './vitals-window.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -151,35 +153,19 @@ const coresSeries = async (
   };
 };
 
-// The readings that show a Condition of this kind, or undefined for a kind
-// with nothing to chart.
-const readSeries = (
-  sql: SQL,
-  {
-    kind,
-    subject,
-    system,
-    window,
-  }: { kind: ConditionKind; subject: string; system: string; window: Window },
-): Promise<ConditionSeries | undefined> => {
-  if (kind === 'low_disk') {
-    return diskSeries(sql, { mount: subject, system, window });
-  }
-  if (kind === 'high_cpu' || kind === 'high_memory') {
-    return percentSeries(sql, { kind, system, window });
-  }
-  if (kind === 'hot_process') {
-    return coresSeries(sql, { subject, system, window });
-  }
-  return Promise.resolve(undefined);
-};
+type SeriesRead = { subject: string; system: string; window: Window };
 
-// The platform the System's Collector last reported, if any.
-const readPlatform = async (sql: SQL, system: string): Promise<string | undefined> => {
-  const [row]: { collector_platform: string | null }[] = await sql`
-    SELECT collector_platform FROM systems WHERE name = ${system}
-  `;
-  return row?.collector_platform ?? undefined;
+// How each kind that charts its own culprit reads it. Every other kind has
+// nothing of its own to chart and shows the System's Vitals around it instead.
+const SERIES_READERS: Partial<
+  Record<ConditionKind, (sql: SQL, read: SeriesRead) => Promise<ConditionSeries | undefined>>
+> = {
+  high_cpu: (sql, { system, window }) => percentSeries(sql, { kind: 'high_cpu', system, window }),
+  high_memory: (sql, { system, window }) =>
+    percentSeries(sql, { kind: 'high_memory', system, window }),
+  hot_process: coresSeries,
+  low_disk: (sql, { subject, system, window }) =>
+    diskSeries(sql, { mount: subject, system, window }),
 };
 
 // The packages the Hub holds as pending in the package source an open
@@ -243,11 +229,12 @@ export const readConditionDetail = async (
   const kind = conditionKind(row.kind);
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
+  const readSeries = SERIES_READERS[kind];
   const [transitions, limits, series, attention, packages, platform, memoryHolders] =
     await Promise.all([
       readConditionTransitions(sql, [row]),
       readConditionLimits(sql, name),
-      readSeries(sql, { kind, subject: row.subject, system: name, window }),
+      readSeries?.(sql, { subject: row.subject, system: name, window }),
       clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
       clearedAt === undefined && kind === 'pending_update'
         ? readPackages(sql, { subject: row.subject, system: name })
@@ -258,6 +245,16 @@ export const readConditionDetail = async (
         ? readMemoryHoldersAsOf(sql, { at: clearedAt, system: name })
         : undefined,
     ]);
+  const vitals =
+    readSeries === undefined
+      ? await readVitalsWindow(sql, {
+          ...aroundSpan({ from: row.raised_at.getTime(), to: clearedAt ?? now }, now),
+          limits,
+          now,
+          platform,
+          system: name,
+        })
+      : undefined;
   return {
     attention,
     clearedAt,
@@ -277,5 +274,6 @@ export const readConditionDetail = async (
     system: name,
     to: window.to,
     transitions: transitions.get(row.id) ?? [],
+    vitals,
   };
 };

@@ -554,3 +554,56 @@ describe('a package source with pending updates', () => {
     expect((await read(h, { id: reboot, name: 'server-1' }))?.packages).toBeUndefined();
   });
 });
+
+describe('Vitals around a Condition', () => {
+  test('a kind with no series of its own gets the System Vitals while it was open and 30 minutes either side', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', [sample(at(-2 * DAY))]);
+    await addVitals(h.db.sql, 'server-1', -4 * HOUR, 10);
+    await addVitals(h.db.sql, 'server-1', -3 * HOUR - 10 * MINUTE, 20);
+    await addVitals(h.db.sql, 'server-1', -HOUR - 40 * MINUTE, 30);
+    await addVitals(h.db.sql, 'server-1', -HOUR - 20 * MINUTE, 40);
+    const id = await addCondition(h.db.sql, {
+      clearedAt: -2 * HOUR,
+      kind: 'service_down',
+      raisedAt: -3 * HOUR,
+      subject: 'web',
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.series).toBeUndefined();
+    expect(detail?.vitals?.points.map(({ cpu }) => cpu)).toEqual([20, 30]);
+  });
+
+  test('a kind that charts its own series keeps it and reads no Vitals window', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', [sample(at(-2 * DAY))]);
+    const id = await addCondition(h.db.sql, {
+      kind: 'high_cpu',
+      raisedAt: -HOUR,
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.series?.kind).toBe('percent');
+    expect(detail?.vitals).toBeUndefined();
+  });
+
+  for (const kind of ['high_memory', 'hot_process', 'low_disk'] as const) {
+    test(`a ${kind} Condition charts its own series and reads no Vitals window`, async () => {
+      await using h = await startHub();
+      await hear(h, 'server-1', [sample(at(-2 * DAY))]);
+      const id = await addCondition(h.db.sql, {
+        kind,
+        raisedAt: -HOUR,
+        subject: kind === 'low_disk' ? '/' : '',
+        system: 'server-1',
+      });
+
+      expect((await read(h, { id, name: 'server-1' }))?.vitals).toBeUndefined();
+    });
+  }
+});

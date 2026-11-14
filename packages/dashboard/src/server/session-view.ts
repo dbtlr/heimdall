@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { bucketFor } from '../lib/bucket-width.ts';
 import type { CpuBucket } from './fleet-overview-types.ts';
 import { BUCKET_MS, projectOf, toBucket } from './fleet-overview.ts';
 import type { BucketRow } from './fleet-overview.ts';
@@ -15,17 +16,6 @@ import type {
 import type { ProcessSeries } from './system-detail-types.ts';
 import { linkOf, toProcesses } from './system-detail.ts';
 import type { CoresRow } from './system-detail.ts';
-
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-// The most buckets the Vitals over a Session's span are drawn in.
-const MAX_BUCKETS = 90;
-// Each divides a day, so a bucket starts on the same grid from any origin at
-// midnight UTC, the Hub's and the page's alike.
-const WIDTHS_MS = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440].map(
-  (minutes) => minutes * MINUTE_MS,
-);
 
 const field = (input: unknown, key: string): unknown =>
   typeof input === 'object' && input !== null ? Reflect.get(input, key) : undefined;
@@ -45,13 +35,6 @@ export const parseSessionInput = (input: unknown): SessionKey => ({
   source: keyPart(input, 'source'),
   system: keyPart(input, 'system'),
 });
-
-// The width of the Vitals buckets over a Session's span: the smallest of 1, 2,
-// 5, 10, 15, and 30 minutes, 1, 2, 3, 6, 12, and 24 hours, then whole days,
-// that covers the span in at most 90 buckets.
-export const bucketFor = (spanMs: number): number =>
-  WIDTHS_MS.find((width) => Math.ceil(spanMs / width) <= MAX_BUCKETS) ??
-  Math.ceil(spanMs / MAX_BUCKETS / DAY_MS) * DAY_MS;
 
 // The start of the `widthMs` bucket holding `t`. Buckets align to the epoch, as
 // the page's grid does, which is the Hub's 5-minute alignment too.

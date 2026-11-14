@@ -14,6 +14,8 @@ const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   note: undefined,
   now: NOW,
   recorded: undefined,
+  reported: [],
+  selection: undefined,
   service: 'web',
   stops: [],
   system: 'server-1',

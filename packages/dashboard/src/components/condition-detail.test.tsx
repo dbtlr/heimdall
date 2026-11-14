@@ -67,6 +67,7 @@ const diskView: ConditionDetailView = {
   },
   system: 'gateway-1',
   title: 'Low disk /',
+  vitals: undefined,
 };
 
 const html = (view: ConditionDetailView) =>

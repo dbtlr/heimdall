@@ -11,6 +11,7 @@ import {
   formatSpanShort,
   formatTime,
   formatWhen,
+  localMidnight,
   pinnedX,
   spanBox,
   xPercent,
@@ -152,5 +153,14 @@ test('formatPast dates a time from before yesterday, so one weeks ago never read
   // The local day decides: 03:30 UTC is the evening before in New York.
   expect(formatPast(Date.UTC(2026, 10, 12, 3, 30), now, 'America/New_York')).toBe(
     'Yesterday 22:30',
+  );
+});
+
+test('a local midnight holds on a day the zone changes its offset', () => {
+  // Berlin leaves summer time on 25 Oct 2026 and enters it on 29 Mar 2026.
+  expect(localMidnight(Date.UTC(2026, 9, 25, 11), 'Europe/Berlin')).toBe(Date.UTC(2026, 9, 24, 22));
+  expect(localMidnight(Date.UTC(2026, 2, 29, 10), 'Europe/Berlin')).toBe(Date.UTC(2026, 2, 28, 23));
+  expect(localMidnight(Date.UTC(2026, 9, 13, 20, 0, 30), 'Asia/Kolkata')).toBe(
+    Date.UTC(2026, 9, 13, 18, 30),
   );
 });

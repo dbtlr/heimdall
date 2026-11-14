@@ -30,7 +30,7 @@ export function TimeAxis({
         {ticks.map((tick) => (
           <span
             className={cn(
-              'absolute',
+              'absolute whitespace-nowrap',
               ALIGN[tick.edge],
               (tick.minor || crowdsAnEndWhenNarrow(tick, window)) && 'hidden sm:block',
             )}

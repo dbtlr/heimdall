@@ -2,9 +2,11 @@ import type { Range } from '../server/fleet-overview-types.ts';
 import {
   formatClock,
   formatClockSeconds,
+  formatDate,
   formatWeekday,
   localDayNumber,
   localHourMinute,
+  localMidnight,
   xPercent,
 } from './time.ts';
 import type { Window } from './time.ts';
@@ -103,7 +105,6 @@ const SPAN_STEPS_MINUTES = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720];
 const SPAN_FALLBACK_STEP_MINUTES = 720;
 // A longer window steps in whole local days instead.
 const SPAN_STEPS_DAYS = [1, 2, 7];
-const SPAN_FALLBACK_STEP_DAYS = 7;
 const SPAN_MINUTE_TICKS_UP_TO_MS = 2 * DAY_MS;
 // A shorter window needs seconds, or its labels repeat.
 const SPAN_SECONDS_BELOW_MS = 10 * MINUTE_MS;
@@ -114,12 +115,6 @@ const MONDAY_DAY_NUMBER = 4;
 const spanStep = (length: number, steps: readonly number[], fallback: number): number =>
   steps.find((step) => length / step <= SPAN_MAX_INTERVALS) ?? fallback;
 
-// The local midnight that starts the day holding `t`.
-const localMidnight = (t: number, timeZone: string): number => {
-  const { hour, minute } = localHourMinute(t, timeZone);
-  return Math.floor(t / MINUTE_MS) * MINUTE_MS - (hour * 60 + minute) * MINUTE_MS;
-};
-
 // A round tick between the ends of a window, or nothing if it crowds an end.
 const roundTick = (at: number, window: Window, label: string, minor: boolean): Tick | undefined => {
   const percent = xPercent(at, window);
@@ -129,23 +124,32 @@ const roundTick = (at: number, window: Window, label: string, minor: boolean): T
   return { at, edge: 'middle', label, minor };
 };
 
+// The days between ticks of a window of days: 1, 2, or 7, else the whole
+// number of weeks nearest to leaving SPAN_MAX_INTERVALS intervals, so a window
+// of months still shows about 8 labels.
+const dayStep = ({ from, to }: Window): number => {
+  const days = (to - from) / DAY_MS;
+  return spanStep(
+    days,
+    SPAN_STEPS_DAYS,
+    7 * Math.max(1, Math.round(days / 7 / SPAN_MAX_INTERVALS)),
+  );
+};
+
 // Ticks at the local midnights of a window of days: each day, every second
-// day, or each Monday, labeled by weekday.
+// day, each Monday, or every few Mondays. Up to a week apart they are labeled
+// by weekday, and further apart by date.
 const dayTicks = (window: Window, timeZone: string): Tick[] => {
   const { from, to } = window;
-  const step = spanStep((to - from) / DAY_MS, SPAN_STEPS_DAYS, SPAN_FALLBACK_STEP_DAYS);
-  const offset = step === 7 ? MONDAY_DAY_NUMBER : 0;
+  const step = dayStep(window);
+  const offset = step % 7 === 0 ? MONDAY_DAY_NUMBER : 0;
+  const label = step > 7 ? formatDate : formatWeekday;
   const ticks: Tick[] = [];
   let midnight = localMidnight(from, timeZone);
   while (midnight < to) {
     const days = localDayNumber(midnight, timeZone) - offset;
     if (midnight > from && days % step === 0) {
-      const tick = roundTick(
-        midnight,
-        window,
-        formatWeekday(midnight, timeZone),
-        (days / step) % 2 === 1,
-      );
+      const tick = roundTick(midnight, window, label(midnight, timeZone), (days / step) % 2 === 1);
       if (tick !== undefined) {
         ticks.push(tick);
       }
@@ -185,14 +189,16 @@ const clockTicks = (window: Window, timeZone: string, label: (t: number) => stri
 // its end, and round local times between, spaced so about 8 labels fit. Up to
 // two days the ends are clock times (with seconds under 10 minutes) and the
 // round times are clock times, every other one minor. Longer windows tick local
-// midnights by weekday, and the ends add the weekday to their clock time.
+// midnights by weekday, and the ends add the weekday to their clock time. A
+// window whose ticks are more than a week apart labels ticks and ends by date.
 export const spanTicks = (window: Window, timeZone: string): Tick[] => {
   const { from, to } = window;
   const length = to - from;
   const daily = length > SPAN_MINUTE_TICKS_UP_TO_MS;
   const clock = length < SPAN_SECONDS_BELOW_MS ? formatClockSeconds : formatClock;
+  const day = daily && dayStep(window) > 7 ? formatDate : formatWeekday;
   const endLabel = (t: number): string =>
-    daily ? `${formatWeekday(t, timeZone)} ${formatClock(t, timeZone)}` : clock(t, timeZone);
+    daily ? `${day(t, timeZone)} ${formatClock(t, timeZone)}` : clock(t, timeZone);
   return [
     { at: from, edge: 'start', label: endLabel(from), minor: false },
     ...(daily

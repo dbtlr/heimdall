@@ -10,6 +10,7 @@ import type {
   ConditionSeries,
   PendingPackage,
 } from '../server/condition-detail-types.ts';
+import type { VitalsWindow } from '../server/vitals-window-types.ts';
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
@@ -46,6 +47,9 @@ export type ChartView = {
   points: ChartPoint[];
   window: Window;
 };
+
+// What a chart draws: the readings with their scale and limit lines.
+export type PlotView = Pick<ChartView, 'domain' | 'label' | 'lines' | 'points' | 'window'>;
 
 export type HistoryRow = {
   at: number;
@@ -86,6 +90,9 @@ export type ConditionDetailView = {
   rate: { estimate: true; text: string } | undefined;
   system: string;
   title: string;
+  // The System's Vitals around the occurrence, with the span it was open to
+  // shade; undefined for a Condition that charts its own series.
+  vitals: { shade: Window; window: VitalsWindow } | undefined;
 };
 
 // "7 days" or "24 h": a length of time.
@@ -141,12 +148,13 @@ export const isLone = (points: readonly ChartPoint[], index: number): boolean =>
   points[index - 1]?.value == null &&
   points[index + 1]?.value == null;
 
-// The points with an empty one between any two more than GAP_MS apart, so the
-// line breaks there instead of crossing the time nothing was read.
-export const withGaps = (points: readonly ChartPoint[]): ChartPoint[] =>
+// The points with an empty one between any two more than GAP_MS apart, or more
+// than two of their `bucketMs` buckets apart when those are wider, so the line
+// breaks there instead of crossing the time nothing was read.
+export const withGaps = (points: readonly ChartPoint[], bucketMs = 0): ChartPoint[] =>
   points.flatMap((point, index) => {
     const before = points[index - 1];
-    return before !== undefined && point.t - before.t > GAP_MS
+    return before !== undefined && point.t - before.t > Math.max(GAP_MS, 2 * bucketMs)
       ? [{ t: (before.t + point.t) / 2, value: null }, point]
       : [point];
   });
@@ -480,5 +488,9 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
     rate: leading.rate,
     system: detail.system,
     title: subject === '' ? kindName : `${kindName} ${subject}`,
+    vitals:
+      detail.vitals === undefined
+        ? undefined
+        : { shade: { from: detail.raisedAt, to: detail.clearedAt ?? now }, window: detail.vitals },
   };
 };

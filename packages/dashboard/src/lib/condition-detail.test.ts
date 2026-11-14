@@ -100,6 +100,7 @@ const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail =
       reason: '80% used',
     },
   ],
+  vitals: undefined,
   ...overrides,
 });
 
@@ -285,6 +286,7 @@ const cpuDetail = (): ConditionDetail => ({
       reason: 'CPU 91% for 31 of 60 min',
     },
   ],
+  vitals: undefined,
 });
 
 test('high CPU leads with the latest busy share, one line at its limit, and the minutes rule', () => {
@@ -414,6 +416,7 @@ const updateDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail
   transitions: [
     { at: NOW - 3 * DAY, backfilled: false, kind: 'raised', level: 'note', reason: '3 updates' },
   ],
+  vitals: undefined,
   ...overrides,
 });
 

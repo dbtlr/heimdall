@@ -184,6 +184,16 @@ describe('spanTicks', () => {
     expect(labels(ticks.slice(1, -1)).every((label) => label === 'Mon')).toBe(true);
   });
 
+  test('a window of months ticks every few Mondays, about 8 of them, labeled by date', () => {
+    const from = Date.UTC(2026, 0, 13, 5, 0, 0);
+    const ticks = spanTicks({ from, to: from + 300 * 24 * HOUR }, 'UTC');
+    expect(ticks.length).toBeLessThanOrEqual(10);
+    expect(
+      labels(ticks.slice(1, -1)).every((label) => /^\d{1,2} [A-Z][a-z]{2,3}$/.test(label)),
+    ).toBe(true);
+    expect(labels(ticks)[0]).toBe('13 Jan 05:00');
+  });
+
   test('midnights are local to the zone', () => {
     const from = Date.UTC(2026, 9, 13, 5, 0, 0);
     const ticks = spanTicks({ from, to: from + 72 * HOUR }, 'Asia/Kolkata');
