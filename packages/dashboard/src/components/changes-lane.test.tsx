@@ -62,7 +62,11 @@ test('lists the latest events under the lane and keeps the earlier ones behind a
   ]);
   const [shown = '', earlier = ''] = html.split('<details');
 
-  for (const text of ['Service down web, alert', 'Job failing backup, alert', 'db restarted']) {
+  for (const text of [
+    'Service down web, alert',
+    'Job failing backup, alert',
+    'db stopped for 4 s',
+  ]) {
     expect(shown).toContain(text);
   }
   expect(earlier).toContain('Show 3 earlier events');
@@ -80,7 +84,7 @@ test('shows a recent restart ahead of Conditions open longer, however many are o
   );
   const [shown = '', earlier = ''] = html.split('<details');
 
-  expect(shown).toContain('db restarted');
+  expect(shown).toContain('db stopped for 4 s');
   expect(earlier).toContain('Show 2 earlier events');
   for (const text of ['/disk5', '/disk6']) {
     expect(earlier).toContain(text);

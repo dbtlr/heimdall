@@ -284,3 +284,13 @@ test('the search keeps a known kind, range, and System and drops the rest', () =
     pinOn: 'server-1',
   });
 });
+
+test('an alert merged into a line keeps when its recovery went out', () => {
+  const [line] = groupActivity([
+    stop({ at: T }),
+    alert({ at: T + MIN, open: false, recoveredAt: T + 2 * MIN, subject: 'backup' }),
+  ]);
+  const words = lineWords(line!);
+  expect(words.alert).toBeUndefined();
+  expect(words.recoveries).toEqual([{ named: 'Service down backup', recoveredAt: T + 2 * MIN }]);
+});

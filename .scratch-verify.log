@@ -1,0 +1,6 @@
+$ bun run check && bun run test
+$ vp check
+pass: All 705 files are correctly formatted (757ms, 6 threads)
+pass: Found no warnings, lint errors, or type errors in 676 files (11.4s, 6 threads)
+$ bun test packages
+bun test v1.4.4 (38afee6c8)

@@ -94,3 +94,41 @@ test('a cleared Drift takes the cleared ring, not its level glyph', async () => 
   expect(html).toContain('stroke-status-good');
   expect(html).not.toContain('fill-status-serious');
 });
+
+test('an alert merged into a stop line says when its recovery went out, in the list zone', async () => {
+  const html = await renderRouted(
+    <ActivityListBody
+      lines={groupActivity([
+        {
+          at: NOW,
+          kind: 'stop',
+          lasted: 4000,
+          ongoing: false,
+          restarts: 0,
+          service: 'caddy',
+          system: 'server-1',
+        },
+        {
+          at: NOW + MIN,
+          condition: 'service_down',
+          kind: 'alert',
+          open: false,
+          recoveredAt: NOW + 5 * MIN,
+          subject: 'backup',
+          system: 'server-1',
+        },
+      ])}
+      now={NOW}
+      timeZone="UTC"
+      unpaired={new Set()}
+    />,
+    {
+      routePaths: [
+        '/systems/$name',
+        '/systems/$name/conditions/$id',
+        '/systems/$name/services/$service',
+      ],
+    },
+  );
+  expect(html).toContain('Recovery sent for Service down backup at 12:05');
+});

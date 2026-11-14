@@ -107,6 +107,22 @@ function Line({
   unpaired: boolean;
 }) {
   const words = lineWords(line);
+  const note = [
+    words.detail,
+    ...words.recoveries.map(
+      ({ named, recoveredAt }) =>
+        `Recovery sent for ${named} at ${formatClock(recoveredAt, timeZone)}`,
+    ),
+    words.alert === undefined
+      ? ''
+      : `Alert pushed at ${formatClock(words.alert.at, timeZone)}${
+          words.alert.recoveredAt === undefined
+            ? ''
+            : `, recovery at ${formatClock(words.alert.recoveredAt, timeZone)}`
+        }`,
+  ]
+    .filter((part) => part !== '')
+    .join(' · ');
   const [lead] = line.events;
   if (lead === undefined) {
     return null;
@@ -168,18 +184,8 @@ function Line({
             <span className={cn(MARKER, 'text-muted-foreground')}>alert sent</span>
           )}
         </p>
-        {(words.detail !== '' || words.alert !== undefined) && (
-          <p className="mt-0.5 text-[13px] text-muted-foreground wrap-anywhere">
-            {words.detail}
-            {words.detail !== '' && words.alert !== undefined && ' · '}
-            {words.alert !== undefined && (
-              <>
-                Alert pushed at {formatClock(words.alert.at, timeZone)}
-                {words.alert.recoveredAt !== undefined &&
-                  `, recovery at ${formatClock(words.alert.recoveredAt, timeZone)}`}
-              </>
-            )}
-          </p>
+        {note !== '' && (
+          <p className="mt-0.5 text-[13px] text-muted-foreground wrap-anywhere">{note}</p>
         )}
       </div>
     </li>

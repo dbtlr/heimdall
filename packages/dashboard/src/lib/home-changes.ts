@@ -5,6 +5,7 @@ import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 
 import { CHANGE_WINDOW_MS } from '../server/home-types.ts';
 import type { Change, ChangeGroup } from '../server/home-types.ts';
+import { stopWords } from './time.ts';
 
 // How many groups the card lists.
 export const CHANGES_SHOWN = 5;
@@ -154,18 +155,17 @@ export const changeWords = (
       };
     }
     case 'stop': {
-      if (change.ongoing) {
-        return {
-          detail: `${where}, still stopped`,
-          mono: false,
-          title: `${change.service} stopped`,
-        };
-      }
       const stops = total(group);
+      // A group of several stops keeps its count and drops the duration, which
+      // belongs to one stop.
+      const title =
+        stops > 1 && !change.ongoing
+          ? `${change.service} stopped ${String(stops)} times`
+          : stopWords(change);
       return {
-        detail: where,
+        detail: change.ongoing ? `${where}, still stopped` : where,
         mono: false,
-        title: `${change.service} restarted${stops > systems.length ? ` ${String(stops)} times` : ''}`,
+        title,
       };
     }
     default: {

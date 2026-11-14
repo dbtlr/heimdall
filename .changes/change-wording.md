@@ -1,0 +1,1 @@
+- **Home and a System's page word a finished stop as Activity does** (HMD-264, HMD-258). A stopped Service now reads "stopped for 4 min" instead of "restarted", and an alert merged into an Activity line keeps the time its recovery went out.
