@@ -38,7 +38,7 @@ Forgetting a job removes its runs, taken or not.
 
 **The Hub keeps 90 days of runs, and each job's latest 14.**
 It stores each run by System, job, and start, with the Report's `sentAt` and its own received time, and replaces a held run under the guard it uses for Service stops, so a re-sent run is stored once.
-It stores every time the section accepts, so a run from a broken clock never fails a Report.
+It stores every time the section accepts, so a run from a broken clock never fails a Report; since 2026-11-14 it drops a run that starts more than 5 minutes ahead of its own clock (see Changelog).
 It prunes runs that started more than 90 days before its own clock, except each job's latest 14 runs, so a job that runs weekly or monthly still shows its last 14.
 Runs are evidence for the dashboard, apart from the records ([ADR-0011](0011-collectors-hold-what-provisioners-record.md)).
 
