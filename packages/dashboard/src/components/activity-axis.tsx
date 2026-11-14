@@ -19,7 +19,7 @@ import { ConditionGlyph } from './condition-glyph.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
 import { TimeAxis } from './time-axis.tsx';
 
-const LANE_HEIGHT = 34;
+const LANE_HEIGHT = 44;
 
 // One bar per stretch of an agent Session under a lane's CPU, colored by
 // Harness: a color that means nothing else.
