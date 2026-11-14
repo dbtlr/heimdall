@@ -2346,8 +2346,9 @@ export const MIGRATIONS: readonly Migration[] = [
     // stops over a window of at most 30 days, so each window is found by time
     // through an index, and a read costs what the window holds rather than
     // every row ever kept. The stops index covers ongoing stops too, so it
-    // replaces the one that held ended stops alone for retention. (Service
-    // versions are already found through their primary key's time column.)
+    // replaces the one that held ended stops alone for retention. Service
+    // versions get their own time index, since their primary key leads with
+    // the System and Service, so a fleet-wide window would read it whole.
     // `recovered_at` is when a delivery's recovered message went out; a
     // delivery closed without one, as unpairing does, has none. Before this
     // column the Hub kept no such record, so a delivery closed earlier counts
@@ -2358,6 +2359,7 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX deliveries_by_push ON deliveries (pushed_at);
       DROP INDEX service_stops_ended;
       CREATE INDEX service_stops_by_stop ON service_stops (stopped_at);
+      CREATE INDEX service_versions_by_time ON service_versions (first_seen_at);
       ALTER TABLE deliveries ADD COLUMN recovered_at timestamptz;
       UPDATE deliveries d SET recovered_at = closed_at
       WHERE closed_at IS NOT NULL
