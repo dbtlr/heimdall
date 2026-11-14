@@ -44,6 +44,7 @@ const HISTORY = [
   'DELETE FROM mirrored_runs WHERE system = $1',
   'DELETE FROM check_sets WHERE system = $1',
   'DELETE FROM service_stops WHERE system = $1',
+  'DELETE FROM job_runs WHERE system = $1',
   'DELETE FROM service_versions WHERE system = $1',
   'DELETE FROM update_managers WHERE system = $1',
   'DELETE FROM update_subjects WHERE system = $1',

@@ -23,7 +23,7 @@ import { loadPriceOverrides, syncPrices } from './price-table.ts';
 import { BUNDLED_PRICES } from './prices.ts';
 import type { PriceEntry } from './prices.ts';
 import { projectionNotes, projectTranscripts } from './projection.ts';
-import { pruneServiceStops, pruneVitals } from './retention.ts';
+import { pruneJobRuns, pruneServiceStops, pruneVitals } from './retention.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
@@ -220,13 +220,16 @@ const serveUntilStopped = async ({
         intervalMs: PRUNE_INTERVAL_MS,
         onError: (error) => {
           void log.warn(
-            clean(`Could not prune old Vitals and Service stops: ${describeError(error)}`),
+            clean(
+              `Could not prune old Vitals, Service stops, and job runs: ${describeError(error)}`,
+            ),
           );
         },
         task: async () => {
           const now = Date.now();
           await pruneVitals(sql, now);
           await pruneServiceStops(sql, now);
+          await pruneJobRuns(sql, now);
         },
       });
       stopJudging = every({

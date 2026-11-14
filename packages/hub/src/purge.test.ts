@@ -151,6 +151,10 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
     INSERT INTO service_stops (system, service, stopped_at, ongoing, restarts, sent_at, received_at)
     VALUES (${system}, 'web', ${AT}, false, 0, ${AT}, ${AT})
   `;
+  await sql`
+    INSERT INTO job_runs (system, job, started_at, finished_at, exit_status, sent_at, received_at)
+    VALUES (${system}, 'backup', ${AT}, ${AT}, 0, ${AT}, ${AT})
+  `;
   await sql`INSERT INTO check_sets (system, sent_at, received_at) VALUES (${system}, ${AT}, ${AT})`;
   await sql`INSERT INTO harness_installs (system, installs, sent_at) VALUES (${system}, '[]', ${AT})`;
   const [process]: { id: string }[] = await sql`

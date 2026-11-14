@@ -146,6 +146,53 @@ test('rows this build cannot read come back as unreadable, not as records, so no
   });
 });
 
+test('a held run whose body starts at another time than its key is left out of the held runs', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(0));
+  store.close();
+  // A body another Collector, or damage, left under a key it does not match.
+  const db = new Database(join(dir.path, 'records.sqlite'));
+  db.query(
+    'INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES (?, ?, ?, ?, ?)',
+  ).run('backup', run(1).started, Date.parse(run(1).started), 0, JSON.stringify(run(2)));
+  db.close();
+
+  const reader = await openRecords({ stateDir: dir.path });
+  const first = reader.heldRuns();
+  const again = reader.heldRuns();
+  reader.close();
+
+  expect(first.runs).toEqual([{ ...run(0), job: 'backup' }]);
+  expect(first.skipped).toEqual([{ job: 'backup', started: run(1).started }]);
+  expect(again.skipped).toEqual([]);
+});
+
+test('a run recorded again after its job was forgotten stays held when a Report read before that settles', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(0));
+  store.putRun('backup', run(0));
+  store.putRun('backup', run(0));
+  const inFlight = store.heldRuns();
+  // Forgetting the job and recording the run again starts its count over, below
+  // the count the in-flight Report read.
+  store.forget('job', 'backup');
+  store.put('job', job);
+  store.putRun('backup', run(0));
+
+  inFlight.settle();
+  const held = store.heldRuns().runs;
+  store.putRun('backup', run(0));
+  const again = store.heldRuns().runs;
+  store.close();
+
+  expect(held).toEqual([{ ...run(0), job: 'backup' }]);
+  expect(again).toEqual([{ ...run(0), job: 'backup' }]);
+});
+
 test('nothing is unreadable when every row reads', async () => {
   await using dir = await tempStateDir();
   const store = await openRecords({ stateDir: dir.path });

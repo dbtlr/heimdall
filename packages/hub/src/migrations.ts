@@ -2367,6 +2367,28 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 43,
   },
+  {
+    // Every run of a job the Collector sent, as the job recorded it (ADR-0023).
+    // The primary key leads with System and job, so a job's latest runs are one
+    // index range, and a run sent again lands on its row. The index on the start
+    // finds runs old enough to prune without reading the rest.
+    sql: `
+      CREATE TABLE job_runs (
+        system text NOT NULL REFERENCES systems (name),
+        job text NOT NULL,
+        started_at timestamptz NOT NULL,
+        finished_at timestamptz NOT NULL,
+        exit_status integer NOT NULL,
+        output_file text,
+        output_size_bytes bigint,
+        sent_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL,
+        PRIMARY KEY (system, job, started_at)
+      );
+      CREATE INDEX job_runs_started ON job_runs (started_at);
+    `,
+    version: 44,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

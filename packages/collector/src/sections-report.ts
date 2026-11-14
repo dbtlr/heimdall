@@ -10,6 +10,7 @@ import type {
   ChecksSection,
   HarnessesSection,
   HarnessProcessesSection,
+  JobRunsSection,
   RecordsSection,
   RunsSection,
   ServiceStopsSection,
@@ -266,6 +267,122 @@ const createStopsState = ({
   };
 };
 
+// Decides when the job runs ride a Report: whenever the store holds runs the
+// Hub has not taken (ADR-0023). It asks the store only when another process
+// committed a write (a run recorded, pruned, or forgotten, or pairing) or
+// while the last look found held runs, so an idle Collector costs no query. A
+// delivered Report settles the runs it carried; a failed delivery keeps them,
+// and so does the Hub's refusal (422), which holds them back until `refreshMs`
+// has passed. A store that cannot be read costs the runs, never the Vitals, and
+// is warned about once until it works again. Once `pair` stored another
+// identity than the one this daemon reports as, the daemon still sends to the
+// Hub it started with, so it sends no job runs until it restarts, and never
+// settles the runs pairing held for the new Hub; it warns once. An identity
+// file it cannot read proves neither, so it keeps the runs held and looks again
+// with the next Report, warning once until the read works.
+const createJobRunsState = ({
+  log,
+  now,
+  paired,
+  refreshMs,
+}: {
+  log: Log;
+  now: () => number;
+  paired: () => Promise<boolean>;
+  refreshMs: number;
+}) => {
+  let refusedAt: number | undefined;
+  let holding = true;
+  let failing = false;
+  let identityFailing = false;
+  let repaired = false;
+  return {
+    pending: async (
+      store: RecordStore,
+      changed: boolean,
+    ): Promise<PendingSection<JobRunsSection> | undefined> => {
+      if (refusedAt !== undefined && now() - refusedAt < refreshMs) {
+        return undefined;
+      }
+      if (!holding && !changed) {
+        return undefined;
+      }
+      if (repaired) {
+        return undefined;
+      }
+      let held: ReturnType<RecordStore['heldRuns']>;
+      try {
+        held = store.heldRuns();
+        failing = false;
+      } catch (error) {
+        if (!failing) {
+          log.warn(`Could not read the job runs to report: ${describeError(error)}`);
+        }
+        failing = true;
+        // Look again next time, since the store version has moved past the
+        // write this read missed.
+        holding = true;
+        return undefined;
+      }
+      if (held.skipped.length > 0) {
+        log.warn(
+          `Left out of the job runs report, since the Hub cannot take them: ${describeRows(held.skipped.map(({ job, started }) => JSON.stringify([job, started])))}.`,
+        );
+      }
+      holding = held.runs.length > 0;
+      if (!holding) {
+        return undefined;
+      }
+      // The identity is read after the runs: `pair` stores the identity before
+      // it holds every run again, so runs read after that hold fail this check,
+      // and runs read before it settle at revisions the hold has passed, so
+      // they stay held for the new Hub.
+      let still: boolean;
+      try {
+        still = await paired();
+        identityFailing = false;
+      } catch (error) {
+        if (!identityFailing) {
+          log.warn(
+            `Could not read the identity to check the job runs are for this Hub (${describeError(error)}); they stay held and are checked again with the next Report.`,
+          );
+        }
+        identityFailing = true;
+        return undefined;
+      }
+      if (!still) {
+        log.warn(
+          'The identity in the state directory is no longer the one this Collector started with, as after pairing again, so it holds the job runs until it restarts (heimdall-collector service restart).',
+        );
+        repaired = true;
+        return undefined;
+      }
+      return {
+        section: { runs: held.runs },
+        settle: (outcome) => {
+          if (outcome.kind === 'delivered') {
+            refusedAt = undefined;
+            try {
+              held.settle();
+            } catch (error) {
+              log.warn(`Could not settle the job runs the Hub took: ${describeError(error)}`);
+            }
+            return;
+          }
+          refusedAt = now();
+          log.warn(
+            `The Hub rejected a Report carrying the job runs (${outcome.detail}); they are kept and sent again within ${String(refreshMs / 60_000)} minutes.`,
+          );
+        },
+      };
+    },
+    // Forgets that the store held nothing, as when it is opened again.
+    reset: () => {
+      holding = true;
+    },
+  };
+};
+
 // What the checks section is built from: the parts the Collector's loops built
 // last, or undefined while none has finished a pass.
 export type ChecksSource = CheckPartsSource;
@@ -280,7 +397,7 @@ const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
 };
 
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, its checks, the Harness installs it found, the Harness
+// jobs' latest runs, the job runs it holds for the Hub (ADR-0023), its checks, the Harness installs it found, the Harness
 // processes it sees, and the Service stops it logged (ADR-0021). The stops are
 // due while the log holds any the Hub has not taken. Every other section is due
 // at start, when its content may have changed and its digest differs from the
@@ -293,13 +410,16 @@ const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
 //
 // The store is opened on the first call that needs it, and again on each call
 // until it opens, so a database that cannot be opened costs the sections, never
-// the daemon. The connection is one this reporter alone keeps open, and the
-// only write it makes is opening the store, which may create the run indexes
-// once, so its `version` moves only when another process commits. A
-// version change costs one read of the records and one query for the latest
-// runs, never a parse of every run, and a section is sent only when its digest
+// the daemon. The connection is one this reporter alone keeps open. Its
+// writes are opening the store, which may add the run columns and indexes
+// once, and settling the job runs a delivered Report carried; its `version`
+// moves only when another process commits, so the job runs are asked for again
+// while the last look found any, whatever the version says. A version change
+// costs one read of the records, one query for the latest runs, and one query
+// for the held runs, which parses at most one section's worth of them, never
+// every run. The record set and the latest runs are sent only when their digest
 // differs from the last one settled, so recording the same content again sends
-// nothing.
+// neither.
 export const createSectionsReporter = ({
   checks,
   updates = { latest: () => undefined },
@@ -311,6 +431,7 @@ export const createSectionsReporter = ({
   maxRunsBytes = MAX_RUNS_SECTION_BYTES,
   now,
   open,
+  paired,
   refreshMs = SECTIONS_REFRESH_MS,
   stops,
 }: {
@@ -324,6 +445,8 @@ export const createSectionsReporter = ({
   maxRunsBytes?: number;
   now: () => number;
   open: () => Promise<RecordStore>;
+  // Whether the identity `pair` stored is still the one this daemon reports as.
+  paired: () => Promise<boolean>;
   refreshMs?: number;
   stops?: StopLog;
 }): SectionsSource & { close: () => void } => {
@@ -341,6 +464,8 @@ export const createSectionsReporter = ({
     now,
     refreshMs,
   });
+
+  const jobRuns = createJobRunsState({ log, now, paired, refreshMs });
 
   const stopped =
     stops === undefined ? undefined : createStopsState({ log, now, refreshMs, stops });
@@ -432,7 +557,7 @@ export const createSectionsReporter = ({
     const version = store.version();
     const changed = version !== seenVersion;
     const latestChecks = checks.latest();
-    const due = {
+    const fromStore = {
       checks:
         latestChecks === undefined
           ? undefined
@@ -440,10 +565,13 @@ export const createSectionsReporter = ({
       records: records.pending(store, changed),
       runs: runs.pending(store, changed),
     };
+    // Last, since it may wait to read the identity.
+    const due = { ...fromStore, jobRuns: await jobRuns.pending(store, changed) };
     seenVersion = version;
     seenChecks = latestChecks;
     return {
       ...(due.checks === undefined ? {} : { checks: due.checks }),
+      ...(due.jobRuns === undefined ? {} : { jobRuns: due.jobRuns }),
       ...(due.records === undefined ? {} : { records: due.records }),
       ...(due.runs === undefined ? {} : { runs: due.runs }),
     };
@@ -455,6 +583,7 @@ export const createSectionsReporter = ({
       store = undefined;
       // A store opened again may carry a version this one never saw.
       seenVersion = undefined;
+      jobRuns.reset();
       seenChecks = undefined;
       seenHarnesses = undefined;
       seenProcesses = undefined;

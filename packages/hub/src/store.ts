@@ -7,6 +7,7 @@ import type {
   RecordsSection,
   Report,
   RunsSection,
+  JobRunsSection,
   ServiceStopsSection,
   TranscriptsSection,
 } from '@heimdall/schema';
@@ -193,6 +194,9 @@ export const storeReport = (
     }
     if (report.serviceStops !== undefined) {
       await storeServiceStops(tx, { receivedAt: seenAt, report, section: report.serviceStops });
+    }
+    if (report.jobRuns !== undefined) {
+      await storeJobRuns(tx, { receivedAt: seenAt, report, section: report.jobRuns });
     }
     if (report.updates !== undefined) {
       await storeUpdates(tx, { receivedAt, section: report.updates, system: report.system });
@@ -450,6 +454,48 @@ const storeServiceStops = async (
       received_at = excluded.received_at
     WHERE service_stops.sent_at <= excluded.sent_at
        OR service_stops.sent_at > ${receivedAt}
+  `;
+};
+
+// Each run is the whole run, so a run sent again replaces its row, `output`
+// included, under the same sent-time guard as Service stops. Times convert from
+// epoch milliseconds as for stops, since PostgreSQL does not read year 0000 as
+// text, and the section accepts years 0000 to 9999.
+const storeJobRuns = async (
+  sql: SQL,
+  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: JobRunsSection },
+) => {
+  const runs = section.runs.map(({ exitStatus, finished, job, output, started }) => ({
+    exitStatus,
+    finished: Date.parse(finished),
+    job,
+    outputFile: output?.file ?? null,
+    outputSizeBytes: output?.sizeBytes ?? null,
+    started: Date.parse(started),
+  }));
+  await sql`
+    INSERT INTO job_runs (
+      system, job, started_at, finished_at, exit_status, output_file, output_size_bytes, sent_at, received_at
+    )
+    SELECT ${report.system}, r->>'job',
+           (timestamp 'epoch'
+             + ((r->>'started')::bigint / 86400000) * interval '1 day'
+             + ((r->>'started')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
+           (timestamp 'epoch'
+             + ((r->>'finished')::bigint / 86400000) * interval '1 day'
+             + ((r->>'finished')::bigint % 86400000) * interval '1 millisecond') AT TIME ZONE 'UTC',
+           (r->>'exitStatus')::integer, r->>'outputFile', (r->>'outputSizeBytes')::bigint,
+           ${new Date(report.sentAt)}, ${receivedAt}
+    FROM jsonb_array_elements(${storableJson(runs)}::text::jsonb) AS r
+    ON CONFLICT (system, job, started_at) DO UPDATE SET
+      finished_at = excluded.finished_at,
+      exit_status = excluded.exit_status,
+      output_file = excluded.output_file,
+      output_size_bytes = excluded.output_size_bytes,
+      sent_at = excluded.sent_at,
+      received_at = excluded.received_at
+    WHERE job_runs.sent_at <= excluded.sent_at
+       OR job_runs.sent_at > ${receivedAt}
   `;
 };
 

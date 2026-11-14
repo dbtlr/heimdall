@@ -3,6 +3,7 @@ import type {
   ChecksSection,
   HarnessesSection,
   HarnessProcessesSection,
+  JobRunsSection,
   RecordsSection,
   Report,
   RunsSection,
@@ -88,6 +89,7 @@ export type PendingSections = {
   checks?: PendingSection<ChecksSection>;
   harnesses?: PendingSection<HarnessesSection>;
   harnessProcesses?: PendingSection<HarnessProcessesSection>;
+  jobRuns?: PendingSection<JobRunsSection>;
   records?: PendingSection<RecordsSection>;
   runs?: PendingSection<RunsSection>;
   serviceStops?: PendingSection<ServiceStopsSection>;
@@ -165,6 +167,7 @@ export const flushQueue = async ({
         | 'checks'
         | 'harnesses'
         | 'harnessProcesses'
+        | 'jobRuns'
         | 'records'
         | 'runs'
         | 'serviceStops'
@@ -178,12 +181,14 @@ export const flushQueue = async ({
       // must not carry the first request's time.
       sentAt: Math.trunc(now()),
     });
-    const { checks, harnesses, harnessProcesses, records, runs, serviceStops, updates } = waiting;
+    const { checks, harnesses, harnessProcesses, jobRuns, records, runs, serviceStops, updates } =
+      waiting;
     const withSections = reportWith({
       ...(updates === undefined ? {} : { updates: updates.section }),
       ...(checks === undefined ? {} : { checks: checks.section }),
       ...(harnesses === undefined ? {} : { harnesses: harnesses.section }),
       ...(harnessProcesses === undefined ? {} : { harnessProcesses: harnessProcesses.section }),
+      ...(jobRuns === undefined ? {} : { jobRuns: jobRuns.section }),
       ...(records === undefined ? {} : { records: records.section }),
       ...(runs === undefined ? {} : { runs: runs.section }),
       ...(serviceStops === undefined ? {} : { serviceStops: serviceStops.section }),
@@ -193,6 +198,7 @@ export const flushQueue = async ({
         checks !== undefined ||
         harnesses !== undefined ||
         harnessProcesses !== undefined ||
+        jobRuns !== undefined ||
         records !== undefined ||
         runs !== undefined ||
         serviceStops !== undefined) &&
@@ -205,6 +211,7 @@ export const flushQueue = async ({
       checks?.settle(outcome);
       harnesses?.settle(outcome);
       harnessProcesses?.settle(outcome);
+      jobRuns?.settle(outcome);
       records?.settle(outcome);
       runs?.settle(outcome);
       serviceStops?.settle(outcome);

@@ -58,7 +58,9 @@ export const asIdentity = (value: unknown): SystemIdentity | undefined => {
 export type IdentityRead =
   | { exposures: string[]; identity: SystemIdentity; kind: 'paired'; path: string }
   | { kind: 'not paired'; path: string }
-  | { kind: 'invalid'; path: string; problem: string };
+  // `unreadable` when the file could not be read at all, which may pass, as
+  // against one that holds no valid identity.
+  | { kind: 'invalid'; path: string; problem: string; unreadable?: true };
 
 const GROUP_OR_OTHER = 0o077;
 const GROUP_OR_OTHER_WRITE = 0o022;
@@ -115,7 +117,12 @@ export const readIdentity = async (
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return { kind: 'not paired', path };
     }
-    return { kind: 'invalid', path, problem: `could not read ${path}: ${describeError(error)}` };
+    return {
+      kind: 'invalid',
+      path,
+      problem: `could not read ${path}: ${describeError(error)}`,
+      unreadable: true,
+    };
   }
   const identity = asIdentity(parseJson(text));
   if (identity === undefined) {
@@ -165,4 +172,24 @@ export const writeIdentity = async (stateDir: string, identity: SystemIdentity):
     throw error;
   }
   await syncDirectory(stateDir);
+};
+
+// Whether `stateDir` still holds the identity a daemon started with: its token,
+// issued by the Hub at the origin `hub`. `pair` may store another while the
+// daemon runs, and a missing or invalid file is not that identity either.
+export const stillPaired = async ({
+  hub,
+  stateDir,
+  token,
+}: {
+  hub: string;
+  stateDir: string;
+  token: string;
+}): Promise<boolean> => {
+  const read = await readIdentity(stateDir);
+  // A file that could not be read says nothing about which identity it holds.
+  if (read.kind === 'invalid' && read.unreadable === true) {
+    throw new Error(read.problem);
+  }
+  return read.kind === 'paired' && read.identity.token === token && read.identity.hub === hub;
 };
