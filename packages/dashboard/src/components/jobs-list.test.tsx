@@ -1,8 +1,20 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
 
+import { useTimeZone as realUseTimeZone } from '../lib/use-time-zone.ts';
 import type { JobsRow } from '../server/jobs-types.ts';
 import { JobsList } from './jobs-list.tsx';
+import { RECORD_DOT } from './recorded-panel.tsx';
 import { linksIn, renderRouted } from './render-routed.tsx';
+
+// The server renders no zone-bound text, so the suffix tests give the viewer a
+// zone, and the real hook comes back for the other test files.
+const VIEWER_ZONE = 'UTC';
+beforeAll(async () => {
+  await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: () => VIEWER_ZONE }));
+});
+afterAll(async () => {
+  await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: realUseTimeZone }));
+});
 
 const NOW = 1_800_000_000_000;
 const HOUR = 3_600_000;
@@ -103,8 +115,24 @@ describe('the Jobs list', () => {
       'unknown',
       'unknown',
     ]);
+    expect(html).toContain(RECORD_DOT.unknown);
     expect(html).toContain('Not run yet');
     expect(html).not.toContain('>OK<');
     expect(html).toContain('no runs yet');
+  });
+
+  test("shows a job's schedule zone when its System's differs from the viewer's, and none when it matches", async () => {
+    const html = await renderRouted(
+      <JobsList
+        jobs={[
+          job('backup', { timeZone: 'Europe/Copenhagen' }),
+          job('sync', { timeZone: VIEWER_ZONE }),
+        ]}
+        now={NOW}
+      />,
+    );
+
+    expect(html).toContain('Europe/Copenhagen');
+    expect(html).not.toContain(` ${VIEWER_ZONE}`);
   });
 });

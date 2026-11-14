@@ -24,6 +24,7 @@ const HISTORY_MS = 90 * DAY_MS;
 
 type JobRow = {
   first_mirrored_at: Date | null;
+  oldest_run_since_mirrored: Date | null;
   latest_run: RunRow['latest_run'] | null;
   name: string;
   record: unknown;
@@ -44,7 +45,11 @@ type StoredRunRow = {
 const keyOf = (system: string, job: string) => JSON.stringify([system, job]);
 
 const readJobRows = (sql: SQL): Promise<JobRow[]> => sql`
-  SELECT r.system, r.name, r.record, u.latest_run, s.time_zone, f.first_mirrored_at
+  SELECT r.system, r.name, r.record, u.latest_run, s.time_zone, f.first_mirrored_at,
+    (
+      SELECT min(j.started_at) FROM job_runs j
+      WHERE j.system = r.system AND j.job = r.name AND j.received_at >= f.first_mirrored_at
+    ) AS oldest_run_since_mirrored
   FROM mirrored_records r
   JOIN paired_systems p ON p.system = r.system
   LEFT JOIN mirrored_runs u ON u.system = r.system AND u.job = r.name
@@ -153,11 +158,15 @@ const jobRow = (
     system: row.system,
   });
   // The job existed from when the Hub first mirrored it, or from an earlier
-  // run the Hub holds.
-  const existed = Math.min(
-    row.first_mirrored_at?.getTime() ?? now - HISTORY_MS,
-    ...history.map(({ started }) => started),
-  );
+  // run its Collector sent with that first Report. A run the Hub stored before
+  // a record was forgotten and recorded again (a Report left it out, a later
+  // one listed it, and `forget` kept its runs) does not count: the gap is not
+  // the job's missed times.
+  const earlierRuns =
+    row.first_mirrored_at === null
+      ? history.map(({ started }) => started)
+      : [row.oldest_run_since_mirrored?.getTime() ?? Infinity];
+  const existed = Math.min(row.first_mirrored_at?.getTime() ?? now - HISTORY_MS, ...earlierRuns);
   const runs =
     latestRun === undefined || history.some(({ started }) => started === latestRun.started)
       ? history

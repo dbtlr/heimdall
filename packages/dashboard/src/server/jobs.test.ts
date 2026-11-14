@@ -61,11 +61,18 @@ const recordJob = async (
 };
 
 // A stored run of `job` that started at `started`, taking a minute.
-const storeRun = (h: Hub, system: string, job: string, started: number, exitStatus = 0) =>
+const storeRun = (
+  h: Hub,
+  system: string,
+  job: string,
+  started: number,
+  exitStatus = 0,
+  receivedAt = NOW,
+) =>
   h.db.sql`
     INSERT INTO job_runs (system, job, started_at, finished_at, exit_status, sent_at, received_at)
     VALUES (${system}, ${job}, ${at(started)}, ${at(started + MINUTE)}, ${exitStatus},
-      ${at(NOW)}, ${at(NOW)})
+      ${at(receivedAt)}, ${at(receivedAt)})
   `;
 
 // 03:00 `days` days before today.
@@ -176,6 +183,24 @@ describe('readJobs', () => {
     expect(sync?.state).toBe('ok');
     expect(sync?.latestRun?.started).toBe(NOW - HOUR);
     expect(kinds(sync?.strip)).toEqual(['missed', 'ok', 'failed', 'ok']);
+  });
+
+  test('counts no missed runs in the gap before a job was forgotten and recorded again', async () => {
+    await using h = await startHub();
+    await addSystem(h, 'server-1');
+    // Recorded again yesterday; its runs from the week before were received
+    // then, and `forget` kept them.
+    await recordJob(h, 'server-1', 'backup', { mirroredDaysAgo: 1 });
+    for (const days of [9, 8, 7]) {
+      // oxlint-disable-next-line no-await-in-loop -- one row per run.
+      await storeRun(h, 'server-1', 'backup', daysAgo(days), 0, daysAgo(days));
+    }
+    await addRun(h, 'server-1', 'backup', 0);
+
+    const { jobs } = await readJobs(h.db.sql, NOW);
+
+    const strip = kinds(jobs.find(({ name }) => name === 'backup')?.strip);
+    expect(strip).toEqual(['ok', 'ok', 'ok', 'ok']);
   });
 
   test('calls no time missed before the history it holds, for a weekly or monthly job with fewer than 14 runs', async () => {
