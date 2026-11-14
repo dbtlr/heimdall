@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { openRecords } from './records.ts';
 import { givenIdentity, invoke, TOKEN } from './testing/cli.ts';
 import { fakeHub, rawHub, unreachableHub } from './testing/fake-hub.ts';
 import { tempStateDir } from './testing/fixtures.ts';
@@ -300,4 +301,34 @@ test('an identity that cannot be replaced after rotating says the old token no l
   expect(await readFile(path)).toEqual(before);
   expect(await readdir(dir.path)).toEqual(['identity.json']);
   expect(result.code).toBe(1);
+});
+
+const whole = (ms: number) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
+
+test('pair holds the job runs the Collector keeps for the new Hub', async () => {
+  await using dir = await tempStateDir();
+  await using hub = fakeHub(paired());
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', {
+    name: 'backup',
+    schedule: [{ hour: 3 }],
+    scheduler: 'systemd-timer',
+    unit: 'backup.timer',
+  });
+  const started = Date.now() - 60_000;
+  store.putRun('backup', {
+    exitStatus: 0,
+    finished: whole(started + 5000),
+    started: whole(started),
+  });
+  store.heldRuns().settle();
+  store.close();
+
+  const result = await pair(hub.url, dir.path);
+
+  const after = await openRecords({ stateDir: dir.path });
+  const held = after.heldRuns().runs.length;
+  after.close();
+  expect(result.code).toBe(0);
+  expect(held).toBe(1);
 });

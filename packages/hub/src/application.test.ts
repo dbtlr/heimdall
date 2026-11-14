@@ -479,7 +479,7 @@ test('serve warns once when a prune fails, and keeps serving', async () => {
   });
 
   expect(
-    stdout.match(/Could not prune old Vitals and Service stops: .*delete refused/gu),
+    stdout.match(/Could not prune old Vitals, Service stops, and job runs: .*delete refused/gu),
   ).toHaveLength(1);
   expect(health).toBe(200);
   expect(code).toBe(130);

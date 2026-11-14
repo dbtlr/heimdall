@@ -10,6 +10,7 @@ import type {
   ChecksSection,
   HarnessesSection,
   HarnessProcessesSection,
+  JobRunsSection,
   RecordsSection,
   RunsSection,
   ServiceStopsSection,
@@ -266,6 +267,80 @@ const createStopsState = ({
   };
 };
 
+// Decides when the job runs ride a Report: whenever the store holds runs the
+// Hub has not taken (ADR-0023). It asks the store only when another process
+// committed a write (a run recorded, pruned, or forgotten, or pairing) or
+// while the last look found held runs, so an idle Collector costs no query. A
+// delivered Report settles the runs it carried; a failed delivery keeps them,
+// and so does the Hub's refusal (422), which holds them back until `refreshMs`
+// has passed. A store that cannot be read costs the runs, never the Vitals, and
+// is warned about once until it works again.
+const createJobRunsState = ({
+  log,
+  now,
+  refreshMs,
+}: {
+  log: Log;
+  now: () => number;
+  refreshMs: number;
+}) => {
+  let refusedAt: number | undefined;
+  let holding = true;
+  let failing = false;
+  return {
+    pending: (store: RecordStore, changed: boolean): PendingSection<JobRunsSection> | undefined => {
+      if (refusedAt !== undefined && now() - refusedAt < refreshMs) {
+        return undefined;
+      }
+      if (!holding && !changed) {
+        return undefined;
+      }
+      let held: ReturnType<RecordStore['heldRuns']>;
+      try {
+        held = store.heldRuns();
+        failing = false;
+      } catch (error) {
+        if (!failing) {
+          log.warn(`Could not read the job runs to report: ${describeError(error)}`);
+        }
+        failing = true;
+        return undefined;
+      }
+      if (held.skipped.length > 0) {
+        log.warn(
+          `Left out of the job runs report, since the Hub cannot take them: ${describeRows(held.skipped.map(({ job, started }) => JSON.stringify([job, started])))}.`,
+        );
+      }
+      holding = held.runs.length > 0;
+      if (!holding) {
+        return undefined;
+      }
+      return {
+        section: { runs: held.runs },
+        settle: (outcome) => {
+          if (outcome.kind === 'delivered') {
+            refusedAt = undefined;
+            try {
+              held.settle();
+            } catch (error) {
+              log.warn(`Could not settle the job runs the Hub took: ${describeError(error)}`);
+            }
+            return;
+          }
+          refusedAt = now();
+          log.warn(
+            `The Hub rejected a Report carrying the job runs (${outcome.detail}); they are kept and sent again within ${String(refreshMs / 60_000)} minutes.`,
+          );
+        },
+      };
+    },
+    // Forgets that the store held nothing, as when it is opened again.
+    reset: () => {
+      holding = true;
+    },
+  };
+};
+
 // What the checks section is built from: the parts the Collector's loops built
 // last, or undefined while none has finished a pass.
 export type ChecksSource = CheckPartsSource;
@@ -280,7 +355,7 @@ const NO_HARNESS_PROCESSES: HarnessProcessesSource = {
 };
 
 // Decides which Report carries the Collector's record set (ADR-0011), its
-// jobs' latest runs, its checks, the Harness installs it found, the Harness
+// jobs' latest runs, the job runs it holds for the Hub (ADR-0023), its checks, the Harness installs it found, the Harness
 // processes it sees, and the Service stops it logged (ADR-0021). The stops are
 // due while the log holds any the Hub has not taken. Every other section is due
 // at start, when its content may have changed and its digest differs from the
@@ -341,6 +416,8 @@ export const createSectionsReporter = ({
     now,
     refreshMs,
   });
+
+  const jobRuns = createJobRunsState({ log, now, refreshMs });
 
   const stopped =
     stops === undefined ? undefined : createStopsState({ log, now, refreshMs, stops });
@@ -437,6 +514,7 @@ export const createSectionsReporter = ({
         latestChecks === undefined
           ? undefined
           : checked.pending(store, latestChecks !== seenChecks),
+      jobRuns: jobRuns.pending(store, changed),
       records: records.pending(store, changed),
       runs: runs.pending(store, changed),
     };
@@ -444,6 +522,7 @@ export const createSectionsReporter = ({
     seenChecks = latestChecks;
     return {
       ...(due.checks === undefined ? {} : { checks: due.checks }),
+      ...(due.jobRuns === undefined ? {} : { jobRuns: due.jobRuns }),
       ...(due.records === undefined ? {} : { records: due.records }),
       ...(due.runs === undefined ? {} : { runs: due.runs }),
     };
@@ -455,6 +534,7 @@ export const createSectionsReporter = ({
       store = undefined;
       // A store opened again may carry a version this one never saw.
       seenVersion = undefined;
+      jobRuns.reset();
       seenChecks = undefined;
       seenHarnesses = undefined;
       seenProcesses = undefined;

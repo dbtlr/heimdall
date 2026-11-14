@@ -1,3 +1,4 @@
+import { JOB_RUN_RETENTION_DAYS, JOB_RUNS_KEPT_PER_JOB } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 const DAY_MS = 86_400_000;
@@ -44,5 +45,27 @@ export const pruneVitals = (sql: SQL, now: number): Promise<Pruned> =>
 export const pruneServiceStops = async (sql: SQL, now: number): Promise<number> => {
   const cutoff = new Date(now - 90 * DAY_MS);
   const deleted = await sql`DELETE FROM service_stops WHERE NOT ongoing AND stopped_at < ${cutoff}`;
+  return deleted.count;
+};
+
+// How many of each job's latest runs the Hub keeps however old they are, and
+// how long it keeps the rest (ADR-0023), from the schema package's constants.
+// A run goes when it started more than 90 days before `now` and 14 later runs
+// of its job exist. The latest runs are found through the primary key, which
+// leads with System, job, and start, and the old candidates through the index
+// on the start, so the cost follows the runs old enough to go.
+export const pruneJobRuns = async (sql: SQL, now: number): Promise<number> => {
+  const cutoff = new Date(now - JOB_RUN_RETENTION_DAYS * DAY_MS);
+  const deleted = await sql`
+    DELETE FROM job_runs old
+    WHERE old.started_at < ${cutoff}
+      AND (
+        SELECT count(*) FROM (
+          SELECT 1 FROM job_runs later
+          WHERE later.system = old.system AND later.job = old.job AND later.started_at > old.started_at
+          LIMIT ${JOB_RUNS_KEPT_PER_JOB}
+        ) AS latest
+      ) >= ${JOB_RUNS_KEPT_PER_JOB}
+  `;
   return deleted.count;
 };

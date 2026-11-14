@@ -7,6 +7,7 @@ import type { pair } from './application.ts';
 import { describeError } from './errors.ts';
 import { identityPath, readIdentity, writeIdentity } from './identity.ts';
 import type { IdentityRead } from './identity.ts';
+import { openRecords, recordsPath } from './records.ts';
 import { MAX_ANSWER_BYTES, redeemCode } from './redeem.ts';
 import type { Redemption } from './redeem.ts';
 import { resolveStateDir } from './state-dir.ts';
@@ -88,6 +89,20 @@ const lostIdentity = ({
     : lost;
 };
 
+// Marks every job run the Collector keeps as not yet taken by the Hub.
+// A System that never recorded anything has no store, and pairing makes none.
+const holdRunsAgain = async (stateDir: string) => {
+  if (!(await Bun.file(recordsPath(stateDir)).exists())) {
+    return;
+  }
+  const store = await openRecords({ stateDir });
+  try {
+    store.holdAllRuns();
+  } finally {
+    store.close();
+  }
+};
+
 // `heimdall-collector pair <code>`: redeems a Pairing code with the Hub and
 // keeps the System name and token it answers, with the Hub's origin, in
 // `identity.json` (ADR-0009).
@@ -125,6 +140,16 @@ export const pairAction: ActionHandler<typeof pair> = async ({
     fail(lostIdentity({ error, path: identityPath(stateDir), previous, system })),
   );
   await out.print(clean(`Paired as ${system}.`));
+  // A Hub the Collector pairs with, new or the same, gets every job run the
+  // Collector still keeps (ADR-0023). A store that will not open costs that
+  // backfill, not the pairing.
+  await holdRunsAgain(stateDir).catch((error: unknown) =>
+    out.print(
+      clean(
+        `Could not mark the job runs to send to the Hub, so it gets only runs recorded from now on: ${describeError(error)}`,
+      ),
+    ),
+  );
   const replaced = replacement(previous, system);
   if (replaced !== undefined) {
     await out.print(clean(replaced));

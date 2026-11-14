@@ -631,9 +631,13 @@ test('a job whose name the section cannot carry is left out of the runs and warn
     jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
     unreadable: [],
   });
-  expect(collector.warnings).toHaveLength(1);
-  expect(collector.warnings[0]).toContain('../escape');
-  expect(collector.warnings[0]).toContain('has space');
+  const warned = collector.warnings.filter((m) => m.startsWith('Left out of the runs report'));
+  expect(warned).toHaveLength(1);
+  expect(warned[0]).toContain('../escape');
+  expect(warned[0]).toContain('has space');
+  // The job runs report leaves them out and says so, once, however often it is read.
+  expect(report?.jobRuns?.runs.map(({ job }) => job)).toEqual(['backup']);
+  expect(collector.warnings.filter((m) => m.includes('job runs report'))).toHaveLength(1);
 });
 
 test('the reporter never reads every run, only the records and the latest runs', async () => {
@@ -749,8 +753,9 @@ test('a job whose name the section cannot carry is left out of the unreadable jo
     jobs: [{ job: 'backup', latestRun: ran, latestSuccess: ran }],
     unreadable: [],
   });
-  expect(collector.warnings).toHaveLength(1);
-  expect(collector.warnings[0]).toContain('has space');
+  const warned = collector.warnings.filter((m) => m.startsWith('Left out of the runs report'));
+  expect(warned).toHaveLength(1);
+  expect(warned[0]).toContain('has space');
 });
 
 test('a store that fails again after it recovered is warned about again', async () => {
@@ -1166,4 +1171,86 @@ test('a Collector with no stops logged sends no Service stops section', async ()
   stops.close();
 
   expect(reports[0]?.serviceStops).toBeUndefined();
+});
+
+const seededRuns = async (dir: { path: string }, ...runs: RunRecord[]) => {
+  const seed = await openRecords({ stateDir: dir.path });
+  seed.put('job', cron);
+  for (const run of runs) {
+    seed.putRun('backup', run);
+  }
+  seed.close();
+};
+
+test('job runs ride Reports oldest first until one carrying them is delivered, across a failed delivery', async () => {
+  await using dir = await tempStateDir();
+  const [older, newer] = [minutesAgo(20), minutesAgo(5)] as const;
+  await seededRuns(dir, newer, older);
+  const collector = await setup(dir);
+  collector.outcomes.push({ kind: 'failed', reason: 'Hub answered 503' });
+
+  const failed = await collector.push();
+  const delivered = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  const runs = [
+    { ...older, job: 'backup' },
+    { ...newer, job: 'backup' },
+  ];
+  expect(failed[0]?.jobRuns).toEqual({ runs });
+  expect(delivered[0]?.jobRuns).toEqual({ runs });
+  expect(after[0]?.jobRuns).toBeUndefined();
+});
+
+test('a run recorded after a delivery is sent, and a run recorded again is sent again', async () => {
+  await using dir = await tempStateDir();
+  const [older, newer] = [minutesAgo(20), minutesAgo(5)] as const;
+  await seededRuns(dir, older);
+  const collector = await setup(dir);
+
+  await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', newer));
+  const next = await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', newer));
+  const again = await collector.push();
+  collector.close();
+
+  expect(next[0]?.jobRuns?.runs.map(({ started }) => started)).toEqual([newer.started]);
+  expect(again[0]?.jobRuns?.runs.map(({ started }) => started)).toEqual([newer.started]);
+});
+
+test('a rejected Report keeps the job runs, warns once, and sends them after the hourly refresh', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  const collector = await setup(dir);
+  collector.outcomes.push({ detail: 'bad runs', kind: 'rejected' });
+
+  const rejected = await collector.push();
+  const next = await collector.push();
+  collector.advance(SECTIONS_REFRESH_MS);
+  const hourly = await collector.push();
+  const after = await collector.push();
+  collector.close();
+
+  expect(rejected[0]?.jobRuns).toBeDefined();
+  expect(next[0]?.jobRuns).toBeUndefined();
+  expect(hourly[0]?.jobRuns?.runs).toHaveLength(1);
+  expect(after[0]?.jobRuns).toBeUndefined();
+  expect(collector.warnings.filter((m) => m.includes('job runs'))).toEqual([
+    expect.stringContaining('carrying the job runs (bad runs)'),
+  ]);
+});
+
+test('pairing holds the runs the Hub took again', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  const collector = await setup(dir);
+  await collector.push();
+
+  await elsewhere(dir.path, (other) => other.holdAllRuns());
+  const repaired = await collector.push();
+  collector.close();
+
+  expect(repaired[0]?.jobRuns?.runs).toHaveLength(1);
 });

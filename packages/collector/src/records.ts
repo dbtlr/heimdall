@@ -2,8 +2,14 @@ import { Database } from 'bun:sqlite';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { RECORD_KINDS, RECORD_SCHEMAS, RunRecordSchema } from '@heimdall/schema';
-import type { RecordKind, RecordOf, RunRecord } from '@heimdall/schema';
+import {
+  JobRunsSectionSchema,
+  MAX_JOB_RUNS_PER_REPORT,
+  RECORD_KINDS,
+  RECORD_SCHEMAS,
+  RunRecordSchema,
+} from '@heimdall/schema';
+import type { RecordKind, RecordOf, RunRecord, SentJobRun } from '@heimdall/schema';
 
 import { parseJson } from './json.ts';
 
@@ -29,6 +35,16 @@ export type RunOutcome =
   | 'expired'
   // No job record of that name exists, so nothing was kept.
   | 'no job';
+
+// The runs the Hub has not taken, oldest first and at most one Report's worth,
+// and how to settle them once a Report carrying them is delivered (ADR-0023).
+// `skipped` lists the held runs the section cannot carry, which are no longer
+// held, so the caller can say so.
+export type HeldRuns = {
+  runs: SentJobRun[];
+  settle: () => void;
+  skipped: { job: string; started: string }[];
+};
 
 // Rows this build cannot read: written by a newer Collector, or damaged. The
 // kind of a record is a string, since it may be one this build does not know.
@@ -60,6 +76,12 @@ export type RecordStore = {
   read: () => { records: StoredRecord[]; runs: StoredRun[]; unreadable: Unreadable };
   // The records alone, read as `read` reads them, without parsing any run.
   readRecords: () => { records: StoredRecord[]; unreadable: Unreadable['records'] };
+  // The runs the Hub has not taken (ADR-0023), found through an index over the
+  // held runs alone. Runs the job runs section cannot carry are left out and
+  // no longer held until they are recorded again.
+  heldRuns: () => HeldRuns;
+  // Holds every kept run again, as pairing with a Hub does.
+  holdAllRuns: () => void;
   // A number that differs from its last value after another connection, such as
   // a `record` process, committed a write to the database. This connection's
   // own writes do not change it, so only a daemon that never writes can use it
@@ -69,7 +91,11 @@ export type RecordStore = {
 
 type RecordRow = { body: string; kind: string; name: string };
 type RunRow = { body: string; job: string; started: string };
+type HeldRow = RunRow & { revision: number };
 type LatestRunsRow = { job: string; latest: string; success: string | null };
+
+// Where the store keeps its database in `stateDir`.
+export const recordsPath = (stateDir: string) => join(stateDir, 'records.sqlite');
 
 // Opens the store in `stateDir`, creating the directory private to its owner and
 // the database when they are missing. `heimdall-collector run` may hold the
@@ -83,7 +109,7 @@ export const openRecords = async ({
   stateDir: string;
 }): Promise<RecordStore> => {
   await mkdir(stateDir, { mode: 0o700, recursive: true });
-  const db = new Database(join(stateDir, 'records.sqlite'), { create: true, strict: true });
+  const db = new Database(recordsPath(stateDir), { create: true, strict: true });
   try {
     return storeOver(db, now);
   } catch (error) {
@@ -91,6 +117,22 @@ export const openRecords = async ({
     // not leave a handle open for each retry.
     db.close();
     throw error;
+  }
+};
+
+// Adds a column to a table made before it existed. Two processes may open the
+// store together, so a column the other added first is not an error.
+const addColumn = (db: Database, table: string, column: string, definition: string) => {
+  const columns = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  if (columns.some(({ name }) => name === column)) {
+    return;
+  }
+  try {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  } catch (error) {
+    if (!String(error).includes('duplicate column')) {
+      throw error;
+    }
   }
 };
 
@@ -104,6 +146,16 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
   // `startedMs` is the start as epoch milliseconds, so pruning compares times, not text.
   db.run(
     'CREATE TABLE IF NOT EXISTS runs (job TEXT NOT NULL, started TEXT NOT NULL, startedMs INTEGER NOT NULL, exitStatus INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (job, started))',
+  );
+
+  // `revision` counts the changes to a run and `settled` is the revision the
+  // Hub last took, so a run is held while `revision > settled`, and one
+  // recorded again after a Report carried it is sent again (ADR-0023). Runs kept
+  // before these columns existed have revision 1 and settled 0, so they are held.
+  addColumn(db, 'runs', 'revision', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn(db, 'runs', 'settled', 'INTEGER NOT NULL DEFAULT 0');
+  db.run(
+    'CREATE INDEX IF NOT EXISTS runs_held ON runs (startedMs, job, started) WHERE revision > settled',
   );
 
   // The two lookups of `latestRuns`: the latest run of a job, and its latest
@@ -120,8 +172,18 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
   const removeRuns = db.query('DELETE FROM runs WHERE job = $job');
   const hasJob = db.query("SELECT 1 FROM records WHERE kind = 'job' AND name = $job");
   const upsertRun = db.query(
-    'INSERT OR REPLACE INTO runs (job, started, startedMs, exitStatus, body) VALUES ($job, $started, $startedMs, $exitStatus, $body)',
+    `INSERT INTO runs (job, started, startedMs, exitStatus, body) VALUES ($job, $started, $startedMs, $exitStatus, $body)
+    ON CONFLICT (job, started) DO UPDATE SET startedMs = excluded.startedMs, exitStatus = excluded.exitStatus,
+      body = excluded.body, revision = revision + 1`,
   );
+  const selectHeld = db.query<HeldRow, []>(
+    `SELECT job, started, body, revision FROM runs WHERE revision > settled
+    ORDER BY startedMs, job, started LIMIT ${String(MAX_JOB_RUNS_PER_REPORT)}`,
+  );
+  const settleRun = db.query(
+    'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started',
+  );
+  const holdAll = db.query('UPDATE runs SET settled = 0');
   // `IS NOT` matches every row when the job has no success, where `!=` would match none.
   const prune = db.query(
     'DELETE FROM runs WHERE job = $job AND startedMs < $cutoff AND startedMs IS NOT (SELECT max(startedMs) FROM runs WHERE job = $job AND exitStatus = 0)',
@@ -192,6 +254,42 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     }
     return { records, runs, unreadable: { records: unreadableRecords, runs: unreadableRuns } };
   });
+  const settleAll = db.transaction((rows: readonly Omit<HeldRow, 'body'>[]) => {
+    for (const { job, revision, started } of rows) {
+      settleRun.run({ job, revision, started });
+    }
+  });
+  // A held run that is no longer a run the section can carry is settled at
+  // once, so it never takes one of the section's places.
+  const heldRuns = (): HeldRuns => {
+    const skipped: HeldRuns['skipped'] = [];
+    // Skipped runs leave their places to the held runs behind them, so look
+    // again until a page carries a run or the held runs are gone.
+    for (;;) {
+      const runs: SentJobRun[] = [];
+      const settling: Omit<HeldRow, 'body'>[] = [];
+      const skippedRows: Omit<HeldRow, 'body'>[] = [];
+      const rows = selectHeld.all();
+      for (const row of rows) {
+        const { job, revision, started } = row;
+        const parsed = RunRecordSchema.safeParse(parseJson(row.body));
+        const sent = parsed.success
+          ? JobRunsSectionSchema.safeParse({ runs: [{ ...parsed.data, job }] })
+          : undefined;
+        if (parsed.success && sent?.success === true && parsed.data.started === started) {
+          runs.push(...sent.data.runs);
+          settling.push({ job, revision, started });
+        } else {
+          skipped.push({ job, started });
+          skippedRows.push({ job, revision, started });
+        }
+      }
+      settleAll(skippedRows);
+      if (runs.length > 0 || skippedRows.length === 0) {
+        return { runs, settle: () => settleAll(settling), skipped };
+      }
+    }
+  };
   const latestRuns = () => {
     const jobs: LatestRuns[] = [];
     const unreadable: string[] = [];
@@ -213,6 +311,10 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     // Immediate transactions take the write lock at once, so two processes wait
     // for each other instead of failing on a lock upgrade.
     forget: (kind, name) => forget.immediate(kind, name),
+    heldRuns,
+    holdAllRuns: () => {
+      holdAll.run();
+    },
     latestRuns,
     put: (kind, record) => {
       upsert.run({ body: JSON.stringify(record), kind, name: record.name });
