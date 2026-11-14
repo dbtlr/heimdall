@@ -1,12 +1,14 @@
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-import { dueWords, latestRunWords, scheduleWords } from '../lib/jobs.ts';
+import { dueWords, latestRunWords, scheduleZone } from '../lib/jobs.ts';
 import type { StripCell } from '../lib/jobs.ts';
+import { scheduleWords } from '../lib/recorded.ts';
 import { cn } from '../lib/utils.ts';
 import type { JobsRow } from '../server/jobs-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
-import { PhraseText } from './date-time.tsx';
+import { InZone, PhraseText } from './date-time.tsx';
+import { RECORD_DOT } from './recorded-panel.tsx';
 
 const CELL: Record<StripCell['kind'], string> = {
   failed: 'bg-status-critical',
@@ -21,11 +23,14 @@ const CELL_WORDS: Record<StripCell['kind'], string> = {
 };
 
 // A job's last runs, oldest first, one cell each: succeeded, failed, or a
-// scheduled time that passed with no run. Without cells the Hub holds no run
-// history for the job, which is not the same as runs it missed.
+// scheduled time that passed with no run. Without a strip the System's
+// Collector has sent no run history, which is not the same as runs it missed.
 function Strip({ cells }: { cells: readonly StripCell[] | undefined }) {
   if (cells === undefined) {
-    return <span className="text-xs text-muted-foreground">history not sent</span>;
+    return <span className="text-xs text-muted-foreground">no run history</span>;
+  }
+  if (cells.length === 0) {
+    return <span className="text-xs text-muted-foreground">no runs yet</span>;
   }
   return (
     <span
@@ -44,7 +49,8 @@ function Strip({ cells }: { cells: readonly StripCell[] | undefined }) {
   );
 }
 
-// The level: a chip for a failing or overdue job, a dot for the rest.
+// The level: a chip for a failing or overdue job, a dot for the rest, muted
+// for a job that has never run, since its state is unknown.
 function Level({ job }: { job: JobsRow }) {
   if (job.state === 'failing' || job.state === 'overdue') {
     return (
@@ -58,10 +64,15 @@ function Level({ job }: { job: JobsRow }) {
       </span>
     );
   }
+  const due = job.state === 'due';
   return (
     <>
-      <span aria-hidden="true" className="inline-block size-2 rounded-full bg-status-good" />
-      <span className="sr-only">OK</span>
+      <span
+        aria-hidden="true"
+        className={cn('inline-block size-2 rounded-full', RECORD_DOT[due ? 'unknown' : 'good'])}
+        data-level={due ? 'unknown' : 'ok'}
+      />
+      <span className="sr-only">{due ? 'Not run yet' : 'OK'}</span>
     </>
   );
 }
@@ -82,6 +93,7 @@ function JobName({ job, withSystem = false }: { job: JobsRow; withSystem?: boole
       {withSystem && <span className="ml-2 text-xs text-muted-foreground">{job.system}</span>}
       <span className="block text-xs text-muted-foreground">
         {scheduleWords(job.schedule)}
+        <InZone>{(viewerZone) => scheduleZone(job.timeZone, viewerZone)}</InZone>
         {job.scheduler === '' ? '' : ` · ${job.scheduler}`}
       </span>
     </>
@@ -208,7 +220,7 @@ function Legend() {
     <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       {legendKey('ok', 'succeeded')}
       {legendKey('failed', 'failed')}
-      {legendKey('missed', 'missed: no run within the grace period')}
+      {legendKey('missed', 'missed: no run before the next scheduled time')}
     </p>
   );
 }

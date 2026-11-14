@@ -16,9 +16,11 @@ import type { JobRun } from './system-detail-types.ts';
 
 const DAY_MS = 86_400_000;
 
-// How far back a job's missed runs are looked for when the Hub has no time it
-// first mirrored the job, which only a damaged table lacks.
-const MISSED_LOOKBACK_MS = 90 * DAY_MS;
+// How long the Hub keeps every run of a job; past it, only the job's latest
+// STRIP_RUNS stay. The Collector keeps the same 90 days and sends them all, so
+// the history holds every run of these days, and none from before it says
+// anything about them.
+const HISTORY_MS = 90 * DAY_MS;
 
 type JobRow = {
   first_mirrored_at: Date | null;
@@ -84,21 +86,50 @@ const toStoredRun = (row: StoredRunRow): JobRun => ({
   started: row.started_at.getTime(),
 });
 
-// The job as the page lists it: its state as Home states it, its schedule,
-// grace, and next time, and the strip of its newest runs when the Hub stores
-// them. A job with no stored run falls back to the latest run it mirrors.
+// The earliest time a job's strip can call a scheduled time missed: no earlier
+// than the job existed, and no earlier than the history speaks for. The
+// history speaks for every scheduled time since its oldest run when it holds
+// STRIP_RUNS of them, since it keeps all later runs; with fewer, it has pruned
+// none and speaks for its 90 days, not for a time before them.
+const missedSince = ({
+  existed,
+  history,
+  now,
+}: {
+  existed: number;
+  history: readonly JobRun[];
+  now: number;
+}): number => {
+  const starts = history.map(({ started }) => started);
+  const held =
+    history.length >= STRIP_RUNS ? Math.min(...starts) : Math.min(now - HISTORY_MS, ...starts);
+  return Math.max(existed, held);
+};
+
+// The job as the page lists it. Its latest run and state come from the latest
+// run the Hub mirrors and the job Conditions, as on Home and in the Hub's
+// judgment; the history lists the earlier runs, with the latest run added when
+// the history does not hold it yet. A System whose Collector has sent no
+// history has no strip, since its earlier runs are unknown, not missed.
 const jobRow = (
   row: JobRow,
   {
+    history,
     now,
     opened,
-    runs,
-  }: { now: number; opened: ReadonlyMap<string, number>; runs: readonly JobRun[] },
+    sendsHistory,
+  }: {
+    history: readonly JobRun[];
+    now: number;
+    opened: ReadonlyMap<string, number>;
+    sendsHistory: boolean;
+  },
 ): JobsRow => {
   const schedule = scheduleOf(field(row.record, 'schedule'));
   const graceMinutes = field(row.record, 'graceMinutes');
   const grace = typeof graceMinutes === 'number' ? graceMinutes : DEFAULT_GRACE_MINUTES;
-  const latestRun = runs[0] ?? (row.latest_run === null ? undefined : toRun(row.latest_run));
+  const graceMs = grace * 60_000;
+  const latestRun = row.latest_run === null ? undefined : toRun(row.latest_run);
   const timeZone = row.time_zone;
   const timed = <T>(find: (zone: string) => T | undefined) => {
     if (timeZone === null) {
@@ -120,11 +151,16 @@ const jobRow = (
     overdueSince,
     system: row.system,
   });
-  // Runs the Hub holds from before it mirrored the job show the job existed.
-  const notBefore = Math.min(
-    row.first_mirrored_at?.getTime() ?? now - MISSED_LOOKBACK_MS,
-    ...runs.map(({ started }) => started),
+  // The job existed from when the Hub first mirrored it, or from an earlier
+  // run the Hub holds.
+  const existed = Math.min(
+    row.first_mirrored_at?.getTime() ?? now - HISTORY_MS,
+    ...history.map(({ started }) => started),
   );
+  const runs =
+    latestRun === undefined || history.some(({ started }) => started === latestRun.started)
+      ? history
+      : [latestRun, ...history];
   return {
     ...home,
     graceMinutes: grace,
@@ -132,22 +168,30 @@ const jobRow = (
     nextDue: timed((zone) => nextScheduledTime({ after: now, schedule, timeZone: zone })),
     schedule,
     scheduler: text(field(row.record, 'scheduler')) ?? '',
-    strip:
-      runs.length === 0
-        ? undefined
-        : jobStrip({
-            graceMs: grace * 60_000,
-            notBefore,
-            now,
-            runs,
-            schedule,
-            timeZone,
-          }),
+    strip: sendsHistory
+      ? jobStrip({
+          graceMs,
+          notBefore: missedSince({ existed, history, now }),
+          now,
+          runs,
+          schedule,
+          timeZone,
+        })
+      : undefined,
+    timeZone,
+    // The Hub is overdue for a time its grace has passed since; on the wall
+    // clock that is the latest at least the grace ago, which for a System that
+    // slept can be later than the time the Hub names.
     wasDueAt:
       overdueSince === undefined
         ? undefined
         : timed((zone) =>
-            latestScheduledTime({ atOrBefore: now, notBefore, schedule, timeZone: zone }),
+            latestScheduledTime({
+              atOrBefore: now - graceMs,
+              notBefore: existed,
+              schedule,
+              timeZone: zone,
+            }),
           ),
   };
 };
@@ -163,20 +207,24 @@ const readJobsSnapshot = async (sql: SQL, now: number): Promise<Jobs> => {
   const opened = new Map(
     open.map((row) => [`${keyOf(row.system, row.subject)}/${row.kind}`, row.raised_at.getTime()]),
   );
-  const runsOf = new Map<string, JobRun[]>();
+  const historyOf = new Map<string, JobRun[]>();
   for (const row of stored) {
     const key = keyOf(row.system, row.job);
-    runsOf.set(key, [...(runsOf.get(key) ?? []), toStoredRun(row)]);
+    historyOf.set(key, [...(historyOf.get(key) ?? []), toStoredRun(row)]);
   }
+  // A Collector sends every run it keeps, so a System with a stored run of any
+  // job it records sends the history, and its other jobs have none to send.
+  const sendingHistory = new Set(stored.map(({ system }) => system));
   return {
     jobs: orderJobs(
       rows.map((row) =>
         jobRow(row, {
-          now,
-          opened,
-          runs: (runsOf.get(keyOf(row.system, row.name)) ?? []).toSorted(
+          history: (historyOf.get(keyOf(row.system, row.name)) ?? []).toSorted(
             (a, b) => b.started - a.started,
           ),
+          now,
+          opened,
+          sendsHistory: sendingHistory.has(row.system),
         }),
       ),
     ),

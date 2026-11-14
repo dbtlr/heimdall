@@ -19,6 +19,7 @@ const job = (name: string, extra: Partial<JobsRow> = {}): JobsRow => ({
   state: 'ok',
   strip: [{ at: NOW - HOUR, kind: 'ok' }],
   system: 'server-1',
+  timeZone: 'UTC',
   wasDueAt: undefined,
   ...extra,
 });
@@ -44,14 +45,14 @@ describe('the Jobs list', () => {
       'overdue',
       'ok',
     ]);
-    expect(html).toContain('daily 03:00 · systemd-timer');
+    expect(html).toContain('Daily at 03:00 · systemd-timer');
     expect(html).toContain('Failing');
     expect(linksIn(html).find(({ label }) => label === 'backup')?.href).toBe(
       '/systems/server-1?tab=records',
     );
   });
 
-  test('draws a missed run as its own cell, and a job with no stored history as unknown', async () => {
+  test('draws a missed run as its own cell, and a System with no run history as unknown', async () => {
     const html = await renderRouted(
       <JobsList
         jobs={[
@@ -78,6 +79,32 @@ describe('the Jobs list', () => {
       'failed',
     ]);
     expect(html).toContain('Last 3 runs: succeeded, missed, failed');
-    expect(html).toContain('history not sent');
+    expect(html).toContain('no run history');
+    expect(html).not.toContain('history not sent');
+  });
+
+  test('marks a job that never ran as unknown, not OK', async () => {
+    const html = await renderRouted(
+      <JobsList
+        jobs={[
+          job('prune', {
+            at: undefined,
+            lastRunAt: undefined,
+            latestRun: undefined,
+            state: 'due',
+            strip: [],
+          }),
+        ]}
+        now={NOW}
+      />,
+    );
+
+    expect([...html.matchAll(/data-level="(\w+)"/gu)].map(([, level]) => level)).toEqual([
+      'unknown',
+      'unknown',
+    ]);
+    expect(html).toContain('Not run yet');
+    expect(html).not.toContain('>OK<');
+    expect(html).toContain('no runs yet');
   });
 });

@@ -18,11 +18,14 @@ export type JobsRow = HomeJob & {
   nextDue: number | undefined;
   schedule: ScheduleEntry[];
   scheduler: string;
-  // The last runs with the scheduled times they missed, oldest first;
-  // undefined when the Hub holds no stored run of the job, as for a Collector
-  // that sends none, so its history is unknown rather than missed.
+  // The last runs with the scheduled times no run answered, oldest first;
+  // undefined when the Hub holds no stored run of any job the System records,
+  // as for a Collector that sends no run history, so its runs are unknown
+  // rather than missed.
   strip: StripCell[] | undefined;
-  // For an overdue job, the latest scheduled time up to now.
+  // The System's zone, which the schedule's times are in; null when unknown.
+  timeZone: string | null;
+  // For an overdue job, the latest scheduled time its grace has passed since.
   wasDueAt: number | undefined;
 };
 
