@@ -1,4 +1,4 @@
-import { WINDOW_DAYS } from './service-detail.ts';
+import { WINDOW_DAYS } from './service-availability.ts';
 
 const WINDOW_MS = WINDOW_DAYS * 24 * 60 * 60 * 1000;
 

@@ -10,6 +10,7 @@ import type {
   ConditionSeries,
   PendingPackage,
 } from '../server/condition-detail-types.ts';
+import type { VitalsWindow } from '../server/vitals-window-types.ts';
 import { ATTENTION_NAMES, evidenceNote, evidenceWords, nextSteps } from './attention.ts';
 import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
@@ -46,6 +47,9 @@ export type ChartView = {
   points: ChartPoint[];
   window: Window;
 };
+
+// What a chart draws: the readings with their scale and limit lines.
+export type PlotView = Pick<ChartView, 'domain' | 'label' | 'lines' | 'points' | 'window'>;
 
 export type HistoryRow = {
   at: number;
@@ -86,6 +90,9 @@ export type ConditionDetailView = {
   rate: { estimate: true; text: string } | undefined;
   system: string;
   title: string;
+  // The System's Vitals around the occurrence, with the span it was open to
+  // shade; undefined for a Condition that charts its own series.
+  vitals: { shade: Window; window: VitalsWindow } | undefined;
 };
 
 // "7 days" or "24 h": a length of time.
@@ -480,5 +487,9 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
     rate: leading.rate,
     system: detail.system,
     title: subject === '' ? kindName : `${kindName} ${subject}`,
+    vitals:
+      detail.vitals === undefined
+        ? undefined
+        : { shade: { from: detail.raisedAt, to: detail.clearedAt ?? now }, window: detail.vitals },
   };
 };

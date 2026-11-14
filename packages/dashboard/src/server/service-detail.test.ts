@@ -223,6 +223,7 @@ describe('parseServiceDetailInput', () => {
     expect(parseServiceDetailInput({ name: 'server-1', service: 'web' })).toEqual({
       name: 'server-1',
       service: 'web',
+      stop: undefined,
     });
   });
 
@@ -407,4 +408,81 @@ test(`reads ${upstream} observations on the same System, skipping withdrawn and 
   });
   expect(found?.updates).toEqual([]);
   expect((await read(h, 'laptop-1'))?.update.status).toBeUndefined();
+});
+
+// Seconds after NOW, as the Hub's fixtures take them, of a time `ms` before it.
+const secondsAgo = (ms: number) => -ms / 1000;
+
+describe('the availability strip and the selected stop', () => {
+  const { addVitals } = timeline(NOW);
+
+  test('reads the days of the 90 in which the System sent Vitals', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records });
+    await addVitals(h.db.sql, 'server-1', secondsAgo(2 * HOUR));
+    await addVitals(h.db.sql, 'server-1', secondsAgo(40 * DAY));
+    await addVitals(h.db.sql, 'server-1', secondsAgo(91 * DAY));
+    await hear(h, 'laptop-1', { records });
+    await addVitals(h.db.sql, 'laptop-1', secondsAgo(10 * DAY));
+
+    const found = await read(h);
+
+    expect(found?.reportDays).toEqual([50, 89]);
+  });
+
+  test('selects the newest stop, or the one asked for, with the Vitals around it', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', {
+      records,
+      serviceStops: {
+        stops: [stop({ startedAt: NOW - 5 * HOUR + MINUTE, stoppedAt: NOW - 5 * HOUR }), stop()],
+      },
+    });
+    await addVitals(h.db.sql, 'server-1', secondsAgo(5 * HOUR), 30);
+    await addVitals(h.db.sql, 'server-1', secondsAgo(HOUR - 10 * MINUTE), 70);
+
+    const newest = await readServiceDetail(h.db.sql, {
+      now: NOW,
+      service: 'web',
+      system: 'server-1',
+    });
+    const older = await readServiceDetail(h.db.sql, {
+      now: NOW,
+      service: 'web',
+      stop: NOW - 5 * HOUR,
+      system: 'server-1',
+    });
+
+    expect(newest?.selection?.span).toEqual({ from: NOW - HOUR, to: NOW - HOUR + MINUTE });
+    expect(newest?.selection?.vitals).toMatchObject({
+      from: NOW - HOUR - 30 * MINUTE,
+      source: 'samples',
+      to: NOW - HOUR + 31 * MINUTE,
+    });
+    expect(newest?.selection?.vitals.points.map(({ cpu }) => cpu)).toEqual([70]);
+    expect(older?.selection?.vitals.points.map(({ cpu }) => cpu)).toEqual([30]);
+  });
+
+  test('a stop that is not there selects the newest, and a Service with no stop selects none', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records, serviceStops: { stops: [stop()] } });
+
+    const missing = await readServiceDetail(h.db.sql, {
+      now: NOW,
+      service: 'web',
+      stop: 1,
+      system: 'server-1',
+    });
+    expect(missing?.selection?.span.from).toBe(NOW - HOUR);
+
+    await using empty = await startHub();
+    await hear(empty, 'server-1', { records });
+    expect((await read(empty))?.selection).toBeUndefined();
+  });
+
+  test('parses the selected stop only when it is a whole number', () => {
+    expect(parseServiceDetailInput({ name: 'a', service: 'b', stop: 5 }).stop).toBe(5);
+    expect(parseServiceDetailInput({ name: 'a', service: 'b', stop: 'x' }).stop).toBeUndefined();
+    expect(parseServiceDetailInput({ name: 'a', service: 'b' }).stop).toBeUndefined();
+  });
 });

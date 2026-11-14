@@ -111,6 +111,7 @@ const memoryDetail = (holders: ConditionDetail['memoryHolders']): ConditionDetai
   system: 'vm-host-1',
   to: NOW,
   transitions: [],
+  vitals: undefined,
 });
 
 const others = (count: number): Attention[] =>

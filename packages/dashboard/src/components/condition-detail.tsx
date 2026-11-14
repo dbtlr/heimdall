@@ -5,6 +5,7 @@ import { ConditionChart } from './condition-chart.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { DateTime, PhraseText } from './date-time.tsx';
 import { MemoryHolders } from './memory-holders.tsx';
+import { VitalsWindowCard } from './vitals-window.tsx';
 
 const CHIP =
   'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-semibold';
@@ -175,6 +176,15 @@ export function ConditionDetailPanel({ now, view }: { now: number; view: Conditi
       <Heading view={view} />
       <Hero view={view} />
       {view.chart !== undefined && <ChartSection chart={view.chart} />}
+      {view.vitals !== undefined && (
+        <div className="mt-6 min-w-0">
+          <VitalsWindowCard
+            shade={view.vitals.shade}
+            title="Vitals while it was open, with 30 minutes either side"
+            vitals={view.vitals.window}
+          />
+        </div>
+      )}
       {view.packages !== undefined && <PackageTable packages={view.packages} />}
       {view.memoryHolders !== undefined && (
         <div className="mt-6 min-w-0">

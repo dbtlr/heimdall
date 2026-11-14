@@ -8,6 +8,7 @@ import type { ServiceStopsRead } from '@heimdall/schema';
 import type { Install } from '../lib/service-installs.ts';
 import type { ServiceUpdate, UpstreamRelease } from '../lib/service-updates.ts';
 import type { RecordedService } from './system-detail-types.ts';
+import type { VitalsWindow } from './vitals-window-types.ts';
 
 export type ServiceStop = ServiceStopsRead['stops'][number];
 
@@ -41,6 +42,12 @@ export type ServiceDetail = {
   note: { id: string; raisedAt: number; reason: string } | undefined;
   // The Service's record and checks, undefined once its provisioner forgot it.
   recorded: RecordedService | undefined;
+  // The 90-day strip's days, counted from its start 90 days before `now`, in
+  // which the System sent Vitals.
+  reportDays: number[];
+  // The selected stop and the System's Vitals around it; undefined when the
+  // Service has no stop.
+  selection: { span: { from: number; to: number }; vitals: VitalsWindow } | undefined;
   service: string;
   // The stops in the 90 days before `now`, newest first.
   stops: ServiceStop[];

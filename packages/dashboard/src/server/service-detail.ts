@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { stopSpan, stripWindow, WINDOW_MS } from '../lib/service-availability.ts';
 import { installsOf } from '../lib/service-installs.ts';
 import {
   isCheckedUpstream,
@@ -8,13 +9,15 @@ import {
   updatesOf,
   upstreamSince,
 } from '../lib/service-updates.ts';
+import { aroundSpan } from '../lib/vitals-window.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
-import type { ServiceDetail, ServiceDownTransition } from './service-detail-types.ts';
+import type { ServiceDetail, ServiceDownTransition, ServiceStop } from './service-detail-types.ts';
 import { readServiceStops } from './service-stops.ts';
 import { recordedService } from './system-detail.ts';
 import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
 import type { UpstreamCheckRow } from './update-observations.ts';
+import { readVitalsWindow } from './vitals-window.ts';
 
 const nameField = (input: unknown, key: string, what: string): string => {
   const name = field(input, key);
@@ -24,14 +27,58 @@ const nameField = (input: unknown, key: string, what: string): string => {
   return name;
 };
 
-// The System and Service a Service page asks for.
-export const parseServiceDetailInput = (input: unknown): { name: string; service: string } => ({
-  name: nameField(input, 'name', 'System'),
-  service: nameField(input, 'service', 'Service'),
-});
+// The System and Service a Service page asks for, and the stop it selects: the
+// time it stopped, in epoch milliseconds. Without one, the newest stop is selected.
+export const parseServiceDetailInput = (
+  input: unknown,
+): { name: string; service: string; stop: number | undefined } => {
+  const stop = field(input, 'stop');
+  return {
+    name: nameField(input, 'name', 'System'),
+    service: nameField(input, 'service', 'Service'),
+    stop: typeof stop === 'number' && Number.isSafeInteger(stop) ? stop : undefined,
+  };
+};
 
 // The Hub keeps stops for this long, and the Service page's history reaches back as far.
-const HISTORY_MS = 90 * 24 * 60 * 60 * 1000;
+const HISTORY_MS = WINDOW_MS;
+
+// The 90-day strip's days in which the System sent Vitals, counted from the
+// window's start. The rollups are 288 a day at most, so the read follows the
+// window and not the Vitals the Hub keeps.
+const readReportDays = async (
+  sql: SQL,
+  { now, system }: { now: number; system: string },
+): Promise<number[]> => {
+  const { from } = stripWindow(now);
+  const rows: { day: number }[] = await sql`
+    SELECT DISTINCT floor(extract(epoch FROM bucket - ${new Date(from)}::timestamptz) / 86400)::int AS day
+    FROM vitals_rollups
+    WHERE system = ${system} AND bucket >= ${new Date(from)} AND bucket < ${new Date(now)}
+    ORDER BY day
+  `;
+  return rows.map(({ day }) => day);
+};
+
+// The stop the page selects: the one that began at `stop`, else the newest, and
+// the System's Vitals around it. Undefined when the Service has no stop.
+const readSelection = async (
+  sql: SQL,
+  {
+    now,
+    stop,
+    stops,
+    system,
+  }: { now: number; stop: number | undefined; stops: readonly ServiceStop[]; system: string },
+): Promise<ServiceDetail['selection']> => {
+  const found = stops.find((candidate) => Date.parse(candidate.stoppedAt) === stop) ?? stops[0];
+  if (found === undefined) {
+    return undefined;
+  }
+  const span = stopSpan(found, now);
+  const vitals = await readVitalsWindow(sql, { ...aroundSpan(span, now), now, system });
+  return { span, vitals };
+};
 
 // Where a Service record puts the Service under its supervisor.
 const unitOf = (record: Record<string, unknown>): string | undefined =>
@@ -46,7 +93,12 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
 // down in its history, or open Service Condition.
 export const readServiceDetail = (
   sql: SQL,
-  { now, service, system }: { now: number; service: string; system: string },
+  {
+    now,
+    service,
+    stop,
+    system,
+  }: { now: number; service: string; stop?: number | undefined; system: string },
 ): Promise<ServiceDetail | undefined> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
     const [known]: { name: string }[] = await tx`
@@ -140,6 +192,10 @@ export const readServiceDetail = (
       upstream: installedUpstream,
       version,
     }));
+    const [reportDays, selection] = await Promise.all([
+      readReportDays(tx, { now, system }),
+      readSelection(tx, { now, stop, stops, system }),
+    ]);
     return {
       downs: downs.map((row) => ({
         at: row.at.getTime(),
@@ -165,6 +221,8 @@ export const readServiceDetail = (
         record === undefined
           ? undefined
           : recordedService(service, record, checks[0]?.services ?? []),
+      reportDays,
+      selection,
       service,
       stops,
       system,

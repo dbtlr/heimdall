@@ -3,19 +3,18 @@ import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
 import { historyRows, listedRows } from '../lib/service-detail.ts';
-import type { HistoryRow, StopDot, StopRow } from '../lib/service-detail.ts';
+import type { HistoryRow } from '../lib/service-detail.ts';
 import { cn } from '../lib/utils.ts';
 import type { ServiceDetail } from '../server/service-detail-types.ts';
-import { DateTime, PhraseText } from './date-time.tsx';
+import { DateTime } from './date-time.tsx';
 
 // Installed version changes and available updates have neutral dots.
-type Dot = StopDot | 'neutral';
+type Dot = 'bad' | 'good' | 'neutral';
 
 const DOT: Record<Dot, string> = {
   bad: 'bg-status-critical',
   good: 'bg-status-good',
   neutral: 'bg-muted-foreground',
-  unknown: 'border-[1.5px] border-muted-foreground',
 };
 
 const LINE =
@@ -45,41 +44,9 @@ function Line({
   );
 }
 
-// One stop on one line, and what the Hub holds of it when opened.
-function StopItem({ now, row }: { now: number; row: StopRow }) {
-  return (
-    <details className="rounded-md">
-      <summary className={cn(LINE, 'cursor-pointer list-none [&::-webkit-details-marker]:hidden')}>
-        <Line at={row.stoppedAt} dot={row.dot} end={row.duration} now={now}>
-          <PhraseText phrase={row.title} />
-          {row.restarts !== undefined && (
-            <span className="text-muted-foreground"> · {row.restarts}</span>
-          )}
-          {row.late !== undefined && (
-            <span className="text-muted-foreground"> · received {row.late} late</span>
-          )}
-        </Line>
-      </summary>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 pr-0 pb-2 pl-[18px] text-sm">
-        {row.details.map(({ label, value }) => (
-          <div className="contents" key={label}>
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="min-w-0 wrap-anywhere">
-              <PhraseText phrase={value} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </details>
-  );
-}
-
-// One row of the history: a stop opens in place, a Service down opens its
-// Condition's page, and an installed version change or update only reads.
+// One row of the history: a Service down opens its Condition's page, and an
+// installed version change or update only reads.
 function HistoryItem({ now, row, system }: { now: number; row: HistoryRow; system: string }) {
-  if (row.kind === 'stop') {
-    return <StopItem now={now} row={row.stop} />;
-  }
   if (row.kind === 'update') {
     return (
       <div className={LINE}>
@@ -123,19 +90,20 @@ export const historyKey = (row: HistoryRow): string => {
   if (row.kind === 'update') {
     return `${row.kind}-${String(row.at)}-${row.version}`;
   }
-  return row.kind === 'stop' || row.kind === 'installed'
+  return row.kind === 'installed'
     ? `${row.kind}-${String(row.at)}`
     : `${row.kind}-${row.condition}`;
 };
 
-// The Service's stops, Service down raises and clears, and installed version
-// changes and available updates, newest first; the newest few show and the rest wait behind "Show older".
+// The Service's Service down raises and clears, and installed version changes
+// and available updates, newest first; the newest few show and the rest wait
+// behind "Show older". Its stops are in the stops table.
 export function ServiceHistory({ detail }: { detail: ServiceDetail }) {
-  const { downs, installs, now, stops, system, updates } = detail;
+  const { downs, installs, now, system, updates } = detail;
   const [showAll, setShowAll] = useState(false);
   const rows = useMemo(
-    () => historyRows(stops, downs, installs, updates, now),
-    [stops, downs, installs, updates, now],
+    () => historyRows(downs, installs, updates, now),
+    [downs, installs, updates, now],
   );
   const { hidden, shown } = listedRows(rows, showAll);
   if (rows.length === 0) {

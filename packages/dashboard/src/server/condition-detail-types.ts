@@ -10,6 +10,7 @@ import type {
 
 import type { Attention } from './attention-types.ts';
 import type { MemoryHolders } from './system-detail-types.ts';
+import type { VitalsWindow } from './vitals-window-types.ts';
 
 // The culprit's readings over the chart's window, oldest first, by what the
 // kind measures: a mount's used and total bytes (5-minute maxima from
@@ -67,4 +68,7 @@ export type ConditionDetail = {
   to: number;
   // In recording order.
   transitions: ConditionTransition[];
+  // The System's Vitals while the occurrence was open, with 30 minutes either
+  // side, for a kind with no series of its own to chart; undefined for the others.
+  vitals: VitalsWindow | undefined;
 };

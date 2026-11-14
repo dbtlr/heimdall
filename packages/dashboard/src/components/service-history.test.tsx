@@ -1,26 +1,12 @@
 import { expect, test } from 'bun:test';
 
 import { historyRows } from '../lib/service-detail.ts';
-import type { ServiceDetail, ServiceStop } from '../server/service-detail-types.ts';
+import type { ServiceDetail } from '../server/service-detail-types.ts';
 import { renderRouted } from './render-routed.tsx';
 import { historyKey, ServiceHistory } from './service-history.tsx';
 
 const NOW = Date.UTC(2026, 9, 24, 12, 0);
 const HOUR = 3_600_000;
-
-const stop = (hoursAgo: number): ServiceStop => ({
-  exitStatus: 0,
-  ongoing: false,
-  paired: true,
-  receivedAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
-  restarts: 0,
-  result: 'success',
-  sentAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
-  service: 'web',
-  startedAt: new Date(NOW - hoursAgo * HOUR + 2000).toISOString(),
-  stoppedAt: new Date(NOW - hoursAgo * HOUR).toISOString(),
-  system: 'server-1',
-});
 
 const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   downs: [],
@@ -29,6 +15,8 @@ const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   note: undefined,
   now: NOW,
   recorded: undefined,
+  reportDays: [],
+  selection: undefined,
   service: 'web',
   stops: [],
   system: 'server-1',
@@ -38,33 +26,29 @@ const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   ...over,
 });
 
-test('the newest 6 show, a Service down links its Condition, and the rest wait behind Show older', async () => {
+const raised = (hoursAgo: number, condition: string) => ({
+  at: NOW - hoursAgo * HOUR,
+  condition,
+  kind: 'raised' as const,
+  reason: 'Stopped: ActiveState=failed',
+});
+
+test('a Service down links its Condition and the rest wait behind Show older', async () => {
   const html = await renderRouted(
     <ServiceHistory
       detail={detail({
-        downs: [
-          {
-            at: NOW - HOUR / 2,
-            condition: '9',
-            kind: 'raised',
-            reason: 'Stopped: ActiveState=failed',
-          },
-        ],
-        stops: [1, 2, 3, 4, 5, 6, 7].map(stop),
+        downs: [1, 2, 3, 4, 5, 6, 7, 8].map((hours) => raised(hours, `c${String(hours)}`)),
       })}
     />,
   );
 
-  expect(html).toContain('href="/systems/server-1/conditions/9"');
+  expect(html).toContain('href="/systems/server-1/conditions/c1"');
   expect(html).toContain('Stopped: ActiveState=failed');
-  expect(html.indexOf('Service down')).toBeLessThan(html.indexOf('Stopped cleanly'));
-  expect(html.split('Stopped cleanly')).toHaveLength(6);
   expect(html).toContain('Show 2 older');
   const times = [...html.matchAll(/<time [^>]*datetime="([^"]+)"/gi)].map(([, at]) => at);
-  expect(times).toEqual([
-    new Date(NOW - HOUR / 2).toISOString(),
-    ...[1, 2, 3, 4, 5].map((hours) => new Date(NOW - hours * HOUR).toISOString()),
-  ]);
+  expect(times).toEqual(
+    [1, 2, 3, 4, 5, 6].map((hours) => new Date(NOW - hours * HOUR).toISOString()),
+  );
 });
 
 test('a cleared Service down reads as cleared', async () => {
@@ -87,7 +71,7 @@ test('a cleared Service down reads as cleared', async () => {
   expect(html).not.toContain('Show');
 });
 
-test('nothing renders with no stops or Service down', async () => {
+test('nothing renders with no Service down', async () => {
   expect(await renderRouted(<ServiceHistory detail={detail()} />)).toBe('');
 });
 
@@ -123,7 +107,6 @@ test('an available update is a neutral dated row beside an install at the same t
 
 test('history keys distinguish releases and an installed version at the same instant', () => {
   const rows = historyRows(
-    [],
     [],
     [{ at: NOW, version: '2.0', was: '1.0' }],
     [
