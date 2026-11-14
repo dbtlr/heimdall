@@ -19,7 +19,33 @@ import { ConditionGlyph } from './condition-glyph.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
 import { TimeAxis } from './time-axis.tsx';
 
-const LANE_HEIGHT = 44;
+// The parts of a lane, top to bottom, in pixels. The real lane and the
+// placeholder that holds its room both read these, so the page does not shift
+// when the time zone arrives.
+export const MARKS_STRIP_HEIGHT = 16;
+export const LANE_PLOT_HEIGHT = 44;
+export const STRETCHES_STRIP_HEIGHT = 8;
+// The lane's `py-1` above and below its track, and the `border-t` that every
+// lane but the first carries.
+export const LANE_PADDING = 8;
+export const LANE_BORDER = 1;
+// On a phone the label stacks above the track: one text-xs line (16 px) and
+// the grid's gap-1.5 (6 px). From sm up it sits beside the track.
+export const PHONE_LABEL_ROW = 16 + 6;
+
+// A change mark's glyph is 16 px (size-4); its hit area is a 24 px pseudo-element
+// centered on it, which takes no room in the strip.
+export const MARK_HIT_PX = 24;
+const MARK_HIT =
+  "before:absolute before:top-1/2 before:left-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
+
+const LANE_HEIGHT = LANE_PLOT_HEIGHT;
+
+// The height of `count` lanes, with the phone's label rows when `phone`.
+export const lanesHeight = (count: number, phone: boolean): number =>
+  count * (MARKS_STRIP_HEIGHT + LANE_PLOT_HEIGHT + STRETCHES_STRIP_HEIGHT + LANE_PADDING) +
+  Math.max(0, count - 1) * LANE_BORDER +
+  (phone ? count * PHONE_LABEL_ROW : 0);
 
 // The divider above the unpaired Systems' lanes, which are greyed: their
 // history is kept, and no new Report arrives.
@@ -33,7 +59,11 @@ const UNPAIRED_LANES = 'text-muted-foreground saturate-50 [&_svg]:opacity-60';
 // Harness: a color that means nothing else.
 function Stretches({ lane, window }: { lane: AxisLane; window: Window }) {
   return (
-    <div aria-hidden="true" className="relative h-2 overflow-hidden">
+    <div
+      aria-hidden="true"
+      className="relative overflow-hidden"
+      style={{ height: STRETCHES_STRIP_HEIGHT }}
+    >
       {lane.stretches.map((stretch) => {
         const { left, width } = spanBox({ end: stretch.endedAt, start: stretch.startedAt }, window);
         return (
@@ -77,7 +107,10 @@ function Marks({
         return (
           <button
             aria-label={`${formatClock(line.at, timeZone)} ${words.title} ${words.subject}`.trim()}
-            className="absolute top-0 z-10 flex size-4 -translate-x-1/2 items-center justify-center"
+            className={cn(
+              'absolute top-0 z-10 flex size-4 -translate-x-1/2 items-center justify-center',
+              MARK_HIT,
+            )}
             key={`${String(line.at)}-${lead.kind}`}
             onClick={() => {
               onPin({ at: line.at, system: line.system });
@@ -222,7 +255,7 @@ function Lane({
         {...pointer}
       >
         {/* Marks sit in a strip above the plot, so none covers a scale label or the limit label. */}
-        <div className="relative h-4" data-marks-strip>
+        <div className="relative" data-marks-strip style={{ height: MARKS_STRIP_HEIGHT }}>
           <Marks lines={lines} onPin={onPin} timeZone={timeZone} window={window} />
         </div>
         <div className="relative">
@@ -365,7 +398,10 @@ export function ActivityAxisBody({
 export function ActivityAxis(props: AxisProps) {
   const timeZone = useTimeZone();
   return timeZone === undefined ? (
-    <div style={{ height: props.lanes.length * (LANE_HEIGHT + 36) }} />
+    <>
+      <div className="max-sm:hidden" style={{ height: lanesHeight(props.lanes.length, false) }} />
+      <div className="sm:hidden" style={{ height: lanesHeight(props.lanes.length, true) }} />
+    </>
   ) : (
     <ActivityAxisBody {...props} timeZone={timeZone} />
   );

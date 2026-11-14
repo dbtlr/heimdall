@@ -19,7 +19,9 @@ export const WINDOW_MS = WINDOW_DAYS * DAY_MS;
 // from: a day before the 90, so the strip's first local day is whole in any zone.
 export const historyFrom = (now: number): number => now - WINDOW_MS - DAY_MS;
 
-export type DayState = 'down' | 'quiet' | 'restarted' | 'up';
+// `unseen` is a day that ended before the Service was first seen: no cell to
+// judge, whatever the System reported.
+export type DayState = 'down' | 'quiet' | 'restarted' | 'unseen' | 'up';
 
 // One local calendar day of the strip, from its midnight to the next.
 export type StripDay = Window & { state: DayState };
@@ -87,6 +89,9 @@ const coveredMs = (spans: readonly Window[], window: Window): number => {
 
 type Evidence = {
   downs: readonly ServiceDownTransition[];
+  // When the Service was first seen, the earliest version the Hub recorded for
+  // it. Time before it is not the Service's: undefined when no version is known.
+  existedSince?: number | undefined;
   now: number;
   // The spans in which the System sent Vitals, in time order, each a run of
   // 5-minute rollup buckets.
@@ -149,7 +154,10 @@ const spansOf = (evidence: Evidence, dayEnd: (t: number) => number) => {
 // The counts and the percentage over the 90 days before `now`, which need no
 // time zone: a stop of unknown end with no later Report ends at the UTC day's end.
 export const availabilityTotals = (evidence: Evidence): AvailabilityTotals => {
-  const window = { from: evidence.now - WINDOW_MS, to: evidence.now };
+  const window = {
+    from: Math.max(evidence.now - WINDOW_MS, evidence.existedSince ?? -Infinity),
+    to: evidence.now,
+  };
   const spans = spansOf(evidence, utcDayEnd);
   const stopped = [...spans.down, ...spans.stops.map(({ span }) => span)];
   const knownMs = coveredMs([...evidence.reported, ...stopped], window);
@@ -176,7 +184,7 @@ export const stripCalendar = (now: number, timeZone: string): Window[] => {
 // The strip's cells: each local day of the 90 in `timeZone` ending today, down
 // when the Service down Condition was open or a down stop fell in it, else
 // restarted when a stop did, else quiet when the System sent no Vitals in it,
-// else up. Stops and Service down spans count even on a day with no Vitals.
+// else up. A day that ended before the Service was first seen is unseen. Stops and Service down spans count even on a day with no Vitals.
 export const stripDays = (evidence: Evidence & { timeZone: string }): StripDay[] => {
   const spans = spansOf(evidence, (t) =>
     localMidnight(localMidnight(t, evidence.timeZone) + 36 * HOUR_MS, evidence.timeZone),
@@ -184,7 +192,12 @@ export const stripDays = (evidence: Evidence & { timeZone: string }): StripDay[]
   return stripCalendar(evidence.now, evidence.timeZone).map((day): StripDay => {
     const touching = (span: Window) => touches(span, day);
     let state: DayState = 'up';
-    if (spans.down.some(touching) || spans.stops.some(({ down, span }) => down && touching(span))) {
+    if (evidence.existedSince !== undefined && day.to <= evidence.existedSince) {
+      state = 'unseen';
+    } else if (
+      spans.down.some(touching) ||
+      spans.stops.some(({ down, span }) => down && touching(span))
+    ) {
       state = 'down';
     } else if (spans.stops.some(({ span }) => touching(span))) {
       state = 'restarted';

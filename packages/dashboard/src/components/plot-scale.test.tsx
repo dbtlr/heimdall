@@ -119,3 +119,10 @@ test('a limit line runs the full width when the scale sits in a gutter or beside
     expect(html).not.toMatch(/data-limit-lines="true" style=/u);
   }
 });
+
+test("the limit lines measure their clearance in the ticks' font size, not the body's", () => {
+  const html = scaleOf([0, 100], [{ color: 'red', label: 'limit', value: 90 }]);
+  // Ticks are text-xs, so the wrapper's ch must be text-xs too.
+  expect(classOf(html, 'data-limit-lines="true"')).toContain('text-xs');
+  expect(classOf(html, 'data-scale-tick="50"')).toContain('text-xs');
+});

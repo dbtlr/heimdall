@@ -451,6 +451,22 @@ describe('the availability strip and the selected stop', () => {
     ]);
   });
 
+  test('bounds the strip at when the Service was first seen, and has no bound without a version', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { records });
+    await hear(h, 'laptop-1', { records });
+    await h.db.sql`DELETE FROM service_versions`;
+    expect((await read(h))?.existedSince).toBeUndefined();
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+        ('server-1', 'web', '2.0', null, ${new Date(NOW - 3 * DAY)}),
+        ('server-1', 'web', '1.0', null, ${new Date(NOW - 20 * DAY)}),
+        ('server-1', 'api', '1.0', null, ${new Date(NOW - 50 * DAY)}),
+        ('laptop-1', 'web', '1.0', null, ${new Date(NOW - 60 * DAY)})
+    `;
+    expect((await read(h))?.existedSince).toBe(NOW - 20 * DAY);
+  });
+
   test('selects the newest stop, or the one asked for, with the Vitals around it', async () => {
     await using h = await startHub();
     await storeConditionLimits(

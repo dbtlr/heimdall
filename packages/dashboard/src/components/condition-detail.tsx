@@ -180,6 +180,7 @@ export function ConditionDetailPanel({ now, view }: { now: number; view: Conditi
         <div className="mt-6 min-w-0">
           <VitalsWindowCard
             shade={view.vitals.shade}
+            tone={view.level}
             title="Vitals while it was open, with 30 minutes either side"
             vitals={view.vitals.window}
           />

@@ -222,6 +222,7 @@ export const readServiceDetail = (
         kind: row.action,
         reason: row.reason,
       })),
+      existedSince: versions[0]?.first_seen_at.getTime(),
       installed: {
         missingApplication:
           application !== undefined && !applications.some(({ name }) => name === application)

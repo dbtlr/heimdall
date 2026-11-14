@@ -1,0 +1,1 @@
+- **Chart fixes** (HMD-254, HMD-255, HMD-261, HMD-262). A Condition's Vitals shading now takes the Condition's level color, and a Service's availability leaves out the days before it was first seen. Limit-line labels clear the scale numbers exactly, and the Activity page keeps its place while it loads and gives its change marks larger tap targets.

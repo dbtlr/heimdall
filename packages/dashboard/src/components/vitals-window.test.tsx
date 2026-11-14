@@ -37,3 +37,23 @@ test('the shade lies under each plot, so it never runs through a scale label', (
     expect(plot).toContain('data-scale-tick=');
   }
 });
+
+const shadeClass = (tone?: 'alert' | 'note' | 'select' | 'warning') => {
+  const html = renderToStaticMarkup(
+    <VitalsWindowCard
+      shade={{ from: NOW - 58 * MINUTE, to: NOW }}
+      title="Around"
+      tone={tone}
+      vitals={vitals}
+    />,
+  );
+  return /class="([^"]*)"[^>]*data-shade/u.exec(html)?.[1] ?? '';
+};
+
+test('the shade is the selection color by default, and the level color for a Condition', () => {
+  expect(shadeClass()).toContain('bg-select/20');
+  expect(shadeClass('alert')).toContain('bg-status-critical/20');
+  expect(shadeClass('alert')).not.toContain('select/');
+  expect(shadeClass('warning')).toContain('bg-status-serious/20');
+  expect(shadeClass('note')).toContain('bg-status-warning/20');
+});

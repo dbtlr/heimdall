@@ -20,6 +20,7 @@ const CELL: Record<DayState, string> = {
   down: 'bg-status-critical',
   quiet: 'bg-muted',
   restarted: 'bg-status-warning',
+  unseen: 'bg-transparent',
   up: 'bg-status-good',
 };
 
@@ -27,6 +28,7 @@ const STATE_WORDS: Record<DayState, string> = {
   down: 'down',
   quiet: 'no Reports',
   restarted: 'restarted',
+  unseen: 'not seen yet',
   up: 'up',
 };
 
@@ -36,10 +38,10 @@ const PHONE_DAYS = 30;
 // The strip's cells, one per local day in `timeZone`, and the dates under them.
 // The phone shows the last PHONE_DAYS.
 function Strip({ detail, timeZone }: { detail: ServiceDetail; timeZone: string }) {
-  const { downs, now, reported, stops } = detail;
+  const { downs, existedSince, now, reported, stops } = detail;
   const days = useMemo(
-    () => stripDays({ downs, now, reported, stops, timeZone }),
-    [downs, now, reported, stops, timeZone],
+    () => stripDays({ downs, existedSince, now, reported, stops, timeZone }),
+    [downs, existedSince, now, reported, stops, timeZone],
   );
   const dateOf = (index: number) => {
     const day = days[index];
@@ -78,10 +80,10 @@ function Strip({ detail, timeZone }: { detail: ServiceDetail; timeZone: string }
 // the count of down periods and other stops. The phone shows the last 30 days.
 // The Service restarted note, when open, links to its page.
 export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
-  const { downs, now, note, reported, stops, system } = detail;
+  const { downs, existedSince, now, note, reported, stops, system } = detail;
   const totals = useMemo(
-    () => availabilityTotals({ downs, now, reported, stops }),
-    [downs, now, reported, stops],
+    () => availabilityTotals({ downs, existedSince, now, reported, stops }),
+    [downs, existedSince, now, reported, stops],
   );
   const percent = percentWords(totals.percent);
   return (

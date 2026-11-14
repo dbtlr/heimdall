@@ -1,3 +1,4 @@
+import type { ConditionLevel } from '@heimdall/schema';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
@@ -5,6 +6,7 @@ import { spanTicks } from '../lib/axis.ts';
 import { spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
+import { cn } from '../lib/utils.ts';
 import { vitalsView } from '../lib/vitals-window.ts';
 import type { VitalsWindow } from '../server/vitals-window-types.ts';
 import { ConditionChart } from './condition-chart.tsx';
@@ -12,14 +14,25 @@ import { TimeAxis } from './time-axis.tsx';
 
 const PLOT_HEIGHT = 56;
 
-// The shade behind a plot at `shade`, in the selection color. A span too short to
+// What colors the shade: the selection color for a selected stop, or the level of
+// the Condition the span belongs to. Full class names, so Tailwind finds them.
+export type ShadeTone = ConditionLevel | 'select';
+
+const SHADE_CLASS: Record<ShadeTone, string> = {
+  alert: 'border-status-critical/50 bg-status-critical/20',
+  note: 'border-status-warning/50 bg-status-warning/20',
+  select: 'border-select/50 bg-select/20',
+  warning: 'border-status-serious/50 bg-status-serious/20',
+};
+
+// The shade behind a plot at `shade`, in the color of `tone`. A span too short to
 // see, such as a restart of a few seconds, is drawn as wide as a hairline.
-function Shade({ shade, window }: { shade: Window; window: Window }) {
+function Shade({ shade, tone, window }: { shade: Window; tone: ShadeTone; window: Window }) {
   const { left, width } = spanBox({ end: shade.to, start: shade.from }, window);
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-y-0 min-w-0.5 border-x border-select/50 bg-select/20"
+      className={cn('pointer-events-none absolute inset-y-0 min-w-0.5 border-x', SHADE_CLASS[tone])}
       data-shade
       style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
     />
@@ -28,14 +41,17 @@ function Shade({ shade, window }: { shade: Window; window: Window }) {
 
 // The System's CPU, memory, and load over a window, one plot each on a shared
 // time axis, with the `shade` span marked on every plot: the stop, or the time
-// the Condition was open. `title` heads the card.
+// the Condition was open. `title` heads the card, and `tone` colors the shade:
+// the selection color unless the span is a Condition's, in its level color.
 export function VitalsWindowCard({
   shade,
   title,
+  tone = 'select',
   vitals,
 }: {
   shade: Window;
   title: ReactNode;
+  tone?: ShadeTone | undefined;
   vitals: VitalsWindow;
 }) {
   const view = useMemo(() => vitalsView(vitals), [vitals]);
@@ -58,7 +74,7 @@ export function VitalsWindowCard({
               </p>
               <div className="relative mt-0.5">
                 {/* The shade comes first, so it lies under the plot's scale labels, not through them. */}
-                <Shade shade={shade} window={view.window} />
+                <Shade shade={shade} tone={tone} window={view.window} />
                 <ConditionChart chart={chart} height={PLOT_HEIGHT} />
               </div>
             </div>

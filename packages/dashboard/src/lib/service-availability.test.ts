@@ -280,3 +280,38 @@ describe('down spans', () => {
     expect(isDownStop(stop(HOUR), spans, NOW)).toBe(false);
   });
 });
+
+describe('before the Service existed', () => {
+  // First seen 10 days before now, at 06:00.
+  const since = Date.UTC(2026, 9, 14, 6);
+
+  test('days that ended before it was first seen are not seen yet, even with Reports', () => {
+    const found = days({ existedSince: since });
+    expect(stateOn(found, Date.UTC(2026, 9, 13))).toBe('unseen');
+    expect(stateOn(found, Date.UTC(2026, 6, 27))).toBe('unseen');
+    // The day it was first seen is a day it existed in.
+    expect(stateOn(found, Date.UTC(2026, 9, 14))).toBe('up');
+    expect(stateOn(found, Date.UTC(2026, 9, 24))).toBe('up');
+  });
+
+  test('a day ending exactly at the first sighting is not seen yet', () => {
+    expect(stateOn(days({ existedSince: Date.UTC(2026, 9, 14) }), Date.UTC(2026, 9, 13))).toBe(
+      'unseen',
+    );
+  });
+
+  test('the percentage counts only the time since it was first seen', () => {
+    // Down for 1 hour of the 10 days and 6 hours it has existed.
+    const found = totals({ downs: [raised(2 * HOUR), cleared(HOUR)], existedSince: since });
+    expect(found.percent).toBeCloseTo((1 - HOUR / (NOW - since)) * 100, 6);
+    expect(totals({ downs: [raised(2 * HOUR), cleared(HOUR)] }).percent).toBeCloseTo(
+      (1 - HOUR / (90 * DAY)) * 100,
+      6,
+    );
+  });
+
+  test('a Service with no bound is counted over all 90 days, as before', () => {
+    expect(states(days()).every((state) => state === 'up')).toBe(true);
+    expect(totals().percent).toBe(100);
+  });
+});
