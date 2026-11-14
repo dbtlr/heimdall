@@ -99,7 +99,7 @@ const setup = async (
     ...(maxRunsBytes === undefined ? {} : { maxRunsBytes }),
     now: () => now,
     open,
-    ...(paired === undefined ? {} : { paired }),
+    paired: paired ?? (() => Promise.resolve(true)),
     ...(stops === undefined ? {} : { stops }),
   });
   let t = 0;
@@ -1067,6 +1067,7 @@ test('updates retry unchanged evidence and refresh hourly even when records cann
     open: async () => {
       throw new Error('records unavailable');
     },
+    paired: () => Promise.resolve(true),
     updates: { latest: () => ({ ...evidence, managers: [] }) },
   });
   const first = (await reporter.pending()).updates;
@@ -1288,6 +1289,37 @@ test('a run recorded again while a Report carrying it is in flight is sent again
   expect(after[0]?.jobRuns).toBeUndefined();
 });
 
+// Forgetting a job removes its runs, so a run recorded again after it starts
+// over at the revision the in-flight Report read.
+test('a run forgotten and recorded again while a Report carrying it is in flight is sent again', async () => {
+  await using dir = await tempStateDir();
+  const run = minutesAgo(5);
+  const rerecorded = { ...run, exitStatus: 1 };
+  await seededRuns(dir, run);
+  const other = await openRecords({ stateDir: dir.path });
+  let inFlight = true;
+  const collector = await setup(dir, {
+    respond: () => {
+      if (inFlight) {
+        other.forget('job', 'backup');
+        other.put('job', cron);
+        other.putRun('backup', rerecorded);
+        inFlight = false;
+      }
+      return { kind: 'delivered' };
+    },
+  });
+
+  await collector.push();
+  const next = await collector.push();
+  const after = await collector.push();
+  collector.close();
+  other.close();
+
+  expect(next[0]?.jobRuns).toEqual({ runs: [{ ...rerecorded, job: 'backup' }] });
+  expect(after[0]?.jobRuns).toBeUndefined();
+});
+
 test('pairing while a Report carrying the runs is in flight holds them again', async () => {
   await using dir = await tempStateDir();
   await seededRuns(dir, minutesAgo(5));
@@ -1335,4 +1367,33 @@ test('a daemon whose identity was replaced sends no job runs and keeps them held
   expect(collector.warnings.filter((m) => m.includes('job runs'))).toEqual([
     expect.stringContaining('until it restarts'),
   ]);
+});
+
+// `pair` stores the identity, then holds every run again. A daemon that read
+// the old identity just before must not settle the hold that followed it.
+test('pairing that lands while the daemon reads its identity keeps the runs held for the new Hub', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  let looks = 0;
+  const collector = await setup(dir, {
+    paired: async () => {
+      looks += 1;
+      if (looks > 1) {
+        return false;
+      }
+      await elsewhere(dir.path, (other) => other.holdAllRuns());
+      return true;
+    },
+  });
+
+  const first = await collector.push();
+  const later = await collector.push();
+  collector.close();
+
+  const held = await openRecords({ stateDir: dir.path });
+  const kept = held.heldRuns().runs;
+  held.close();
+  expect(first[0]?.jobRuns?.runs).toHaveLength(1);
+  expect(later[0]?.jobRuns).toBeUndefined();
+  expect(kept).toHaveLength(1);
 });

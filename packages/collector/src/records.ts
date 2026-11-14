@@ -182,8 +182,10 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     `SELECT job, started, body, revision FROM runs WHERE revision > settled
     ORDER BY startedMs, job, started LIMIT ${String(MAX_JOB_RUNS_PER_REPORT)}`,
   );
+  // Settles a run only while it holds the body that was read, since `forget`
+  // and `record` may replace it with another at the same revision.
   const settleRun = db.query(
-    'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started',
+    'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started AND body = $body',
   );
   const holdAll = db.query('UPDATE runs SET revision = revision + 1');
   // `IS NOT` matches every row when the job has no success, where `!=` would match none.
@@ -256,9 +258,9 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     }
     return { records, runs, unreadable: { records: unreadableRecords, runs: unreadableRuns } };
   });
-  const settleAll = db.transaction((rows: readonly Omit<HeldRow, 'body'>[]) => {
-    for (const { job, revision, started } of rows) {
-      settleRun.run({ job, revision, started });
+  const settleAll = db.transaction((rows: readonly HeldRow[]) => {
+    for (const { body, job, revision, started } of rows) {
+      settleRun.run({ body, job, revision, started });
     }
   });
   // A held run that is no longer a run the section can carry is settled at
@@ -269,21 +271,22 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     // again until a page carries a run or the held runs are gone.
     for (;;) {
       const runs: SentJobRun[] = [];
-      const settling: Omit<HeldRow, 'body'>[] = [];
-      const skippedRows: Omit<HeldRow, 'body'>[] = [];
+      const settling: HeldRow[] = [];
+      const skippedRows: HeldRow[] = [];
       const rows = selectHeld.all();
       for (const row of rows) {
-        const { job, revision, started } = row;
+        const { job, started } = row;
         const parsed = RunRecordSchema.safeParse(parseJson(row.body));
         const sent = parsed.success
           ? JobRunsSectionSchema.safeParse({ runs: [{ ...parsed.data, job }] })
           : undefined;
+        // A body whose start is not its key would be sent as another run.
         if (parsed.success && sent?.success === true && parsed.data.started === started) {
           runs.push(...sent.data.runs);
-          settling.push({ job, revision, started });
+          settling.push(row);
         } else {
           skipped.push({ job, started });
-          skippedRows.push({ job, revision, started });
+          skippedRows.push(row);
         }
       }
       settleAll(skippedRows);

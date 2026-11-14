@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test';
-import { chmod, stat } from 'node:fs/promises';
+import { chmod, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { readIdentity } from './identity.ts';
-import { givenIdentity } from './testing/cli.ts';
+import { readIdentity, stillPaired } from './identity.ts';
+import { givenIdentity, TOKEN } from './testing/cli.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
 const owner = () => process.getuid?.() ?? 0;
@@ -70,4 +71,40 @@ test('an identity another user owns is exposed, naming both users', async () => 
   expect(exposures).toEqual([
     `${path} is owned by uid ${String(uid)}, not this user (uid ${String(uid + 1)})`,
   ]);
+});
+
+// The daemon's check, after `pair` may have stored another identity (ADR-0023).
+test('a daemon is still paired while the identity holds its token from its Hub', async () => {
+  await using dir = await tempStateDir();
+  await givenIdentity(dir.path);
+
+  expect(await stillPaired({ hub: 'http://h.example', stateDir: dir.path, token: TOKEN })).toBe(
+    true,
+  );
+});
+
+test.each([
+  ['another token', { hub: 'http://h.example', token: 'another-token' }],
+  ['another Hub', { hub: 'http://other.example', token: TOKEN }],
+])('a daemon is no longer paired once the identity holds %s', async (_, given) => {
+  await using dir = await tempStateDir();
+  await givenIdentity(dir.path, given);
+
+  expect(await stillPaired({ hub: 'http://h.example', stateDir: dir.path, token: TOKEN })).toBe(
+    false,
+  );
+});
+
+test('a daemon is no longer paired once the identity is gone or invalid', async () => {
+  await using missing = await tempStateDir();
+  await using invalid = await tempStateDir();
+  await writeFile(join(invalid.path, 'identity.json'), '{"system":"server-1"}', { mode: 0o600 });
+
+  const found = await Promise.all(
+    [missing.path, invalid.path].map((stateDir) =>
+      stillPaired({ hub: 'http://h.example', stateDir, token: TOKEN }),
+    ),
+  );
+
+  expect(found).toEqual([false, false]);
 });

@@ -18,7 +18,7 @@ import type { ReportIdentity } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { fileReader } from './harness-installs.ts';
 import { startHarnessScan } from './harness-scan.ts';
-import { readIdentity } from './identity.ts';
+import { readIdentity, stillPaired } from './identity.ts';
 import type { SystemIdentity } from './identity.ts';
 import { systemReader } from './processes/loop.ts';
 import { openProcessNames } from './processes/names.ts';
@@ -254,14 +254,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       open: () => openRecords({ stateDir }),
       // `pair` may store another identity while this daemon runs; the job runs
       // it then holds are for the Hub of that identity, not this one (ADR-0023).
-      paired: async () => {
-        const read = await readIdentity(stateDir);
-        return (
-          read.kind === 'paired' &&
-          read.identity.token === token &&
-          read.identity.hub === options.hub.origin
-        );
-      },
+      paired: () => stillPaired({ hub: options.hub.origin, stateDir, token }),
       ...(stops === undefined ? {} : { stops }),
       updates,
     });

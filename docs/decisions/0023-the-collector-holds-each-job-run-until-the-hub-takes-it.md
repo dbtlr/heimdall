@@ -25,7 +25,7 @@ It carries the runs the Collector keeps that the Hub has not taken, oldest first
 A job and a start name a run, so a section holds each at most once.
 The Collector sends the section while it holds any such run.
 A delivered Report settles the runs it carried; a failed delivery keeps them, and a refused one keeps them and holds them back for an hour, as for Service stops.
-A run recorded again with the same start, which replaces it at the Collector, is sent again, even when that happens after the Collector read the run for a section and before the Report carrying it was delivered: each held run counts its changes, as each logged Service stop does, and a delivered Report settles a run only if its count is still the one read for the section.
+A run recorded again with the same start, which replaces it at the Collector, is sent again, even when that happens after the Collector read the run for a section and before the Report carrying it was delivered: each held run counts its changes, as each logged Service stop does, and a delivered Report settles a run only if its count is still the one read for the section and it still holds the run read, since forgetting its job and recording the run again starts its count over.
 A run the section cannot carry, which only a damaged state file holds, is left out and no longer held, with one warning, so it never holds back the runs after it or a Report.
 
 **The Collector holds no second copy.**

@@ -166,3 +166,19 @@ export const writeIdentity = async (stateDir: string, identity: SystemIdentity):
   }
   await syncDirectory(stateDir);
 };
+
+// Whether `stateDir` still holds the identity a daemon started with: its token,
+// issued by the Hub at the origin `hub`. `pair` may store another while the
+// daemon runs, and a missing or invalid file is not that identity either.
+export const stillPaired = async ({
+  hub,
+  stateDir,
+  token,
+}: {
+  hub: string;
+  stateDir: string;
+  token: string;
+}): Promise<boolean> => {
+  const read = await readIdentity(stateDir);
+  return read.kind === 'paired' && read.identity.token === token && read.identity.hub === hub;
+};

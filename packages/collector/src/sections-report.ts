@@ -304,13 +304,7 @@ const createJobRunsState = ({
       if (!holding && !changed) {
         return undefined;
       }
-      if (repaired || !(await paired().catch(() => false))) {
-        if (!repaired) {
-          log.warn(
-            'The identity in the state directory is no longer the one this Collector started with, as after pairing again, so it holds the job runs until it restarts (heimdall-collector service restart).',
-          );
-        }
-        repaired = true;
+      if (repaired) {
         return undefined;
       }
       let held: ReturnType<RecordStore['heldRuns']>;
@@ -331,6 +325,17 @@ const createJobRunsState = ({
       }
       holding = held.runs.length > 0;
       if (!holding) {
+        return undefined;
+      }
+      // The identity is read after the runs: `pair` stores the identity before
+      // it holds every run again, so runs read after that hold fail this check,
+      // and runs read before it settle at revisions the hold has passed, so
+      // they stay held for the new Hub.
+      if (!(await paired().catch(() => false))) {
+        log.warn(
+          'The identity in the state directory is no longer the one this Collector started with, as after pairing again, so it holds the job runs until it restarts (heimdall-collector service restart).',
+        );
+        repaired = true;
         return undefined;
       }
       return {
@@ -407,7 +412,7 @@ export const createSectionsReporter = ({
   maxRunsBytes = MAX_RUNS_SECTION_BYTES,
   now,
   open,
-  paired = () => Promise.resolve(true),
+  paired,
   refreshMs = SECTIONS_REFRESH_MS,
   stops,
 }: {
@@ -422,7 +427,7 @@ export const createSectionsReporter = ({
   now: () => number;
   open: () => Promise<RecordStore>;
   // Whether the identity `pair` stored is still the one this daemon reports as.
-  paired?: () => Promise<boolean>;
+  paired: () => Promise<boolean>;
   refreshMs?: number;
   stops?: StopLog;
 }): SectionsSource & { close: () => void } => {
