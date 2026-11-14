@@ -35,3 +35,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0020 — The Hub delivers alerts through ntfy, sending what is true now](0020-the-hub-delivers-alerts-through-ntfy.md)
 - [ADR-0021 — The Collector logs Service stops from supervisor facts, and the Hub raises a note](0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md)
 - [ADR-0022 — Each Service shows its installed version, and the Hub checks its upstream for newer releases](0022-services-show-their-version-and-the-hub-checks-upstreams.md)
+- [ADR-0023 — The Collector holds each job run until the Hub takes it, and the Hub keeps 90 days of runs](0023-the-collector-holds-each-job-run-until-the-hub-takes-it.md)

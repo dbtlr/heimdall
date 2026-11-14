@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ChecksSectionSchema } from './checks-section.ts';
 import { HarnessProcessesSectionSchema } from './harness-processes-section.ts';
 import { HarnessesSectionSchema } from './harnesses-section.ts';
+import { JobRunsSectionSchema } from './job-runs-section.ts';
 import { ProcessObservationSchema } from './process-observation.ts';
 import { RecordsSectionSchema } from './records-section.ts';
 import { RunsSectionSchema } from './runs-section.ts';
@@ -30,8 +31,8 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 // The largest Report body the Hub reads; a larger one is rejected, Vitals with
 // it. The records section may take 8 MiB, the runs section 1 MiB, and the
 // checks section 1 MiB, which leaves 2 MiB for the samples, transcripts,
-// harnesses (at most about 16 KiB), and Service stops (about 200 KB) when
-// those three are at their budget. A full batch of 1,000 samples of 24 disks
+// harnesses (at most about 16 KiB), Service stops (about 200 KB), and job runs
+// (at most about 530 KB) when those four are at their budget. A full batch of 1,000 samples of 24 disks
 // each comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
 // sends a Report that would exceed this without its sections, which ride a
 // later, smaller Report.
@@ -98,6 +99,9 @@ export const ReportSchema = z.object({
   // started, or an hour passed; the Hub keeps the System's latest list until
   // another arrives.
   harnesses: HarnessesSectionSchema.optional(),
+  // While the Collector holds job runs the Hub has not taken; each run rides
+  // Reports until one carrying it is delivered (ADR-0023).
+  jobRuns: JobRunsSectionSchema.optional(),
   // Only when the Collector's record set changed, it started, or an hour
   // passed; the Hub keeps the System's mirror until another arrives (ADR-0011).
   records: RecordsSectionSchema.optional(),
