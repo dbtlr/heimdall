@@ -1,6 +1,15 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
+import {
+  NOW,
+  parseConditionLimits,
+  push,
+  report,
+  startHub,
+  storeConditionLimits,
+  timeline,
+  unpair,
+} from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import type { SentServiceStop } from '@heimdall/schema';
 
@@ -108,7 +117,7 @@ test('reads the record, its checks, the open note, and every stop the Hub holds,
   expect(found).toMatchObject({ now: NOW, service: 'web', system: 'server-1' });
 });
 
-test('reads the Service down raises and clears of the 90 days, and the raise of one still open', async () => {
+test('reads the raises and clears of every Service down open in the 90 days, with a raise from before them', async () => {
   await using h = await startHub();
   await hear(h, 'server-1', { records });
   const service = (over: { clearedAt?: number; raisedAt: number; subject?: string }) =>
@@ -146,6 +155,12 @@ test('reads the Service down raises and clears of the 90 days, and the raise of 
       at: NOW - 3600 * 1000,
       condition: recent,
       kind: 'cleared',
+      reason: 'Stopped: ActiveState=failed',
+    },
+    {
+      at: NOW - 91 * DAY,
+      condition: straddling,
+      kind: 'raised',
       reason: 'Stopped: ActiveState=failed',
     },
     {
@@ -416,22 +431,32 @@ const secondsAgo = (ms: number) => -ms / 1000;
 describe('the availability strip and the selected stop', () => {
   const { addVitals } = timeline(NOW);
 
-  test('reads the days of the 90 in which the System sent Vitals', async () => {
+  test('reads each run of 5-minute rollups since a day before the 90 days as one span', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', { records });
     await addVitals(h.db.sql, 'server-1', secondsAgo(2 * HOUR));
+    await addVitals(h.db.sql, 'server-1', secondsAgo(2 * HOUR - 5 * MINUTE));
     await addVitals(h.db.sql, 'server-1', secondsAgo(40 * DAY));
-    await addVitals(h.db.sql, 'server-1', secondsAgo(91 * DAY));
+    await addVitals(h.db.sql, 'server-1', secondsAgo(90 * DAY + HOUR));
+    await addVitals(h.db.sql, 'server-1', secondsAgo(92 * DAY));
     await hear(h, 'laptop-1', { records });
     await addVitals(h.db.sql, 'laptop-1', secondsAgo(10 * DAY));
 
     const found = await read(h);
 
-    expect(found?.reportDays).toEqual([50, 89]);
+    expect(found?.reported).toEqual([
+      { from: NOW - 90 * DAY - HOUR, to: NOW - 90 * DAY - HOUR + 5 * MINUTE },
+      { from: NOW - 40 * DAY, to: NOW - 40 * DAY + 5 * MINUTE },
+      { from: NOW - 2 * HOUR, to: NOW - 2 * HOUR + 10 * MINUTE },
+    ]);
   });
 
   test('selects the newest stop, or the one asked for, with the Vitals around it', async () => {
     await using h = await startHub();
+    await storeConditionLimits(
+      h.db.sql,
+      parseConditionLimits({ cpu: { percent: 77 }, systems: {} }),
+    );
     await hear(h, 'server-1', {
       records,
       serviceStops: {
@@ -454,12 +479,8 @@ describe('the availability strip and the selected stop', () => {
     });
 
     expect(newest?.selection?.span).toEqual({ from: NOW - HOUR, to: NOW - HOUR + MINUTE });
-    expect(newest?.selection?.vitals).toMatchObject({
-      from: NOW - HOUR - 30 * MINUTE,
-      source: 'samples',
-      to: NOW - HOUR + 31 * MINUTE,
-    });
     expect(newest?.selection?.vitals.points.map(({ cpu }) => cpu)).toEqual([70]);
+    expect(newest?.selection?.vitals.limits.cpuPercent).toBe(77);
     expect(older?.selection?.vitals.points.map(({ cpu }) => cpu)).toEqual([30]);
   });
 

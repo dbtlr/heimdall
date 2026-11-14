@@ -92,8 +92,8 @@ function ServicePage() {
           </div>
           <ServiceHistory detail={detail} />
           <p className="mt-4 text-xs text-muted-foreground">
-            Stop times use the System&apos;s clock. Received times, version changes, and upstream
-            checks use the Hub&apos;s.
+            Stop times use the System&apos;s clock. Version changes and upstream checks use the
+            Hub&apos;s.
           </p>
         </div>
         <aside className="hidden lg:sticky lg:top-6 lg:block">

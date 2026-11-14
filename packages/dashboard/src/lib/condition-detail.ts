@@ -148,12 +148,13 @@ export const isLone = (points: readonly ChartPoint[], index: number): boolean =>
   points[index - 1]?.value == null &&
   points[index + 1]?.value == null;
 
-// The points with an empty one between any two more than GAP_MS apart, so the
-// line breaks there instead of crossing the time nothing was read.
-export const withGaps = (points: readonly ChartPoint[]): ChartPoint[] =>
+// The points with an empty one between any two more than GAP_MS apart, or more
+// than two of their `bucketMs` buckets apart when those are wider, so the line
+// breaks there instead of crossing the time nothing was read.
+export const withGaps = (points: readonly ChartPoint[], bucketMs = 0): ChartPoint[] =>
   points.flatMap((point, index) => {
     const before = points[index - 1];
-    return before !== undefined && point.t - before.t > GAP_MS
+    return before !== undefined && point.t - before.t > Math.max(GAP_MS, 2 * bucketMs)
       ? [{ t: (before.t + point.t) / 2, value: null }, point]
       : [point];
   });

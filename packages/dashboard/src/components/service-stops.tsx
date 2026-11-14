@@ -2,9 +2,9 @@ import { Link } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import {
-  availability,
+  availabilityTotals,
   percentWords,
-  stripWindow,
+  stripDays,
   WINDOW_DAYS,
 } from '../lib/service-availability.ts';
 import type { DayState } from '../lib/service-availability.ts';
@@ -33,17 +33,57 @@ const STATE_WORDS: Record<DayState, string> = {
 // The phone shows this many of the strip's days.
 const PHONE_DAYS = 30;
 
-// The 90 days as one cell each, the share of the time the Service was up, and
-// the count of down periods and restarts. The phone shows the last 30 days. The
-// Service restarted note, when open, links to its page.
-export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
-  const { downs, now, note, reportDays, stops, system } = detail;
-  const found = useMemo(
-    () => availability({ downs, now, reportDays, stops }),
-    [downs, now, reportDays, stops],
+// The strip's cells, one per local day in `timeZone`, and the dates under them.
+// The phone shows the last PHONE_DAYS.
+function Strip({ detail, timeZone }: { detail: ServiceDetail; timeZone: string }) {
+  const { downs, now, reported, stops } = detail;
+  const days = useMemo(
+    () => stripDays({ downs, now, reported, stops, timeZone }),
+    [downs, now, reported, stops, timeZone],
   );
-  const percent = percentWords(found.percent);
-  const { from } = stripWindow(now);
+  const dateOf = (index: number) => {
+    const day = days[index];
+    return day === undefined ? '' : formatDate(day.from, timeZone);
+  };
+  return (
+    <>
+      <div
+        aria-label={`Availability over ${String(WINDOW_DAYS)} days`}
+        className="mt-2 flex h-[26px] gap-px"
+        role="img"
+      >
+        {days.map((day, index) => (
+          <span
+            className={cn(
+              'min-w-0 flex-1 rounded-[2px]',
+              CELL[day.state],
+              index < WINDOW_DAYS - PHONE_DAYS && 'max-sm:hidden',
+            )}
+            key={day.from}
+            title={`${formatDate(day.from, timeZone)}: ${STATE_WORDS[day.state]}`}
+          />
+        ))}
+      </div>
+      <p className="mt-0.5 flex justify-between text-xs text-muted-foreground">
+        <span className="max-sm:hidden">{dateOf(0)}</span>
+        <span className="sm:hidden">{dateOf(WINDOW_DAYS - PHONE_DAYS)}</span>
+        <span className="max-sm:hidden">{dateOf(WINDOW_DAYS / 2)}</span>
+        <span>Today</span>
+      </p>
+    </>
+  );
+}
+
+// The 90 days as one cell each, the share of the time the Service was up, and
+// the count of down periods and other stops. The phone shows the last 30 days.
+// The Service restarted note, when open, links to its page.
+export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
+  const { downs, now, note, reported, stops, system } = detail;
+  const totals = useMemo(
+    () => availabilityTotals({ downs, now, reported, stops }),
+    [downs, now, reported, stops],
+  );
+  const percent = percentWords(totals.percent);
   return (
     <section className="mt-[14px] card-surface rounded-xl border p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
@@ -51,46 +91,12 @@ export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
         <p>
           {percent !== undefined && <b className="font-semibold tabular-nums">{percent} </b>}
           <span className="text-muted-foreground">
-            {found.downPeriods} down {found.downPeriods === 1 ? 'period' : 'periods'},{' '}
-            {found.restarts} {found.restarts === 1 ? 'restart' : 'restarts'}
+            {totals.downPeriods} down {totals.downPeriods === 1 ? 'period' : 'periods'},{' '}
+            {totals.otherStops} other {totals.otherStops === 1 ? 'stop' : 'stops'}
           </span>
         </p>
       </div>
-      <InZone>
-        {(timeZone) => (
-          <div
-            aria-label={`Availability over ${String(WINDOW_DAYS)} days`}
-            className="mt-2 flex h-[26px] gap-px"
-            role="img"
-          >
-            {found.days.map((day, index) => (
-              <span
-                className={cn(
-                  'min-w-0 flex-1 rounded-[2px]',
-                  CELL[day.state],
-                  index < WINDOW_DAYS - PHONE_DAYS && 'max-sm:hidden',
-                )}
-                key={day.from}
-                title={`${formatDate(day.from, timeZone)}: ${STATE_WORDS[day.state]}`}
-              />
-            ))}
-          </div>
-        )}
-      </InZone>
-      <InZone>
-        {(timeZone) => (
-          <p className="mt-0.5 flex justify-between text-xs text-muted-foreground">
-            <span className="max-sm:hidden">{formatDate(from, timeZone)}</span>
-            <span className="sm:hidden">
-              {formatDate(from + (WINDOW_DAYS - PHONE_DAYS) * 86_400_000, timeZone)}
-            </span>
-            <span className="max-sm:hidden">
-              {formatDate(from + (WINDOW_DAYS / 2) * 86_400_000, timeZone)}
-            </span>
-            <span>Today</span>
-          </p>
-        )}
-      </InZone>
+      <InZone>{(timeZone) => <Strip detail={detail} timeZone={timeZone} />}</InZone>
       <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {(['up', 'restarted', 'down', 'quiet'] as const).map((state) => (
           <span className="flex items-center gap-1.5" key={state}>

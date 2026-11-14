@@ -22,8 +22,8 @@ export type ServiceDownTransition = {
 };
 
 export type ServiceDetail = {
-  // The Service down raises and clears in the 90 days before `now`, and the
-  // raise of one still open however old, in the order the Hub recorded them.
+  // The raises and clears of each Service down open in the 90 days before
+  // `now`, its raise however old, in the order the Hub recorded them.
   downs: ServiceDownTransition[];
   // The installed version and upstream the Hub derived, null while unknown. An
   // Application the Service record names that the System has not recorded is
@@ -42,9 +42,9 @@ export type ServiceDetail = {
   note: { id: string; raisedAt: number; reason: string } | undefined;
   // The Service's record and checks, undefined once its provisioner forgot it.
   recorded: RecordedService | undefined;
-  // The 90-day strip's days, counted from its start 90 days before `now`, in
-  // which the System sent Vitals.
-  reportDays: number[];
+  // The spans in which the System sent Vitals from a day before the 90 days
+  // before `now`, oldest first, for the strip to bin into the viewer's days.
+  reported: { from: number; to: number }[];
   // The selected stop and the System's Vitals around it; undefined when the
   // Service has no stop.
   selection: { span: { from: number; to: number }; vitals: VitalsWindow } | undefined;

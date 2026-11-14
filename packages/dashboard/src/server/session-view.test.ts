@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import { bucketFor, parseSessionInput, readSessionView } from './session-view.ts';
+import { parseSessionInput, readSessionView } from './session-view.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -69,27 +69,6 @@ describe('parseSessionInput', () => {
     expect(() => parseSessionInput({ ...KEY, system: undefined })).toThrow('system');
     expect(() => parseSessionInput({ ...KEY, sessionId: '' })).toThrow('sessionId');
     expect(() => parseSessionInput(undefined)).toThrow('harness');
-  });
-});
-
-describe('bucketFor', () => {
-  test('widens with the span, to 1 hour by 90 hours', () => {
-    expect(bucketFor(0)).toBe(MINUTE);
-    expect(bucketFor(90 * MINUTE)).toBe(MINUTE);
-    expect(bucketFor(91 * MINUTE)).toBe(2 * MINUTE);
-    expect(bucketFor(3 * HOUR)).toBe(2 * MINUTE);
-    expect(bucketFor(3 * HOUR + MINUTE)).toBe(5 * MINUTE);
-    expect(bucketFor(15 * HOUR)).toBe(10 * MINUTE);
-    expect(bucketFor(45 * HOUR)).toBe(30 * MINUTE);
-    expect(bucketFor(90 * HOUR)).toBe(HOUR);
-  });
-
-  test('grows through hours that divide a day, then whole days, so every bucket starts on the page grid', () => {
-    expect(bucketFor(90 * HOUR + MINUTE)).toBe(2 * HOUR);
-    expect(bucketFor(200 * HOUR)).toBe(3 * HOUR);
-    expect(bucketFor(400 * HOUR)).toBe(6 * HOUR);
-    expect(bucketFor(1500 * HOUR)).toBe(24 * HOUR);
-    expect(bucketFor(2200 * HOUR)).toBe(48 * HOUR);
   });
 });
 

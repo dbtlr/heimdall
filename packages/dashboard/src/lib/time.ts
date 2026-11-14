@@ -63,6 +63,21 @@ export const localHourMinute = (t: number, timeZone: string): { hour: number; mi
   return { hour: Number(hour), minute: Number(minute) };
 };
 
+// The minutes since local midnight that `t` reads as.
+const minuteOfDay = (t: number, timeZone: string): number => {
+  const { hour, minute } = localHourMinute(t, timeZone);
+  return hour * 60 + minute;
+};
+
+// The local midnight that starts the day holding `t`. On a day the zone's
+// offset changed, stepping back by the local time misses midnight by the
+// change, so the guess is corrected by the time it reads as, the nearer way.
+export const localMidnight = (t: number, timeZone: string): number => {
+  const guess = Math.floor(t / 60_000) * 60_000 - minuteOfDay(t, timeZone) * 60_000;
+  const off = minuteOfDay(guess, timeZone);
+  return guess - (off > 12 * 60 ? off - 24 * 60 : off) * 60_000;
+};
+
 // A time `days` local days away from now: "HH:MM" on the same day, "Mon 14:02"
 // within a week, else "Tue 20 Oct 14:02", so a far time never reads as this week.
 const formatDaysAway = (t: number, days: number, timeZone: string): string => {

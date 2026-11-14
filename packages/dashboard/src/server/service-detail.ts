@@ -1,6 +1,6 @@
 import type { SQL } from 'bun';
 
-import { stopSpan, stripWindow, WINDOW_MS } from '../lib/service-availability.ts';
+import { historyFrom, stopSpan } from '../lib/service-availability.ts';
 import { installsOf } from '../lib/service-installs.ts';
 import {
   isCheckedUpstream,
@@ -10,6 +10,8 @@ import {
   upstreamSince,
 } from '../lib/service-updates.ts';
 import { aroundSpan } from '../lib/vitals-window.ts';
+import { readConditionLimits } from './condition-limits.ts';
+import { BUCKET_MS } from './fleet-overview.ts';
 import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
 import type { ServiceDetail, ServiceDownTransition, ServiceStop } from './service-detail-types.ts';
@@ -17,7 +19,7 @@ import { readServiceStops } from './service-stops.ts';
 import { recordedService } from './system-detail.ts';
 import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
 import type { UpstreamCheckRow } from './update-observations.ts';
-import { readVitalsWindow } from './vitals-window.ts';
+import { readPlatform, readVitalsWindow } from './vitals-window.ts';
 
 const nameField = (input: unknown, key: string, what: string): string => {
   const name = field(input, key);
@@ -40,24 +42,30 @@ export const parseServiceDetailInput = (
   };
 };
 
-// The Hub keeps stops for this long, and the Service page's history reaches back as far.
-const HISTORY_MS = WINDOW_MS;
-
-// The 90-day strip's days in which the System sent Vitals, counted from the
-// window's start. The rollups are 288 a day at most, so the read follows the
-// window and not the Vitals the Hub keeps.
-const readReportDays = async (
+// The spans in which the System sent Vitals since `historyFrom(now)`: each run
+// of 5-minute rollups with none missing, from the first one's start to the
+// last one's end. The strip bins them into days in the viewer's zone. The
+// rollups are 288 a day at most, so the read follows the window and not the
+// Vitals the Hub keeps.
+const readReported = async (
   sql: SQL,
   { now, system }: { now: number; system: string },
-): Promise<number[]> => {
-  const { from } = stripWindow(now);
-  const rows: { day: number }[] = await sql`
-    SELECT DISTINCT floor(extract(epoch FROM bucket - ${new Date(from)}::timestamptz) / 86400)::int AS day
-    FROM vitals_rollups
-    WHERE system = ${system} AND bucket >= ${new Date(from)} AND bucket < ${new Date(now)}
-    ORDER BY day
+): Promise<{ from: number; to: number }[]> => {
+  const rows: { first: Date; last: Date }[] = await sql`
+    SELECT min(bucket) AS first, max(bucket) AS last
+    FROM (
+      SELECT bucket,
+             bucket - row_number() OVER (ORDER BY bucket) * make_interval(secs => ${BUCKET_MS / 1000}) AS run
+      FROM vitals_rollups
+      WHERE system = ${system} AND bucket >= ${new Date(historyFrom(now))} AND bucket < ${new Date(now)}
+    ) buckets
+    GROUP BY run
+    ORDER BY 1
   `;
-  return rows.map(({ day }) => day);
+  return rows.map(({ first, last }) => ({
+    from: first.getTime(),
+    to: Math.min(now, last.getTime() + BUCKET_MS),
+  }));
 };
 
 // The stop the page selects: the one that began at `stop`, else the newest, and
@@ -76,7 +84,17 @@ const readSelection = async (
     return undefined;
   }
   const span = stopSpan(found, now);
-  const vitals = await readVitalsWindow(sql, { ...aroundSpan(span, now), now, system });
+  const [limits, platform] = await Promise.all([
+    readConditionLimits(sql, system),
+    readPlatform(sql, system),
+  ]);
+  const vitals = await readVitalsWindow(sql, {
+    ...aroundSpan(span, now),
+    limits,
+    now,
+    platform,
+    system,
+  });
   return { span, vitals };
 };
 
@@ -85,9 +103,10 @@ const unitOf = (record: Record<string, unknown>): string | undefined =>
   text(record.unit) ?? text(record.container) ?? text(record.label);
 
 // One Service of System `system` as of `now`: its record and checks, the open
-// Service restarted note, the stops and Service down raises and clears of the
-// last 90 days, the installed version and its changes, and upstream updates,
-// from one snapshot.
+// Service restarted note, the stops of the last 90 days, the raises and clears
+// of each Service down open in them, the spans the System sent Vitals, the
+// selected stop with the Vitals around it, the installed version and its
+// changes, and upstream updates, from one snapshot.
 // A System that is no longer paired opens as it was left. Undefined for a
 // System that does not exist, and for a Service with no record, stop, Service
 // down in its history, or open Service Condition.
@@ -132,15 +151,15 @@ export const readServiceDetail = (
       // Every stop the Hub holds: those of its 90 days, and one still under way
       // however old, which the Hub keeps until it ends.
       readServiceStops(tx, { includeUnpaired: true, service, system }),
-      // A Service down still open stays however long ago it was raised, as a
-      // stop still under way does.
+      // Every Service down open in the strip's days, with its raise however
+      // long ago, as a stop still under way stays.
       tx`
         SELECT t.condition, t.action, t.at, t.reason
         FROM condition_transitions t
         JOIN conditions c ON c.id = t.condition
         WHERE c.system = ${system} AND c.kind = 'service_down' AND c.subject = ${service}
           AND t.action IN ('raised', 'cleared')
-          AND (t.at >= ${new Date(now - HISTORY_MS)} OR (t.action = 'raised' AND c.cleared_at IS NULL))
+          AND (c.cleared_at IS NULL OR c.cleared_at >= ${new Date(historyFrom(now))})
         ORDER BY t.id
       `,
       tx`
@@ -192,8 +211,8 @@ export const readServiceDetail = (
       upstream: installedUpstream,
       version,
     }));
-    const [reportDays, selection] = await Promise.all([
-      readReportDays(tx, { now, system }),
+    const [reported, selection] = await Promise.all([
+      readReported(tx, { now, system }),
       readSelection(tx, { now, stop, stops, system }),
     ]);
     return {
@@ -221,7 +240,7 @@ export const readServiceDetail = (
         record === undefined
           ? undefined
           : recordedService(service, record, checks[0]?.services ?? []),
-      reportDays,
+      reported,
       selection,
       service,
       stops,

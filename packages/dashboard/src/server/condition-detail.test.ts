@@ -559,13 +559,14 @@ describe('Vitals around a Condition', () => {
   test('a kind with no series of its own gets the System Vitals while it was open and 30 minutes either side', async () => {
     await using h = await startHub();
     await hear(h, 'server-1', [sample(at(-2 * DAY))]);
-    await addVitals(h.db.sql, 'server-1', -3 * HOUR, 10);
-    await addVitals(h.db.sql, 'server-1', -HOUR - 10 * MINUTE, 20);
-    await addVitals(h.db.sql, 'server-1', -20 * MINUTE, 30);
+    await addVitals(h.db.sql, 'server-1', -4 * HOUR, 10);
+    await addVitals(h.db.sql, 'server-1', -3 * HOUR - 10 * MINUTE, 20);
+    await addVitals(h.db.sql, 'server-1', -HOUR - 40 * MINUTE, 30);
+    await addVitals(h.db.sql, 'server-1', -HOUR - 20 * MINUTE, 40);
     const id = await addCondition(h.db.sql, {
-      clearedAt: -30 * MINUTE,
+      clearedAt: -2 * HOUR,
       kind: 'service_down',
-      raisedAt: -HOUR,
+      raisedAt: -3 * HOUR,
       subject: 'web',
       system: 'server-1',
     });
@@ -573,11 +574,6 @@ describe('Vitals around a Condition', () => {
     const detail = await read(h, { id, name: 'server-1' });
 
     expect(detail?.series).toBeUndefined();
-    expect(detail?.vitals).toMatchObject({
-      from: at(-HOUR - 30 * MINUTE),
-      source: 'samples',
-      to: at(0),
-    });
     expect(detail?.vitals?.points.map(({ cpu }) => cpu)).toEqual([20, 30]);
   });
 
@@ -595,4 +591,19 @@ describe('Vitals around a Condition', () => {
     expect(detail?.series?.kind).toBe('percent');
     expect(detail?.vitals).toBeUndefined();
   });
+
+  for (const kind of ['high_memory', 'hot_process', 'low_disk'] as const) {
+    test(`a ${kind} Condition charts its own series and reads no Vitals window`, async () => {
+      await using h = await startHub();
+      await hear(h, 'server-1', [sample(at(-2 * DAY))]);
+      const id = await addCondition(h.db.sql, {
+        kind,
+        raisedAt: -HOUR,
+        subject: kind === 'low_disk' ? '/' : '',
+        system: 'server-1',
+      });
+
+      expect((await read(h, { id, name: 'server-1' }))?.vitals).toBeUndefined();
+    });
+  }
 });
