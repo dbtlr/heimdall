@@ -103,8 +103,7 @@ const missedSince = ({
   now: number;
 }): number => {
   const starts = history.map(({ started }) => started);
-  const held =
-    history.length >= STRIP_RUNS ? Math.min(...starts) : now - HISTORY_MS;
+  const held = history.length >= STRIP_RUNS ? Math.min(...starts) : now - HISTORY_MS;
   return Math.max(existed, held);
 };
 
