@@ -93,7 +93,15 @@ test('a change mark sits in the strip above the plot, so it never covers a scale
   const line: ActivityLine = {
     at: NOW - 60 * 60_000,
     events: [
-      { at: NOW - 60 * 60_000, kind: 'stop', ongoing: false, service: 'caddy', system: 'server-1' },
+      {
+        at: NOW - 60 * 60_000,
+        kind: 'stop',
+        lasted: 60_000,
+        ongoing: false,
+        restarts: 0,
+        service: 'caddy',
+        system: 'server-1',
+      },
     ],
     system: 'server-1',
   };

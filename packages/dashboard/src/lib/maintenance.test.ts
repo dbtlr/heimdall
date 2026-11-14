@@ -209,10 +209,10 @@ describe('upstreamName', () => {
 describe('withoutServicePackages', () => {
   test('a package of a Service on an apt: or brew: upstream is counted once, as the Service update', () => {
     const apt = { ...pkg('caddy:amd64'), manager: 'APT' };
-    const brew = { ...pkg('formula:ntfy'), manager: 'Homebrew' };
+    const brewed = { ...pkg('formula:ntfy'), manager: 'Homebrew' };
     const other = pkg('curl:amd64');
     const held = system('server-1', {
-      packages: [apt, brew, other],
+      packages: [apt, brewed, other],
       updates: [
         { ...update('caddy'), upstream: 'apt:caddy' },
         { ...update('ntfy'), upstream: 'brew:ntfy' },
