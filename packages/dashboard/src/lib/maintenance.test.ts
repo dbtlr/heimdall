@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
 import type {
+  MaintenanceCheck,
   MaintenancePackage,
   MaintenanceServiceUpdate,
   MaintenanceSystem,
 } from '../server/maintenance-types.ts';
 import {
+  checkSentence,
   maintenanceSummary,
   orderMaintenance,
   PACKAGES_SHOWN,
@@ -30,8 +32,10 @@ const update = (name: string): MaintenanceServiceUpdate => ({
   upstream: null,
 });
 
+const CHECKED: MaintenanceCheck = { at: 0, kind: 'current' };
+
 const system = (name: string, over: Partial<MaintenanceSystem> = {}): MaintenanceSystem => ({
-  checkedAt: undefined,
+  check: CHECKED,
   managers: ['apt'],
   packages: [],
   rebootSince: undefined,
@@ -41,13 +45,15 @@ const system = (name: string, over: Partial<MaintenanceSystem> = {}): Maintenanc
 });
 
 describe('orderMaintenance', () => {
-  test('orders Systems by security count, then package count, then a pending reboot, then name, and each System packages security first', () => {
+  test('orders Systems by security count, then package count, then a pending reboot, then Service updates, then name', () => {
     const ordered = orderMaintenance([
       system('c-up-to-date'),
       system('b-many', { packages: [pkg('a'), pkg('b'), pkg('c')] }),
       system('a-security', { packages: [pkg('x'), pkg('s', true)] }),
       system('d-reboot', { rebootSince: 1 }),
       system('e-few', { packages: [pkg('a')] }),
+      system('f-service', { updates: [update('w')] }),
+      system('g-services', { updates: [update('w'), update('v')] }),
     ]);
 
     expect(ordered.map(({ system: name }) => name)).toEqual([
@@ -55,9 +61,24 @@ describe('orderMaintenance', () => {
       'b-many',
       'e-few',
       'd-reboot',
+      'g-services',
+      'f-service',
       'c-up-to-date',
     ]);
-    expect(ordered[0]?.packages.map(({ name }) => name)).toEqual(['s', 'x']);
+  });
+
+  test('puts an up to date System after one with only a Service update, and after one whose checks cannot show it is up to date', () => {
+    const ordered = orderMaintenance([
+      system('a-up-to-date'),
+      system('b-unchecked', { check: { kind: 'none' } }),
+      system('c-service', { updates: [update('w')] }),
+    ]);
+
+    expect(ordered.map(({ system: name }) => name)).toEqual([
+      'c-service',
+      'b-unchecked',
+      'a-up-to-date',
+    ]);
   });
 });
 
@@ -94,6 +115,47 @@ describe('maintenanceSummary', () => {
   test('says so when nothing is pending', () => {
     expect(maintenanceSummary([system('a')])).toBe('Every System is up to date.');
     expect(maintenanceSummary([])).toBe('No paired System.');
+  });
+
+  test('never calls the fleet up to date while a System has no current package check', () => {
+    expect(maintenanceSummary([system('a'), system('b', { check: { kind: 'none' } })])).toBe(
+      'No update is known to be pending. 1 System has no current package check.',
+    );
+    expect(
+      maintenanceSummary([
+        system('a', { packages: [pkg('x')] }),
+        system('b', { check: { kind: 'failed', manager: 'APT', reason: 'no indexes' } }),
+        system('c', { check: { at: 0, kind: 'old', manager: 'APT' } }),
+      ]),
+    ).toBe('1 package update on 1 System. 2 Systems have no current package check.');
+  });
+});
+
+describe('checkSentence', () => {
+  const NOW = 10 * 86_400_000;
+
+  test('calls a System up to date only on a current check, and otherwise says why its checks cannot show it', () => {
+    expect(checkSentence({ at: NOW - 40 * 60_000, kind: 'current' }, NOW)).toBe(
+      'Up to date. Checked 40 min ago.',
+    );
+    expect(checkSentence({ kind: 'none' }, NOW)).toBe(
+      'Not known to be up to date: no package check has reported.',
+    );
+    expect(
+      checkSentence(
+        { kind: 'failed', manager: 'APT', reason: 'APT has no local package indexes.' },
+        NOW,
+      ),
+    ).toBe('Not known to be up to date: the APT check failed (APT has no local package indexes).');
+    expect(checkSentence({ at: NOW - 3 * 86_400_000, kind: 'old', manager: 'APT' }, NOW)).toBe(
+      'Not known to be up to date: APT was last checked 3 d ago.',
+    );
+    expect(
+      checkSentence({ at: NOW - 9 * 86_400_000, kind: 'metadata', manager: 'Homebrew' }, NOW),
+    ).toBe("Not known to be up to date: Homebrew's package metadata is 9 d old.");
+    expect(checkSentence({ at: null, kind: 'metadata', manager: 'Homebrew' }, NOW)).toBe(
+      "Not known to be up to date: Homebrew's package metadata is of unknown age.",
+    );
   });
 });
 

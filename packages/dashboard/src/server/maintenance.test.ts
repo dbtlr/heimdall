@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from 'bun:test';
 
 import { NOW, push, report, startHub, storeToken, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
+import type { UpdateManager } from '@heimdall/schema';
 
 import { readMaintenance } from './maintenance.ts';
 
@@ -20,12 +21,17 @@ const at = (ms: number) => new Date(ms);
 type Pending = { name: string; security: boolean | null };
 
 // One Report from `system` received at NOW, with an APT source holding
-// `pending` and a reboot marker, as a Collector sends them.
+// `pending` (or reporting `result` instead) and a reboot marker, as a
+// Collector sends them.
 const hear = async (
   h: Hub,
   system: string,
   pending: Pending[],
-  { reboot = false, services = [] }: { reboot?: boolean; services?: string[] } = {},
+  {
+    reboot = false,
+    result,
+    services = [],
+  }: { reboot?: boolean; result?: UpdateManager['result']; services?: string[] } = {},
 ) => {
   h.clock.now = NOW;
   const response = await push(
@@ -46,7 +52,7 @@ const hear = async (
             installation: 'system',
             manager: 'apt',
             observedAt: NOW - 20 * MINUTE,
-            result: {
+            result: result ?? {
               kind: 'available',
               metadataAt: NOW - 2 * HOUR,
               updates: pending.map(({ name, security }) => ({
@@ -66,7 +72,7 @@ const hear = async (
   expect(response.status).toBe(200);
 };
 
-test("reads each paired System's pending packages security first, its pending reboot, and Service updates dated by their upstream, and leaves out an unpaired System", async () => {
+test("reads each paired System's pending packages with their security, its pending reboot, and Service updates dated by their upstream, and leaves out an unpaired System", async () => {
   await using h = await startHub();
   await storeToken(h.db.sql, { pairedAt: NOW, system: 'mini-1', token: 'mini-token' });
   await storeToken(h.db.sql, { pairedAt: NOW, system: 'old-1', token: 'old-token' });
@@ -101,11 +107,14 @@ test("reads each paired System's pending packages security first, its pending re
 
   expect(systems.map(({ system }) => system)).toEqual(['server-1', 'laptop-1', 'mini-1']);
   const [server, laptop, mini] = systems;
-  expect(server?.packages.map(({ name, security }) => [name, security])).toEqual([
-    ['openssl', true],
-    ['curl', false],
+  expect(
+    server?.packages
+      .map(({ name, security, securitySince }) => [name, security, securitySince])
+      .toSorted(),
+  ).toEqual([
+    ['curl', false, null],
+    ['openssl', true, NOW],
   ]);
-  expect(server?.packages[0]?.securitySince).toBe(NOW);
   expect(server?.managers).toEqual(['APT']);
   expect(server?.rebootSince).toBe(NOW);
   expect(server?.updates).toEqual([
@@ -120,5 +129,41 @@ test("reads each paired System's pending packages security first, its pending re
   expect(laptop?.packages).toHaveLength(1);
   expect(laptop?.rebootSince).toBeUndefined();
   // An up to date System says when it was last checked.
-  expect(mini).toMatchObject({ checkedAt: NOW - 20 * MINUTE, packages: [], updates: [] });
+  expect(mini).toMatchObject({
+    check: { at: NOW - 20 * MINUTE, kind: 'current' },
+    packages: [],
+    updates: [],
+  });
+});
+
+test('a System whose package check failed, read old metadata, or never reported has no current check', async () => {
+  await using h = await startHub();
+  await storeToken(h.db.sql, { pairedAt: NOW, system: 'quiet-1', token: 'quiet-token' });
+  await hear(h, 'server-1', [], {
+    result: { kind: 'unavailable', reason: 'APT has no local package indexes' },
+  });
+  await hear(h, 'laptop-1', [], {
+    result: { kind: 'available', metadataAt: NOW - 8 * DAY, updates: [] },
+  });
+
+  const checkOf = async (name: string, now = NOW) =>
+    (await readMaintenance(h.db.sql, now)).systems.find(({ system }) => system === name)?.check;
+
+  expect(await checkOf('server-1')).toEqual({
+    kind: 'failed',
+    manager: 'APT',
+    reason: 'APT has no local package indexes',
+  });
+  expect(await checkOf('laptop-1')).toEqual({
+    at: NOW - 8 * DAY,
+    kind: 'metadata',
+    manager: 'APT',
+  });
+  expect(await checkOf('quiet-1')).toEqual({ kind: 'none' });
+  // A day on, the last check is too old to show anything.
+  expect(await checkOf('server-1', NOW + DAY)).toEqual({
+    at: NOW - 20 * MINUTE,
+    kind: 'old',
+    manager: 'APT',
+  });
 });

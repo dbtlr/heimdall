@@ -18,7 +18,7 @@ const pkg = (name: string, security = false): MaintenancePackage => ({
 });
 
 const system = (name: string, over: Partial<MaintenanceSystem> = {}): MaintenanceSystem => ({
-  checkedAt: undefined,
+  check: { at: NOW - 40 * 60_000, kind: 'current' },
   managers: ['APT'],
   packages: [],
   rebootSince: undefined,
@@ -28,9 +28,7 @@ const system = (name: string, over: Partial<MaintenanceSystem> = {}): Maintenanc
 });
 
 const render = (systems: MaintenanceSystem[]) =>
-  renderRouted(<MaintenanceCards maintenance={{ now: NOW, systems }} />, {
-    routePaths: ['/systems/$name'],
-  });
+  renderRouted(<MaintenanceCards maintenance={{ now: NOW, systems }} />);
 
 describe('the Maintenance cards', () => {
   test('a card names its System and manager, the pending reboot with its age, security packages first with versions and since, and a Service update with its upstream', async () => {
@@ -74,15 +72,37 @@ describe('the Maintenance cards', () => {
     expect(html).toContain('<details');
   });
 
-  test('a System with nothing pending is a quiet card saying when it was last checked, and one never checked says so', async () => {
-    const html = await render([
-      system('mini-1', { checkedAt: NOW - 40 * 60_000 }),
-      system('mini-2'),
-    ]);
+  test('a System with nothing pending and a current check is a quiet card saying when it was last checked', async () => {
+    const html = await render([system('mini-1')]);
 
     expect(html).toContain('Up to date. Checked 40 min ago.');
-    expect(html).toContain('Up to date. Not checked yet.');
+    expect(html).toContain('opacity-80');
     expect(html).not.toContain('Packages');
+  });
+
+  test('a System whose check failed or never reported is not called up to date, nor quiet', async () => {
+    const html = await render([
+      system('mini-1', {
+        check: { kind: 'failed', manager: 'APT', reason: 'APT has no local package indexes' },
+      }),
+      system('mini-2', { check: { kind: 'none' } }),
+    ]);
+
+    expect(html).not.toContain('Up to date');
+    expect(html).not.toContain('opacity-80');
+    expect(html).toContain(
+      'Not known to be up to date: the APT check failed (APT has no local package indexes).',
+    );
+    expect(html).toContain('Not known to be up to date: no package check has reported.');
+    expect(html).toContain('2 Systems have no current package check.');
+  });
+
+  test('a System whose only pending item is a reboot is not called up to date', async () => {
+    const html = await render([system('server-1', { rebootSince: NOW - 4 * DAY })]);
+
+    expect(html).toContain('Reboot pending · 4 d');
+    expect(html).not.toContain('Up to date');
+    expect(html).not.toContain('opacity-80');
   });
 
   test('the summary leads, and the cards keep the order they are given', async () => {

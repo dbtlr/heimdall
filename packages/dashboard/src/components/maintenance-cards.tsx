@@ -1,7 +1,15 @@
 import { Link } from '@tanstack/react-router';
 
-import { maintenanceSummary, splitPackages, upstreamName } from '../lib/maintenance.ts';
-import { formatSpanShort } from '../lib/time.ts';
+import { isSecurityUpdate } from '../lib/condition-detail.ts';
+import {
+  ago,
+  checkSentence,
+  isUpToDate,
+  maintenanceSummary,
+  nothingPending,
+  splitPackages,
+  upstreamName,
+} from '../lib/maintenance.ts';
 import { cn } from '../lib/utils.ts';
 import type {
   Maintenance,
@@ -15,9 +23,6 @@ const CHIP = 'flex-none rounded-full bg-status-warning/15 px-2 py-0.5 text-xs wh
 
 const HEADING = 'text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
-// How long before `now`, in its largest unit: "4 d".
-const ago = (at: number, now: number) => formatSpanShort(Math.max(0, now - at));
-
 // A package: its name, the versions it would move between, and for a security
 // update a chip and how long the Hub has held it as one.
 function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
@@ -27,7 +32,7 @@ function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
       <span className="min-w-0 text-xs text-muted-foreground tabular-nums">
         {`${pkg.installed ?? '?'} → ${pkg.available ?? '?'}`}
       </span>
-      {pkg.security && (
+      {isSecurityUpdate(pkg) && (
         <span className={cn(CHIP, MARK_COLOR.note, 'ml-auto')}>
           security
           {pkg.securitySince !== null && (
@@ -43,7 +48,7 @@ function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
 // "+N more" expander.
 function Packages({ now, packages }: { now: number; packages: readonly MaintenancePackage[] }) {
   const { more, shown } = splitPackages(packages);
-  const security = packages.filter((pkg) => pkg.security).length;
+  const security = packages.filter(isSecurityUpdate).length;
   return (
     <div className="mt-3">
       <h3 className={HEADING}>
@@ -92,17 +97,19 @@ function ServiceUpdateRow({ now, update }: { now: number; update: MaintenanceSer
 
 // One System's card: the System and its package managers with a pending
 // reboot and how long it has been required, its packages, and its Services
-// with an update. A System with none of them is a quiet card saying when it
-// was last checked. All of it can wait, so nothing here is tinted as a problem
-// beyond the notes' own color.
+// with an update. A System with none of them is a short card saying when it
+// was last checked, or why its checks cannot show it is up to date; only an
+// up to date one is quiet. All of it can wait, so nothing here is tinted as a
+// problem beyond the notes' own color.
 function SystemCard({ now, system }: { now: number; system: MaintenanceSystem }) {
   const id = `maintenance-${system.system}`;
-  const upToDate =
-    system.packages.length === 0 && system.rebootSince === undefined && system.updates.length === 0;
   return (
     <section
       aria-labelledby={id}
-      className={cn('min-w-0 card-surface rounded-xl border px-4 py-3.5', upToDate && 'opacity-80')}
+      className={cn(
+        'min-w-0 card-surface rounded-xl border px-4 py-3.5',
+        isUpToDate(system) && 'opacity-80',
+      )}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
         <h2 className="min-w-0 text-[15px] font-semibold" id={id}>
@@ -121,11 +128,9 @@ function SystemCard({ now, system }: { now: number; system: MaintenanceSystem })
           </span>
         )}
       </div>
-      {upToDate && (
-        <p className="mt-3 text-[13.5px] text-muted-foreground">
-          {system.checkedAt === undefined
-            ? 'Up to date. Not checked yet.'
-            : `Up to date. Checked ${ago(system.checkedAt, now)} ago.`}
+      {nothingPending(system) && (
+        <p className="mt-3 text-[13.5px] break-words text-muted-foreground">
+          {checkSentence(system.check, now)}
         </p>
       )}
       {system.packages.length > 0 && <Packages now={now} packages={system.packages} />}
