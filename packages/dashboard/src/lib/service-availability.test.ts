@@ -194,7 +194,8 @@ describe('a stop whose end is unknown', () => {
 
   test('is downtime until the System next reports, so the percent is below 100', () => {
     const found = totals({ reported: gap, stops: [lost] });
-    expect(found.percent).toBeCloseTo((1 - 1 / (90 * 24 - 12 - 1 / 60)) * 100, 3);
+    // The downtime fills the reporting gap, so all 90 days are known time.
+    expect(found.percent).toBeCloseTo((1 - 1 / (90 * 24)) * 100, 6);
     expect(percentWords(found.percent)).not.toBe('100.00%');
   });
 
@@ -222,8 +223,9 @@ describe('a stop whose end is unknown', () => {
       stops: [lost],
     });
     expect(found.percent).toBeLessThan(100);
-    // 08:00 to midnight is 16 hours of the 90 days' known time.
-    expect(found.percent).toBeCloseTo((1 - 16 / (90 * 24 - 12 - 16)) * 100, 0);
+    // 08:00 to midnight is 16 hours of downtime; the known time ends with it,
+    // 12 hours before now.
+    expect(found.percent).toBeCloseTo((1 - 16 / (90 * 24 - 12)) * 100, 6);
   });
 });
 
