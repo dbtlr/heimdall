@@ -22,7 +22,7 @@ const mark = (overrides: Partial<ConditionMark> & Pick<ConditionMark, 'kind'>): 
   ...overrides,
 });
 
-const restart = {
+const serviceStop = {
   at: NOW - 10 * MINUTE,
   kind: 'stop',
   lasted: 4000,
@@ -37,7 +37,7 @@ const lane = (conditions: ConditionMark[]) =>
     <DetailAxis onSelect={() => {}} selected={undefined} window={WINDOW}>
       <ChangesLane
         detail={{
-          changes: [restart],
+          changes: [serviceStop],
           conditions,
           now: NOW,
           paired: true,
@@ -76,7 +76,7 @@ test('lists the latest events under the lane and keeps the earlier ones behind a
   }
 });
 
-test('shows a recent restart ahead of Conditions open longer, however many are open', () => {
+test('shows a recent stop ahead of Conditions open longer, however many are open', () => {
   const html = lane(
     Array.from({ length: 7 }, (_, i) =>
       mark({ kind: 'low_disk', raisedAt: NOW - (i + 1) * HOUR, subject: `/disk${String(i)}` }),

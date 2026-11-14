@@ -176,27 +176,6 @@ export const formatSpan = (ms: number): string => {
   return pair(Math.floor(ms / DAY_MS), 'd', Math.floor((ms % DAY_MS) / HOUR_MS), 'h');
 };
 
-// A Service stop in words, as Activity, Home, and a System's events all say
-// it: still under way, or finished with how long it lasted, if known, and how
-// often the Service restarted meanwhile. Never "restarted": a stop is a stop.
-export const stopWords = (stop: {
-  lasted: number | undefined;
-  ongoing: boolean;
-  restarts: number;
-  service: string;
-}): string => {
-  if (stop.ongoing) {
-    return `${stop.service} stopped`;
-  }
-  const restarts =
-    stop.restarts > 0
-      ? ` (restarted ${String(stop.restarts)} ${stop.restarts === 1 ? 'time' : 'times'})`
-      : '';
-  return stop.lasted === undefined
-    ? `${stop.service} stopped, end unknown${restarts}`
-    : `${stop.service} stopped for ${formatSpan(stop.lasted)}${restarts}`;
-};
-
 // The time left on a silence: "2 h", "1 h 31 min", never below "1 min". Rounds up
 // to the minute, as `heimdall-hub silence` lists it, so a silence just set for
 // 2 h reads as 2 h. formatSpan then shows two units, so from a day on the

@@ -5,7 +5,7 @@ import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 
 import { CHANGE_WINDOW_MS } from '../server/home-types.ts';
 import type { Change, ChangeGroup } from '../server/home-types.ts';
-import { stopWords } from './time.ts';
+import { stopWords } from './stop-words.ts';
 
 // How many groups the card lists.
 export const CHANGES_SHOWN = 5;

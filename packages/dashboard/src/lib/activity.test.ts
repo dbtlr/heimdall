@@ -14,6 +14,7 @@ import {
   groupActivity,
   lineWords,
 } from './activity.ts';
+import { phraseText } from './phrase.ts';
 
 const MIN = 60_000;
 const T = Date.UTC(2026, 10, 14, 12, 0);
@@ -109,7 +110,7 @@ test('a line says its sentence, the other changes it holds, and that an alert wa
   expect(words.title).toBe('Service down');
   expect(words.subject).toBe('caddy');
   expect(words.level).toBe('alert');
-  expect(words.detail).toBe('Exited with status 1. · caddy stopped for 4 s');
+  expect(phraseText(words.detail, 'UTC')).toBe('Exited with status 1. · caddy stopped for 4 s');
   expect(words.alert).toEqual({ at: T + MIN, recoveredAt: T + 2 * MIN });
   expect(words.open).toBe(true);
 });
@@ -130,7 +131,7 @@ test('a cleared Condition says how long it lasted', () => {
       condition({ action: 'cleared', at: T + 18 * MIN, level: 'warning', open: false }),
     ])[0]!,
   );
-  expect(words.detail).toBe('Exited with status 1. · cleared after 18 min');
+  expect(phraseText(words.detail, 'UTC')).toBe('Exited with status 1. · cleared after 18 min');
   expect(words.open).toBe(false);
 });
 
@@ -155,7 +156,7 @@ test('each change after the lead keeps its subject and level, so two Conditions 
   ]);
   const words = lineWords(line!);
   expect(words.subject).toBe('ntfy');
-  expect(words.detail).toBe(
+  expect(phraseText(words.detail, 'UTC')).toBe(
     'Exited with status 1. · Service down caddy (alert, open) · Low disk / (warning, open)',
   );
 });
@@ -170,7 +171,7 @@ test('an alert for another Condition in the line is named, not folded into the a
   const words = lineWords(line!);
   expect([words.title, words.subject]).toEqual(['Alert sent for Low disk', '/']);
   expect(words.alert).toEqual({ at: T + 30_000, recoveredAt: undefined });
-  expect(words.detail).toBe('Alert sent for Service down caddy');
+  expect(phraseText(words.detail, 'UTC')).toBe('Alert sent for Service down caddy');
 });
 
 test("an alert for another Condition is not shown as the lead Condition's alert-sent marker", () => {
@@ -181,7 +182,7 @@ test("an alert for another Condition is not shown as the lead Condition's alert-
   const words = lineWords(line!);
   expect([words.title, words.subject]).toEqual(['Service down', 'caddy']);
   expect(words.alert).toBeUndefined();
-  expect(words.detail).toBe('Exited with status 1. · Alert sent for Low disk /');
+  expect(phraseText(words.detail, 'UTC')).toBe('Exited with status 1. · Alert sent for Low disk /');
 });
 
 test('the open marker belongs to the lead, and another open change says so itself', () => {
@@ -197,7 +198,7 @@ test('the open marker belongs to the lead, and another open change says so itsel
   ]);
   const words = lineWords(line!);
   expect(words.open).toBe(false);
-  expect(words.detail).toBe(
+  expect(phraseText(words.detail, 'UTC')).toBe(
     'Exited with status 1. · cleared after 2 min · Low disk / (warning, open)',
   );
 });
@@ -285,12 +286,15 @@ test('the search keeps a known kind, range, and System and drops the rest', () =
   });
 });
 
-test('an alert merged into a line keeps when its recovery went out', () => {
+test('an alert merged into a line says when its recovery went out, with its own alert', () => {
   const [line] = groupActivity([
     stop({ at: T }),
     alert({ at: T + MIN, open: false, recoveredAt: T + 2 * MIN, subject: 'backup' }),
+    alert({ at: T + MIN, subject: 'web' }),
   ]);
   const words = lineWords(line!);
   expect(words.alert).toBeUndefined();
-  expect(words.recoveries).toEqual([{ named: 'Service down backup', recoveredAt: T + 2 * MIN }]);
+  expect(phraseText(words.detail, 'UTC')).toBe(
+    'Alert sent for Service down backup, recovery at 12:02 · Alert sent for Service down web',
+  );
 });

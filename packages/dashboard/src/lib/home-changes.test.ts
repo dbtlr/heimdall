@@ -155,6 +155,20 @@ describe('groupChanges', () => {
     ).toBe('t3code stopped 2 times');
   });
 
+  test('stops of one Service on several Systems, one each, read as a count, not one duration', () => {
+    expect(words([stop('server-1', NOW, 'web'), stop('laptop-1', NOW + MINUTE, 'web')])).toEqual([
+      { detail: 'laptop-1 and server-1', mono: false, title: 'web stopped 2 times' },
+    ]);
+  });
+
+  test('stops still under way on several Systems say their Service stopped, with no count', () => {
+    expect(
+      words([stop('server-1', NOW, 'web', true), stop('laptop-1', NOW + MINUTE, 'web', true)]),
+    ).toEqual([
+      { detail: 'laptop-1 and server-1, still stopped', mono: false, title: 'web stopped' },
+    ]);
+  });
+
   test('a stop says its restarts and an unknown end as Activity does', () => {
     const lone = { ...stop('server-1', NOW, 't3code'), lasted: undefined, restarts: 2 } as Change;
     expect(words([lone])[0]?.title).toBe('t3code stopped, end unknown (restarted 2 times)');

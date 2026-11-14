@@ -21,6 +21,18 @@ export const clockSpan = (start: number, end: number | undefined): Phrase => [
   end === undefined ? 'now' : clockAt(end),
 ];
 
+// The phrases that say anything, one after another with `separator` between.
+export const joinPhrases = (phrases: readonly Phrase[], separator: string): Phrase => {
+  const joined: (Moment | string)[] = [];
+  for (const phrase of phrases.filter((parts) => parts.some((part) => part !== ''))) {
+    if (joined.length > 0) {
+      joined.push(separator);
+    }
+    joined.push(...phrase);
+  }
+  return joined;
+};
+
 // The phrase written out, its times in `timeZone`.
 export const phraseText = (phrase: Phrase, timeZone: string): string =>
   phrase

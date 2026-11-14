@@ -14,7 +14,10 @@ import type {
 } from '../server/activity-types.ts';
 import { pinFromSearch } from './activity-moment.ts';
 import { knownValues, stringList } from './filter-search.ts';
-import { formatSpan, stopWords } from './time.ts';
+import { clockAt, joinPhrases } from './phrase.ts';
+import type { Phrase } from './phrase.ts';
+import { stopWords } from './stop-words.ts';
+import { formatSpan } from './time.ts';
 
 // The grouping rule: changes on one System merge into one line while each
 // falls within this long of the first change of the line.
@@ -150,12 +153,11 @@ export type LineWords = {
   // What the lead changed after its subject: "cleared", or the levels a
   // level change went between.
   change: string;
-  detail: string;
+  // The lead's detail, then each other change in words of its own, an alert
+  // with when its recovery went out.
+  detail: Phrase;
   // The level pill, for a line led by a Condition.
   level: ConditionLevel | undefined;
-  // Recoveries of other alerts merged into the line, each with the Condition
-  // it was sent for, so the line says when each recovery went out.
-  recoveries: { named: string; recoveredAt: number }[];
   // The lead is still happening: its Condition or alert open, or its Service
   // still stopped.
   open: boolean;
@@ -225,24 +227,25 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
 };
 
 // The words of a change that follows the lead in a line: whole enough to
-// stand alone, with its subject, and a Condition's level and whether it is
-// still open.
-const namedOf = (event: ConditionActivity | AlertActivity): string =>
-  [CONDITION_KIND_NAMES[event.condition], subjectOf(event)].filter((part) => part !== '').join(' ');
-
-const phrase = (event: ActivityEvent): string => {
+// stand alone, with its subject, a Condition's level and whether it is still
+// open, and when an alert's recovery went out.
+const phrase = (event: ActivityEvent): Phrase => {
   if (event.kind === 'version' || event.kind === 'stop') {
-    return sentence(event).title;
+    return [sentence(event).title];
   }
-  const named = namedOf(event);
+  const named = [CONDITION_KIND_NAMES[event.condition], subjectOf(event)]
+    .filter((part) => part !== '')
+    .join(' ');
   if (event.kind === 'alert') {
-    return `Alert sent for ${named}`;
+    return event.recoveredAt === undefined
+      ? [`Alert sent for ${named}`]
+      : [`Alert sent for ${named}, recovery at `, clockAt(event.recoveredAt)];
   }
   const change = changeOf(event);
   const state = [change === '' ? event.level : change, isOpen(event) ? 'open' : '']
     .filter((part) => part !== '')
     .join(', ');
-  return `${named} (${state})`;
+  return [`${named} (${state})`];
 };
 
 // Whether `alert` was sent for the Condition `lead` is about.
@@ -266,19 +269,13 @@ export const lineWords = (line: ActivityLine): LineWords => {
     (event): event is AlertActivity => event.kind === 'alert' && alertFor(event, lead),
   );
   const others = rest.filter((event) => event !== alert);
-  const recoveries = others.flatMap((event) =>
-    event.kind === 'alert' && event.recoveredAt !== undefined
-      ? [{ named: namedOf(event), recoveredAt: event.recoveredAt }]
-      : [],
-  );
   const isCondition = lead.kind === 'condition' || lead.kind === 'drift';
   return {
     alert: alert === undefined ? undefined : { at: alert.at, recoveredAt: alert.recoveredAt },
     change: isCondition ? changeOf(lead) : '',
-    detail: [detail, ...others.map(phrase)].filter((part) => part !== '').join(' · '),
+    detail: joinPhrases([[detail], ...others.map(phrase)], ' · '),
     level: isCondition ? lead.level : undefined,
     open: isOpen(lead),
-    recoveries,
     subject: isCondition || lead.kind === 'alert' ? subjectOf(lead) : '',
     title,
   };

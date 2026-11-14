@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { groupByDay } from '../lib/activity-days.ts';
 import { lineWords } from '../lib/activity.ts';
 import type { ActivityLine } from '../lib/activity.ts';
+import { clockAt, joinPhrases, phraseText } from '../lib/phrase.ts';
 import { formatClock } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
@@ -107,22 +108,24 @@ function Line({
   unpaired: boolean;
 }) {
   const words = lineWords(line);
-  const note = [
-    words.detail,
-    ...words.recoveries.map(
-      ({ named, recoveredAt }) =>
-        `Recovery sent for ${named} at ${formatClock(recoveredAt, timeZone)}`,
+  const note = phraseText(
+    joinPhrases(
+      [
+        words.detail,
+        words.alert === undefined
+          ? []
+          : [
+              'Alert pushed at ',
+              clockAt(words.alert.at),
+              ...(words.alert.recoveredAt === undefined
+                ? []
+                : [', recovery at ', clockAt(words.alert.recoveredAt)]),
+            ],
+      ],
+      ' · ',
     ),
-    words.alert === undefined
-      ? ''
-      : `Alert pushed at ${formatClock(words.alert.at, timeZone)}${
-          words.alert.recoveredAt === undefined
-            ? ''
-            : `, recovery at ${formatClock(words.alert.recoveredAt, timeZone)}`
-        }`,
-  ]
-    .filter((part) => part !== '')
-    .join(' · ');
+    timeZone,
+  );
   const [lead] = line.events;
   if (lead === undefined) {
     return null;
