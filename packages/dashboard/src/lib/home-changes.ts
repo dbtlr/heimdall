@@ -185,18 +185,18 @@ export const changeWords = (
 
 // Where a group leads: a Service change on one System to its Service page, on
 // several to the Services page for those Systems; a Condition change on one
-// System to its Condition page, on several to the Timeline.
+// System to its Condition page, on several to Activity.
 export type ChangeLink =
   | { service: string; system: string; to: 'service' }
   | { systems: string[]; to: 'services' }
   | { id: string; system: string; to: 'condition' }
-  | { to: 'timeline' };
+  | { to: 'activity' };
 
 export const changeLink = ({ change, systems }: ChangeGroup): ChangeLink => {
   if (change.kind === 'condition') {
     return systems.length === 1
       ? { id: change.conditionId, system: change.system, to: 'condition' }
-      : { to: 'timeline' };
+      : { to: 'activity' };
   }
   return systems.length === 1
     ? { service: change.service, system: change.system, to: 'service' }

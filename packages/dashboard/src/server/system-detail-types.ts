@@ -1,7 +1,7 @@
 // The data the System detail page renders: one System's Vitals, Harness
 // processes, agent Sessions, and Conditions on one time axis; the sample the
-// inspector shows; and what its provisioner recorded with its Timeline. Times
-// are epoch milliseconds.
+// inspector shows; and what its provisioner recorded. Times are epoch
+// milliseconds.
 
 import type { ConditionKind } from '@heimdall/schema';
 
@@ -233,7 +233,4 @@ export type Recorded = {
   services: ListedService[];
 };
 
-// One occurrence and its transitions in the Hub's recording order.
-export type TimelineEntry = ConditionMark & { reason: string };
-
-export type SystemRecords = { recorded: Recorded; timeline: TimelineEntry[] };
+export type SystemRecords = { recorded: Recorded };

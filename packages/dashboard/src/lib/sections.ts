@@ -1,5 +1,5 @@
-// The dashboard's sections, in the top bar's order. Activity is the Fleet
-// Timeline.
+// The dashboard's sections, in the top bar's order. Activity lists what
+// changed across the fleet.
 export const SECTIONS = [
   { key: 'home', label: 'Home' },
   { key: 'systems', label: 'Systems' },
@@ -50,7 +50,7 @@ export const sectionOf = (path: string): Section | undefined => {
   if (first === 'maintenance') {
     return 'maintenance';
   }
-  return first === 'timeline' ? 'activity' : undefined;
+  return first === 'activity' ? 'activity' : undefined;
 };
 
 // The bottom-bar tab a page belongs to: its section's own tab, else More,

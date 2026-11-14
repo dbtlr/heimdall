@@ -190,7 +190,7 @@ describe('groupChanges', () => {
     ]);
   });
 
-  test('the same Condition change on several Systems names them and leads to the Timeline', () => {
+  test('the same Condition change on several Systems names them and leads to Activity', () => {
     const [group] = groupChanges([
       condition('cleared', NOW),
       condition('cleared', NOW, 'db-1'),
@@ -202,7 +202,7 @@ describe('groupChanges', () => {
       mono: false,
       title: 'Drift cleared',
     });
-    expect(changeLink(group!)).toEqual({ to: 'timeline' });
+    expect(changeLink(group!)).toEqual({ to: 'activity' });
   });
 
   test('a Service change on one System leads to its Service page, on several to the Services page', () => {

@@ -72,6 +72,25 @@ test('System navigation lists paired Systems with Hub health and keeps the curre
   expect(other?.navigation.map(({ name }) => name)).toEqual(['laptop-1']);
 });
 
+// The level each Condition transition on a System page's Activity reached.
+test("a System page's Activity holds that System's changes and no other System's", async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await hear(h, 'laptop-1');
+  await Promise.all(
+    ['server-1', 'laptop-1'].map((system) =>
+      addCondition(h.db.sql, { kind: 'low_disk', raisedAt: -3600, subject: '/', system }),
+    ),
+  );
+
+  const page = await readSystemPage(h.db.sql, { name: 'laptop-1', now: NOW, range: '12h' });
+
+  expect(page?.activity.events.map(({ system }) => system)).toEqual(['laptop-1']);
+});
+
+const conditionLevels = (page: Awaited<ReturnType<typeof readSystemPage>>) =>
+  page?.activity.events.flatMap((event) => (event.kind === 'condition' ? [event.level] : []));
+
 test('a System page keeps health, history, and attention in one snapshot during a concurrent level change', async () => {
   await using h = await startHub();
   await hear(h, 'server-1');
@@ -118,16 +137,13 @@ test('a System page keeps health, history, and attention in one snapshot during 
     const page = await pending;
     expect(page?.detail.status).toBe('up');
     expect(page?.detail.conditions[0]?.level).toBe('note');
-    expect(page?.records.timeline[0]?.transitions.map(({ level }) => level)).toEqual(['note']);
+    expect(conditionLevels(page)).toEqual(['note']);
     expect(page?.attention[0]?.level).toBe('note');
 
     const fresh = await readSystemPage(h.db.sql, input);
     expect(fresh?.detail.status).toBe('needs_you');
     expect(fresh?.detail.conditions[0]?.level).toBe('alert');
-    expect(fresh?.records.timeline[0]?.transitions.map(({ level }) => level)).toEqual([
-      'note',
-      'alert',
-    ]);
+    expect(conditionLevels(fresh)).toEqual(['note', 'alert']);
     expect(fresh?.attention[0]?.level).toBe('alert');
   } finally {
     if (writing) {
@@ -724,7 +740,7 @@ describe('an unpaired System', () => {
     ]);
   });
 
-  test('keeps its Timeline', async () => {
+  test('keeps its Activity, labelled unpaired', async () => {
     await using h = await startHub();
     await hear(h, 'laptop-1');
     await addCondition(h.db.sql, {
@@ -736,11 +752,17 @@ describe('an unpaired System', () => {
     });
     await unpair(h.db.sql, 'laptop-1');
 
-    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'laptop-1', now: NOW });
+    const page = await readSystemPage(h.db.sql, { name: 'laptop-1', now: NOW, range: '12h' });
 
-    expect(entries.map(({ kind, reason }) => [kind, reason])).toEqual([
-      ['system_stale', 'Not heard from.'],
+    expect(
+      page?.activity.events.map((event) =>
+        event.kind === 'condition' ? [event.condition, event.action, event.reason] : [],
+      ),
+    ).toEqual([
+      ['system_stale', 'raised', 'Not heard from.'],
+      ['system_stale', 'cleared', 'Not heard from.'],
     ]);
+    expect(page?.activity.unpaired).toEqual(['laptop-1']);
   });
 });
 
@@ -1190,134 +1212,6 @@ describe('readSystemRecords', () => {
       files: [],
       jobs: [],
       services: [],
-    });
-  });
-
-  test('keeps recurrences distinct when their identity and raised timestamp match', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    const ended = await addCondition(h.db.sql, {
-      clearedAt: -600,
-      kind: 'low_disk',
-      level: 'alert',
-      raisedAt: -600,
-      reason: 'Earlier occurrence',
-      subject: '/',
-      system: 'server-1',
-    });
-    const open = await addCondition(h.db.sql, {
-      kind: 'low_disk',
-      level: 'note',
-      raisedAt: -600,
-      reason: 'Later recurrence',
-      subject: '/',
-      system: 'server-1',
-    });
-    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
-    expect(entries.map(({ id }) => id)).toEqual([open, ended]);
-    expect(entries.map(({ transitions }) => transitions.map(({ kind }) => kind))).toEqual([
-      ['raised'],
-      ['raised', 'cleared'],
-    ]);
-  });
-
-  test('keeps level changes inside their occurrence in recording order, with backfilled levels distinguished', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await addCondition(h.db.sql, {
-      backfilled: true,
-      kind: 'low_disk',
-      level: 'note',
-      raisedAt: -600,
-      reason: '70% used',
-      subject: '/',
-      system: 'server-1',
-      transitions: [
-        { at: -300, level: 'warning', reason: '80% used' },
-        { at: -300, level: 'alert', reason: '90% used' },
-      ],
-    });
-    await addCondition(h.db.sql, {
-      clearedAt: -60,
-      kind: 'service_down',
-      raisedAt: -400,
-      subject: 'web',
-      system: 'server-1',
-    });
-
-    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
-    expect(entries.map(({ kind }) => kind)).toEqual(['service_down', 'low_disk']);
-    expect(entries[1]).toMatchObject({
-      level: 'alert',
-      raisedAt: NOW - 600_000,
-      transitions: [
-        { at: NOW - 600_000, backfilled: true, kind: 'raised', level: 'note', reason: '70% used' },
-        {
-          at: NOW - 300_000,
-          backfilled: false,
-          kind: 'level_changed',
-          level: 'warning',
-          previousLevel: 'note',
-          reason: '80% used',
-        },
-        {
-          at: NOW - 300_000,
-          backfilled: false,
-          kind: 'level_changed',
-          level: 'alert',
-          previousLevel: 'warning',
-          reason: '90% used',
-        },
-      ],
-    });
-  });
-
-  test('puts on the Timeline the Conditions of the last 7 days and those still open, newest raised first', async () => {
-    await using h = await startHub();
-    await hear(h, 'server-1');
-    await hear(h, 'laptop-1');
-    await addCondition(h.db.sql, {
-      kind: 'drift',
-      raisedAt: -10 * 86_400,
-      reason: 'drifted',
-      subject: '/etc/a',
-      system: 'server-1',
-    });
-    await addCondition(h.db.sql, {
-      clearedAt: -600,
-      kind: 'service_down',
-      raisedAt: -900,
-      reason: 'down',
-      subject: 'web',
-      system: 'server-1',
-    });
-    // Received last, though the Hub's clock had stepped back to stamp it earlier.
-    await addCondition(h.db.sql, {
-      clearedAt: -3 * 86_400,
-      kind: 'low_disk',
-      raisedAt: -3 * 86_400 - 600,
-      reason: 'disk',
-      subject: '/',
-      system: 'server-1',
-    });
-    await addCondition(h.db.sql, {
-      clearedAt: -8 * 86_400,
-      kind: 'job_overdue',
-      raisedAt: -9 * 86_400,
-      subject: 'backup',
-      system: 'server-1',
-    });
-    await addCondition(h.db.sql, { kind: 'system_stale', raisedAt: -60, system: 'laptop-1' });
-
-    const { timeline: entries } = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
-
-    expect(entries.map(({ kind }) => kind)).toEqual(['low_disk', 'service_down', 'drift']);
-    expect(entries[2]).toMatchObject({
-      clearedAt: undefined,
-      kind: 'drift',
-      raisedAt: NOW - 10 * DAY,
-      reason: 'drifted',
-      subject: '/etc/a',
     });
   });
 });

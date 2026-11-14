@@ -292,7 +292,10 @@ const deliverPass = async (
       await sendAndRecord(sql, send, recoveredMessage(recoveries, dashboard), at, async (tx) => {
         for (const recovery of recoveries) {
           // oxlint-disable-next-line no-await-in-loop -- a pass delivers a handful at most.
-          await tx`UPDATE deliveries SET closed_at = ${at} WHERE id = ${recovery.delivery}`;
+          await tx`
+            UPDATE deliveries SET closed_at = ${at}, recovered_at = ${at}
+            WHERE id = ${recovery.delivery}
+          `;
         }
       }),
     );

@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { AppNavigation, ServiceAttentionCount } from './app-navigation.tsx';
 import { linksIn, renderRouted } from './render-routed.tsx';
 
-const PATHS = ['/', '/services', '/agents', '/timeline', '/more', '/systems', '/systems/$name'];
+const PATHS = ['/', '/services', '/agents', '/activity', '/more', '/systems', '/systems/$name'];
 
 const renderAt = (path: string, element: ReactNode) =>
   renderRouted(element, { path, routePaths: PATHS });
@@ -16,7 +16,7 @@ test('the phone bar holds Home, Services, Agents, Activity, and More, each with 
     { current: true, href: '/', icon: true, label: 'Home' },
     { current: false, href: '/services', icon: true, label: 'Services' },
     { current: false, href: '/agents', icon: true, label: 'Agents' },
-    { current: false, href: '/timeline', icon: true, label: 'Activity' },
+    { current: false, href: '/activity', icon: true, label: 'Activity' },
     { current: false, href: '/more', icon: true, label: 'More' },
   ]);
 });

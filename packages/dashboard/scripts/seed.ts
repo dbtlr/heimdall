@@ -1221,11 +1221,49 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: 'nightly-image',
     system: UNPAIRED_SYSTEM,
   });
-  // Oldest raised first, the order a Hub receives them, which orders the Timeline.
+  // History for Activity: Drift that cleared, a disk that filled and emptied, and
+  // caddy going down, stopping, alerting, and recovering within one minute.
+  conditions.push({
+    clearedAt: -hours(40),
+    kind: 'drift',
+    raisedAt: -hours(50),
+    reason: 'The file no longer matches the hash its provisioner recorded.',
+    subject: '/etc/caddy/Caddyfile',
+    system: 'laptop-1',
+  });
+  conditions.push({
+    clearedAt: -hours(70),
+    kind: 'low_disk',
+    level: 'warning',
+    raisedAt: -hours(90),
+    reason: 'Disk / is 91% full.',
+    subject: '/',
+    system: 'gateway-1',
+  });
+  conditions.push({
+    clearedAt: -hours(26) + 130,
+    kind: 'service_down',
+    raisedAt: -hours(26),
+    reason: 'Exited with status 1 and restarted 3 times.',
+    subject: 'caddy',
+    system: 'server-1',
+  });
+  // Oldest raised first, the order a Hub receives them, which orders their transitions.
   for (const condition of conditions.toSorted((a, b) => a.raisedAt - b.raisedAt)) {
     // oxlint-disable-next-line no-await-in-loop -- a handful of rows, in order.
     await addCondition(sql, condition);
   }
+  const downAt = now - 26 * HOUR;
+  await sql`
+    INSERT INTO service_stops (system, service, stopped_at, started_at, ongoing, restarts, result, exit_status, sent_at, received_at)
+    VALUES ('server-1', 'caddy', ${new Date(downAt - 20 * SECOND)}, ${new Date(downAt + 2 * MINUTE)}, false, 3, 'exit-code', 1,
+            ${new Date(downAt + 2 * MINUTE)}, ${new Date(downAt + 2 * MINUTE)})
+  `;
+  await sql`
+    INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at, recovered_at)
+    VALUES ('server-1', 'service_down', 'caddy', ${new Date(downAt)}, ${new Date(downAt + MINUTE)},
+            ${new Date(downAt + 130 * SECOND)}, ${new Date(downAt + 130 * SECOND)})
+  `;
 };
 
 // A stop of syncthing that began at `stoppedAt` and lasted `downMs`.

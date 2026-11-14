@@ -12,10 +12,10 @@ import { MARK_COLOR } from './attention-status.tsx';
 import { RangePicker } from './range-picker.tsx';
 
 const TAB_NAMES: Record<SystemTab, string> = {
+  activity: 'Activity',
   now: 'Now',
   records: 'Records',
   sessions: 'Sessions',
-  timeline: 'Timeline',
   vitals: 'Vitals',
 };
 

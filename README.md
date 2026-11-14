@@ -155,7 +155,7 @@ warningWindowMinutes = 60
 percent = 95
 ```
 
-Quiet readings can leave a recent pattern open. Missing samples never establish recovery. Completed episodes remain in the Timeline, including those found in delayed Reports. See [sustained and recurring load](docs/spec.md#sustained-and-recurring-load) for sample coverage, recovery, and configuration rules. Upgrade the Hub before the dashboard and Collectors so its migration has applied and it can store macOS pressure. Older Collectors remain compatible, but macOS high-memory judgments need the new pressure field.
+Quiet readings can leave a recent pattern open. Missing samples never establish recovery. Completed episodes remain in Activity, including those found in delayed Reports. See [sustained and recurring load](docs/spec.md#sustained-and-recurring-load) for sample coverage, recovery, and configuration rules. Upgrade the Hub before the dashboard and Collectors so its migration has applied and it can store macOS pressure. Older Collectors remain compatible, but macOS high-memory judgments need the new pressure field.
 
 Hot-process Conditions name the executable and PID when one process exceeds half a core for 30 measured minutes within an hour at note, or two hours within four hours at warning. CPU excludes descendants. Confirmed exit clears immediately; unknown readings preserve the stored level. The Collector reports the five hottest processes and bounded coverage evidence, without arguments or environment variables.
 

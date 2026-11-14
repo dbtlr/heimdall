@@ -4,10 +4,10 @@ import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 import { filesRecordDigest } from '@heimdall/schema';
 
+import { readActivity } from './activity.ts';
 import type { Attention, AttentionKind } from './attention-types.ts';
 import { readAttention } from './attention.ts';
 import { readFleetOverview } from './fleet-overview.ts';
-import { readSystemRecords } from './system-detail.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -135,9 +135,9 @@ test('a hot process keeps its stored level while a newer sample awaits evaluatio
     conditions: [{ kind: 'hot_process', level: 'warning' }],
     status: 'needs_you',
   });
-  const systemRecords = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
-  expect(systemRecords.timeline).toMatchObject([
-    { kind: 'hot_process', level: 'warning', transitions: [{ kind: 'raised', level: 'warning' }] },
+  const activity = await readActivity(h.db.sql, { now: NOW, range: '24h', system: 'server-1' });
+  expect(activity.events).toMatchObject([
+    { action: 'raised', condition: 'hot_process', level: 'warning' },
   ]);
 });
 
@@ -768,10 +768,13 @@ test('update attention reads actual observations independently of fresh Vitals a
   expect(fleet.lanes.find(({ name }) => name === 'server-1')).toMatchObject({
     status: 'needs_you',
   });
-  const systemRecords = await readSystemRecords(h.db.sql, { name: 'server-1', now: NOW });
-  expect(systemRecords.timeline.map(({ kind }) => kind)).toEqual(
-    expect.arrayContaining(['pending_update', 'reboot_required']),
-  );
+  // The Reboot required note waits on Maintenance, so Activity leaves it out.
+  const activity = await readActivity(h.db.sql, { now: NOW, range: '24h', system: 'server-1' });
+  expect(
+    activity.events.map((event) =>
+      event.kind === 'condition' ? [event.condition, event.level] : [],
+    ),
+  ).toEqual([['pending_update', 'warning']]);
 });
 
 test.each([

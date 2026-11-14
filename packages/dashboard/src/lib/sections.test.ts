@@ -27,7 +27,7 @@ test('every route marks the section it belongs to, and the phone tab that holds 
     ['/services', 'services', 'services'],
     ['/maintenance', 'maintenance', 'more'],
     ['/agents', 'agents', 'agents'],
-    ['/timeline', 'activity', 'activity'],
+    ['/activity', 'activity', 'activity'],
     ['/more', undefined, 'more'],
     ['/nowhere', undefined, undefined],
   ];

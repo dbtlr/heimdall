@@ -81,10 +81,15 @@ export const readHomeJobs = async (
 // unknown, is no change, and one read as unknown in between is passed over, so
 // the change is from the last version known. With `system`, only that System's,
 // paired or not, since an unpaired System keeps its history; without it, every
-// paired System's.
+// paired System's, and every unpaired System's too with `includeUnpaired`.
 export const readServiceChanges = async (
   sql: SQL,
-  { now, since, system: only }: { now: number; since: number; system?: string },
+  {
+    includeUnpaired = false,
+    now,
+    since,
+    system: only,
+  }: { includeUnpaired?: boolean; now: number; since: number; system?: string },
 ): Promise<ServiceChange[]> => {
   const from = new Date(since);
   const to = new Date(now);
@@ -111,10 +116,10 @@ export const readServiceChanges = async (
       ) previous ON true
       WHERE v.first_seen_at >= ${from} AND v.first_seen_at <= ${to}
         AND (${filter}::text IS NULL OR v.system = ${filter})
-        AND (${filter}::text IS NOT NULL OR p.system IS NOT NULL)
+        AND (${filter}::text IS NOT NULL OR ${includeUnpaired} OR p.system IS NOT NULL)
     `,
     readServiceStops(sql, {
-      includeUnpaired: only !== undefined,
+      includeUnpaired: only !== undefined || includeUnpaired,
       since: from,
       ...(only === undefined ? {} : { system: only }),
     }),

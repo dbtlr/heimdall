@@ -9,7 +9,7 @@ const PATHS = [
   '/services',
   '/agents',
   '/maintenance',
-  '/timeline',
+  '/activity',
   '/systems',
   '/systems/$name',
   '/more',
@@ -42,7 +42,7 @@ test('the top bar links the six sections in order, marks the one the page belong
     { current: false, href: '/services', icon: false, label: 'Services' },
     { current: false, href: '/agents', icon: false, label: 'Agents' },
     { current: false, href: '/maintenance', icon: false, label: 'Maintenance' },
-    { current: false, href: '/timeline', icon: false, label: 'Activity' },
+    { current: false, href: '/activity', icon: false, label: 'Activity' },
   ]);
   expect(html).toContain('aria-label="2 warnings, 1 note"');
   expect(html).toContain('role="combobox"');

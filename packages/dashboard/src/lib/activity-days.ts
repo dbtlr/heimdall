@@ -12,21 +12,21 @@ const dayHeading = (at: number, now: number, timeZone: string): string => {
   return ago === 1 ? 'Yesterday' : formatDayHeading(at, timeZone);
 };
 
-// Entries grouped under the local day (in `timeZone`) they were raised, in the
+// Entries grouped under the local day (in `timeZone`) of their `at`, in the
 // order given: a new group opens whenever the day differs from the entry before.
-export const groupByRaisedDay = <T extends { raisedAt: number }>(
+export const groupByDay = <T extends { at: number }>(
   entries: readonly T[],
   now: number,
   timeZone: string,
 ): DayGroup<T>[] => {
   const groups: DayGroup<T>[] = [];
   for (const entry of entries) {
-    const key = localDayNumber(entry.raisedAt, timeZone);
+    const key = localDayNumber(entry.at, timeZone);
     const last = groups.at(-1);
     if (last?.key === key) {
       last.entries.push(entry);
     } else {
-      groups.push({ entries: [entry], heading: dayHeading(entry.raisedAt, now, timeZone), key });
+      groups.push({ entries: [entry], heading: dayHeading(entry.at, now, timeZone), key });
     }
   }
   return groups;

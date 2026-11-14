@@ -34,7 +34,6 @@ test('a clock rollback keeps an open alert in the page and its disk bar', async 
   }
   expect(page.detail.status).toBe('needs_you');
   expect(page.detail.conditions).toMatchObject([{ level: 'alert', raisedAt: NOW + 60_000 }]);
-  expect(page.records.timeline[0]?.level).toBe('alert');
   expect(page.attention[0]?.level).toBe('alert');
   expect(renderToStaticMarkup(<SystemFacts detail={page.detail} />)).toContain(
     'bg-status-critical',

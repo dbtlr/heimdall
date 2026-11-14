@@ -135,6 +135,9 @@ test('a recovered message goes out once the identity has stayed below alert for 
       title: 'Recovered: Service down on server-1: nginx',
     },
   ]);
+  expect(await d.db.sql`SELECT closed_at, recovered_at FROM deliveries`).toEqual([
+    { closed_at: new Date(at(15)), recovered_at: new Date(at(15)) },
+  ]);
 });
 
 test('returns to alert within a delivery are counted in its recovered message, never pushed', async () => {
@@ -412,6 +415,11 @@ test('unpairing a System closes its open delivery without a message, so pairing 
   expect(d.sent.map((m) => m.title)).toEqual([
     'Service down on laptop-1: sshd',
     'Service down on laptop-1: sshd',
+  ]);
+  // The closed delivery records no recovery, paired again or not.
+  expect(await d.db.sql`SELECT closed_at, recovered_at FROM deliveries ORDER BY id`).toEqual([
+    { closed_at: new Date(at(1)), recovered_at: null },
+    { closed_at: null, recovered_at: null },
   ]);
 });
 

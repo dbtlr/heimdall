@@ -7,13 +7,13 @@ import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
 import { SampleSheet } from '../components/sample-sheet.tsx';
 import { SilenceBanner } from '../components/silence-line.tsx';
+import { SystemActivity } from '../components/system-activity.tsx';
 import { SystemCharts } from '../components/system-charts.tsx';
 import { SystemFacts } from '../components/system-facts.tsx';
 import { SystemGlance } from '../components/system-glance.tsx';
 import { SystemNavigationHeader } from '../components/system-navigation.tsx';
 import { SystemMaintenance, SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { SystemOverview } from '../components/system-overview.tsx';
-import { TimelineRail } from '../components/timeline-rail.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
 import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
@@ -97,6 +97,7 @@ const useSample = (
 
 function SystemPage() {
   const {
+    activity,
     at,
     attention,
     detail,
@@ -200,12 +201,7 @@ function SystemPage() {
             <RecordedPanel now={detail.now} recorded={records.recorded} system={detail.name} />
           </>
         )}
-        {search.tab === 'timeline' && (
-          <>
-            <h2 className="text-lg font-semibold">Timeline</h2>
-            <TimelineRail entries={records.timeline} now={detail.now} system={detail.name} />
-          </>
-        )}
+        {search.tab === 'activity' && <SystemActivity activity={activity} system={detail.name} />}
       </main>
       {overview && (
         <SampleSheet
