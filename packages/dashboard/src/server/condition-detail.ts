@@ -1,9 +1,4 @@
-import {
-  ConditionLevelSchema,
-  parseProcessSubject,
-  parseUpdateSubject,
-  PendingUpdateSchema,
-} from '@heimdall/schema';
+import { ConditionLevelSchema, parseProcessSubject, parseUpdateSubject } from '@heimdall/schema';
 import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
@@ -15,6 +10,7 @@ import { readConditionTransitions } from './condition-transitions.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
 import { readMemoryHoldersAsOf } from './memory-holders.ts';
+import { pendingPackageOf } from './update-observations.ts';
 import { readPlatform, readVitalsWindow } from './vitals-window.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -183,16 +179,7 @@ const readPackages = async (
     WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
     ORDER BY security_since IS NULL, name
   `;
-  return rows.map((row) => {
-    const { available, installed, security } = PendingUpdateSchema.parse(row.pending_update);
-    return {
-      available,
-      installed,
-      name: row.name,
-      security,
-      securitySince: row.security_since?.getTime() ?? null,
-    };
-  });
+  return rows.map(pendingPackageOf);
 };
 
 // The open occurrence's attention item, the way the System page builds it.

@@ -5,7 +5,13 @@
 import type { PendingPackage } from './condition-detail-types.ts';
 
 // A package the Hub holds as pending, with its package manager's display name.
-export type MaintenancePackage = PendingPackage & { manager: string };
+// `name` is the full identity the manager reports; `label` is the short name
+// people know it by, and `cask` marks a Homebrew cask.
+export type MaintenancePackage = PendingPackage & {
+  cask: boolean;
+  label: string;
+  manager: string;
+};
 
 // Whether a System's package checks can show that nothing is pending. Only a
 // check that ran within a day, succeeded, and read package metadata no older
@@ -13,14 +19,16 @@ export type MaintenancePackage = PendingPackage & { manager: string };
 // the oldest of them. Otherwise the first source, by manager, without one
 // says why: its latest check could not run (`failed`), ran too long ago
 // (`old`, `at` when it ran), or read metadata too old or of unknown age
-// (`metadata`, `at` the metadata's time when known). `none` is a System no
-// package source has reported for.
+// (`metadata`, `at` the metadata's time when known), or stored in a form the
+// dashboard cannot read (`unreadable`). `none` is a System no package source
+// has reported for.
 export type MaintenanceCheck =
   | { at: number; kind: 'current' }
   | { kind: 'none' }
   | { kind: 'failed'; manager: string; reason: string }
   | { at: number; kind: 'old'; manager: string }
-  | { at: number | null; kind: 'metadata'; manager: string };
+  | { at: number | null; kind: 'metadata'; manager: string }
+  | { kind: 'unreadable'; manager: string };
 
 // A Service with a newer version available: `since` is when its upstream's
 // releases first found it, undefined for an update a package manager reports.

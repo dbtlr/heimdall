@@ -27,9 +27,11 @@ export const nothingPending = (system: MaintenanceSystem): boolean =>
 export const isUpToDate = (system: MaintenanceSystem): boolean =>
   nothingPending(system) && system.check.kind === 'current';
 
-// Security updates first, then by name.
+// Security updates first, then by the name shown, then by full identity.
 const securityFirst = (a: MaintenancePackage, b: MaintenancePackage) =>
-  Number(isSecurityUpdate(b)) - Number(isSecurityUpdate(a)) || a.name.localeCompare(b.name);
+  Number(isSecurityUpdate(b)) - Number(isSecurityUpdate(a)) ||
+  a.label.localeCompare(b.label) ||
+  a.name.localeCompare(b.name);
 
 // The Systems with the most security updates first, then the most packages,
 // then a pending reboot, then the most Service updates, then by name; an up
@@ -65,6 +67,9 @@ const whyUnknown = (check: Exclude<MaintenanceCheck, { kind: 'current' }>, now: 
   }
   if (check.kind === 'failed') {
     return `the ${check.manager} check failed (${check.reason.replace(/\.$/u, '')})`;
+  }
+  if (check.kind === 'unreadable') {
+    return `the ${check.manager} check was stored in a form this page cannot read`;
   }
   if (check.kind === 'old') {
     return `${check.manager} was last checked ${ago(check.at, now)} ago`;

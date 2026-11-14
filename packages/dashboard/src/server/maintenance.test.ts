@@ -21,18 +21,21 @@ const at = (ms: number) => new Date(ms);
 type Pending = { name: string; security: boolean | null };
 
 // One Report from `system` received at NOW, with an APT source holding
-// `pending` (or reporting `result` instead), any `sources` beside it, and a
-// reboot marker, as a Collector sends them.
+// `pending` (or reporting `result` instead) and, when given, its `installed`
+// census names, any `sources` beside it, and a reboot marker, as a Collector
+// sends them.
 const hear = async (
   h: Hub,
   system: string,
   pending: Pending[],
   {
+    installed,
     reboot = false,
     result,
     services = [],
     sources = [],
   }: {
+    installed?: string[];
     reboot?: boolean;
     result?: UpdateManager['result'];
     services?: string[];
@@ -56,6 +59,7 @@ const hear = async (
         managers: [
           {
             installation: 'system',
+            ...(installed && { installed: { names: installed, observedAt: NOW - 20 * MINUTE } }),
             manager: 'apt',
             observedAt: NOW - 20 * MINUTE,
             result: result ?? {
@@ -226,4 +230,105 @@ test('a System with several package sources has a current check only when every 
     manager: 'Homebrew',
   });
   expect(checks.get('mini-1')).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
+});
+
+test('a malformed package observation leaves its source with no current check and every other System intact', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [{ name: 'openssl:amd64', security: true }]);
+  await hear(h, 'laptop-1', [], { sources: [source('homebrew', '/opt/homebrew', CURRENT)] });
+  await h.db.sql`
+    UPDATE update_managers SET observation = '{"manager":"homebrew"}'::jsonb
+    WHERE system = 'laptop-1' AND manager = 'homebrew'
+  `;
+
+  const { systems } = await readMaintenance(h.db.sql, NOW);
+  const byName = new Map(systems.map((s) => [s.system, s]));
+
+  expect(byName.get('laptop-1')?.check).toEqual({ kind: 'unreadable', manager: 'Homebrew' });
+  expect(byName.get('server-1')?.check).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
+  expect(byName.get('server-1')?.packages).toHaveLength(1);
+});
+
+test("a package reads by its short name with its full identity kept, and an APT architecture is dropped when it is the System's own", async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [
+    { name: 'openssl:amd64', security: null },
+    { name: 'bash:amd64', security: null },
+    { name: 'libc6:i386', security: null },
+  ]);
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+  const labels = system?.packages.map(({ label, name }) => [name, label]);
+
+  expect(labels?.toSorted()).toEqual([
+    ['bash:amd64', 'bash'],
+    ['libc6:i386', 'libc6:i386'],
+    ['openssl:amd64', 'openssl'],
+  ]);
+});
+
+test("an APT package built for every architecture drops its suffix, and the census decides the System's own architecture", async () => {
+  await using h = await startHub();
+  await hear(
+    h,
+    'server-1',
+    [
+      { name: 'tzdata:all', security: null },
+      { name: 'openssl:amd64', security: null },
+      { name: 'libc6:i386', security: null },
+      { name: 'zlib1g:i386', security: null },
+    ],
+    { installed: ['bash:amd64', 'coreutils:amd64', 'openssl:amd64', 'tzdata:all'] },
+  );
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+
+  expect(system?.packages.map(({ label }) => label).toSorted()).toEqual([
+    'libc6:i386',
+    'openssl',
+    'tzdata',
+    'zlib1g:i386',
+  ]);
+});
+
+test("the census alone decides the System's own architecture, however many foreign packages are pending", async () => {
+  await using h = await startHub();
+  await hear(
+    h,
+    'server-1',
+    [
+      { name: 'libc6:i386', security: null },
+      { name: 'zlib1g:i386', security: null },
+      { name: 'libgcc-s1:i386', security: null },
+    ],
+    { installed: ['bash:amd64', 'coreutils:amd64'] },
+  );
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+
+  expect(system?.packages.map(({ label }) => label).toSorted()).toEqual([
+    'libc6:i386',
+    'libgcc-s1:i386',
+    'zlib1g:i386',
+  ]);
+});
+
+test('a malformed held package stays listed with its versions unknown, and every other System still shows', async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [{ name: 'openssl:amd64', security: true }]);
+  await hear(h, 'laptop-1', [{ name: 'curl:amd64', security: null }]);
+  await h.db.sql`
+    UPDATE update_subjects SET pending_update = '{"name":"curl:amd64"}'::jsonb
+    WHERE system = 'laptop-1'
+  `;
+
+  const { systems } = await readMaintenance(h.db.sql, NOW);
+  const byName = new Map(systems.map((s) => [s.system, s]));
+
+  expect(byName.get('laptop-1')?.packages).toEqual([
+    expect.objectContaining({ available: null, installed: null, label: 'curl', security: null }),
+  ]);
+  expect(byName.get('server-1')?.packages).toEqual([
+    expect.objectContaining({ available: '2', installed: '1', label: 'openssl', security: true }),
+  ]);
 });

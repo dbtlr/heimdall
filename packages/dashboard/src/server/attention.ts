@@ -2,9 +2,9 @@ import {
   CLOCK_OFFSET_FRESH_MS,
   ConditionLevelSchema,
   FUTURE_SAMPLE_TOLERANCE_MS,
-  UpdateManagerSchema,
   updateSourceSubject,
   RebootObservationSchema,
+  UpdateManagerSchema,
   freshUpdateTime,
   UPDATE_OBSERVATION_MAX_AGE_MS,
   UPDATE_METADATA_MAX_AGE_MS,
@@ -47,6 +47,11 @@ export type ConditionRow = {
 
 type ObservationRow = { system: string; observation: unknown };
 
+type UpdateObservationRow = ObservationRow & {
+  installation: string;
+  manager: UpdateManager['manager'];
+};
+
 type ChecksSetRow = ChecksRow & { received_at: Date; system: string };
 
 type RunSetRow = { received_at: Date; system: string };
@@ -87,6 +92,10 @@ export type Held = {
   sleeps: boolean;
   updateManagers: UpdateManager[];
   reboot: RebootObservation | undefined;
+  // The stored observations that no longer parse: the pending_update subject
+  // of each such package source, and whether the reboot observation is one.
+  unreadableUpdates: ReadonlySet<string>;
+  rebootUnreadable: boolean;
 };
 
 // What the item rests on and how far that holds, with the facts of its kind.
@@ -250,6 +259,7 @@ export const updateFacts = (held: Held, row: ConditionRow, now: number): Found =
   if (kind === 'reboot_required') {
     const observation = held.reboot;
     const checkedAt = observation?.observedAt;
+    const unreadable = observation === undefined && held.rebootUnreadable;
     let evidence: Evidence =
       observation?.kind === 'available' && observation.required ? 'current' : 'unknown';
     if (
@@ -261,13 +271,14 @@ export const updateFacts = (held: Held, row: ConditionRow, now: number): Found =
     return {
       checkedAt,
       evidence,
-      facts: { kind, reason: row.latest_reason },
+      facts: { kind, reason: row.latest_reason, ...(unreadable && { unreadable }) },
     };
   }
   const observation = held.updateManagers.find(
     (manager) => updateSourceSubject(manager) === row.subject,
   );
   const checkedAt = observation?.observedAt;
+  const unreadable = observation === undefined && held.unreadableUpdates.has(row.subject);
   let evidence: Evidence = 'unknown';
   if (checkedAt === undefined || !freshUpdateTime(checkedAt, now, UPDATE_OBSERVATION_MAX_AGE_MS)) {
     evidence = 'old';
@@ -279,7 +290,11 @@ export const updateFacts = (held: Held, row: ConditionRow, now: number): Found =
       evidence = 'current';
     }
   }
-  return { checkedAt, evidence, facts: { kind: 'pending_update', reason: row.latest_reason } };
+  return {
+    checkedAt,
+    evidence,
+    facts: { kind: 'pending_update', reason: row.latest_reason, ...(unreadable && { unreadable }) },
+  };
 };
 
 // A hot process is judged on the newest sample only when the Hub's last
@@ -470,26 +485,37 @@ const heldOf = (
     runSets: Map<string, RunSetRow[]>;
     samples: Map<string, SampleRow[]>;
     systems: Map<string, SystemRow[]>;
-    updateManagers: Map<string, ObservationRow[]>;
+    updateManagers: Map<string, UpdateObservationRow[]>;
     reboots: Map<string, ObservationRow[]>;
   },
-): Held => ({
-  checks: rows.checks.get(name)?.[0],
-  clockOffsetAt: rows.systems.get(name)?.[0]?.clock_offset_at?.getTime(),
-  conditions: rows.conditions.get(name) ?? [],
-  jobRuns: new Map((rows.runs.get(name) ?? []).map((row) => [row.job, row])),
-  lastSeenAt: rows.systems.get(name)?.[0]?.last_seen_at?.getTime(),
-  reboot: rows.reboots
-    .get(name)
-    ?.map(({ observation }) => RebootObservationSchema.parse(observation))[0],
-  records: rows.records.get(name) ?? [],
-  runSet: rows.runSets.get(name)?.[0],
-  sample: rows.samples.get(name)?.[0],
-  sleeps: rows.systems.get(name)?.[0]?.sleeps === true,
-  updateManagers: (rows.updateManagers.get(name) ?? []).map(({ observation }) =>
-    UpdateManagerSchema.parse(observation),
-  ),
-});
+): Held => {
+  const updates = (rows.updateManagers.get(name) ?? []).map((row) => ({
+    parsed: UpdateManagerSchema.safeParse(row.observation),
+    row,
+  }));
+  const reboots = (rows.reboots.get(name) ?? []).map(({ observation }) =>
+    RebootObservationSchema.safeParse(observation),
+  );
+  return {
+    checks: rows.checks.get(name)?.[0],
+    clockOffsetAt: rows.systems.get(name)?.[0]?.clock_offset_at?.getTime(),
+    conditions: rows.conditions.get(name) ?? [],
+    jobRuns: new Map((rows.runs.get(name) ?? []).map((row) => [row.job, row])),
+    lastSeenAt: rows.systems.get(name)?.[0]?.last_seen_at?.getTime(),
+    reboot: reboots.flatMap((parsed) => (parsed.success ? [parsed.data] : []))[0],
+    rebootUnreadable: reboots.some(({ success }) => !success),
+    records: rows.records.get(name) ?? [],
+    runSet: rows.runSets.get(name)?.[0],
+    sample: rows.samples.get(name)?.[0],
+    sleeps: rows.systems.get(name)?.[0]?.sleeps === true,
+    // A malformed observation is left out, so its source has no current check,
+    // and its subject is kept so the item can say why.
+    unreadableUpdates: new Set(
+      updates.flatMap(({ parsed, row }) => (parsed.success ? [] : [updateSourceSubject(row)])),
+    ),
+    updateManagers: updates.flatMap(({ parsed }) => (parsed.success ? [parsed.data] : [])),
+  };
+};
 
 // Everything that needs the operator on `systems`, with the evidence behind
 // each item, as of `now`: each open Condition, each recorded file the
@@ -512,7 +538,7 @@ export const readAttention = async (
     MirroredRecordRow[],
     SystemRow[],
     SampleRow[],
-    ObservationRow[],
+    UpdateObservationRow[],
     ObservationRow[],
   ] = await Promise.all([
     sql`
@@ -552,7 +578,10 @@ export const readAttention = async (
       LEFT JOIN hot_process_evaluations p ON p.system = s.name AND p.through = v.t
       WHERE s.name IN ${sql(names)}
     `,
-    sql`SELECT system, observation FROM update_managers WHERE system IN ${sql(names)}`,
+    sql`
+      SELECT system, manager, installation, observation
+      FROM update_managers WHERE system IN ${sql(names)}
+    `,
     sql`SELECT system, observation FROM reboot_observations WHERE system IN ${sql(names)}`,
   ]);
   const grouped = {

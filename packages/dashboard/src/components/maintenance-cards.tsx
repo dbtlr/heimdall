@@ -29,7 +29,10 @@ const HEADING = 'text-[11px] font-semibold tracking-[0.08em] text-dim uppercase'
 function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
   return (
     <li className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t py-1.5 first:border-t-0">
-      <span className="min-w-0 break-all">{pkg.name}</span>
+      <span className="min-w-0 break-all" title={pkg.name}>
+        {pkg.label}
+        {pkg.cask && <span className="ml-1.5 text-xs text-muted-foreground">cask</span>}
+      </span>
       <span className="min-w-0 text-xs text-muted-foreground tabular-nums">
         {`${pkg.installed ?? '?'} → ${pkg.available ?? '?'}`}
       </span>

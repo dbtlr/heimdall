@@ -34,7 +34,9 @@ export type AttentionFacts =
   | { kind: 'service_restarted'; reason: string; service: ServiceTarget | undefined }
   | { kind: 'high_cpu' | 'high_memory'; reason: string }
   | { kind: 'hot_process'; reason: string }
-  | { kind: 'pending_update' | 'reboot_required'; reason: string }
+  // `unreadable` when the latest observation the Hub stored for it no longer
+  // parses, so the evidence is old for that reason rather than for none.
+  | { kind: 'pending_update' | 'reboot_required'; reason: string; unreadable?: true }
   | {
       kind: 'drift';
       // The files record that holds the path, and the hash it records, when

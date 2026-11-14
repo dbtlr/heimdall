@@ -465,6 +465,11 @@ export const evidenceNote = (item: Attention, now: number): Phrase | undefined =
       item.kind === 'pending_update'
         ? 'A current package query must be within 24 hours, with repository metadata within 7 days.'
         : 'A current reboot observation must be within 24 hours.';
+    if (item.unreadable === true) {
+      return [
+        `The latest ${thing} was stored in a form this page cannot read, so this may be out of date. ${limits}`,
+      ];
+    }
     return item.checkedAt === undefined
       ? [`No ${thing} has arrived, so this may be out of date. ${limits}`]
       : [

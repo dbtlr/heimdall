@@ -776,6 +776,59 @@ test('update attention reads actual observations independently of fresh Vitals a
   ).toEqual([['pending_update', 'warning']]);
 });
 
+test('a malformed update or reboot observation leaves Attention readable, its evidence old because it cannot be read, and other Systems untouched', async () => {
+  await using h = await startHub();
+  const valid = {
+    installation: 'system',
+    manager: 'apt',
+    observedAt: NOW - MINUTE,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: [{ available: '2', installed: '1', name: 'openssl:amd64', security: true }],
+    },
+  };
+  const pending = (system: string) =>
+    addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'warning',
+      raisedAt: -3600,
+      reason: '1 APT package is out of date.',
+      subject: '["apt","system"]',
+      system,
+    });
+  await hear(h, 'server-1');
+  await hear(h, 'laptop-1');
+  await pending('server-1');
+  await pending('laptop-1');
+  await addCondition(h.db.sql, {
+    kind: 'reboot_required',
+    level: 'note',
+    raisedAt: -3600,
+    reason: 'A reboot is required.',
+    subject: '',
+    system: 'server-1',
+  });
+  await h.db
+    .sql`INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+    VALUES ('server-1', 'apt', 'system', ${new Date(NOW)}, '{"manager":"apt"}'::jsonb),
+           ('laptop-1', 'apt', 'system', ${new Date(valid.observedAt)}, ${JSON.stringify(valid)}::text::jsonb)`;
+  await h.db.sql`INSERT INTO reboot_observations (system, observed_at, observation)
+    VALUES ('server-1', ${new Date(NOW)}, '{"kind":"nonsense"}'::jsonb)`;
+
+  const items = await attention(h, [
+    { name: 'server-1', paired: true },
+    { name: 'laptop-1', paired: true },
+  ]);
+  const of = (system: string, kind: AttentionKind) =>
+    items.find((item) => item.system === system && item.kind === kind);
+
+  expect(of('server-1', 'pending_update')).toMatchObject({ evidence: 'old', unreadable: true });
+  expect(of('server-1', 'reboot_required')).toMatchObject({ evidence: 'old', unreadable: true });
+  expect(of('laptop-1', 'pending_update')).toMatchObject({ evidence: 'current' });
+  expect(of('laptop-1', 'pending_update')).not.toHaveProperty('unreadable');
+});
+
 test.each([
   { evidence: 'current', label: 'a Report at the 10-minute edge', receivedAt: NOW - 10 * MINUTE },
   { evidence: 'old', label: 'no Report for over 10 minutes', receivedAt: NOW - 10 * MINUTE - 1000 },
