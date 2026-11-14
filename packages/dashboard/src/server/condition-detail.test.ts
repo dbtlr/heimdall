@@ -532,6 +532,32 @@ describe('a package source with pending updates', () => {
     expect(detail?.packages?.map((item) => item.name)).toEqual(['mine']);
   });
 
+  test('keeps a package whose stored update no longer reads, its versions unknown', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await addPackage(h, { available: '2.0', installed: '1.0', name: 'wget', security: false });
+    await h.db.sql`
+      INSERT INTO update_subjects (
+        system, subject, manager, installation, name, first_seen_at, observed_at, pending_update
+      ) VALUES ('server-1', ${JSON.stringify(['apt', '/usr/bin/apt', 'curl'])}, 'apt', '/usr/bin/apt',
+                'curl', ${new Date(NOW)}, ${new Date(NOW)}, '{"name":"curl"}'::jsonb)
+    `;
+    const id = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -HOUR,
+      subject: source,
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.packages).toEqual([
+      { available: null, installed: null, name: 'curl', security: null, securitySince: null },
+      { available: '2.0', installed: '1.0', name: 'wget', security: false, securitySince: null },
+    ]);
+  });
+
   test('is not listed for a cleared occurrence, nor for another kind', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');
