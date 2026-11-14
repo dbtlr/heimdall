@@ -220,7 +220,10 @@ function Legend() {
     <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       {legendKey('ok', 'succeeded')}
       {legendKey('failed', 'failed')}
-      {legendKey('missed', 'missed: no run before the next scheduled time')}
+      {legendKey(
+        'missed',
+        'missed: no run before the next scheduled time or the end of its grace, whichever is later',
+      )}
     </p>
   );
 }
