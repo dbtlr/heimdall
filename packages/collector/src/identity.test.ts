@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { chmod, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { readIdentity, stillPaired } from './identity.ts';
@@ -107,4 +107,21 @@ test('a daemon is no longer paired once the identity is gone or invalid', async 
   );
 
   expect(found).toEqual([false, false]);
+});
+
+test('a daemon that cannot read the identity is not told it was paired again', async () => {
+  await using dir = await tempStateDir();
+  // A directory where the file should be fails the read, as EIO or EMFILE would.
+  await mkdir(join(dir.path, 'identity.json'));
+
+  const error = await stillPaired({
+    hub: 'http://h.example',
+    stateDir: dir.path,
+    token: TOKEN,
+  }).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  );
+
+  expect(String(error)).toContain('could not read');
 });

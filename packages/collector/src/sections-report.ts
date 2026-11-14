@@ -277,7 +277,9 @@ const createStopsState = ({
 // is warned about once until it works again. Once `pair` stored another
 // identity than the one this daemon reports as, the daemon still sends to the
 // Hub it started with, so it sends no job runs until it restarts, and never
-// settles the runs pairing held for the new Hub; it warns once.
+// settles the runs pairing held for the new Hub; it warns once. An identity
+// file it cannot read proves neither, so it keeps the runs held and looks again
+// with the next Report, warning once until the read works.
 const createJobRunsState = ({
   log,
   now,
@@ -292,6 +294,7 @@ const createJobRunsState = ({
   let refusedAt: number | undefined;
   let holding = true;
   let failing = false;
+  let identityFailing = false;
   let repaired = false;
   return {
     pending: async (
@@ -334,7 +337,20 @@ const createJobRunsState = ({
       // it holds every run again, so runs read after that hold fail this check,
       // and runs read before it settle at revisions the hold has passed, so
       // they stay held for the new Hub.
-      if (!(await paired().catch(() => false))) {
+      let still: boolean;
+      try {
+        still = await paired();
+        identityFailing = false;
+      } catch (error) {
+        if (!identityFailing) {
+          log.warn(
+            `Could not read the identity to check the job runs are for this Hub (${describeError(error)}); they stay held and are checked again with the next Report.`,
+          );
+        }
+        identityFailing = true;
+        return undefined;
+      }
+      if (!still) {
         log.warn(
           'The identity in the state directory is no longer the one this Collector started with, as after pairing again, so it holds the job runs until it restarts (heimdall-collector service restart).',
         );

@@ -1400,6 +1400,30 @@ test('a daemon whose identity was replaced sends no job runs and keeps them held
   ]);
 });
 
+test('a daemon that cannot read its identity keeps the job runs held and looks again with the next Report', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir, minutesAgo(5));
+  let looks = 0;
+  const collector = await setup(dir, {
+    paired: () => {
+      looks += 1;
+      return looks === 1
+        ? Promise.reject(new Error('could not read identity.json: EIO'))
+        : Promise.resolve(true);
+    },
+  });
+
+  const unreadable = await collector.push();
+  const readable = await collector.push();
+  collector.close();
+
+  expect(unreadable[0]?.jobRuns).toBeUndefined();
+  expect(readable[0]?.jobRuns?.runs).toHaveLength(1);
+  expect(collector.warnings.filter((m) => m.includes('job runs'))).toEqual([
+    expect.stringContaining('EIO'),
+  ]);
+});
+
 // `pair` stores the identity, then holds every run again. A daemon that read
 // the old identity just before must not settle the hold that followed it.
 test('pairing that lands while the daemon reads its identity keeps the runs held for the new Hub', async () => {
