@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import { spanTicks } from '../lib/axis.ts';
+import { LEVEL_SHADE } from '../lib/conditions.ts';
 import { spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
@@ -15,14 +16,12 @@ import { TimeAxis } from './time-axis.tsx';
 const PLOT_HEIGHT = 56;
 
 // What colors the shade: the selection color for a selected stop, or the level of
-// the Condition the span belongs to. Full class names, so Tailwind finds them.
+// the Condition the span belongs to.
 export type ShadeTone = ConditionLevel | 'select';
 
 const SHADE_CLASS: Record<ShadeTone, string> = {
-  alert: 'border-status-critical/50 bg-status-critical/20',
-  note: 'border-status-warning/50 bg-status-warning/20',
+  ...LEVEL_SHADE,
   select: 'border-select/50 bg-select/20',
-  warning: 'border-status-serious/50 bg-status-serious/20',
 };
 
 // The shade behind a plot at `shade`, in the color of `tone`. A span too short to

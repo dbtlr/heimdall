@@ -13,6 +13,15 @@ export const LEVEL_STROKE: Record<ConditionLevel, string> = {
   warning: 'var(--status-serious)',
 };
 
+// A level's shade over a span of a chart, such as the time a Condition was
+// open: its colour as a light fill between two faint edges. Full class names,
+// so Tailwind finds them.
+export const LEVEL_SHADE: Record<ConditionLevel, string> = {
+  alert: 'border-status-critical/50 bg-status-critical/20',
+  note: 'border-status-warning/50 bg-status-warning/20',
+  warning: 'border-status-serious/50 bg-status-serious/20',
+};
+
 export const transitionLabel = (transition: ConditionTransition): string => {
   switch (transition.kind) {
     case 'raised': {

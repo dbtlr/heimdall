@@ -98,6 +98,29 @@ const readSelection = async (
   return { span, vitals };
 };
 
+// When the Hub first had evidence of the Service on the System: the earliest of
+// when it first mirrored the Service's record, its first version, its first
+// stop, and the first raise of its Service down. Undefined when there is none.
+// A day holding a stop or a Service down is then never before it.
+const readExistedSince = async (
+  sql: SQL,
+  { service, system }: { service: string; system: string },
+): Promise<number | undefined> => {
+  const [row]: { at: Date | null }[] = await sql`
+    SELECT LEAST(
+      (SELECT min(first_mirrored_at) FROM records_first_mirrored
+        WHERE system = ${system} AND kind = 'service' AND name = ${service}),
+      (SELECT min(first_seen_at) FROM service_versions
+        WHERE system = ${system} AND service = ${service}),
+      (SELECT min(stopped_at) FROM service_stops
+        WHERE system = ${system} AND service = ${service}),
+      (SELECT min(raised_at) FROM conditions
+        WHERE system = ${system} AND kind = 'service_down' AND subject = ${service})
+    ) AS at
+  `;
+  return row?.at?.getTime() ?? undefined;
+};
+
 // Where a Service record puts the Service under its supervisor.
 const unitOf = (record: Record<string, unknown>): string | undefined =>
   text(record.unit) ?? text(record.container) ?? text(record.label);
@@ -211,9 +234,10 @@ export const readServiceDetail = (
       upstream: installedUpstream,
       version,
     }));
-    const [reported, selection] = await Promise.all([
+    const [reported, selection, existedSince] = await Promise.all([
       readReported(tx, { now, system }),
       readSelection(tx, { now, stop, stops, system }),
+      readExistedSince(tx, { service, system }),
     ]);
     return {
       downs: downs.map((row) => ({
@@ -222,7 +246,7 @@ export const readServiceDetail = (
         kind: row.action,
         reason: row.reason,
       })),
-      existedSince: versions[0]?.first_seen_at.getTime(),
+      existedSince,
       installed: {
         missingApplication:
           application !== undefined && !applications.some(({ name }) => name === application)

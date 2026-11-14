@@ -310,6 +310,44 @@ describe('before the Service existed', () => {
     );
   });
 
+  test('a stop or a Service down span before it was first seen is not counted', () => {
+    const before = since - 2 * DAY;
+    const found = totals({
+      downs: [raisedAt(before), clearedAt(before + HOUR)],
+      existedSince: since,
+      stops: [stopAt(before + 3 * HOUR, 5 * MINUTE)],
+    });
+    expect(found).toEqual({ downPeriods: 0, otherStops: 0, percent: 100 });
+    // Without the bound, both count.
+    expect(
+      totals({
+        downs: [raisedAt(before), clearedAt(before + HOUR)],
+        stops: [stopAt(before + 3 * HOUR, 5 * MINUTE)],
+      }),
+    ).toMatchObject({ downPeriods: 1, otherStops: 1 });
+  });
+
+  test('on the day it was first seen, the strip, the counts, and the percentage judge only the time since', () => {
+    const day = Date.UTC(2026, 9, 14);
+    // A stop at 02:00, before the first sighting at 06:00, is not the Service's.
+    const early = { existedSince: since, stops: [stopAt(day + 2 * HOUR, 5 * MINUTE)] };
+    expect(stateOn(days(early), day)).toBe('up');
+    expect(totals(early)).toEqual({ downPeriods: 0, otherStops: 0, percent: 100 });
+    // A Service down span that ends before the first sighting is not either.
+    const down = { downs: [raisedAt(day + HOUR), clearedAt(day + 2 * HOUR)], existedSince: since };
+    expect(stateOn(days(down), day)).toBe('up');
+    expect(totals(down)).toMatchObject({ downPeriods: 0, percent: 100 });
+    // A stop at 08:00 is, in all three.
+    const late = { existedSince: since, stops: [stopAt(day + 8 * HOUR, 5 * MINUTE)] };
+    expect(stateOn(days(late), day)).toBe('restarted');
+    expect(totals(late).otherStops).toBe(1);
+    expect(totals(late).percent).toBeLessThan(100);
+    // Reports only before the first sighting leave the rest of that day quiet.
+    const reportedBefore = { existedSince: since, reported: [{ from: day, to: day + 4 * HOUR }] };
+    expect(stateOn(days(reportedBefore), day)).toBe('quiet');
+    expect(totals(reportedBefore).percent).toBeUndefined();
+  });
+
   test('a Service with no bound is counted over all 90 days, as before', () => {
     expect(states(days()).every((state) => state === 'up')).toBe(true);
     expect(totals().percent).toBe(100);

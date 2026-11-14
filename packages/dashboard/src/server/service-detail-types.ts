@@ -45,8 +45,10 @@ export type ServiceDetail = {
   // The spans in which the System sent Vitals from a day before the 90 days
   // before `now`, oldest first, for the strip to bin into the viewer's days.
   reported: { from: number; to: number }[];
-  // When the Service was first seen, as the earliest version the Hub recorded
-  // for it; the strip leaves the days before it empty. Undefined without one.
+  // When the Hub first had evidence of the Service: its record first mirrored,
+  // its first version, stop, or Service down raise, whichever came first. The
+  // strip shows the days before it as not seen yet, and the totals leave them
+  // out. Undefined when the Hub has none.
   existedSince: number | undefined;
   // The selected stop and the System's Vitals around it; undefined when the
   // Service has no stop.
