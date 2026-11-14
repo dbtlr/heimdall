@@ -2349,9 +2349,10 @@ export const MIGRATIONS: readonly Migration[] = [
     // replaces the one that held ended stops alone for retention. (Service
     // versions are already found through their primary key's time column.)
     // `recovered_at` is when a delivery's recovered message went out; a
-    // delivery closed without one, as unpairing does, has none. Before this column the Hub kept no such record, so a
-    // delivery closed earlier counts as recovered when its System is paired
-    // now, which is how the dashboard read it until then.
+    // delivery closed without one, as unpairing does, has none. Before this
+    // column the Hub kept no such record, so a delivery closed earlier counts
+    // as recovered when its System is paired now, which is how the dashboard
+    // read it until then.
     sql: `
       CREATE INDEX condition_transitions_by_time ON condition_transitions (at);
       CREATE INDEX deliveries_by_push ON deliveries (pushed_at);

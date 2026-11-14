@@ -73,6 +73,21 @@ test('System navigation lists paired Systems with Hub health and keeps the curre
 });
 
 // The level each Condition transition on a System page's Activity reached.
+test("a System page's Activity holds that System's changes and no other System's", async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1');
+  await hear(h, 'laptop-1');
+  await Promise.all(
+    ['server-1', 'laptop-1'].map((system) =>
+      addCondition(h.db.sql, { kind: 'low_disk', raisedAt: -3600, subject: '/', system }),
+    ),
+  );
+
+  const page = await readSystemPage(h.db.sql, { name: 'laptop-1', now: NOW, range: '12h' });
+
+  expect(page?.activity.events.map(({ system }) => system)).toEqual(['laptop-1']);
+});
+
 const conditionLevels = (page: Awaited<ReturnType<typeof readSystemPage>>) =>
   page?.activity.events.flatMap((event) => (event.kind === 'condition' ? [event.level] : []));
 
