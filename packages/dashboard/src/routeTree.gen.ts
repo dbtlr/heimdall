@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as CompareRouteImport } from './routes/compare'
+import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as MoreRouteImport } from './routes/more'
 import { Route as ServicesRouteImport } from './routes/services'
 import { Route as TimelineRouteImport } from './routes/timeline'
@@ -37,6 +38,11 @@ const AgentsRoute = AgentsRouteImport.update({
 const CompareRoute = CompareRouteImport.update({
   id: '/compare',
   path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MaintenanceRoute = MaintenanceRouteImport.update({
+  id: '/maintenance',
+  path: '/maintenance',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MoreRoute = MoreRouteImport.update({
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
@@ -134,6 +142,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
@@ -152,6 +161,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/maintenance'
     | '/more'
     | '/services'
     | '/timeline'
@@ -168,6 +178,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/maintenance'
     | '/more'
     | '/services'
     | '/timeline'
@@ -184,6 +195,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents'
     | '/compare'
+    | '/maintenance'
     | '/more'
     | '/services'
     | '/timeline'
@@ -201,6 +213,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentsRoute: typeof AgentsRoute
   CompareRoute: typeof CompareRoute
+  MaintenanceRoute: typeof MaintenanceRoute
   MoreRoute: typeof MoreRoute
   ServicesRoute: typeof ServicesRoute
   TimelineRoute: typeof TimelineRoute
@@ -235,6 +248,13 @@ declare module '@tanstack/react-router' {
       path: '/compare'
       fullPath: '/compare'
       preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/maintenance': {
+      id: '/maintenance'
+      path: '/maintenance'
+      fullPath: '/maintenance'
+      preLoaderRoute: typeof MaintenanceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/more': {
@@ -321,6 +341,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
   CompareRoute: CompareRoute,
+  MaintenanceRoute: MaintenanceRoute,
   MoreRoute: MoreRoute,
   ServicesRoute: ServicesRoute,
   TimelineRoute: TimelineRoute,

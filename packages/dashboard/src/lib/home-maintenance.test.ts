@@ -75,9 +75,11 @@ describe('pendingPackages', () => {
 });
 
 const update = (name: string, since: number | undefined) => ({
+  installed: '1.0',
   name,
   since,
   system: 'server-1',
+  upstream: null,
   version: '2.0',
 });
 

@@ -435,11 +435,17 @@ const clearsBelow = (detail: ConditionDetail): string | undefined => {
 
 // A package the Hub holds a security age for is a security update, whatever the
 // latest observation reports; otherwise the latest report stands.
-const securityWord = ({ security, securitySince }: PendingPackage) => {
-  if (securitySince !== null || security === true) {
+export const isSecurityUpdate = ({
+  security,
+  securitySince,
+}: Pick<PendingPackage, 'security' | 'securitySince'>): boolean =>
+  securitySince !== null || security === true;
+
+const securityWord = (item: PendingPackage) => {
+  if (isSecurityUpdate(item)) {
     return 'yes';
   }
-  return security === null ? 'unknown' : 'no';
+  return item.security === null ? 'unknown' : 'no';
 };
 
 const packageRow = (item: PendingPackage, now: number): PackageRow => ({

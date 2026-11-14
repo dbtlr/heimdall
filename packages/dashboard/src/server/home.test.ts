@@ -339,7 +339,14 @@ describe('readHome', () => {
       { conditionId: laptop, packages: 1, security: 0, system: 'laptop-1' },
     ]);
     expect(maintenance.updates).toEqual([
-      { name: 'web', since: NOW - 5 * DAY, system: 'server-1', version: '2.0' },
+      {
+        installed: '1.0',
+        name: 'web',
+        since: NOW - 5 * DAY,
+        system: 'server-1',
+        upstream: 'github:owner/web',
+        version: '2.0',
+      },
     ]);
   });
 
