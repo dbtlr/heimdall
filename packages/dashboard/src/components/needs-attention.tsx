@@ -212,36 +212,48 @@ function Lead({
 // How many other items the card lists before "+N more".
 export const OTHERS_SHOWN = 5;
 
-// The other items, one line each with its mark, linking to its page: the
-// alerts and warnings after the lead, then the notes. Past OTHERS_SHOWN, a
-// last line counts the rest and links to every open Condition.
+// One other item's line, with its mark, linking to its page.
+function OtherItem({ item, now }: { item: Attention; now: number }) {
+  return (
+    <li>
+      <AttentionLink
+        className="flex min-h-9 min-w-0 items-center gap-2 hover:underline"
+        item={item}
+      >
+        <ConditionGlyph kind={item.level ?? 'unknown'} />
+        <span className="min-w-0 flex-1 truncate">{itemTitle(item)}</span>
+        <span className="flex-none text-xs text-dim tabular-nums">
+          open {formatSpanShort(Math.max(0, now - item.firstDetected))}
+        </span>
+      </AttentionLink>
+    </li>
+  );
+}
+
+const otherKey = (item: Attention) => `${item.system}-${item.kind}-${item.subject}`;
+
+// The other items, a line each: the alerts and warnings after the lead, then
+// the notes. Past OTHERS_SHOWN, a last line counts the rest and opens them in
+// place, so the card itself lists every item it counts.
 function OtherItems({ items, now }: { items: readonly Attention[]; now: number }) {
   const more = items.length - OTHERS_SHOWN;
   return (
     <ul className="mt-3 border-t pt-1 text-[13px]">
       {items.slice(0, OTHERS_SHOWN).map((item) => (
-        <li key={`${item.system}-${item.kind}-${item.subject}`}>
-          <AttentionLink
-            className="flex min-h-9 min-w-0 items-center gap-2 hover:underline"
-            item={item}
-          >
-            <ConditionGlyph kind={item.level ?? 'unknown'} />
-            <span className="min-w-0 flex-1 truncate">{itemTitle(item)}</span>
-            <span className="flex-none text-xs text-dim tabular-nums">
-              open {formatSpanShort(Math.max(0, now - item.firstDetected))}
-            </span>
-          </AttentionLink>
-        </li>
+        <OtherItem item={item} key={otherKey(item)} now={now} />
       ))}
       {more > 0 && (
         <li>
-          <Link
-            className="flex min-h-9 items-center text-xs text-link tabular-nums hover:underline"
-            search={{ kind: 'condition', range: '30d' }}
-            to="/activity"
-          >
-            +{more} more
-          </Link>
+          <details>
+            <summary className="flex min-h-9 cursor-pointer items-center text-xs text-link tabular-nums hover:underline">
+              +{more} more
+            </summary>
+            <ul>
+              {items.slice(OTHERS_SHOWN).map((item) => (
+                <OtherItem item={item} key={otherKey(item)} now={now} />
+              ))}
+            </ul>
+          </details>
         </li>
       )}
     </ul>
@@ -327,12 +339,8 @@ export function NeedsAttention({
           >
             Needs attention
           </h2>
-          <Link
-            className="text-xs text-link hover:underline"
-            search={{ kind: 'condition', range: '30d' }}
-            to="/activity"
-          >
-            All Conditions →
+          <Link className="text-xs text-link hover:underline" to="/activity">
+            Activity →
           </Link>
         </div>
         {lead === undefined ? (

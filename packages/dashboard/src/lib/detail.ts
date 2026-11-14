@@ -7,7 +7,6 @@ import type {
   SampleProcess,
   SessionRow,
   SystemDetail,
-  TimelineEntry,
   UnlinkedSession,
 } from '../server/system-detail-types.ts';
 import { harnessName } from './lane.ts';
@@ -67,20 +66,6 @@ export const headerLine = (
   const report = joined === '' ? 'Last Report ' : ', last Report ';
   return { lead, tail: [report, whenAt(detail.lastSeenAt, now), '.'] };
 };
-
-// When a Condition on the Timeline was raised and cleared, and for how long.
-export const timelineWhen = (
-  entry: Pick<TimelineEntry, 'clearedAt' | 'raisedAt'>,
-  now: number,
-): Phrase =>
-  entry.clearedAt === undefined
-    ? ['Open since ', whenAt(entry.raisedAt, now), `, ${formatSpan(now - entry.raisedAt)}`]
-    : [
-        whenAt(entry.raisedAt, now),
-        ' to ',
-        whenAt(entry.clearedAt, now),
-        `, ${formatSpan(entry.clearedAt - entry.raisedAt)}`,
-      ];
 
 // "heimdall on main", or whichever of the two a Session recorded.
 const place = ({ branch, project }: { branch: string | undefined; project: string | undefined }) =>

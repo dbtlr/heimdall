@@ -4,13 +4,18 @@ import { isRedirect } from '@tanstack/react-router';
 
 import { toActivity } from './timeline.tsx';
 
-test('opening /timeline redirects to /activity, keeping the System', () => {
-  let thrown: unknown;
+const redirectOf = (search: Record<string, unknown>): unknown => {
   try {
-    toActivity({ search: { system: 'server-1' } });
+    toActivity({ search });
   } catch (error) {
-    thrown = error;
+    return error;
   }
-  expect(isRedirect(thrown)).toBe(true);
-  expect(thrown).toMatchObject({ options: { search: { system: 'server-1' }, to: '/activity' } });
+  return undefined;
+};
+
+test('opening /timeline redirects to /activity, keeping the System and dropping the old filters', () => {
+  const kept = redirectOf({ level: ['alert'], status: ['open'], system: ['server-1'] });
+  expect(isRedirect(kept)).toBe(true);
+  expect(kept).toMatchObject({ options: { search: { system: 'server-1' }, to: '/activity' } });
+  expect(redirectOf({})).toMatchObject({ options: { search: {}, to: '/activity' } });
 });

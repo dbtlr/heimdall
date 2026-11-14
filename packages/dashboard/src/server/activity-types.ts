@@ -12,6 +12,9 @@ export const ACTIVITY_RANGE_MS: Record<ActivityRange, number> = {
   '7d': 7 * 24 * 60 * 60_000,
 };
 
+// The range a System's Activity tab shows; the Activity page reaches further.
+export const SYSTEM_ACTIVITY_RANGE: ActivityRange = '7d';
+
 export const isActivityRange = (value: unknown): value is ActivityRange =>
   ACTIVITY_RANGES.some((range) => range === value);
 
@@ -19,24 +22,27 @@ export const isActivityRange = (value: unknown): value is ActivityRange =>
 export const ACTIVITY_KINDS = ['condition', 'version', 'stop', 'drift', 'alert'] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
-// A Condition occurrence: `raised` at `at`, or, when it was raised before the
-// window, `cleared` at `at`. `clearedAt` is set once it has cleared, and
-// `level` is the level it holds, or held when it cleared.
+// A Condition transition: its occurrence `raised`, its level changed from
+// `previousLevel`, or `cleared`, at `at`. `level` is the level the transition
+// left it at, or held as it cleared, and `reason` the Hub's reason then.
+// `open` says whether the occurrence is still open now.
 export type ConditionActivity = {
-  action: 'cleared' | 'raised';
+  action: 'cleared' | 'level_changed' | 'raised';
   at: number;
-  clearedAt: number | undefined;
   condition: ConditionKind;
   conditionId: string;
   kind: 'condition' | 'drift';
   level: ConditionLevel;
+  open: boolean;
+  previousLevel: ConditionLevel | undefined;
+  raisedAt: number;
   reason: string;
   subject: string;
   system: string;
 };
 
-// An alert pushed for a Condition, with the time its recovery went out, or
-// undefined while it is open or when no recovery was sent.
+// An alert pushed for a Condition, with the time its recovered message went
+// out, or undefined while it is open or when it closed without one.
 export type AlertActivity = {
   at: number;
   condition: ConditionKind;

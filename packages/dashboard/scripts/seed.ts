@@ -1248,7 +1248,7 @@ const seedConditions = async (sql: SQL, now: number) => {
     subject: 'caddy',
     system: 'server-1',
   });
-  // Oldest raised first, the order a Hub receives them, which orders the Timeline.
+  // Oldest raised first, the order a Hub receives them, which orders their transitions.
   for (const condition of conditions.toSorted((a, b) => a.raisedAt - b.raisedAt)) {
     // oxlint-disable-next-line no-await-in-loop -- a handful of rows, in order.
     await addCondition(sql, condition);
@@ -1260,8 +1260,9 @@ const seedConditions = async (sql: SQL, now: number) => {
             ${new Date(downAt + 2 * MINUTE)}, ${new Date(downAt + 2 * MINUTE)})
   `;
   await sql`
-    INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at)
-    VALUES ('server-1', 'service_down', 'caddy', ${new Date(downAt)}, ${new Date(downAt + MINUTE)}, ${new Date(downAt + 130 * SECOND)})
+    INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at, recovered_at)
+    VALUES ('server-1', 'service_down', 'caddy', ${new Date(downAt)}, ${new Date(downAt + MINUTE)},
+            ${new Date(downAt + 130 * SECOND)}, ${new Date(downAt + 130 * SECOND)})
   `;
 };
 

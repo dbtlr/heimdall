@@ -17,7 +17,8 @@ const MARKER = 'rounded-full border px-2 text-xs whitespace-nowrap';
 // The mark for a line's lead change: a Condition's level glyph, and for the
 // kinds without a level a neutral shape, so a color keeps one meaning: a
 // square for a version change, a ring for a Service stop, and a dot for an
-// alert sent. Drift takes its Condition's level glyph.
+// alert sent. Drift takes its Condition's level glyph, and a Condition or
+// Drift that cleared takes the cleared ring.
 function KindGlyph({
   event,
   words,
@@ -28,7 +29,11 @@ function KindGlyph({
   if (words.level !== undefined) {
     return (
       <ConditionGlyph
-        kind={event.kind === 'condition' && event.action === 'cleared' ? 'cleared' : words.level}
+        kind={
+          (event.kind === 'condition' || event.kind === 'drift') && event.action === 'cleared'
+            ? 'cleared'
+            : words.level
+        }
       />
     );
   }
@@ -53,6 +58,7 @@ function Title({ line, words }: { line: ActivityLine; words: ReturnType<typeof l
       {words.subject !== '' && (
         <span className="ml-1.5 font-mono text-[13px] break-all">{words.subject}</span>
       )}
+      {words.change !== '' && <span className="ml-1.5">{words.change}</span>}
     </>
   );
   if (lead?.kind === 'condition' || lead?.kind === 'drift') {

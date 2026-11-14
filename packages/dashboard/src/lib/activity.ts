@@ -1,7 +1,7 @@
 // What the Activity page says: the changes filtered, merged into lines, and
 // each line put into words.
 
-import { CONDITION_KIND_NAMES } from '@heimdall/schema';
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
 import type { ConditionLevel } from '@heimdall/schema';
 
 import { ACTIVITY_KINDS, isActivityRange } from '../server/activity-types.ts';
@@ -10,6 +10,7 @@ import type {
   ActivityKind,
   ActivityRange,
   AlertActivity,
+  ConditionActivity,
 } from '../server/activity-types.ts';
 import { knownValues, stringList } from './filter-search.ts';
 import { formatSpan } from './time.ts';
@@ -122,17 +123,58 @@ export const timelineRedirect = (
 };
 
 export type LineWords = {
+  // The alert sent for the lead's Condition, or the lead itself when it is an
+  // alert: the line's alert-sent marker.
   alert: { at: number; recoveredAt: number | undefined } | undefined;
+  // What the lead changed after its subject: "cleared", or the levels a
+  // level change went between.
+  change: string;
   detail: string;
   // The level pill, for a line led by a Condition.
   level: ConditionLevel | undefined;
-  // Still happening: an open Condition or alert, or a Service still stopped.
+  // The lead is still happening: its Condition or alert open, or its Service
+  // still stopped.
   open: boolean;
   // A monospace subject after the title: the subject of a Condition or alert.
   subject: string;
   title: string;
 };
 
+const subjectOf = (event: AlertActivity | ConditionActivity) =>
+  conditionSubject({ kind: event.condition, subject: event.subject });
+
+const changeOf = (event: ConditionActivity): string => {
+  switch (event.action) {
+    case 'cleared': {
+      return 'cleared';
+    }
+    case 'level_changed': {
+      return `${event.previousLevel ?? ''} → ${event.level}`;
+    }
+    default: {
+      return '';
+    }
+  }
+};
+
+const isOpen = (event: ActivityEvent): boolean => {
+  switch (event.kind) {
+    case 'stop': {
+      return event.ongoing;
+    }
+    case 'alert': {
+      return event.open;
+    }
+    case 'version': {
+      return false;
+    }
+    default: {
+      return event.open && event.action !== 'cleared';
+    }
+  }
+};
+
+// The words of a change that leads a line.
 const sentence = (event: ActivityEvent): { detail: string; title: string } => {
   switch (event.kind) {
     case 'version': {
@@ -148,50 +190,66 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
       return { detail: '', title: `Alert sent for ${CONDITION_KIND_NAMES[event.condition]}` };
     }
     default: {
-      const name = CONDITION_KIND_NAMES[event.condition];
       const lasted =
-        event.action === 'raised' && event.clearedAt !== undefined
-          ? `cleared after ${formatSpan(event.clearedAt - event.at)}`
-          : '';
+        event.action === 'cleared' ? `cleared after ${formatSpan(event.at - event.raisedAt)}` : '';
       return {
         detail: [event.reason, lasted].filter((part) => part !== '').join(' · '),
-        title: event.action === 'cleared' ? `${name} cleared` : name,
+        title: CONDITION_KIND_NAMES[event.condition],
       };
     }
   }
 };
 
-// A line's sentence: its lead change's, the detail of the lead and the
-// sentences of the other changes after it, and whether an alert was sent. An
-// alert that merged into a line shows as the alert-sent marker, not a sentence.
+// The words of a change that follows the lead in a line: whole enough to
+// stand alone, with its subject, and a Condition's level and whether it is
+// still open.
+const phrase = (event: ActivityEvent): string => {
+  if (event.kind === 'version' || event.kind === 'stop') {
+    return sentence(event).title;
+  }
+  const subject = subjectOf(event);
+  const named = [CONDITION_KIND_NAMES[event.condition], subject]
+    .filter((part) => part !== '')
+    .join(' ');
+  if (event.kind === 'alert') {
+    return `Alert sent for ${named}`;
+  }
+  const change = changeOf(event);
+  const state = [change === '' ? event.level : change, isOpen(event) ? 'open' : '']
+    .filter((part) => part !== '')
+    .join(', ');
+  return `${named} (${state})`;
+};
+
+// Whether `alert` was sent for the Condition `lead` is about.
+const alertFor = (alert: AlertActivity, lead: ActivityEvent) =>
+  alert === lead ||
+  ((lead.kind === 'condition' || lead.kind === 'drift') &&
+    alert.condition === lead.condition &&
+    alert.subject === lead.subject);
+
+// A line's sentence: its lead change's, then the detail of the lead and each
+// other change it holds in words of its own. An alert sent for the lead's
+// Condition shows as the alert-sent marker; any other alert is one of those
+// other changes.
 export const lineWords = (line: ActivityLine): LineWords => {
   const [lead, ...rest] = line.events;
   if (lead === undefined) {
     throw new Error('An Activity line holds at least one change.');
   }
   const { detail, title } = sentence(lead);
-  const alert = line.events.find((event): event is AlertActivity => event.kind === 'alert');
-  const others = rest
-    .filter((event) => event.kind !== 'alert')
-    .map((event) => sentence(event).title);
-  const isCondition = lead.kind === 'condition' || lead.kind === 'drift';
-  const conditionOpen = line.events.some(
-    (event) =>
-      (event.kind === 'condition' || event.kind === 'drift') &&
-      event.action === 'raised' &&
-      event.clearedAt === undefined,
+  const alert = line.events.find(
+    (event): event is AlertActivity => event.kind === 'alert' && alertFor(event, lead),
   );
+  const others = rest.filter((event) => event !== alert).map(phrase);
+  const isCondition = lead.kind === 'condition' || lead.kind === 'drift';
   return {
     alert: alert === undefined ? undefined : { at: alert.at, recoveredAt: alert.recoveredAt },
+    change: isCondition ? changeOf(lead) : '',
     detail: [detail, ...others].filter((part) => part !== '').join(' · '),
     level: isCondition ? lead.level : undefined,
-    open:
-      conditionOpen ||
-      line.events.some(
-        (event) =>
-          (event.kind === 'stop' && event.ongoing) || (event.kind === 'alert' && event.open),
-      ),
-    subject: isCondition || lead.kind === 'alert' ? lead.subject : '',
+    open: isOpen(lead),
+    subject: isCondition || lead.kind === 'alert' ? subjectOf(lead) : '',
     title,
   };
 };

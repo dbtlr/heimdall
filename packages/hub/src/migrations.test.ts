@@ -114,6 +114,35 @@ test('Condition levels preserve legacy occurrences and identify backfilled histo
   ]);
 });
 
+// Before migration 43 the Hub kept no record of a recovered message, so a
+// closed delivery reads as recovered only when its System is paired.
+test('migration 43 counts a closed delivery as recovered when its System is paired', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 42),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('server-1'), ('laptop-1')`;
+  await db.sql`
+    INSERT INTO paired_systems (system, token_hash, paired_at)
+    VALUES ('server-1', '\\x01', '2026-10-01T00:00:00Z')
+  `;
+  await db.sql`
+    INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at) VALUES
+      ('server-1', 'service_down', 'a', '2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z', '2026-10-01T11:00:00Z'),
+      ('server-1', 'service_down', 'b', '2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z', NULL),
+      ('laptop-1', 'service_down', 'c', '2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z', '2026-10-01T11:00:00Z')
+  `;
+
+  await migrate(db.sql);
+
+  expect(await db.sql`SELECT subject, recovered_at FROM deliveries ORDER BY subject`).toEqual([
+    { recovered_at: new Date('2026-10-01T11:00:00Z'), subject: 'a' },
+    { recovered_at: null, subject: 'b' },
+    { recovered_at: null, subject: 'c' },
+  ]);
+});
+
 test('migrate brings an empty database to the latest version', async () => {
   await using db = await testDatabase();
 

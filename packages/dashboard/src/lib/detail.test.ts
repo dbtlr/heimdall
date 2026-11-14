@@ -11,7 +11,6 @@ import {
   processRows,
   sampleProcessLine,
   steppedSample,
-  timelineWhen,
   unlinkedLine,
 } from './detail.ts';
 import { phraseText, zoneFreeText } from './phrase.ts';
@@ -116,23 +115,6 @@ describe('headerLine', () => {
     const old = headerLine({ ...none, lastSeenAt: NOW - 3 * DAY }, NOW);
     expect(old.lead).toBe('');
     expect(old.tail.at(-1)).toBe('.');
-  });
-});
-
-describe('timelineWhen', () => {
-  test('says how long an open Condition has been open', () => {
-    expect(
-      phraseText(timelineWhen({ clearedAt: undefined, raisedAt: NOW - 7 * HOUR }, NOW), 'UTC'),
-    ).toBe('Open since 09:00, 7 h');
-  });
-
-  test('says when a cleared Condition was raised and cleared, and for how long', () => {
-    expect(
-      phraseText(
-        timelineWhen({ clearedAt: NOW - 3 * DAY + 12 * MINUTE, raisedAt: NOW - 3 * DAY }, NOW),
-        'UTC',
-      ),
-    ).toBe('Sat 16:00 to Sat 16:12, 12 min');
   });
 });
 

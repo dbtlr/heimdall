@@ -185,7 +185,7 @@ export const changeWords = (
 
 // Where a group leads: a Service change on one System to its Service page, on
 // several to the Services page for those Systems; a Condition change on one
-// System to its Condition page, on several to the Timeline.
+// System to its Condition page, on several to Activity.
 export type ChangeLink =
   | { service: string; system: string; to: 'service' }
   | { systems: string[]; to: 'services' }

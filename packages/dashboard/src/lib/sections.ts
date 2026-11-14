@@ -1,5 +1,5 @@
-// The dashboard's sections, in the top bar's order. Activity is the Fleet
-// Timeline.
+// The dashboard's sections, in the top bar's order. Activity lists what
+// changed across the fleet.
 export const SECTIONS = [
   { key: 'home', label: 'Home' },
   { key: 'systems', label: 'Systems' },

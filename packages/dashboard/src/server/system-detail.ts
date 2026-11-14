@@ -2,6 +2,8 @@ import { nextScheduledTime } from '@heimdall/schema';
 import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { SYSTEM_ACTIVITY_RANGE } from './activity-types.ts';
+import { readActivitySnapshot } from './activity.ts';
 import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
@@ -53,14 +55,11 @@ import type {
   SessionRow,
   SystemDetail,
   SystemRecords,
-  TimelineEntry,
   UnlinkedSession,
 } from './system-detail-types.ts';
 import { readSystemNavigation } from './system-navigation.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
-// The Timeline covers this much history, and every Condition still open.
-const TIMELINE_MS = 7 * DAY_MS;
 
 const systemName = (input: unknown): string => {
   const name = field(input, 'name');
@@ -620,29 +619,24 @@ const isJobCondition = (kind: string): kind is RecordedJob['open'][number] =>
   kind === 'job_failing' || kind === 'job_overdue';
 
 // What System `name`'s provisioner recorded, with the latest checks and runs,
-// and its Timeline: every Condition of the last 7 days before `now` and every
-// one still open, newest received first. Read-only.
+// and the job Conditions open on it. Read-only.
 const readSystemRecordsSnapshot = async (
   sql: SQL,
   { name, now }: { name: string; now: number },
 ): Promise<SystemRecords> => {
-  const [records, checks, runs, conditions, zones]: [
+  const [records, checks, runs, openJobConditions, zones]: [
     RecordRow[],
     ChecksRow[],
     RunRow[],
-    ConditionRow[],
+    { kind: string; subject: string }[],
     { time_zone: string | null }[],
   ] = await Promise.all([
     sql`SELECT kind, name, record FROM mirrored_records WHERE system = ${name} ORDER BY kind, name`,
     sql`SELECT services, files, file_records FROM check_sets WHERE system = ${name}`,
     sql`SELECT job, latest_run FROM mirrored_runs WHERE system = ${name}`,
     sql`
-      SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
-      FROM conditions
-      WHERE system = ${name}
-        AND (cleared_at IS NULL OR cleared_at >= ${new Date(now - TIMELINE_MS)})
-      -- The Hub's occurrence order survives a step back in its clock.
-      ORDER BY id DESC
+      SELECT kind, subject FROM conditions
+      WHERE system = ${name} AND cleared_at IS NULL AND kind IN ('job_failing', 'job_overdue')
     `,
     sql`SELECT time_zone FROM systems WHERE name = ${name}`,
   ]);
@@ -670,13 +664,6 @@ const readSystemRecordsSnapshot = async (
     };
   });
   const runOf = new Map(runs.map((row) => [row.job, toRun(row.latest_run)]));
-  const openJobConditions = conditions.filter(
-    (row) => row.cleared_at === null && isJobCondition(row.kind),
-  );
-  const transitions = await readConditionTransitions(sql, conditions);
-  const timeline = conditions.map((row): TimelineEntry =>
-    Object.assign(toMark(row, transitions.get(row.id) ?? []), { reason: row.latest_reason }),
-  );
   return {
     recorded: {
       applications: of('application').map(({ name: app, record }): RecordedApplication => {
@@ -716,7 +703,6 @@ const readSystemRecordsSnapshot = async (
         });
       }),
     },
-    timeline,
   };
 };
 
@@ -741,13 +727,18 @@ export const readSystemPage = (sql: SQL, input: Parameters<typeof readSystemDeta
     if (detail === undefined) {
       return undefined;
     }
-    const [records, attention, navigation] = await Promise.all([
+    const [records, attention, navigation, activity] = await Promise.all([
       readSystemRecordsSnapshot(tx, input),
       readAttention(tx, {
         now: input.now,
         systems: [{ name: input.name, paired: detail.paired }],
       }),
       readSystemNavigation(tx, input),
+      readActivitySnapshot(tx, {
+        now: input.now,
+        range: SYSTEM_ACTIVITY_RANGE,
+        system: input.name,
+      }),
     ]);
-    return { attention, detail, navigation, records };
+    return { activity, attention, detail, navigation, records };
   });

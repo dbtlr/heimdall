@@ -149,7 +149,7 @@ The most recent time the Hub heard from a System under that System's token, whet
 _Avoid_: heartbeat (the mechanism, not the fact), uptime (a Vital)
 
 **Activity**:
-The dashboard's list of what changed across the fleet, newest first under day headings: Conditions raised and cleared, Drift, Service version changes, Service stops, and alerts sent. Changes on one System within 2 minutes share one line. Changes to recorded files and Harness installs are not listed, since neither is kept as history. It replaces the Timeline, which listed only Conditions.
+The dashboard's list of what changed across the fleet, or on one System, newest first under day headings: Conditions being raised, changing level, and being cleared, Drift, Service version changes, Service stops, and alerts sent. Changes on one System within 2 minutes share one line. Changes to recorded files and Harness installs are not listed, since neither is kept as history. It replaces the Timeline, which listed only Conditions.
 _Avoid_: Timeline (retired), event feed, event log (a Report is never an event)
 
 **Pairing**:

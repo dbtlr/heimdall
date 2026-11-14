@@ -13,7 +13,6 @@ import {
   filterActivity,
   groupActivity,
   lineWords,
-  timelineRedirect,
 } from './activity.ts';
 
 const MIN = 60_000;
@@ -22,11 +21,13 @@ const T = Date.UTC(2026, 10, 14, 12, 0);
 const condition = (over: Partial<ConditionActivity> = {}): ConditionActivity => ({
   action: 'raised',
   at: T,
-  clearedAt: undefined,
   condition: 'service_down',
   conditionId: '1',
   kind: 'condition',
   level: 'alert',
+  open: true,
+  previousLevel: undefined,
+  raisedAt: T,
   reason: 'Exited with status 1.',
   subject: 'caddy',
   system: 'server-1',
@@ -115,18 +116,77 @@ test('a lone alert, version change, and cleared Condition each read as one sente
   const lone = lineWords(groupActivity([alert()])[0]!);
   expect([lone.title, lone.subject]).toEqual(['Alert sent for Service down', 'caddy']);
   expect(lineWords(groupActivity([version()])[0]!).title).toBe('ntfy 2.11.0 → 2.12.0');
-  const cleared = condition({ action: 'cleared', at: T, clearedAt: T });
+  const cleared = condition({ action: 'cleared', open: false });
   const words = lineWords(groupActivity([cleared])[0]!);
-  expect(words.title).toBe('Service down cleared');
+  expect([words.title, words.subject, words.change]).toEqual(['Service down', 'caddy', 'cleared']);
   expect(words.open).toBe(false);
 });
 
-test('a Condition cleared inside the window says how long it lasted', () => {
+test('a cleared Condition says how long it lasted', () => {
   const words = lineWords(
-    groupActivity([condition({ at: T, clearedAt: T + 18 * MIN, level: 'warning' })])[0]!,
+    groupActivity([
+      condition({ action: 'cleared', at: T + 18 * MIN, level: 'warning', open: false }),
+    ])[0]!,
   );
   expect(words.detail).toBe('Exited with status 1. · cleared after 18 min');
   expect(words.open).toBe(false);
+});
+
+test('a level change says the levels it went between, with the level it reached on the pill', () => {
+  const words = lineWords(
+    groupActivity([
+      condition({ action: 'level_changed', condition: 'low_disk', previousLevel: 'warning' }),
+    ])[0]!,
+  );
+  expect([words.title, words.change, words.level]).toEqual([
+    'Low disk',
+    'warning → alert',
+    'alert',
+  ]);
+});
+
+test('each change after the lead keeps its subject and level, so two Conditions in a line stay apart', () => {
+  const [line] = groupActivity([
+    condition({ at: T, subject: 'caddy' }),
+    condition({ at: T + MIN, conditionId: '2', subject: 'ntfy' }),
+    condition({ at: T, condition: 'low_disk', conditionId: '3', level: 'warning', subject: '/' }),
+  ]);
+  const words = lineWords(line!);
+  expect(words.subject).toBe('ntfy');
+  expect(words.detail).toBe(
+    'Exited with status 1. · Service down caddy (alert, open) · Low disk / (warning, open)',
+  );
+});
+
+test('an alert for another Condition in the line is named, not folded into the alert-sent marker', () => {
+  const [line] = groupActivity(
+    filterActivity(
+      [alert({ at: T }), alert({ at: T + 30_000, condition: 'low_disk', subject: '/' })],
+      { kind: 'alert' },
+    ),
+  );
+  const words = lineWords(line!);
+  expect([words.title, words.subject]).toEqual(['Alert sent for Low disk', '/']);
+  expect(words.alert).toEqual({ at: T + 30_000, recoveredAt: undefined });
+  expect(words.detail).toBe('Alert sent for Service down caddy');
+});
+
+test('the open marker belongs to the lead, and another open change says so itself', () => {
+  const [line] = groupActivity([
+    condition({ action: 'cleared', at: T + 2 * MIN, open: false, raisedAt: T }),
+    condition({
+      at: T + MIN,
+      condition: 'low_disk',
+      conditionId: '2',
+      level: 'warning',
+      subject: '/',
+    }),
+  ]);
+  const words = lineWords(line!);
+  expect(words.open).toBe(false);
+  expect(words.detail).toBe(
+    'Exited with status 1. · cleared after 2 min · Low disk / (warning, open)',
+  );
 });
 
 test('filters keep the kind and System chosen, and none keeps everything', () => {
@@ -175,12 +235,4 @@ test('the search keeps a known kind, range, and System and drops the rest', () =
     range: '7d',
     system: '5',
   });
-});
-
-test('the old Timeline address redirects to Activity, keeping its System', () => {
-  expect(timelineRedirect({ level: ['alert'], status: ['open'], system: ['server-1'] })).toEqual({
-    search: { system: 'server-1' },
-    to: '/activity',
-  });
-  expect(timelineRedirect({})).toEqual({ search: {}, to: '/activity' });
 });

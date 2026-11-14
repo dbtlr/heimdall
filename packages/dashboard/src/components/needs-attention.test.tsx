@@ -148,7 +148,7 @@ describe('the attention card', () => {
     );
     expect(html).toContain('href="/systems/edge-1/conditions/12"');
     expect(html).toContain('Alert · open 4 min');
-    expect(html).toContain('href="/activity?kind=condition&amp;range=30d"');
+    expect(html).toMatch(/<a[^>]*href="\/activity"[^>]*>Activity →<\/a>/u);
   });
 
   test('a High memory lead shows its chart against the limit, and the processes holding the most memory', async () => {
@@ -288,17 +288,18 @@ describe('the attention card', () => {
       const html = await render({ attention: [down, ...others(5)] });
 
       expect(html).toContain('/srv/file-4');
-      expect(html).not.toContain('more</a>');
+      expect(html).not.toContain('more</summary>');
     });
 
-    test('lists 5 of 8 others, then +3 more linking to the open Conditions', async () => {
+    test('lists 5 of 8 others, then +3 more that opens the other 3 in place', async () => {
       const html = await render({ attention: [down, ...others(8)] });
+      const [shown = '', folded = ''] = html.split('+3 more</summary>');
 
-      expect(html).toContain('/srv/file-4');
-      expect(html).not.toContain('/srv/file-5');
-      expect(html).toMatch(
-        /<a[^>]*href="\/activity\?kind=condition&amp;range=30d"[^>]*>\+3 more<\/a>/u,
-      );
+      expect(shown).toContain('/srv/file-4');
+      expect(shown).not.toContain('/srv/file-5');
+      for (const file of ['/srv/file-5', '/srv/file-6', '/srv/file-7']) {
+        expect(folded).toContain(file);
+      }
     });
   });
 });

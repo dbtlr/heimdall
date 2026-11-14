@@ -12,11 +12,13 @@ const events: ActivityEvent[] = [
   {
     action: 'raised',
     at: NOW - 3 * HOUR,
-    clearedAt: undefined,
     condition: 'service_down',
     conditionId: '7',
     kind: 'condition',
     level: 'alert',
+    open: true,
+    previousLevel: undefined,
+    raisedAt: NOW - 3 * HOUR,
     reason: 'Exited with status 1.',
     subject: 'caddy',
     system: 'server-1',
@@ -63,4 +65,32 @@ test('the list heads each day, shows an alert sent on its Condition, and labels 
   expect(html).toContain('href="/systems/server-1/conditions/7"');
   expect(html).toContain('ntfy 2.11.0 → 2.12.0');
   expect(html.match(/unpaired/gu)).toHaveLength(1);
+});
+
+test('a cleared Drift takes the cleared ring, not its level glyph', async () => {
+  const cleared: ActivityEvent = {
+    action: 'cleared',
+    at: NOW - HOUR,
+    condition: 'drift',
+    conditionId: '9',
+    kind: 'drift',
+    level: 'warning',
+    open: false,
+    previousLevel: undefined,
+    raisedAt: NOW - 2 * HOUR,
+    reason: 'The file matches its record again.',
+    subject: '/etc/caddy/Caddyfile',
+    system: 'server-1',
+  };
+  const html = await renderRouted(
+    <ActivityListBody
+      lines={groupActivity([cleared])}
+      now={NOW}
+      timeZone="UTC"
+      unpaired={new Set()}
+    />,
+    { routePaths: ['/systems/$name', '/systems/$name/conditions/$id'] },
+  );
+  expect(html).toContain('stroke-status-good');
+  expect(html).not.toContain('fill-status-serious');
 });

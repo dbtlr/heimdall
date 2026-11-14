@@ -2341,6 +2341,26 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 42,
   },
+  {
+    // The dashboard's Activity reads transitions and deliveries over a window
+    // of at most 30 days, so each window is found by time through an index,
+    // and a read costs what the window holds rather than every transition or
+    // delivery ever kept. (Service versions are already found through their
+    // primary key's time column.) `recovered_at` is when a delivery's
+    // recovered message went out; a delivery closed without one, as unpairing
+    // does, has none. Before this column the Hub kept no such record, so a
+    // delivery closed earlier counts as recovered when its System is paired
+    // now, which is how the dashboard read it until then.
+    sql: `
+      CREATE INDEX condition_transitions_by_time ON condition_transitions (at);
+      CREATE INDEX deliveries_by_push ON deliveries (pushed_at);
+      ALTER TABLE deliveries ADD COLUMN recovered_at timestamptz;
+      UPDATE deliveries d SET recovered_at = closed_at
+      WHERE closed_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM paired_systems p WHERE p.system = d.system);
+    `,
+    version: 43,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

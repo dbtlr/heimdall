@@ -1,4 +1,5 @@
 import { ConditionLevelSchema } from '@heimdall/schema';
+import type { ConditionLevel } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { shownElsewhere } from '../lib/attention.ts';
@@ -13,13 +14,16 @@ import type {
 import { readServiceChanges } from './home-cards.ts';
 import { conditionKind } from './hub-rows.ts';
 
-type ConditionRow = {
+type TransitionRow = {
+  action: ConditionActivity['action'];
+  at: Date;
   cleared_at: Date | null;
   id: string;
   kind: string;
-  latest_reason: string;
   level: string;
+  previous_level: string | null;
   raised_at: Date;
+  reason: string;
   subject: string;
   system: string;
 };
@@ -28,104 +32,125 @@ type DeliveryRow = {
   closed_at: Date | null;
   kind: string;
   pushed_at: Date;
+  recovered_at: Date | null;
   subject: string;
   system: string;
 };
 
-// A Condition occurrence is listed when it was raised in the window, at its
-// raising, or, raised before the window, when it was cleared in it, at its
-// clearing. Maintenance notes and Service restarted notes on paired Systems
-// are left out, as they live on Maintenance and Services.
+// Each Condition transition in the window, at the level it left the Condition
+// at. A transition that only concerns levels the list keeps off is left out:
+// maintenance notes and Service restarted notes on paired Systems, which live
+// on Maintenance and Services. A level change into or out of one stays.
 const conditionEvents = (
-  rows: readonly ConditionRow[],
-  { from, paired }: { from: number; paired: ReadonlySet<string> },
+  rows: readonly TransitionRow[],
+  paired: ReadonlySet<string>,
 ): ConditionActivity[] =>
   rows.flatMap((row): ConditionActivity[] => {
     const condition = conditionKind(row.kind);
     const level = ConditionLevelSchema.parse(row.level);
-    if (
-      shownElsewhere({ kind: condition, level, unpaired: !paired.has(row.system) }) !== undefined
-    ) {
+    const previousLevel =
+      row.previous_level === null ? undefined : ConditionLevelSchema.parse(row.previous_level);
+    const unpaired = !paired.has(row.system);
+    const elsewhere = (at: ConditionLevel) =>
+      shownElsewhere({ kind: condition, level: at, unpaired }) !== undefined;
+    if (elsewhere(level) && (previousLevel === undefined || elsewhere(previousLevel))) {
       return [];
     }
-    const raisedAt = row.raised_at.getTime();
-    const raisedInWindow = raisedAt >= from;
-    const clearedAt = row.cleared_at?.getTime();
     return [
       {
-        action: raisedInWindow ? 'raised' : 'cleared',
-        at: raisedInWindow ? raisedAt : (clearedAt ?? raisedAt),
-        clearedAt,
+        action: row.action,
+        at: row.at.getTime(),
         condition,
         conditionId: row.id,
         kind: condition === 'drift' ? 'drift' : 'condition',
         level,
-        reason: row.latest_reason,
+        open: row.cleared_at === null,
+        previousLevel,
+        raisedAt: row.raised_at.getTime(),
+        reason: row.reason,
         subject: row.subject,
         system: row.system,
       },
     ];
   });
 
-// Alerts pushed in the window, each with the recovery sent when it closed on
-// a paired System, which sends none once unpaired.
-const alertEvents = (rows: readonly DeliveryRow[], paired: ReadonlySet<string>): AlertActivity[] =>
+// Alerts pushed in the window, each with the time its recovered message went
+// out, as the Hub recorded it.
+const alertEvents = (rows: readonly DeliveryRow[]): AlertActivity[] =>
   rows.map((row) => ({
     at: row.pushed_at.getTime(),
     condition: conditionKind(row.kind),
     kind: 'alert',
     open: row.closed_at === null,
-    recoveredAt: paired.has(row.system) ? row.closed_at?.getTime() : undefined,
+    recoveredAt: row.recovered_at?.getTime(),
     subject: row.subject,
     system: row.system,
   }));
 
-// Every change in the range that ends at `now`: Condition occurrences, Service
-// version changes and stops, Drift, and alerts sent, on paired Systems and on
-// unpaired ones, whose history is kept. Each read is bounded by the window.
-// Changes to recorded files and Harness installs are not listed, as neither
-// keeps a history.
-export const readActivity = (
-  sql: SQL,
-  { now, range }: { now: number; range: ActivityRange },
+type ActivityInput = { now: number; range: ActivityRange; system?: string | undefined };
+
+// Every change in the range that ends at `now`, in a snapshot `tx` holds:
+// Condition transitions, Drift, Service version changes and stops, and alerts
+// sent, on paired Systems and on unpaired ones, whose history is kept. With
+// `system`, that System's alone. Each source is found by time through an
+// index, so a read costs what its window holds. Changes to recorded files and
+// Harness installs are not listed, as neither keeps a history.
+export const readActivitySnapshot = async (
+  tx: SQL,
+  { now, range, system }: ActivityInput,
 ): Promise<Activity> => {
   const from = now - ACTIVITY_RANGE_MS[range];
   const [start, end] = [new Date(from), new Date(now)];
-  return sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
-    const [conditions, deliveries, pairings, services]: [
-      ConditionRow[],
-      DeliveryRow[],
-      { system: string }[],
-      Awaited<ReturnType<typeof readServiceChanges>>,
-    ] = await Promise.all([
-      tx`
-        SELECT id::text AS id, system, kind, level, subject, raised_at, cleared_at, latest_reason
-        FROM conditions
-        WHERE (raised_at >= ${start} AND raised_at <= ${end})
-           OR (cleared_at >= ${start} AND cleared_at <= ${end})
-      `,
-      tx`
-        SELECT system, kind, subject, pushed_at, closed_at
-        FROM deliveries
-        WHERE pushed_at >= ${start} AND pushed_at <= ${end}
-      `,
-      tx`SELECT system FROM paired_systems`,
-      readServiceChanges(tx, { includeUnpaired: true, now, since: from }),
-    ]);
-    const paired = new Set(pairings.map(({ system }) => system));
-    const events: ActivityEvent[] = [
-      ...conditionEvents(conditions, { from, paired }),
-      ...alertEvents(deliveries, paired),
-      ...services,
-    ];
-    const systems = new Set([...paired, ...events.map(({ system }) => system)]);
-    return {
-      events,
-      from,
+  const only = system ?? null;
+  const [transitions, deliveries, pairings, services]: [
+    TransitionRow[],
+    DeliveryRow[],
+    { system: string }[],
+    Awaited<ReturnType<typeof readServiceChanges>>,
+  ] = await Promise.all([
+    tx`
+      SELECT c.id::text AS id, c.system, c.kind, c.subject, c.raised_at, c.cleared_at,
+        t.action, t.level, t.previous_level, t.at, t.reason
+      FROM condition_transitions t
+      JOIN conditions c ON c.id = t.condition
+      WHERE t.at >= ${start} AND t.at <= ${end}
+        AND (${only}::text IS NULL OR c.system = ${only})
+      ORDER BY t.id
+    `,
+    tx`
+      SELECT system, kind, subject, pushed_at, closed_at, recovered_at
+      FROM deliveries
+      WHERE pushed_at >= ${start} AND pushed_at <= ${end}
+        AND (${only}::text IS NULL OR system = ${only})
+    `,
+    tx`SELECT system FROM paired_systems`,
+    readServiceChanges(tx, {
+      includeUnpaired: true,
       now,
-      range,
-      systems: [...systems].toSorted((a, b) => a.localeCompare(b)),
-      unpaired: [...systems].filter((system) => !paired.has(system)).toSorted(),
-    };
-  });
+      since: from,
+      ...(system === undefined ? {} : { system }),
+    }),
+  ]);
+  const paired = new Set(pairings.map((row) => row.system));
+  const events: ActivityEvent[] = [
+    ...conditionEvents(transitions, paired),
+    ...alertEvents(deliveries),
+    ...services,
+  ];
+  const systems = new Set([
+    ...(system === undefined ? paired : []),
+    ...events.map((event) => event.system),
+  ]);
+  return {
+    events,
+    from,
+    now,
+    range,
+    systems: [...systems].toSorted((a, b) => a.localeCompare(b)),
+    unpaired: [...systems].filter((name) => !paired.has(name)).toSorted(),
+  };
 };
+
+// Every change in the range, read in one snapshot.
+export const readActivity = (sql: SQL, input: ActivityInput): Promise<Activity> =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readActivitySnapshot(tx, input));
