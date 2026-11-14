@@ -63,3 +63,7 @@ The mirror stays the source of each job's latest run and status; the history is 
 - A job's latest 14 runs stay at the Hub after the job is forgotten, until its System is purged.
 - The history holds a run older than 90 days only once the Hub has taken it, so a monthly job shows the 3 or so runs its Collector keeps at first, and reaches 14 over the months that follow.
 - Run times are on the System's clock and pruning is on the Hub's, so a System whose clock runs behind loses its runs a little early.
+
+## Changelog
+
+- 2026-11-14: Amendment. The Hub no longer stores every time the section accepts: it drops a run whose start is more than 5 minutes after its own clock, the bound it applies to samples, so a run from a clock that runs ahead never outlasts real runs in the 90 days and the latest 14. It takes runs one at a time and drops a run that breaks the run rules or repeats a key, so a bad run never fails a Report ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)). A delivered Report settles every run it carried, dropped ones included.
