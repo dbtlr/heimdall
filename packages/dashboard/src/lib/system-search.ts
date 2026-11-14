@@ -1,3 +1,5 @@
+import { RANGE_MS, RANGES } from '../server/fleet-overview-types.ts';
+import type { Range } from '../server/fleet-overview-types.ts';
 import { atFromSearch, rangeFromSearch } from './range.ts';
 
 export const SYSTEM_TABS = ['now', 'vitals', 'sessions', 'records', 'activity'] as const;
@@ -14,6 +16,11 @@ export const systemSearch = (search: Record<string, unknown>) => {
     tab: SYSTEM_TABS.find((tab) => tab === named) ?? (at === undefined ? 'now' : 'vitals'),
   };
 };
+
+// The shortest System page range that ends at `now` and still holds `at`, so a
+// link to a sample opens on charts that show it; 7 d for anything older.
+export const rangeHolding = (at: number, now: number): Range =>
+  RANGES.find((range) => now - at <= RANGE_MS[range]) ?? '7d';
 
 // From `lg` the page has one Overview where the phone has Now, Vitals, and
 // Sessions; `tab` is the phone tab a link to each opens.

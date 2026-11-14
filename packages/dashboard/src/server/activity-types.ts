@@ -74,29 +74,33 @@ export type StopActivity = {
 
 export type ActivityEvent = AlertActivity | ConditionActivity | StopActivity | VersionActivity;
 
-// One stretch of an agent Session on a System, drawn on the shared axis.
-export type AxisStretch = { endedAt: number; harness: string; startedAt: number };
-
-// What the shared axis draws for one System: its CPU busy in `bucketMs`
-// buckets, the CPU limit the Hub judges it by, and the stretches of its
-// Sessions that overlap the range.
-export type AxisLane = {
-  buckets: CpuBucket[];
-  cpuLimit: number | undefined;
-  stretches: AxisStretch[];
-  system: string;
-};
-
-// `systems` names every System the events, the Sessions, or the Hub's
-// pairings hold, and `unpaired` the ones whose history is kept. `lanes` holds
-// the axis of each of them, whose CPU buckets are `bucketMs` wide.
+// `systems` names every System the events or the Hub's pairings hold, and
+// `unpaired` the ones whose history is kept.
 export type Activity = {
-  bucketMs: number;
   events: ActivityEvent[];
   from: number;
-  lanes: AxisLane[];
   now: number;
   range: ActivityRange;
   systems: string[];
   unpaired: string[];
 };
+
+// One run of agent Session stretches of one Harness on a System, drawn on the
+// shared axis: stretches closer than the axis can tell apart are drawn as one.
+export type AxisStretch = { endedAt: number; harness: string; startedAt: number };
+
+// What the shared axis draws for one System: its CPU busy in the page's
+// `bucketMs` buckets, the CPU limit the Hub judges it by, the stretches of its
+// Sessions that overlap the range, and whether it is no longer paired.
+export type AxisLane = {
+  buckets: CpuBucket[];
+  cpuLimit: number | undefined;
+  stretches: AxisStretch[];
+  system: string;
+  unpaired: boolean;
+};
+
+// What the Activity page reads: the changes, and a lane on the shared axis for
+// each System, the paired ones first. `systems` and `unpaired` also name the
+// Systems with only Sessions in the range.
+export type ActivityPage = Activity & { bucketMs: number; lanes: AxisLane[] };

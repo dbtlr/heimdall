@@ -1,7 +1,9 @@
 // The pinned moment on the Activity axis: which changes it names, what its
 // Sessions cost, and how a drag or the URL sets it.
 
+import { ACTIVITY_RANGE_MS } from '../server/activity-types.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
+import { field } from '../server/hub-rows.ts';
 import type { MomentSession } from '../server/pinned-moment-types.ts';
 import { stringList } from './filter-search.ts';
 import { atFromSearch } from './range.ts';
@@ -25,9 +27,7 @@ export const changesNear = (
 
 // What the Sessions running at a moment cost at list price, over those that
 // are priced, and how many Sessions hold an unpriced request.
-export const momentTotal = (
-  sessions: readonly MomentSession[],
-): { unpriced: number; usd: number } => ({
+const momentTotal = (sessions: readonly MomentSession[]): { unpriced: number; usd: number } => ({
   unpriced: sessions.filter(({ costUsd }) => costUsd === undefined).length,
   usd: sessions.reduce((sum, { costUsd }) => sum + (costUsd ?? 0), 0),
 });
@@ -57,4 +57,33 @@ export const pinFromSearch = (
 ): { at: number; system: string | undefined } | undefined => {
   const at = atFromSearch({ at: search.pin });
   return at === undefined ? undefined : { at, system: stringList(search.pinOn)[0] };
+};
+
+// The pin a URL names when it falls inside the window the page shows, else
+// none: a pin kept from a longer range or an old link names a moment off the
+// axis, and reading it would cost the Sessions since then.
+export const pinWithin = <P extends { at: number }>(
+  pin: P | undefined,
+  { from, to }: Window,
+): P | undefined => (pin !== undefined && pin.at >= from && pin.at <= to ? pin : undefined);
+
+// The oldest moment the pinned-moment read answers, at `now`: the start of
+// Activity's longest range, so its cost follows that range and not the archive.
+const oldestMoment = (now: number) => now - Math.max(...Object.values(ACTIVITY_RANGE_MS));
+
+// What a pinned-moment request asks for, at the server's `now`: a time no older
+// than Activity's longest range, and the System it was pinned on, if any.
+export const momentInput = (
+  input: unknown,
+  now: number,
+): { at: number; system: string | undefined } => {
+  const at = field(input, 'at');
+  const system = field(input, 'system');
+  if (typeof at !== 'number' || !Number.isFinite(at)) {
+    throw new TypeError('The pinned moment needs a time.');
+  }
+  if (at < oldestMoment(now)) {
+    throw new RangeError('The pinned moment is older than the longest Activity range.');
+  }
+  return { at, system: typeof system === 'string' ? system : undefined };
 };

@@ -8,7 +8,7 @@ import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import { readDiskTrends } from './disk-trends.ts';
-import { isRange, RANGES } from './fleet-overview-types.ts';
+import { isRange, RANGE_MS, RANGES } from './fleet-overview-types.ts';
 import type { Link, Range } from './fleet-overview-types.ts';
 import {
   bucketStart,
@@ -16,7 +16,6 @@ import {
   isLink,
   laneStatus,
   projectOf,
-  RANGE_MS,
   readStretches,
   toBucket,
   toMark,

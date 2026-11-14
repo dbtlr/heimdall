@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 
 import { FleetTiles } from '../components/fleet-tiles.tsx';
-import { UnpairedLink } from '../components/unpaired-lanes.tsx';
+import { UnpairedLink } from '../components/unpaired-link.tsx';
 import { tileOrder } from '../lib/fleet-tile.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { emptyFleetText, unpairedFromSearch } from '../lib/unpaired.ts';

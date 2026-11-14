@@ -12,7 +12,6 @@ import type {
   Gap,
   LaneStatus,
   Link,
-  Range,
   SystemGlance,
 } from './fleet-overview-types.ts';
 import { bySystem, conditionKind, field } from './hub-rows.ts';
@@ -26,12 +25,6 @@ export const parseGlanceInput = (input: unknown): { unpaired: boolean } => ({
 const MINUTE_MS = 60_000;
 export const BUCKET_MS = 5 * MINUTE_MS;
 const DAY_MS = 24 * 60 * MINUTE_MS;
-export const RANGE_MS: Record<Range, number> = {
-  '12h': DAY_MS / 2,
-  '24h': DAY_MS,
-  '6h': DAY_MS / 4,
-  '7d': 7 * DAY_MS,
-};
 
 // The start of the 5-minute bucket holding `t`. The Hub aligns buckets to
 // 2000-01-01 UTC, a whole number of 5 minutes after the epoch, so the epoch
@@ -211,19 +204,29 @@ export const readStretches = (
   ORDER BY st.system, st.started_at
 `;
 
-// The 5-minute CPU rollup buckets of the Systems `names` from the bucket
-// holding `from` up to `to`, by System and time, in one statement however
-// many Systems it names.
+// The CPU rollups of the Systems `names` from the bucket holding `from` up to
+// `to`, by System and time, in one statement however many Systems it names.
+// They come in the Hub's 5-minute buckets, or averaged in `widthMs` buckets
+// when given: a width that divides a day keeps whole 5-minute rollups in each.
 export const readCpuBuckets = (
   sql: SQL,
-  { from, names, to }: { from: number; names: readonly string[]; to: number },
+  {
+    from,
+    names,
+    to,
+    widthMs = BUCKET_MS,
+  }: { from: number; names: readonly string[]; to: number; widthMs?: number },
 ): Promise<BucketRow[]> => sql`
-  SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
-  FROM vitals_rollups
+  WITH w AS (SELECT make_interval(secs => ${widthMs / 1000}) AS width)
+  SELECT system, date_bin(w.width, bucket, timestamptz '2000-01-01 00:00:00+00') AS bucket,
+         sum(samples)::int AS samples, min(cpu_busy_min) AS cpu_busy_min,
+         sum(cpu_busy_sum) AS cpu_busy_sum, max(cpu_busy_max) AS cpu_busy_max
+  FROM vitals_rollups, w
   WHERE system IN ${sql(names)}
-    AND bucket >= date_bin('5 minutes', ${new Date(from)}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
+    AND bucket >= date_bin(w.width, ${new Date(from)}::timestamptz, timestamptz '2000-01-01 00:00:00+00')
     AND bucket < ${new Date(to)}
-  ORDER BY system, bucket
+  GROUP BY 1, 2
+  ORDER BY 1, 2
 `;
 
 // When the Hub's current run of failed alert deliveries began, none while

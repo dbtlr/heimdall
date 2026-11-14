@@ -7,7 +7,7 @@ import { AgentsCard } from '../components/home-agents.tsx';
 import { ChangesCard, JobsCard, MaintenanceCardView } from '../components/home-cards.tsx';
 import { HomeVerdictCard } from '../components/home-verdict.tsx';
 import { NeedsAttention } from '../components/needs-attention.tsx';
-import { UnpairedLink } from '../components/unpaired-lanes.tsx';
+import { UnpairedLink } from '../components/unpaired-link.tsx';
 import { validZone } from '../lib/agents-search.ts';
 import { tileOrder } from '../lib/fleet-tile.ts';
 import { maintenanceCard } from '../lib/home-maintenance.ts';
@@ -35,7 +35,7 @@ export const Route = createFileRoute('/')({
 // Home, the same on every screen and stacked on a phone: the verdict, what
 // needs attention beside agent work, a tile per paired System, then the
 // maintenance that can wait, what changed, and the jobs, and the ways on to
-// Compare and the unpaired Systems.
+// Activity and the unpaired Systems.
 function Home() {
   const home = Route.useLoaderData();
   const search = Route.useSearch();

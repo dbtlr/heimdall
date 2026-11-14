@@ -3,7 +3,6 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { SQL } from 'bun';
 
-import { axisBucketMs } from './activity-axis.ts';
 import { readActivity } from './activity.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
@@ -14,7 +13,7 @@ beforeAll(async () => {
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
-const { addCondition, addSession, addVitals, at } = timeline(NOW);
+const { addCondition, at } = timeline(NOW);
 // The Condition fixtures count seconds from NOW.
 const ago = (ms: number) => -ms / 1000;
 
@@ -245,43 +244,3 @@ test.each([
     expect(await windowPlan(h.db.sql, table, column)).toMatch(new RegExp(String.raw`\b${index}\b`));
   },
 );
-
-test('the axis bucket widens with the range, so its read follows the buckets drawn', () => {
-  expect([HOUR * 24, DAY * 7, DAY * 30].map(axisBucketMs)).toEqual([
-    10 * 60_000,
-    2 * HOUR,
-    6 * HOUR,
-  ]);
-});
-
-test('each System gets a lane of CPU in axis buckets and the stretches of its Sessions, with no systems row needed', async () => {
-  await using h = await startHub();
-  const { sql } = h.db;
-  await sql`INSERT INTO systems (name) VALUES ('server-1')`;
-  // Samples 2 minutes apart averaged in one 10-minute bucket, then one in the next.
-  for (const minutes of [-120, -118, -116, -114, -110]) {
-    // oxlint-disable-next-line no-await-in-loop -- fixture rows.
-    await addVitals(sql, 'server-1', minutes * 60, minutes === -110 ? 90 : 10 + minutes + 120);
-  }
-  // A Session on a System the Hub never heard a Report from.
-  await addSession(sql, { id: 'solo', requests: [-3 * 3600, -3 * 3600 + 120], system: 'laptop-1' });
-  await addSession(sql, {
-    id: 'old',
-    requests: [(-3 * DAY) / 1000, (-3 * DAY) / 1000 + 60],
-    system: 'laptop-1',
-  });
-
-  const { bucketMs, lanes, systems } = await readActivity(sql, { now: NOW, range: '24h' });
-
-  expect(bucketMs).toBe(10 * 60_000);
-  expect(systems).toEqual(['laptop-1', 'server-1']);
-  const [laptop, server] = lanes;
-  expect(laptop?.stretches).toMatchObject([
-    { endedAt: NOW - 3 * HOUR + 120_000, harness: 'claude-code', startedAt: NOW - 3 * HOUR },
-  ]);
-  expect(laptop?.buckets).toEqual([]);
-  expect(server?.buckets.map(({ average, high, low }) => ({ average, high, low }))).toEqual([
-    { average: 13, high: 16, low: 10 },
-    { average: 90, high: 90, low: 90 },
-  ]);
-});

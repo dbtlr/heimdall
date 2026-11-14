@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { DESKTOP_TABS, desktopTab, systemSearch } from './system-search.ts';
+import { DESKTOP_TABS, desktopTab, rangeHolding, systemSearch } from './system-search.ts';
 
 test('a link to the tab by its old name, Timeline, opens Activity', () => {
   expect(systemSearch({ tab: 'timeline' }).tab).toBe('activity');
@@ -35,4 +35,15 @@ test('on a wide screen Now, Vitals, and Sessions are one Overview, and Records a
   expect(desktopTab('sessions')).toBe('overview');
   expect(desktopTab('records')).toBe('records');
   expect(desktopTab('activity')).toBe('activity');
+});
+
+test('a link to a sample opens the shortest range that still holds it', () => {
+  const HOUR = 60 * 60_000;
+  const NOW = Date.UTC(2026, 10, 14, 12);
+  expect(rangeHolding(NOW - HOUR, NOW)).toBe('6h');
+  expect(rangeHolding(NOW - 6 * HOUR, NOW)).toBe('6h');
+  expect(rangeHolding(NOW - 7 * HOUR, NOW)).toBe('12h');
+  expect(rangeHolding(NOW - 13 * HOUR, NOW)).toBe('24h');
+  expect(rangeHolding(NOW - 3 * 24 * HOUR, NOW)).toBe('7d');
+  expect(rangeHolding(NOW - 20 * 24 * HOUR, NOW)).toBe('7d');
 });

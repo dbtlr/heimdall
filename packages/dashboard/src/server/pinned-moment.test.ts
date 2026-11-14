@@ -10,7 +10,7 @@ beforeAll(async () => {
 
 const HOUR_S = 3600;
 const MINUTE_S = 60;
-const { addSession, addVitals } = timeline(NOW);
+const { addProcess, addSession, addVitals } = timeline(NOW);
 const dollar = { inputTokens: 1_000_000, model: 'test-model', outputTokens: 0 };
 
 const start = async () => {
@@ -76,6 +76,44 @@ test('the pinned moment names the Sessions with a stretch running then and their
   ]);
 });
 
+// The Session ids running at `at` seconds from NOW, on every System.
+const runningAt = async (sql: Parameters<typeof readPinnedMoment>[0], at: number) =>
+  (await readPinnedMoment(sql, { at: NOW + at * 1000, system: undefined })).sessions.map(
+    ({ sessionId }) => sessionId,
+  );
+
+test('a Session runs at a moment from its stretch until 5 minutes after its latest request, as Home counts it', async () => {
+  await using h = await start();
+  // Requests every 2 minutes for 20 minutes, the latest 30 seconds ago.
+  await addSession(h.db.sql, {
+    id: 'live',
+    requests: Array.from({ length: 11 }, (_, index) => -30 - (10 - index) * 2 * MINUTE_S),
+  });
+
+  // Now, past its latest request; and 5 minutes after that request.
+  expect(await runningAt(h.db.sql, 0)).toEqual(['live']);
+  expect(await runningAt(h.db.sql, 5 * MINUTE_S - 30)).toEqual(['live']);
+  // More than 5 minutes after it, no longer.
+  expect(await runningAt(h.db.sql, 5 * MINUTE_S - 29)).toEqual([]);
+});
+
+test('a Session idle between two stretches is not running then', async () => {
+  await using h = await start();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('server-1')`;
+  // Two processes in turn run the Session, an hour apart.
+  await addProcess(h.db.sql, { end: -3 * HOUR_S, pid: 1, start: -4 * HOUR_S, system: 'server-1' });
+  await addProcess(h.db.sql, { end: -HOUR_S, pid: 2, start: -2 * HOUR_S, system: 'server-1' });
+  await addSession(h.db.sql, {
+    id: 'resumed',
+    requests: [-4 * HOUR_S + 600, -3 * HOUR_S - 600, -2 * HOUR_S + 600, -HOUR_S - 600],
+    system: 'server-1',
+  });
+
+  expect(await runningAt(h.db.sql, -3 * HOUR_S - 900)).toEqual(['resumed']);
+  expect(await runningAt(h.db.sql, -2 * HOUR_S - 30 * MINUTE_S)).toEqual([]);
+  expect(await runningAt(h.db.sql, -2 * HOUR_S + 900)).toEqual(['resumed']);
+});
+
 test("the pinned moment reads a System's Vitals from the sample before it, else from the rollup holding it", async () => {
   await using h = await start();
   await h.db.sql`INSERT INTO systems (name) VALUES ('server-1')`;
@@ -104,4 +142,22 @@ test("the pinned moment reads a System's Vitals from the sample before it, else 
     system: 'server-1',
   });
   expect(none.vitals).toBeUndefined();
+});
+
+test('a sample more than 15 minutes before the moment is no reading of it, as during a sleep', async () => {
+  await using h = await start();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('server-1')`;
+  // The System sleeps after this sample, and its rollup holds nothing later.
+  await addVitals(h.db.sql, 'server-1', -2 * HOUR_S, 70);
+
+  const within = await readPinnedMoment(h.db.sql, {
+    at: NOW + (-2 * HOUR_S + 15 * MINUTE_S) * 1000,
+    system: 'server-1',
+  });
+  expect(within.vitals).toMatchObject({ cpu: 70, t: NOW - 2 * HOUR_S * 1000 });
+  const asleep = await readPinnedMoment(h.db.sql, {
+    at: NOW + (-2 * HOUR_S + 16 * MINUTE_S) * 1000,
+    system: 'server-1',
+  });
+  expect(asleep.vitals).toBeUndefined();
 });

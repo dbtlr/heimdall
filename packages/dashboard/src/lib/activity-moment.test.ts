@@ -4,8 +4,9 @@ import type { ActivityEvent } from '../server/activity-types.ts';
 import type { MomentSession } from '../server/pinned-moment-types.ts';
 import {
   changesNear,
-  momentTotal,
+  momentInput,
   pinFromSearch,
+  pinWithin,
   sessionsSummary,
   timeAtFraction,
 } from './activity-moment.ts';
@@ -47,14 +48,6 @@ test('the changes near a moment are those within 15 minutes of it on the pinned 
   expect(changesNear(events, { at: T, system: undefined })).toHaveLength(3);
 });
 
-test('a moment totals the cost it knows and counts the Sessions it cannot price', () => {
-  expect(momentTotal([session(1.5), session(0.25), session(undefined)])).toEqual({
-    unpriced: 1,
-    usd: 1.75,
-  });
-  expect(momentTotal([])).toEqual({ unpriced: 0, usd: 0 });
-});
-
 test('the summary names the Sessions and their list price, and the ones it cannot price', () => {
   expect(sessionsSummary([])).toBe('0 Sessions running');
   expect(sessionsSummary([session(2.17)])).toBe('1 Session running · $2.17 list price');
@@ -78,4 +71,27 @@ test('the pin in the URL is a time and the System it was pinned on, or nothing',
   });
   expect(pinFromSearch({ pin: 'soon' })).toBeUndefined();
   expect(pinFromSearch({ pinOn: 'server-1' })).toBeUndefined();
+});
+
+const pin = (at: number) => ({ at, system: 'server-1' });
+
+test('a pin off the shown window is no pin', () => {
+  const window = { from: T - 60 * MIN, to: T };
+  expect(pinWithin(pin(T - 60 * MIN), window)).toEqual(pin(T - 60 * MIN));
+  expect(pinWithin(pin(T), window)).toEqual(pin(T));
+  expect(pinWithin(pin(T - 61 * MIN), window)).toBeUndefined();
+  expect(pinWithin(pin(T + MIN), window)).toBeUndefined();
+  expect(pinWithin(undefined, window)).toBeUndefined();
+});
+
+test('the pinned-moment read takes a time within the longest Activity range, and no older', () => {
+  const DAY = 24 * 60 * MIN;
+  expect(momentInput({ at: T - 30 * DAY, system: 'server-1' }, T)).toEqual({
+    at: T - 30 * DAY,
+    system: 'server-1',
+  });
+  expect(momentInput({ at: T, system: 5 }, T)).toEqual({ at: T, system: undefined });
+  expect(() => momentInput({ at: T - 30 * DAY - 1 }, T)).toThrow(RangeError);
+  expect(() => momentInput({ at: 0 }, T)).toThrow(RangeError);
+  expect(() => momentInput({ at: 'soon' }, T)).toThrow(TypeError);
 });

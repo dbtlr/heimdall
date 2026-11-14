@@ -170,7 +170,7 @@ function TileSparkline({
 // What the System's state is in words: its worst alert or warning with its
 // subject and the count of the others, else "Healthy", "Asleep 20 h", "No
 // Report yet", or "Unpaired", then the dashed pill for evidence that does not
-// confirm a failure. An unpaired System lists its items on Compare instead.
+// confirm a failure. An unpaired System's tile names none of its items.
 function TileStatus({ now, tile }: { now: number; tile: SystemTile }) {
   const { items, lane } = tile;
   if (namedItem(items, lane.status) !== undefined) {

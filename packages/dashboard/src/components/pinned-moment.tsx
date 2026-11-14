@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { changesNear, sessionsSummary } from '../lib/activity-moment.ts';
 import { groupActivity, lineWords } from '../lib/activity.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
+import { rangeHolding } from '../lib/system-search.ts';
 import { formatClock, formatCost, formatDated, formatSpan } from '../lib/time.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
 import type { MomentSession, MomentVitals, PinnedMoment } from '../server/pinned-moment-types.ts';
@@ -17,8 +18,8 @@ export type MomentRead =
 
 const HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
-// The pinned moment's sessions as lines: Harness bar, project and System, cost,
-// and how long the Session has run.
+// The pinned moment's sessions as lines: Harness bar, project and System, and
+// the cost and length of the whole Session, first request to latest.
 function SessionRows({ sessions }: { sessions: readonly MomentSession[] }) {
   return (
     <ul className="space-y-1.5 text-sm">
@@ -44,7 +45,7 @@ function SessionRows({ sessions }: { sessions: readonly MomentSession[] }) {
             <span className="text-muted-foreground">on {session.system}</span>
           </Link>
           <p className="pl-[22px] text-[13px] text-muted-foreground tabular-nums">
-            {formatCost(session.costUsd)} · {formatSpan(session.endedAt - session.startedAt)}
+            {formatCost(session.costUsd)} · {formatSpan(session.endedAt - session.startedAt)} in all
           </p>
         </li>
       ))}
@@ -55,13 +56,40 @@ function SessionRows({ sessions }: { sessions: readonly MomentSession[] }) {
 const percent = (value: number | undefined) =>
   value === undefined ? 'unknown' : `${String(Math.round(value))}%`;
 
+// The link to the System page at the sample, on the shortest range whose
+// charts hold it.
+function SampleLink({
+  className,
+  now,
+  system,
+  vitals,
+}: {
+  className: string;
+  now: number;
+  system: string;
+  vitals: MomentVitals;
+}) {
+  return (
+    <Link
+      className={className}
+      params={{ name: system }}
+      search={{ at: vitals.t, range: rangeHolding(vitals.t, now), tab: 'vitals' }}
+      to="/systems/$name"
+    >
+      Open {system} at this moment →
+    </Link>
+  );
+}
+
 // The System's CPU, memory, and load at the moment, with a link to the System
 // page at that sample.
 function VitalsColumn({
+  now,
   system,
   timeZone,
   vitals,
 }: {
+  now: number;
   system: string;
   timeZone: string;
   vitals: MomentVitals | undefined;
@@ -81,14 +109,12 @@ function VitalsColumn({
       <p className="text-[13px] text-muted-foreground">
         Sample at {formatClock(vitals.t, timeZone)}
       </p>
-      <Link
+      <SampleLink
         className="mt-1 inline-flex min-h-11 items-center text-sm text-primary"
-        params={{ name: system }}
-        search={{ at: vitals.t, tab: 'vitals' }}
-        to="/systems/$name"
-      >
-        Open {system} at this moment →
-      </Link>
+        now={now}
+        system={system}
+        vitals={vitals}
+      />
     </>
   );
 }
@@ -198,6 +224,7 @@ export function PinnedMomentCard({
                           {pin.system} at {formatClock(pin.at, timeZone)}
                         </h3>
                         <VitalsColumn
+                          now={now}
                           system={pin.system}
                           timeZone={timeZone}
                           vitals={read.moment.vitals}
@@ -214,14 +241,12 @@ export function PinnedMomentCard({
                     )}
                     <p className="text-muted-foreground">{sessionsSummary(read.moment.sessions)}</p>
                     {pin.system !== undefined && read.moment.vitals !== undefined && (
-                      <Link
+                      <SampleLink
                         className="inline-flex min-h-11 items-center text-primary"
-                        params={{ name: pin.system }}
-                        search={{ at: read.moment.vitals.t, tab: 'vitals' }}
-                        to="/systems/$name"
-                      >
-                        Open {pin.system} at this moment →
-                      </Link>
+                        now={now}
+                        system={pin.system}
+                        vitals={read.moment.vitals}
+                      />
                     )}
                   </div>
                 </>

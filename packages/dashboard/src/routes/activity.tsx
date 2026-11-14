@@ -8,6 +8,7 @@ import { ActivityList } from '../components/activity-list.tsx';
 import type { Pin } from '../components/activity-list.tsx';
 import { PinnedMomentCard } from '../components/pinned-moment.tsx';
 import type { MomentRead } from '../components/pinned-moment.tsx';
+import { pinWithin } from '../lib/activity-moment.ts';
 import { activityCounts, activitySearch, filterActivity, groupActivity } from '../lib/activity.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { getActivity } from '../server/activity-fn.ts';
@@ -62,7 +63,11 @@ function ActivityPage() {
   const lines = groupActivity(shown);
   const counts = activityCounts(events, filters);
   const unpairedSystems = new Set(unpaired);
-  const pin: Pin | undefined = pinAt === undefined ? undefined : { at: pinAt, system: pinOn };
+  // A pin off the range's axis, from an old link or a longer range, is none.
+  const pin = pinWithin<Pin>(pinAt === undefined ? undefined : { at: pinAt, system: pinOn }, {
+    from,
+    to: now,
+  });
   const setPin = (next: Pin | undefined) => {
     void navigate({
       replace: true,

@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
-import type { KeyboardEvent, PointerEvent } from 'react';
+import type { KeyboardEvent } from 'react';
 
 import { timeAtFraction } from '../lib/activity-moment.ts';
 import { lineWords } from '../lib/activity.ts';
@@ -20,6 +20,11 @@ import { CpuPlot } from './cpu-plot.tsx';
 import { TimeAxis } from './time-axis.tsx';
 
 const LANE_HEIGHT = 44;
+
+// The divider above the unpaired Systems' lanes, which are greyed: their
+// history is kept, and no new Report arrives.
+const UNPAIRED_DIVIDER =
+  'mt-2 flex items-center gap-3 text-[12.5px] font-normal text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed';
 
 // One bar per stretch of an agent Session under a lane's CPU, colored by
 // Harness: a color that means nothing else.
@@ -88,6 +93,52 @@ function Marks({
   );
 }
 
+type Drag = {
+  // The time under the pointer, undefined while the track has no width.
+  at: (event: { clientX: number }) => number | undefined;
+  onDrag: (at: number | undefined) => void;
+  onPin: (at: number) => void;
+};
+
+// The pointer handlers of a lane's track. A press starts a drag whose line
+// follows the pointer, and its release pins the time under it. A pointer the
+// browser takes back, as when a touch scrolls the page, ends the drag with
+// nothing pinned, so no line is left without a pin.
+export const trackPointer = ({ at, onDrag, onPin }: Drag) => {
+  let dragging = false;
+  return {
+    onPointerCancel: () => {
+      dragging = false;
+      onDrag(undefined);
+    },
+    onPointerDown: (event: {
+      clientX: number;
+      currentTarget: { setPointerCapture: (id: number) => void };
+      pointerId: number;
+    }) => {
+      dragging = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onDrag(at(event));
+    },
+    onPointerMove: (event: { clientX: number }) => {
+      if (dragging) {
+        onDrag(at(event));
+      }
+    },
+    onPointerUp: (event: { clientX: number }) => {
+      if (!dragging) {
+        return;
+      }
+      dragging = false;
+      const moment = at(event);
+      onDrag(undefined);
+      if (moment !== undefined) {
+        onPin(moment);
+      }
+    },
+  };
+};
+
 // A System's lane: CPU busy with the Session stretches under it and the
 // change marks over it. Dragging across it, or arrow keys on it, pins a moment
 // on this System.
@@ -113,13 +164,26 @@ function Lane({
   window: Window;
 }) {
   const track = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
-  const at = (event: PointerEvent) => {
-    const box = track.current?.getBoundingClientRect();
-    return box === undefined || box.width === 0
-      ? undefined
-      : timeAtFraction((event.clientX - box.left) / box.width, window);
-  };
+  // The handlers keep the drag between renders; the latest props are read
+  // through `props` so a re-render mid-drag does not end it.
+  const props = useRef({ onDrag, onPin, system: lane.system, window });
+  props.current = { onDrag, onPin, system: lane.system, window };
+  const [pointer] = useState(() =>
+    trackPointer({
+      at: (event) => {
+        const box = track.current?.getBoundingClientRect();
+        return box === undefined || box.width === 0
+          ? undefined
+          : timeAtFraction((event.clientX - box.left) / box.width, props.current.window);
+      },
+      onDrag: (moment) => {
+        props.current.onDrag(moment);
+      },
+      onPin: (moment) => {
+        props.current.onPin({ at: moment, system: props.current.system });
+      },
+    }),
+  );
   const step = (event: KeyboardEvent) => {
     const direction = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
     if (direction === undefined) {
@@ -148,24 +212,10 @@ function Lane({
         aria-label={`${lane.system}: drag or use the arrow keys to pin a moment`}
         className="relative min-w-0 cursor-col-resize touch-pan-y outline-none focus-visible:ring-2 focus-visible:ring-select"
         onKeyDown={step}
-        onPointerDown={(event) => {
-          dragging.current = true;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          onDrag(at(event));
-        }}
-        onPointerMove={(event) => {
-          if (dragging.current) {
-            onDrag(at(event));
-          }
-        }}
-        onPointerUp={(event) => {
-          dragging.current = false;
-          const moment = at(event);
-          onDrag(undefined);
-          if (moment !== undefined) {
-            onPin({ at: moment, system: lane.system });
-          }
-        }}
+        onPointerCancel={pointer.onPointerCancel}
+        onPointerDown={pointer.onPointerDown}
+        onPointerMove={pointer.onPointerMove}
+        onPointerUp={pointer.onPointerUp}
         ref={track}
         role="group"
         tabIndex={0}
@@ -182,7 +232,7 @@ function Lane({
                 : [
                     {
                       color: 'var(--status-warning)',
-                      label: `${String(lane.cpuLimit)}%`,
+                      label: `${String(lane.cpuLimit)}% limit`,
                       value: lane.cpuLimit,
                     },
                   ]
@@ -276,22 +326,33 @@ export function ActivityAxis({
     return <div style={{ height: lanes.length * (LANE_HEIGHT + 16) }} />;
   }
   const linesOf = Map.groupBy(lines, (line) => line.system);
+  const laneOf = (lane: AxisLane) => (
+    <Lane
+      bucketMs={bucketMs}
+      key={lane.system}
+      lane={lane}
+      lines={linesOf.get(lane.system) ?? []}
+      onDrag={setDrag}
+      onPin={onPin}
+      pin={pin}
+      shown={drag ?? pin?.at}
+      timeZone={timeZone}
+      window={window}
+    />
+  );
+  const paired = lanes.filter((lane) => !lane.unpaired);
+  const unpaired = lanes.filter((lane) => lane.unpaired);
   return (
     <div className="[--lane-label:120px]">
-      {lanes.map((lane) => (
-        <Lane
-          bucketMs={bucketMs}
-          key={lane.system}
-          lane={lane}
-          lines={linesOf.get(lane.system) ?? []}
-          onDrag={setDrag}
-          onPin={onPin}
-          pin={pin}
-          shown={drag ?? pin?.at}
-          timeZone={timeZone}
-          window={window}
-        />
-      ))}
+      {paired.map(laneOf)}
+      {unpaired.length > 0 && (
+        <>
+          <h3 className={UNPAIRED_DIVIDER}>Unpaired, history kept</h3>
+          <div className="text-muted-foreground saturate-50 [&_svg]:opacity-60">
+            {unpaired.map(laneOf)}
+          </div>
+        </>
+      )}
       <TimeAxis ticks={spanTicks(window, timeZone)} window={window} />
       <AxisLegend />
     </div>

@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { RUNNING_MS } from '../lib/home-agents.ts';
 import { projectOf } from './fleet-overview.ts';
 import type { MomentSession, MomentVitals, PinnedMoment } from './pinned-moment-types.ts';
 import { sessionSpans } from './session-spans.ts';
@@ -20,15 +21,19 @@ type SessionRow = {
 // A sample older than this before the instant is no reading of it.
 const SAMPLE_REACH_MS = 15 * 60_000;
 
-// The Sessions with a stretch running at `at`, on every System, with each
-// one's cost, oldest first. The Sessions are the spans' (see sessionSpans), so
-// the read costs the stretches since `at`; a Session idle at `at`, between two
-// stretches, is not running. No System needs a `systems` row. Call it inside
-// a snapshot.
+// The Sessions running at `at`, on every System, with each one's cost, oldest
+// first. A Session runs at `at` when it has a stretch that started by then and
+// ended no more than RUNNING_MS before, the rule Home's running Sessions
+// follow: a stretch ends at its latest request, so a Session pinned just after
+// a request still runs, while one idle longer between two stretches does not.
+// The Sessions are the spans' (see sessionSpans), so the read costs the
+// stretches since RUNNING_MS before `at`, which the Activity page holds to its
+// range. No System needs a `systems` row. Call it inside a snapshot.
 export const readSessionsRunning = async (sql: SQL, at: number): Promise<MomentSession[]> => {
   const instant = new Date(at);
+  const since = new Date(at - RUNNING_MS);
   const rows: SessionRow[] = await sql`
-    WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: instant, to: instant })})
+    WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: since, to: instant })})
     SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at, k.last_request_at,
            s.repository, s.first_cwd, s.last_cwd, t.cost_usd
     FROM spans k
@@ -37,7 +42,7 @@ export const readSessionsRunning = async (sql: SQL, at: number): Promise<MomentS
       FROM insight.session_stretches x
       WHERE (x.harness, x.system, x.source, x.session_id)
           = (k.harness, k.system, k.source, k.session_id)
-        AND x.started_at <= ${instant} AND x.ended_at >= ${instant}
+        AND x.started_at <= ${instant} AND x.ended_at >= ${since}
       LIMIT 1
     ) running
     LEFT JOIN LATERAL (

@@ -1,7 +1,7 @@
-// The data the Fleet pages render: every paired System, the unpaired Systems
-// when asked for, and what needs the operator now. The Fleet page's tiles read
-// a glance; Compare reads the overview, which draws each System as a lane on
-// one time axis. Times are epoch milliseconds.
+// The data the fleet pages render: every paired System, the unpaired Systems
+// when asked for, and what needs the operator now, which Home's and the
+// Systems page's tiles read as a glance; and the ranges a System page shows.
+// Times are epoch milliseconds.
 
 import type { ConditionKind, ConditionLevel, ConditionTransition } from '@heimdall/schema';
 
@@ -12,6 +12,14 @@ export const RANGES = ['6h', '12h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];
 
 export const isRange = (value: unknown): value is Range => RANGES.some((range) => range === value);
+
+const DAY_MS = 24 * 60 * 60_000;
+export const RANGE_MS: Record<Range, number> = {
+  '12h': DAY_MS / 2,
+  '24h': DAY_MS,
+  '6h': DAY_MS / 4,
+  '7d': 7 * DAY_MS,
+};
 
 // A System not heard from for longer than this is quiet: asleep, if it sleeps,
 // and its newest Vitals are no longer shown as current.
