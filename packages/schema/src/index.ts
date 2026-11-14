@@ -85,6 +85,7 @@ export type {
 export { MAX_RUNS_SECTION_BYTES, mirrorRuns, RunsSectionSchema } from './runs-section.ts';
 export {
   JOB_RUN_RETENTION_DAYS,
+  JOB_RUNS_KEPT_PER_JOB,
   JobRunsSectionSchema,
   MAX_JOB_RUNS_PER_REPORT,
 } from './job-runs-section.ts';

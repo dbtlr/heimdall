@@ -83,6 +83,24 @@ describe('a Report', () => {
     expect(parsedRuns(runs).data?.jobRuns).toEqual({ runs });
   });
 
+  // The Collector sends the oldest first, which the Hub does not check.
+  test('accepts runs in any order', () => {
+    const runs = [FAILED, SUCCEEDED];
+
+    expect(parsedRuns(runs).data?.jobRuns).toEqual({ runs });
+  });
+
+  // The Hub stores every time the section accepts, including years PostgreSQL
+  // does not parse as text, so a run from a broken clock never fails a Report.
+  test.each([
+    ['the first second of year 0000', '0000-01-01T00:00:00Z'],
+    ['the last second of year 9999', '9999-12-31T23:59:59Z'],
+  ])('accepts a run started at %s', (_, time) => {
+    const run = { ...FAILED, finished: time, started: time };
+
+    expect(parsedRuns([run]).data?.jobRuns).toEqual({ runs: [run] });
+  });
+
   test(`accepts ${String(MAX_JOB_RUNS_PER_REPORT)} runs and refuses one more`, () => {
     expect(parsedRuns(runsOfOneJob(MAX_JOB_RUNS_PER_REPORT)).success).toBe(true);
     expect(parsedRuns(runsOfOneJob(MAX_JOB_RUNS_PER_REPORT + 1)).success).toBe(false);

@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -55,6 +55,10 @@ _Avoid_: incident, outage, restart event
 **job**:
 A scheduled program a provisioner recorded, with its scheduler and schedule, such as a backup. It reports each run to the Collector, and the Hub judges whether it is failing, because its latest run failed, or overdue, because its System was awake for the job's grace period after a scheduled time with no successful run since.
 _Avoid_: cron, task, Backup Job (a backup is a job whose runs report an output file)
+
+**run**:
+One execution of a job, named by its job and start time, with its finish, exit status, and optionally its output file's name and size. The runs the Hub keeps for a job are its run history; the job's latest run and latest successful run are its latest runs, which decide its Conditions.
+_Avoid_: execution, invocation, attempt
 
 **Drift**:
 A recorded file whose content no longer matches the hash its provisioner recorded, or that no longer exists. A file the Collector cannot read is not Drift.

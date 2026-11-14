@@ -32,10 +32,11 @@ export const MAX_SAMPLES_PER_REPORT = 1000;
 // it. The records section may take 8 MiB, the runs section 1 MiB, and the
 // checks section 1 MiB, which leaves 2 MiB for the samples, transcripts,
 // harnesses (at most about 16 KiB), Service stops (about 200 KB), and job runs
-// (at most about 530 KB) when those four are at their budget. A full batch of 1,000 samples of 24 disks
-// each comes to about 2.2 MB, and disks per sample are not bounded, so a Collector
-// sends a Report that would exceed this without its sections, which ride a
-// later, smaller Report.
+// (at most about 783 KB). With those three at their budget, about 1.1 MB is
+// left for the samples and transcripts. A full batch of 1,000 samples of 24
+// disks each comes to about 2.2 MB, and disks per sample are not bounded, so a
+// Collector sends a Report that would exceed this without its sections, which
+// ride a later, smaller Report.
 export const MAX_REPORT_BYTES = 12 * 1024 * 1024;
 
 // An IANA time zone name such as `America/New_York`, `UTC`, or `Etc/GMT+5`.
