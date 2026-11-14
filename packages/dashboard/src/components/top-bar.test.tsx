@@ -4,7 +4,16 @@ import type { FleetSummary } from '../lib/fleet.ts';
 import { linksIn, renderRouted } from './render-routed.tsx';
 import { TopBar } from './top-bar.tsx';
 
-const PATHS = ['/', '/services', '/agents', '/timeline', '/systems', '/systems/$name', '/more'];
+const PATHS = [
+  '/',
+  '/services',
+  '/agents',
+  '/maintenance',
+  '/timeline',
+  '/systems',
+  '/systems/$name',
+  '/more',
+];
 
 const fleet: FleetSummary = {
   counts: { alert: 0, note: 1, warning: 2 },
@@ -32,20 +41,15 @@ test('the top bar links the six sections in order, marks the one the page belong
     { current: true, href: '/systems', icon: false, label: 'Systems' },
     { current: false, href: '/services', icon: false, label: 'Services' },
     { current: false, href: '/agents', icon: false, label: 'Agents' },
-    {
-      current: false,
-      href: '/services?status=%5B%22updates%22%5D',
-      icon: false,
-      label: 'Maintenance',
-    },
+    { current: false, href: '/maintenance', icon: false, label: 'Maintenance' },
     { current: false, href: '/timeline', icon: false, label: 'Activity' },
   ]);
   expect(html).toContain('aria-label="2 warnings, 1 note"');
   expect(html).toContain('role="combobox"');
 });
 
-test('Maintenance is marked on the Services page filtered to updates, and nothing on More', async () => {
-  const maintenance = await renderAt('/services?status=%5B%22updates%22%5D', fleet);
+test('Maintenance is marked on its own page, and nothing on More', async () => {
+  const maintenance = await renderAt('/maintenance', fleet);
   const more = await renderAt('/more', fleet);
 
   expect(linksIn(maintenance).flatMap((link) => (link.current ? [link.label] : []))).toEqual([

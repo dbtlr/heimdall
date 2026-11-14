@@ -8,7 +8,7 @@ const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 
 describe('the Maintenance card', () => {
-  test('shows each row with its Systems linking to their Conditions, and plans on the Services page', async () => {
+  test('shows each row with its Systems linking to their Conditions, and plans on the Maintenance page', async () => {
     const html = await renderRouted(
       <MaintenanceCardView
         card={{
@@ -39,12 +39,8 @@ describe('the Maintenance card', () => {
     );
     expect(html).toContain('oldest 6 d');
     expect(links.find(({ label }) => label === 'db-1')?.href).toBe('/systems/db-1/conditions/41');
-    expect(links.find(({ label }) => label.startsWith('4 Services'))?.href).toBe(
-      '/services?status=%5B%22updates%22%5D',
-    );
-    expect(links.find(({ label }) => label === 'Plan →')?.href).toBe(
-      '/services?status=%5B%22updates%22%5D',
-    );
+    expect(links.find(({ label }) => label.startsWith('4 Services'))?.href).toBe('/maintenance');
+    expect(links.find(({ label }) => label === 'Plan →')?.href).toBe('/maintenance');
   });
 
   test('omits an empty row, shows no chip without security updates, and says when nothing is left', async () => {

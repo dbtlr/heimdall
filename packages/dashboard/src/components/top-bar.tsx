@@ -2,7 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router';
 
 import type { FleetSummary } from '../lib/fleet.ts';
 import { contentFrame } from '../lib/layout.ts';
-import { MAINTENANCE_STATUS, sectionOf, SECTIONS } from '../lib/sections.ts';
+import { sectionOf, SECTIONS } from '../lib/sections.ts';
 import type { Section } from '../lib/sections.ts';
 import { cn } from '../lib/utils.ts';
 import type { JumpIndex } from '../server/jump-index-types.ts';
@@ -11,12 +11,13 @@ import { FleetVerdict } from './fleet-verdict.tsx';
 import { JumpBox } from './jump-box.tsx';
 
 const SECTION_PATHS: Record<
-  Exclude<Section, 'maintenance'>,
-  '/' | '/agents' | '/services' | '/systems' | '/timeline'
+  Section,
+  '/' | '/agents' | '/maintenance' | '/services' | '/systems' | '/timeline'
 > = {
   activity: '/timeline',
   agents: '/agents',
   home: '/',
+  maintenance: '/maintenance',
   services: '/services',
   systems: '/systems',
 };
@@ -46,11 +47,7 @@ function SectionLink({
       {section === 'services' && <ServicesBadge />}
     </>
   );
-  return section === 'maintenance' ? (
-    <Link {...shared} search={{ status: [...MAINTENANCE_STATUS] }} to="/services">
-      {content}
-    </Link>
-  ) : (
+  return (
     <Link {...shared} to={SECTION_PATHS[section]}>
       {content}
     </Link>
@@ -70,7 +67,7 @@ export function TopBar({
   loadJumpIndex: () => Promise<JumpIndex>;
 }) {
   const location = useRouterState({ select: (state) => state.location });
-  const active = sectionOf(location.pathname, location.search);
+  const active = sectionOf(location.pathname);
   return (
     <header className="border-b bg-bar pt-[env(safe-area-inset-top)]">
       <div

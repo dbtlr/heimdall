@@ -7,7 +7,6 @@ import { ConditionGlyph } from '../components/condition-glyph.tsx';
 import { JumpBox } from '../components/jump-box.tsx';
 import type { FleetSummary } from '../lib/fleet.ts';
 import { contentFrame } from '../lib/layout.ts';
-import { MAINTENANCE_STATUS } from '../lib/sections.ts';
 import { getJumpIndex } from '../server/jump-index-fn.ts';
 import { DASHBOARD_VERSION } from '../version.ts';
 
@@ -64,8 +63,8 @@ function More() {
           </Link>
         </li>
         <li>
-          <Link className={ROW} search={{ status: [...MAINTENANCE_STATUS] }} to="/services">
-            <RowLink label="Maintenance">Services with an update</RowLink>
+          <Link className={ROW} to="/maintenance">
+            <RowLink label="Maintenance">Packages, reboots, and Service updates</RowLink>
           </Link>
         </li>
         <li className="flex flex-col gap-2 px-4 py-3">

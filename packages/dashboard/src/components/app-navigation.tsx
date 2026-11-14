@@ -50,7 +50,7 @@ export function ServicesBadge({ corner = false }: { corner?: boolean }) {
 // belongs to in the primary color.
 export function AppNavigation() {
   const location = useRouterState({ select: (state) => state.location });
-  const active = phoneTabOf(location.pathname, location.search);
+  const active = phoneTabOf(location.pathname);
   return (
     <nav
       aria-label="Main navigation"

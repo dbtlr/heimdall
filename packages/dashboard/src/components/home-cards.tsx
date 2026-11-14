@@ -6,7 +6,6 @@ import type { ChangeLink } from '../lib/home-changes.ts';
 import { JOBS_SHOWN, jobWords } from '../lib/home-jobs.ts';
 import type { MaintenanceCard } from '../lib/home-maintenance.ts';
 import { whenAt } from '../lib/phrase.ts';
-import { MAINTENANCE_STATUS } from '../lib/sections.ts';
 import { cn } from '../lib/utils.ts';
 import type { ChangeGroup, HomeJob, JobState } from '../server/home-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
@@ -82,7 +81,7 @@ export function MaintenanceCardView({ card }: { card: MaintenanceCard }) {
     <HomeCard
       id="home-maintenance"
       link={
-        <Link className={CARD_LINK} search={{ status: [...MAINTENANCE_STATUS] }} to="/services">
+        <Link className={CARD_LINK} to="/maintenance">
           Plan →
         </Link>
       }
@@ -129,8 +128,7 @@ export function MaintenanceCardView({ card }: { card: MaintenanceCard }) {
             <li className={ROW}>
               <Link
                 className={cn(ROW_LINE, 'min-h-9 items-center hover:underline')}
-                search={{ status: [...MAINTENANCE_STATUS] }}
-                to="/services"
+                to="/maintenance"
               >
                 <span>{updates.text}</span>
                 <span className="min-w-0 truncate text-xs text-muted-foreground">

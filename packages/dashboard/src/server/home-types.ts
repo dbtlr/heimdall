@@ -73,9 +73,13 @@ export type HomeAgents = {
 // A Service with a newer version available, and since when, when its
 // upstream's releases date it.
 export type AvailableUpdate = {
+  // The version installed, when the Hub holds one.
+  installed: string | null;
   name: string;
   since: number | undefined;
   system: string;
+  // The upstream the Service's updates come from, such as `github:owner/repo`.
+  upstream: string | null;
   version: string;
 };
 

@@ -1,8 +1,5 @@
-import { stringList } from './filter-search.ts';
-
-// The dashboard's sections, in the top bar's order. Maintenance is the
-// Services page filtered to Services with an update, and Activity is the
-// Fleet Timeline.
+// The dashboard's sections, in the top bar's order. Activity is the Fleet
+// Timeline.
 export const SECTIONS = [
   { key: 'home', label: 'Home' },
   { key: 'systems', label: 'Systems' },
@@ -25,18 +22,14 @@ export const PHONE_TABS = [
 
 export type PhoneTab = (typeof PHONE_TABS)[number]['key'];
 
-// The Services filter Maintenance opens: only Services with an update.
+// The Services filter for Services with an update, which a System's page opens.
 export const MAINTENANCE_STATUS = ['updates'] as const;
 
-const isMaintenance = (search: Record<string, unknown>) => {
-  const status = stringList(search.status);
-  return status.length === 1 && status[0] === MAINTENANCE_STATUS[0];
-};
-
 // The section a page belongs to: a System or Condition page to Systems, a
-// Service page to Services, a Session page to Agents, and Compare to Home.
+// Service page to Services, a Session page to Agents, the Maintenance page to
+// Maintenance, and Compare to Home.
 // The More page and unknown paths belong to none.
-export const sectionOf = (path: string, search: Record<string, unknown>): Section | undefined => {
+export const sectionOf = (path: string): Section | undefined => {
   const parts = path.split('/').filter((part) => part !== '');
   const [first, , kind] = parts;
   if (first === undefined || first === 'compare') {
@@ -49,18 +42,21 @@ export const sectionOf = (path: string, search: Record<string, unknown>): Sectio
     return kind === 'sessions' ? 'agents' : 'systems';
   }
   if (first === 'services') {
-    return isMaintenance(search) ? 'maintenance' : 'services';
+    return 'services';
   }
   if (first === 'agents') {
     return 'agents';
+  }
+  if (first === 'maintenance') {
+    return 'maintenance';
   }
   return first === 'timeline' ? 'activity' : undefined;
 };
 
 // The bottom-bar tab a page belongs to: its section's own tab, else More,
 // which holds Systems, Maintenance, and the More page itself.
-export const phoneTabOf = (path: string, search: Record<string, unknown>): PhoneTab | undefined => {
-  const section = sectionOf(path, search);
+export const phoneTabOf = (path: string): PhoneTab | undefined => {
+  const section = sectionOf(path);
   if (section === 'systems' || section === 'maintenance' || path.replace(/\/$/u, '') === '/more') {
     return 'more';
   }

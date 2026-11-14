@@ -205,9 +205,11 @@ const availableUpdatesOf = (rows: readonly ServiceRow[], now: number): Available
     return status?.kind === 'update'
       ? [
           {
+            installed: row.version,
             name: row.name,
             since: status.source === 'upstream' ? status.since : undefined,
             system: row.system,
+            upstream: row.upstream,
             version: status.version,
           },
         ]

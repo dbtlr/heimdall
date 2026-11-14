@@ -608,6 +608,17 @@ const provisionedBySystem = async (now: number) => {
         updates: updatesSection(now, [{ manager: 'apt', packages: 9, security: 2 }], true),
       },
     ],
+    // A System whose Collector checked and found every package current.
+    [
+      'laptop-1',
+      {
+        updates: updatesSection(
+          now,
+          [{ installation: '/opt/homebrew', manager: 'homebrew', packages: 0, security: 0 }],
+          false,
+        ),
+      },
+    ],
     [
       UNPAIRED_SYSTEM,
       { harnesses: { installs: [{ harness: 'codex', location: 'npm', version: '0.57.0' }] } },
