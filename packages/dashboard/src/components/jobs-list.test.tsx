@@ -1,20 +1,20 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
 
+import { renderToStaticMarkup } from 'react-dom/server';
+
 import { useTimeZone as realUseTimeZone } from '../lib/use-time-zone.ts';
 import type { JobsRow } from '../server/jobs-types.ts';
+import { InZone } from './date-time.tsx';
 import { JobsList } from './jobs-list.tsx';
 import { RECORD_DOT } from './recorded-panel.tsx';
 import { linksIn, renderRouted } from './render-routed.tsx';
 
 // The server renders no zone-bound text, so the suffix tests give the viewer a
-// zone, and the real hook comes back for the other test files.
+// zone, and the real hook comes back for the other test files. mock.module
+// rewrites the imported binding too, so the real hook is kept by value before
+// the mock, or the restore would put the mock back.
 const VIEWER_ZONE = 'UTC';
-beforeAll(async () => {
-  await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: () => VIEWER_ZONE }));
-});
-afterAll(async () => {
-  await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: realUseTimeZone }));
-});
+const REAL_USE_TIME_ZONE = realUseTimeZone;
 
 const NOW = 1_800_000_000_000;
 const HOUR = 3_600_000;
@@ -37,6 +37,13 @@ const job = (name: string, extra: Partial<JobsRow> = {}): JobsRow => ({
 });
 
 describe('the Jobs list', () => {
+  beforeAll(async () => {
+    await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: () => VIEWER_ZONE }));
+  });
+  afterAll(async () => {
+    await mock.module('../lib/use-time-zone.ts', () => ({ useTimeZone: REAL_USE_TIME_ZONE }));
+  });
+
   test('lists jobs in the order given, each with its latest run and schedule', async () => {
     const html = await renderRouted(
       <JobsList
@@ -142,4 +149,10 @@ describe('the Jobs list', () => {
     expect(html).toContain('Europe/Copenhagen');
     expect(html).not.toContain(` ${VIEWER_ZONE}`);
   });
+});
+
+// The mock lasts for this file's Jobs list tests only: the server knows no zone
+// again after them, as every later test file expects.
+test('the viewer zone the Jobs list tests give is gone after them', () => {
+  expect(renderToStaticMarkup(<InZone>{(zone) => `at ${zone}`}</InZone>)).toBe('');
 });
