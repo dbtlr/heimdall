@@ -182,10 +182,12 @@ const storeOver = (db: Database, now: () => number): RecordStore => {
     `SELECT job, started, body, revision FROM runs WHERE revision > settled
     ORDER BY startedMs, job, started LIMIT ${String(MAX_JOB_RUNS_PER_REPORT)}`,
   );
-  // Settles a run only while it holds the body that was read, since `forget`
-  // and `record` may replace it with another at the same revision.
+  // Settles a run only while it holds the revision and body that were read: a
+  // run recorded again has moved past that revision, and `forget` then
+  // `record` starts the count over, so a stale settle could otherwise mark a
+  // later revision taken.
   const settleRun = db.query(
-    'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started AND body = $body',
+    'UPDATE runs SET settled = $revision WHERE job = $job AND started = $started AND revision = $revision AND body = $body',
   );
   const holdAll = db.query('UPDATE runs SET revision = revision + 1');
   // `IS NOT` matches every row when the job has no success, where `!=` would match none.

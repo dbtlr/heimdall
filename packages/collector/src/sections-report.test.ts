@@ -1207,6 +1207,37 @@ test('job runs ride Reports oldest first until one carrying them is delivered, a
   expect(after[0]?.jobRuns).toBeUndefined();
 });
 
+test('job runs a failed read missed are sent once the read works, with no further write', async () => {
+  await using dir = await tempStateDir();
+  await seededRuns(dir);
+  let reads = 0;
+  const collector = await setup(dir, {
+    open: async () => {
+      const store = await openRecords({ stateDir: dir.path });
+      return {
+        ...store,
+        heldRuns: () => {
+          reads += 1;
+          if (reads === 2) {
+            throw new Error('disk busy');
+          }
+          return store.heldRuns();
+        },
+      };
+    },
+  });
+
+  const empty = await collector.push();
+  await elsewhere(dir.path, (other) => other.putRun('backup', minutesAgo(5)));
+  const failed = await collector.push();
+  const retried = await collector.push();
+  collector.close();
+
+  expect(empty[0]?.jobRuns).toBeUndefined();
+  expect(failed[0]?.jobRuns).toBeUndefined();
+  expect(retried[0]?.jobRuns?.runs).toHaveLength(1);
+});
+
 test('a run recorded after a delivery is sent, and a run recorded again is sent again', async () => {
   await using dir = await tempStateDir();
   const [older, newer] = [minutesAgo(20), minutesAgo(5)] as const;

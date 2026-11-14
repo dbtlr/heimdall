@@ -316,6 +316,9 @@ const createJobRunsState = ({
           log.warn(`Could not read the job runs to report: ${describeError(error)}`);
         }
         failing = true;
+        // Look again next time, since the store version has moved past the
+        // write this read missed.
+        holding = true;
         return undefined;
       }
       if (held.skipped.length > 0) {

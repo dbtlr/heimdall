@@ -169,6 +169,30 @@ test('a held run whose body starts at another time than its key is left out of t
   expect(again.skipped).toEqual([]);
 });
 
+test('a run recorded again after its job was forgotten stays held when a Report read before that settles', async () => {
+  await using dir = await tempStateDir();
+  const store = await openRecords({ stateDir: dir.path });
+  store.put('job', job);
+  store.putRun('backup', run(0));
+  store.putRun('backup', run(0));
+  store.putRun('backup', run(0));
+  const inFlight = store.heldRuns();
+  // Forgetting the job and recording the run again starts its count over, below
+  // the count the in-flight Report read.
+  store.forget('job', 'backup');
+  store.put('job', job);
+  store.putRun('backup', run(0));
+
+  inFlight.settle();
+  const held = store.heldRuns().runs;
+  store.putRun('backup', run(0));
+  const again = store.heldRuns().runs;
+  store.close();
+
+  expect(held).toEqual([{ ...run(0), job: 'backup' }]);
+  expect(again).toEqual([{ ...run(0), job: 'backup' }]);
+});
+
 test('nothing is unreadable when every row reads', async () => {
   await using dir = await tempStateDir();
   const store = await openRecords({ stateDir: dir.path });
