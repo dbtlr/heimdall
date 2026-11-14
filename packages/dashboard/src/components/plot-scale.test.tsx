@@ -85,3 +85,21 @@ test('a scaled plot with no reading to scale draws no labels, so it states no sc
   );
   expect(html).not.toContain('data-scale-tick');
 });
+
+// The left inset of the limit lines in `html`.
+const clear = (html: string) => /data-limit-lines="true" style="left:([^"]*)"/u.exec(html)?.[1];
+
+test('a limit line starts right of the scale labels laid over the plot, so it never crosses one', () => {
+  const limits = [{ color: 'red', label: 'limit', value: 90 }];
+  expect(clear(scaleOf([0, 100], limits))).toBe('calc(3ch + 0.875rem)');
+  expect(clear(scaleOf([0, 100]))).toBe('calc(3ch + 0.875rem)');
+});
+
+test('a limit line runs the full width when the scale sits in a gutter', () => {
+  const html = renderToStaticMarkup(
+    <ScaledPlot domain={[0, 100]} gutter height={40} limits={[LIMIT]}>
+      <svg />
+    </ScaledPlot>,
+  );
+  expect(html).not.toMatch(/data-limit-lines="true" style=/u);
+});

@@ -79,11 +79,33 @@ function ScaleTicks({
   );
 }
 
+// The room the scale labels laid over a plot take from its left edge: the
+// widest label, the inset, and the backing.
+export const tickClearance = (domain: Domain, format: (value: number) => string): string => {
+  const widest = Math.max(...scaleTicks(domain).map(({ value }) => format(value).length));
+  return `calc(${String(widest)}ch + 0.875rem)`;
+};
+
 // A dashed line across the plot at each limit, labelled at the right end in
 // the limit's color.
-function LimitLines({ domain, limits }: { domain: Domain; limits: readonly PlotLimit[] }) {
+// The line starts at `clearLeft`, right of the scale labels laid over the plot,
+// so it never runs through one.
+function LimitLines({
+  clearLeft,
+  domain,
+  limits,
+}: {
+  clearLeft?: string | undefined;
+  domain: Domain;
+  limits: readonly PlotLimit[];
+}) {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0"
+      data-limit-lines
+      style={clearLeft === undefined ? undefined : { left: clearLeft }}
+    >
       {limits.map((limit) => {
         const y = yPercent(limit.value, domain);
         return (
@@ -143,7 +165,11 @@ export function ScaledPlot({
       <div className={cn('relative w-full', className)} style={{ height }}>
         {children}
         {labelled && <ScaleTicks beside={beside} domain={domain} format={format} />}
-        <LimitLines domain={domain} limits={limits} />
+        <LimitLines
+          clearLeft={labelled && !beside ? tickClearance(domain, format) : undefined}
+          domain={domain}
+          limits={limits}
+        />
       </div>
     );
   }

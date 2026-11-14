@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 
+import type { ActivityLine } from '../lib/activity.ts';
 import type { AxisLane } from '../server/activity-types.ts';
 import { ActivityAxisBody, trackPointer } from './activity-axis.tsx';
 import { renderRouted } from './render-routed.tsx';
@@ -54,12 +55,12 @@ const lane = (system: string, unpaired: boolean): AxisLane => ({
   unpaired,
 });
 
-const renderAxis = (lanes: readonly AxisLane[]) =>
+const renderAxis = (lanes: readonly AxisLane[], lines: readonly ActivityLine[] = []) =>
   renderRouted(
     <ActivityAxisBody
       bucketMs={10 * 60_000}
       lanes={lanes}
-      lines={[]}
+      lines={lines}
       onPin={() => {}}
       pin={undefined}
       timeZone="UTC"
@@ -86,4 +87,18 @@ test('with every System paired there is no divider and no lane is greyed', async
   const html = await renderAxis([lane('server-1', false), lane('laptop-1', false)]);
   expect(html).not.toContain('Unpaired, history kept');
   expect(html).not.toContain('saturate-50');
+});
+
+test('a change mark sits in the strip above the plot, so it never covers a scale label', async () => {
+  const line: ActivityLine = {
+    at: NOW - 60 * 60_000,
+    events: [
+      { at: NOW - 60 * 60_000, kind: 'stop', ongoing: false, service: 'caddy', system: 'server-1' },
+    ],
+    system: 'server-1',
+  };
+  const html = await renderAxis([lane('server-1', false)], [line]);
+  const strip = /data-marks-strip="true">(.*?)<\/div>/u.exec(html)?.[1] ?? '';
+  expect(strip).toContain('<button');
+  expect(html.replace(strip, '')).not.toContain('<button');
 });

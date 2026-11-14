@@ -77,7 +77,7 @@ function Marks({
         return (
           <button
             aria-label={`${formatClock(line.at, timeZone)} ${words.title} ${words.subject}`.trim()}
-            className="absolute top-0 z-10 flex size-5 -translate-x-1/2 items-center justify-center"
+            className="absolute top-0 z-10 flex size-4 -translate-x-1/2 items-center justify-center"
             key={`${String(line.at)}-${lead.kind}`}
             onClick={() => {
               onPin({ at: line.at, system: line.system });
@@ -205,7 +205,7 @@ function Lane({
   return (
     <div className={cn(LANE_GRID, 'relative items-center border-t py-1 first:border-t-0')}>
       <Link
-        className="absolute top-1 left-0 z-20 max-w-[8rem] truncate rounded-md bg-card/85 px-1.5 text-xs font-semibold sm:static sm:max-w-none sm:bg-transparent sm:px-0 sm:text-sm"
+        className="max-w-full truncate text-xs font-semibold sm:text-sm"
         params={{ name: lane.system }}
         to="/systems/$name"
       >
@@ -221,6 +221,10 @@ function Lane({
         // Every handler trackPointer makes, so none is left unattached.
         {...pointer}
       >
+        {/* Marks sit in a strip above the plot, so none covers a scale label or the limit label. */}
+        <div className="relative h-4" data-marks-strip>
+          <Marks lines={lines} onPin={onPin} timeZone={timeZone} window={window} />
+        </div>
         <div className="relative">
           <CpuPlot
             bucketMs={bucketMs}
@@ -240,7 +244,6 @@ function Lane({
             }
             window={window}
           />
-          <Marks lines={lines} onPin={onPin} timeZone={timeZone} window={window} />
         </div>
         <Stretches lane={lane} window={window} />
         {shown !== undefined && <PinLine at={shown} window={window} />}
@@ -362,7 +365,7 @@ export function ActivityAxisBody({
 export function ActivityAxis(props: AxisProps) {
   const timeZone = useTimeZone();
   return timeZone === undefined ? (
-    <div style={{ height: props.lanes.length * (LANE_HEIGHT + 16) }} />
+    <div style={{ height: props.lanes.length * (LANE_HEIGHT + 36) }} />
   ) : (
     <ActivityAxisBody {...props} timeZone={timeZone} />
   );
