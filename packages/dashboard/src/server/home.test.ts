@@ -350,6 +350,61 @@ describe('readHome', () => {
     ]);
   });
 
+  test('counts a Service updated from its own package once, as a Service update, as Maintenance does', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web'] });
+    await holdPackages(h, 'server-1', [null, false]);
+    // `web:amd64`, a security update, is the package of Service `web`.
+    const owned = JSON.stringify({
+      available: '2',
+      installed: '1',
+      name: 'web:amd64',
+      security: true,
+    });
+    await h.db.sql`
+      INSERT INTO update_subjects (system, subject, manager, installation, name, first_seen_at,
+        security_since, observed_at, pending_update)
+      VALUES ('server-1', ${JSON.stringify(['apt', 'system', 'web:amd64'])}, 'apt', 'system',
+        'web:amd64', ${at(NOW - DAY)}, ${at(NOW - DAY)}, ${at(NOW)}, ${owned}::text::jsonb)
+    `;
+    const subject = JSON.stringify(['apt', 'system']);
+    const condition = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -86_400,
+      subject,
+      system: 'server-1',
+    });
+    // The latest APT check lists web:amd64 as pending, which is what makes the
+    // Service's update known.
+    const observed = JSON.stringify({
+      installation: 'system',
+      manager: 'apt',
+      observedAt: NOW,
+      result: {
+        kind: 'available',
+        metadataAt: NOW,
+        updates: [{ available: '2', installed: '1', name: 'web:amd64', security: true }],
+      },
+    });
+    await h.db.sql`
+      INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+      VALUES ('server-1', 'apt', 'system', ${at(NOW)}, ${observed}::text::jsonb)
+    `;
+    await h.db.sql`DELETE FROM service_versions`;
+    await h.db.sql`
+      INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+      VALUES ('server-1', 'web', '1', 'apt:web', ${at(NOW - 10 * DAY)})
+    `;
+
+    const { maintenance } = await home(h);
+
+    expect(maintenance.packages).toEqual([
+      { conditionId: condition, packages: 2, security: 0, system: 'server-1' },
+    ]);
+    expect(maintenance.updates.map(({ name }) => name)).toEqual(['web']);
+  });
+
   test('reads the changes of the last day grouped: a version change with its restarts across Systems, a lone stop, and a warning raised and cleared', async () => {
     await using h = await startHub();
     await hear(h, 'server-1');

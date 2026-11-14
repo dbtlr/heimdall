@@ -4,11 +4,13 @@
 
 import type { PendingPackage } from './condition-detail-types.ts';
 
-// A package the Hub holds as pending, with its package manager's display name.
-// `name` is the full identity the manager reports; `label` is the short name
+// A package the Hub holds as pending, with its package manager's display name
+// and the installation of that manager it is pending in (a Homebrew prefix, or
+// `system`). `name` is the full identity the manager reports; `label` is the short name
 // people know it by, and `cask` marks a Homebrew cask.
 export type MaintenancePackage = PendingPackage & {
   cask: boolean;
+  installation: string;
   label: string;
   manager: string;
 };

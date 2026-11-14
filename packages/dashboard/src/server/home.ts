@@ -156,7 +156,7 @@ const readHomeSnapshot = async (
     readLeadEvidence(sql, lead, now),
     lead === undefined ? readLastCleared(sql) : undefined,
     timeZone === undefined ? undefined : readHomeAgents(sql, { now, timeZone }),
-    readHeldPackages(sql),
+    readHeldPackages(sql, updates),
     readHomeJobs(sql, { attention, now }),
     readChanges(sql, { now, since: now - CHANGES_SINCE_MS }),
   ]);

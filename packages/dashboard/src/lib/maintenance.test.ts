@@ -20,6 +20,7 @@ import {
 const pkg = (name: string, security = false): MaintenancePackage => ({
   available: '2',
   cask: false,
+  installation: 'system',
   installed: '1',
   label: name,
   manager: 'apt',

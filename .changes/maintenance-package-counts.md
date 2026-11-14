@@ -1,0 +1,1 @@
+- **Maintenance and Home count packages correctly** (HMD-253, HMD-260, HMD-263). A package pending in two Homebrew installations now lists once for each, naming its installation. A System with no installed-package census no longer hides a foreign architecture's suffix, and Home no longer counts a Service's own package as a package as well as a Service update.

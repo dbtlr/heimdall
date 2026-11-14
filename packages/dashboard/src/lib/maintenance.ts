@@ -67,6 +67,25 @@ export const splitPackages = (
   return { more: ordered.slice(cut), shown: ordered.slice(0, cut) };
 };
 
+// The key of a package row: one formula pending in two Homebrew prefixes is
+// two rows.
+export const packageKey = ({ installation, manager, name }: MaintenancePackage): string =>
+  `${manager}/${installation}/${name}`;
+
+// The package managers with more than one installation among `packages`, where
+// a row says which installation it is in.
+export const managersWithSeveralInstallations = (
+  packages: readonly MaintenancePackage[],
+): Set<string> => {
+  const installations = new Map<string, Set<string>>();
+  for (const { installation, manager } of packages) {
+    installations.set(manager, (installations.get(manager) ?? new Set()).add(installation));
+  }
+  return new Set(
+    [...installations].filter(([, found]) => found.size > 1).map(([manager]) => manager),
+  );
+};
+
 // How long before `now`, in its largest unit: "4 d".
 export const ago = (at: number, now: number): string => formatSpanShort(Math.max(0, now - at));
 
@@ -157,12 +176,21 @@ const UPSTREAM_NAMES: Record<string, string> = {
 export const upstreamName = (upstream: string | null): string | undefined =>
   upstream === null ? undefined : UPSTREAM_NAMES[upstream.split(':')[0] ?? ''];
 
+// What the rule below needs of a package and of a Service update, so Home and
+// Maintenance apply it to the rows each reads.
+type OwnablePackage = Pick<MaintenancePackage, 'name' | 'security' | 'securitySince'>;
+type OwningUpdate = Pick<MaintenanceServiceUpdate, 'security' | 'upstream'>;
+
 // The System with the packages of its Services left out: a Service whose
 // upstream is an apt: or brew: package shows its update once, as a Service
 // update marked security when its package is a security update, and its
 // package is neither counted nor listed.
-export const withoutServicePackages = (system: MaintenanceSystem): MaintenanceSystem => {
-  const packagesOf = ({ upstream }: MaintenanceServiceUpdate) =>
+export const withoutServicePackages = <
+  S extends { packages: OwnablePackage[]; updates: OwningUpdate[] },
+>(
+  system: S,
+): S => {
+  const packagesOf = ({ upstream }: OwningUpdate) =>
     upstream === null
       ? []
       : system.packages.filter(({ name }) => packageMatchesUpstream(upstream, name));
@@ -177,5 +205,6 @@ export const withoutServicePackages = (system: MaintenanceSystem): MaintenanceSy
         security: update.security || packagesOf(update).some(isSecurityUpdate),
       }))
       .toSorted((a, b) => Number(b.security) - Number(a.security)),
+    // The rows are the System's own, kept whole; S's types cannot say so.
   };
 };

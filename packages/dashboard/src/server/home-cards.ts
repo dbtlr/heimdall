@@ -5,27 +5,73 @@
 import { nextScheduledTime } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { isSecurityUpdate } from '../lib/condition-detail.ts';
 import { homeJob, orderJobs } from '../lib/home-jobs.ts';
+import { withoutServicePackages } from '../lib/maintenance.ts';
 import type { Attention } from './attention-types.ts';
-import type { Change, HeldPackages, HomeJob, ServiceChange } from './home-types.ts';
-import { conditionKind, scheduleOf, toRun } from './hub-rows.ts';
+import type {
+  AvailableUpdate,
+  Change,
+  HeldPackages,
+  HomeJob,
+  ServiceChange,
+} from './home-types.ts';
+import { bySystem, conditionKind, scheduleOf, toRun } from './hub-rows.ts';
 import type { RunRow } from './hub-rows.ts';
 import { readServiceStops } from './service-stops.ts';
+import { pendingPackageOf } from './update-observations.ts';
+
+type HeldRow = {
+  installation: string;
+  manager: string;
+  name: string;
+  pending_update: unknown;
+  security_since: Date | null;
+  system: string;
+};
 
 // The packages the Hub holds as pending in each package source of each paired
 // System, which a failed or stale check leaves in place, and the security
 // updates among them: a package the latest check calls one, or one the Hub has
-// held as one since an earlier check.
-export const readHeldPackages = async (sql: SQL): Promise<HeldPackages[]> =>
-  sql`
-    SELECT u.system, u.manager, u.installation, count(*)::int AS packages,
-      count(*) FILTER (
-        WHERE u.security_since IS NOT NULL OR u.pending_update->>'security' = 'true'
-      )::int AS security
+// held as one since an earlier check. A Service updated from its own package
+// is left out, by the rule Maintenance lists packages by: `updates` are the
+// Services with an update.
+export const readHeldPackages = async (
+  sql: SQL,
+  updates: readonly AvailableUpdate[],
+): Promise<HeldPackages[]> => {
+  const rows: HeldRow[] = await sql`
+    SELECT u.system, u.manager, u.installation, u.name, u.pending_update, u.security_since
     FROM update_subjects u
     JOIN paired_systems p ON p.system = u.system
-    GROUP BY u.system, u.manager, u.installation
   `;
+  const held = new Map<string, HeldPackages>();
+  for (const [system, systemRows] of bySystem(rows)) {
+    const { packages } = withoutServicePackages({
+      packages: systemRows.map((row) =>
+        Object.assign(pendingPackageOf(row), {
+          installation: row.installation,
+          manager: row.manager,
+        }),
+      ),
+      updates: updates
+        .filter((update) => update.system === system)
+        .map(({ upstream }) => ({ security: false, upstream })),
+    });
+    for (const pkg of packages) {
+      const key = JSON.stringify([system, pkg.manager, pkg.installation]);
+      const before = held.get(key);
+      held.set(key, {
+        installation: pkg.installation,
+        manager: pkg.manager,
+        packages: (before?.packages ?? 0) + 1,
+        security: (before?.security ?? 0) + Number(isSecurityUpdate(pkg)),
+        system,
+      });
+    }
+  }
+  return [...held.values()];
+};
 
 type JobRow = {
   latest_run: RunRow['latest_run'] | null;
