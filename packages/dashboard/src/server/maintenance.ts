@@ -13,6 +13,7 @@ import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { orderMaintenance } from '../lib/maintenance.ts';
+import { inSnapshot } from './fleet-overview.ts';
 import { bySystem } from './hub-rows.ts';
 import type {
   Maintenance,
@@ -109,7 +110,7 @@ const systemCheck = (sources: readonly UpdateManager[], now: number): Maintenanc
 // Each paired System with what its package checks show, the packages the Hub
 // holds as pending on it, a pending reboot, and the Services with an update,
 // ordered for the page.
-export const readMaintenance = async (sql: SQL, now: number): Promise<Maintenance> => {
+const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenance> => {
   const [systems, sources, packages, services] = await Promise.all([
     readSystems(sql),
     readSources(sql),
@@ -152,3 +153,7 @@ export const readMaintenance = async (sql: SQL, now: number): Promise<Maintenanc
     ),
   };
 };
+
+// One snapshot, so a Report stored between the reads cannot pair a fresh
+// package check with the packages it made pending before it.
+export const readMaintenance = inSnapshot(readMaintenanceSnapshot);

@@ -119,7 +119,12 @@ export const conditionKind = (kind: string): ConditionKind => {
 export const bySystem = <Row extends { system: string }>(rows: readonly Row[]) => {
   const grouped = new Map<string, Row[]>();
   for (const row of rows) {
-    grouped.set(row.system, [...(grouped.get(row.system) ?? []), row]);
+    const group = grouped.get(row.system);
+    if (group === undefined) {
+      grouped.set(row.system, [row]);
+    } else {
+      group.push(row);
+    }
   }
   return grouped;
 };
