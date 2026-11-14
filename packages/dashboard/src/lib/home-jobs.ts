@@ -45,7 +45,9 @@ const RANK: Record<JobState, number> = { due: 2, failing: 0, ok: 2, overdue: 1 }
 
 // Failing jobs first, then overdue, then by their latest run, the most recent
 // first, with jobs that never ran last, then by System and name.
-export const orderJobs = (jobs: readonly HomeJob[]): HomeJob[] =>
+export const orderJobs = <T extends Pick<HomeJob, 'lastRunAt' | 'name' | 'state' | 'system'>>(
+  jobs: readonly T[],
+): T[] =>
   jobs.toSorted(
     (a, b) =>
       RANK[a.state] - RANK[b.state] ||

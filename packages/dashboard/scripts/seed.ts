@@ -233,7 +233,10 @@ type Report = ReturnType<typeof report>;
 
 // The sections a Collector sends beside Vitals: what its provisioner recorded,
 // the runs of its jobs, what it observed against both, and the Harnesses installed.
-type Provisioned = Pick<Report, 'checks' | 'harnesses' | 'records' | 'runs' | 'updates'>;
+type Provisioned = Pick<
+  Report,
+  'checks' | 'harnesses' | 'jobRuns' | 'records' | 'runs' | 'updates'
+>;
 
 const PROVENANCE = { by: 'fleet', revision: 'a1b2c3d' };
 const HOME = '/home/dev';
@@ -278,6 +281,40 @@ const runOf = (
   ...(output === undefined ? {} : { output }),
   started: iso(started),
 });
+
+// The `count` runs of `job` the Collector has not yet handed over, one every
+// `every` milliseconds, the last started at `last`, which exits with
+// `lastStatus` while the rest succeed.
+const jobRunsOf = (
+  job: string,
+  {
+    count,
+    every,
+    last,
+    lastStatus = 0,
+    minutes,
+    now,
+  }: {
+    count: number;
+    every: number;
+    last: number;
+    lastStatus?: number;
+    minutes: number;
+    now: number;
+  },
+) =>
+  Array.from({ length: count }, (_, i) => ({
+    job,
+    ...runOf(
+      {
+        exitStatus: i === count - 1 ? lastStatus : 0,
+        minutes,
+        now,
+        started: last - (count - 1 - i) * every,
+      },
+      undefined,
+    ),
+  }));
 
 // When the seeded jobs last ran, and what they found, as milliseconds. The
 // Conditions and the Reports both read these, so each failing run has its Condition.
@@ -471,6 +508,25 @@ const workstationSections = async (now: number, scenario: Scenario) => {
         { harness: 'codex', location: 'npm', version: '0.58.0' },
       ],
     },
+    jobRuns: {
+      runs: [
+        ...jobRunsOf('dotfiles-pull', {
+          count: 14,
+          every: HOUR,
+          last: scenario.dotfilesStarted,
+          minutes: 0.1,
+          now,
+        }),
+        ...jobRunsOf('borg-home', {
+          count: 8,
+          every: DAY,
+          last: scenario.borgStarted,
+          lastStatus: 2,
+          minutes: 12,
+          now,
+        }),
+      ],
+    },
     records: { records: sent, unreadable: [] },
     runs: {
       jobs: [
@@ -545,6 +601,27 @@ const serverSections = async (now: number, scenario: Scenario) => {
       ],
       services: [
         supervisorCheck('dev-db', 'stopped', 'status exited, exit code 137', now - 2 * HOUR),
+      ],
+    },
+    // The nightly backup skipped one night; the log rotation ran until its
+    // last success, which the Hub's runs section also holds.
+    jobRuns: {
+      runs: [
+        ...jobRunsOf(nightly.name, {
+          count: 10,
+          every: DAY,
+          last: scenario.nightlyStarted,
+          lastStatus: 1,
+          minutes: 30,
+          now,
+        }).filter((_, index) => index !== 5),
+        ...jobRunsOf(logRotate.name, {
+          count: 6,
+          every: DAY,
+          last: scenario.logRotateMissed - DAY,
+          minutes: 2,
+          now,
+        }),
       ],
     },
     records: {

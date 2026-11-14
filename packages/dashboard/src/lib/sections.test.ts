@@ -24,6 +24,7 @@ test('every route marks the section it belongs to, and the phone tab that holds 
     ['/systems/server-1/services/web', 'services', 'services'],
     ['/systems/server-1/sessions/codex/codex/abc', 'agents', 'agents'],
     ['/services', 'services', 'services'],
+    ['/jobs', 'services', 'services'],
     ['/maintenance', 'maintenance', 'more'],
     ['/agents', 'agents', 'agents'],
     ['/activity', 'activity', 'activity'],
