@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
-import { latestScheduledTime } from './schedule.ts';
+import { latestScheduledTime, nextScheduledTime } from './schedule.ts';
 
 const at = (iso: string) => Date.parse(iso);
 
@@ -289,4 +289,215 @@ test('agrees with brute force around clock changes in several zones', () => {
       });
     }
   }
+});
+
+// The definition, by brute force: every wall-clock minute an entry names
+// from the day before the clock's date at `after` to three days after it,
+// resolved as Temporal's `compatible` does, and the earliest instant after `after`.
+const bruteForceNext = ({ after, schedule, timeZone }: Parameters<typeof nextScheduledTime>[0]) => {
+  const first = Temporal.Instant.fromEpochMilliseconds(after)
+    .toZonedDateTimeISO(timeZone)
+    .toPlainDate()
+    .subtract({ days: 1 });
+  let next: number | undefined;
+  for (let ahead = 0; ahead < 5; ahead += 1) {
+    const date = first.add({ days: ahead });
+    for (let minute = 0; minute < 1440; minute += 1) {
+      const fires = schedule.some(
+        (e) =>
+          (e.hour === undefined || e.hour === Math.floor(minute / 60)) &&
+          (e.minute === undefined || e.minute === minute % 60),
+      );
+      if (fires) {
+        const instant = date
+          .toPlainDateTime({ hour: Math.floor(minute / 60), minute: minute % 60 })
+          .toZonedDateTime(timeZone, { disambiguation: 'compatible' }).epochMilliseconds;
+        if (instant > after && (next === undefined || instant < next)) {
+          next = instant;
+        }
+      }
+    }
+  }
+  return next;
+};
+
+describe('nextScheduledTime', () => {
+  // Tuesday 2026-10-06 16:00 UTC.
+  const NOW = Date.UTC(2026, 9, 6, 16, 0);
+
+  test("a daily time later today comes today, an earlier one tomorrow, in the System's zone", () => {
+    expect(
+      nextScheduledTime({ after: NOW, schedule: [{ hour: 17, minute: 30 }], timeZone: 'UTC' }),
+    ).toBe(Date.UTC(2026, 9, 6, 17, 30));
+    expect(
+      nextScheduledTime({ after: NOW, schedule: [{ hour: 3, minute: 0 }], timeZone: 'UTC' }),
+    ).toBe(Date.UTC(2026, 9, 7, 3, 0));
+    // 17:30 in Berlin (UTC+2 in October) is 15:30 UTC, already past.
+    expect(
+      nextScheduledTime({
+        after: NOW,
+        schedule: [{ hour: 17, minute: 30 }],
+        timeZone: 'Europe/Berlin',
+      }),
+    ).toBe(Date.UTC(2026, 9, 7, 15, 30));
+  });
+
+  test('a time exactly at `after` is not next; the following one is', () => {
+    expect(
+      nextScheduledTime({
+        after: Date.UTC(2026, 9, 6, 3, 0),
+        schedule: [{ hour: 3, minute: 0 }],
+        timeZone: 'UTC',
+      }),
+    ).toBe(Date.UTC(2026, 9, 7, 3, 0));
+  });
+
+  test('a weekly time and the earliest of several entries', () => {
+    expect(
+      nextScheduledTime({
+        after: NOW,
+        schedule: [
+          { hour: 4, minute: 0, weekday: 0 },
+          { hour: 4, minute: 0, weekday: 5 },
+        ],
+        timeZone: 'UTC',
+      }),
+    ).toBe(Date.UTC(2026, 9, 9, 4, 0));
+  });
+
+  test('entries listed later in the day first still give the earliest time', () => {
+    expect(
+      nextScheduledTime({
+        after: Date.UTC(2026, 9, 6, 1, 0),
+        schedule: [
+          { hour: 17, minute: 30 },
+          { hour: 3, minute: 0 },
+        ],
+        timeZone: 'UTC',
+      }),
+    ).toBe(Date.UTC(2026, 9, 6, 3, 0));
+  });
+
+  test('no schedule, or an unknown zone, has no next time', () => {
+    expect(nextScheduledTime({ after: NOW, schedule: [], timeZone: 'UTC' })).toBeUndefined();
+    expect(
+      nextScheduledTime({ after: NOW, schedule: [{ minute: 0 }], timeZone: 'Nowhere/Else' }),
+    ).toBeUndefined();
+  });
+
+  test('a time a clock change skips does not hide a later time that falls first', () => {
+    // New York skips 02:00 to 03:00 on 2026-03-08, so 02:30 falls at 03:30 EDT, after 03:10 EDT.
+    expect(
+      nextScheduledTime({
+        after: Date.UTC(2026, 2, 8, 6, 0),
+        schedule: [
+          { hour: 2, minute: 30 },
+          { hour: 3, minute: 10 },
+        ],
+        timeZone: 'America/New_York',
+      }),
+    ).toBe(Date.UTC(2026, 2, 8, 7, 10));
+    // Lord Howe Island skips 02:00 to 02:30 on 2026-10-04, so 02:10 falls at
+    // 02:40, after 02:30, though the clock reads hour 2 for both.
+    expect(
+      nextScheduledTime({
+        after: Date.UTC(2026, 9, 3, 15, 0),
+        schedule: [
+          { hour: 2, minute: 10 },
+          { hour: 2, minute: 30 },
+        ],
+        timeZone: 'Australia/Lord_Howe',
+      }),
+    ).toBe(Date.UTC(2026, 9, 3, 15, 30));
+  });
+
+  test("a time the clock skips late on the day before can be next after the clock's midnight", () => {
+    // Nuuk skips from 23:00 on 28 March to 00:00 the next day: at 00:10 on
+    // 29 March, 28 March's 23:30 is still to come, at 01:30 UTC.
+    expect(
+      nextScheduledTime({
+        after: Date.UTC(2026, 2, 29, 1, 10),
+        schedule: [{ hour: 23, minute: 30 }],
+        timeZone: 'America/Nuuk',
+      }),
+    ).toBe(Date.UTC(2026, 2, 29, 1, 30));
+  });
+
+  test('a time the clock repeats falls the first time, so its second pass is not next', () => {
+    // New York repeats 01:00 to 02:00 on 2026-11-01: 01:30 falls at 05:30 UTC.
+    const schedule = [{ hour: 1, minute: 30 }];
+    const timeZone = 'America/New_York';
+
+    expect(nextScheduledTime({ after: Date.UTC(2026, 10, 1, 5, 0), schedule, timeZone })).toBe(
+      Date.UTC(2026, 10, 1, 5, 30),
+    );
+    expect(nextScheduledTime({ after: Date.UTC(2026, 10, 1, 5, 30), schedule, timeZone })).toBe(
+      Date.UTC(2026, 10, 2, 6, 30),
+    );
+    // At 01:59 EDT every minute of the repeated hour has had its first pass.
+    expect(
+      nextScheduledTime({ after: Date.UTC(2026, 10, 1, 5, 59), schedule: [{}], timeZone }),
+    ).toBe(Date.UTC(2026, 10, 1, 7, 0));
+  });
+
+  test('on a day with no clock change, an every-minute job converts no minute of the day before', () => {
+    const conversions = spyOn(Temporal.PlainDateTime.prototype, 'toZonedDateTime');
+    try {
+      // 12:00 in Berlin.
+      expect(
+        nextScheduledTime({
+          after: Date.UTC(2026, 5, 17, 10, 0),
+          schedule: [{}],
+          timeZone: 'Europe/Berlin',
+        }),
+      ).toBe(Date.UTC(2026, 5, 17, 10, 1));
+      // Today's minutes up to 12:01, tomorrow's first, and both midnights.
+      expect(conversions).toHaveBeenCalledTimes(12 * 60 + 2 + 3);
+    } finally {
+      conversions.mockRestore();
+    }
+  });
+
+  test('agrees with brute force around clock changes in several zones', () => {
+    // A seeded generator, so a failure repeats.
+    let seed = 41;
+    const random = (n: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
+      return Math.floor((seed / 2 ** 31) * n);
+    };
+    const transitions = [
+      ['America/New_York', '2026-03-08T07:00:00Z'],
+      ['America/New_York', '2026-11-01T06:00:00Z'],
+      ['America/Havana', '2026-03-08T05:00:00Z'],
+      ['America/Havana', '2026-11-01T05:00:00Z'],
+      ['America/Nuuk', '2026-03-29T01:00:00Z'],
+      ['America/Nuuk', '2026-10-25T01:00:00Z'],
+      ['America/Goose_Bay', '1988-10-30T02:00:00Z'],
+      ['Australia/Lord_Howe', '2026-10-03T15:30:00Z'],
+      ['Australia/Lord_Howe', '2026-04-04T15:00:00Z'],
+      ['Pacific/Apia', '2011-12-30T10:00:00Z'],
+      ['Asia/Kathmandu', '2026-10-10T00:00:00Z'],
+    ] as const;
+    for (const [timeZone, transition] of transitions) {
+      // Half the time, an hour next to the change's local hour, where times collide.
+      const changeHour = Temporal.Instant.from(transition)
+        .subtract({ hours: 1 })
+        .toZonedDateTimeISO(timeZone).hour;
+      for (let i = 0; i < 200; i += 1) {
+        const hour = () => (random(2) === 0 ? random(24) : (changeHour + random(4)) % 24);
+        const schedule = Array.from({ length: 1 + random(3) }, () =>
+          random(4) === 0 ? { minute: random(60) } : { hour: hour(), minute: random(60) },
+        );
+        // Mostly within three hours of the change, and otherwise up to two and
+        // a half days after it, past where the day before can hold the next time.
+        const minutesFromChange = random(4) === 0 ? random(60 * 60) : random(6 * 60) - 3 * 60;
+        const input = { after: at(transition) + minutesFromChange * 60_000, schedule, timeZone };
+
+        expect({ input, next: nextScheduledTime(input) }).toEqual({
+          input,
+          next: bruteForceNext(input),
+        });
+      }
+    }
+  });
 });

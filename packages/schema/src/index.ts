@@ -161,3 +161,4 @@ export {
   parseVersion,
 } from './upstream-versions.ts';
 export type { ParsedVersion, UpdateStatus } from './upstream-versions.ts';
+export { latestScheduledTime, nextScheduledTime } from './schedule.ts';
