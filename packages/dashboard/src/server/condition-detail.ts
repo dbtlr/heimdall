@@ -210,7 +210,7 @@ const readOpenAttention = async (
   return items.find((item) => item.conditionId === id);
 };
 
-// One Condition occurrence of a System, with its Timeline of transitions, the
+// One Condition occurrence of a System, with its history of transitions, the
 // evidence and next steps while it is open, the limits the Hub judges by now,
 // the readings around it, and for high memory the processes holding the most. Undefined when the System has no such occurrence.
 // Read-only.

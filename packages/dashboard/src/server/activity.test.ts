@@ -206,7 +206,7 @@ test('an unpaired System keeps its Condition history, labelled unpaired', async 
 });
 
 // The plan for a read of `table` over a window on `column`, with sequential
-// scans priced out, so a missing index shows as a Seq Scan.
+// scans priced out.
 const windowPlan = (sql: SQL, table: string, column: string) =>
   sql.begin(async (tx) => {
     await tx`SET LOCAL enable_seqscan = off`;
@@ -217,10 +217,30 @@ const windowPlan = (sql: SQL, table: string, column: string) =>
     return rows.map((row) => row['QUERY PLAN']).join('\n');
   });
 
+// The indexes on `table` that lead with `column` and hold every row. A
+// partial index, or one that leads with another column and is skipped
+// through, does not find a window by time.
+const timeIndexes = async (sql: SQL, table: string, column: string): Promise<string[]> => {
+  const rows: { name: string }[] = await sql`
+    SELECT i.relname AS name
+    FROM pg_index x
+    JOIN pg_class i ON i.oid = x.indexrelid
+    JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = x.indkey[0]
+    WHERE x.indrelid = ${table}::regclass AND a.attname = ${column} AND x.indpred IS NULL
+  `;
+  return rows.map((row) => row.name);
+};
+
 test.each([
   ['condition_transitions', 'at'],
   ['deliveries', 'pushed_at'],
-])('each window Activity reads from %s is found through an index', async (table, column) => {
-  await using h = await startHub();
-  expect(await windowPlan(h.db.sql, table, column)).not.toContain('Seq Scan');
-});
+  ['service_stops', 'stopped_at'],
+])(
+  'each window Activity reads from %s is found through an index on its time',
+  async (table, column) => {
+    await using h = await startHub();
+    const [index] = await timeIndexes(h.db.sql, table, column);
+    expect(index).toBeDefined();
+    expect(await windowPlan(h.db.sql, table, column)).toMatch(new RegExp(String.raw`\b${index}\b`));
+  },
+);

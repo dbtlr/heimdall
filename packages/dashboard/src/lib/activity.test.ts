@@ -171,6 +171,17 @@ test('an alert for another Condition in the line is named, not folded into the a
   expect(words.detail).toBe('Alert sent for Service down caddy');
 });
 
+test("an alert for another Condition is not shown as the lead Condition's alert-sent marker", () => {
+  const [line] = groupActivity([
+    condition(),
+    alert({ at: T + 30_000, condition: 'low_disk', subject: '/' }),
+  ]);
+  const words = lineWords(line!);
+  expect([words.title, words.subject]).toEqual(['Service down', 'caddy']);
+  expect(words.alert).toBeUndefined();
+  expect(words.detail).toBe('Exited with status 1. · Alert sent for Low disk /');
+});
+
 test('the open marker belongs to the lead, and another open change says so itself', () => {
   const [line] = groupActivity([
     condition({ action: 'cleared', at: T + 2 * MIN, open: false, raisedAt: T }),
