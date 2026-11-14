@@ -103,11 +103,18 @@ export const activityCounts = (events: readonly ActivityEvent[], filters: Activi
       events.filter((event) => event.kind === each && matches(event, filters, 'kind')),
     );
   }
+  const bySystem = new Map<string, ActivityEvent[]>();
+  for (const event of events) {
+    const group = bySystem.get(event.system);
+    if (group === undefined) {
+      bySystem.set(event.system, [event]);
+    } else {
+      group.push(event);
+    }
+  }
   const system: Record<string, number> = {};
-  for (const each of new Set(events.map((event) => event.system))) {
-    system[each] = lineCount(
-      events.filter((event) => event.system === each && matches(event, filters, 'system')),
-    );
+  for (const [each, own] of bySystem) {
+    system[each] = lineCount(own.filter((event) => matches(event, filters, 'system')));
   }
   return {
     kind,

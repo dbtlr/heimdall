@@ -170,9 +170,12 @@ export const withoutServicePackages = (system: MaintenanceSystem): MaintenanceSy
   return {
     ...system,
     packages: system.packages.filter((pkg) => !owned.has(pkg)),
-    updates: system.updates.map((update) => ({
-      ...update,
-      security: update.security || packagesOf(update).some(isSecurityUpdate),
-    })),
+    // Security updates first, as packages are; the order is otherwise kept.
+    updates: system.updates
+      .map((update) => ({
+        ...update,
+        security: update.security || packagesOf(update).some(isSecurityUpdate),
+      }))
+      .toSorted((a, b) => Number(b.security) - Number(a.security)),
   };
 };

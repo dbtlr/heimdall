@@ -244,4 +244,17 @@ describe('withoutServicePackages', () => {
       'laptop-1',
     ]);
   });
+
+  test("a Service whose package is a security update lists before the System's other Service updates", () => {
+    const kept = withoutServicePackages(
+      system('server-1', {
+        packages: [pkg('caddy:amd64', true)],
+        updates: [
+          { ...update('api'), upstream: 'github:owner/api' },
+          { ...update('web'), upstream: 'apt:caddy' },
+        ],
+      }),
+    );
+    expect(kept.updates.map(({ name }) => name)).toEqual(['web', 'api']);
+  });
 });
