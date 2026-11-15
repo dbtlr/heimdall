@@ -799,9 +799,16 @@ test('the newest carrier decides: an empty list means no holders, not older ones
   expect(memoryReason(facts)).toMatch(PLAIN);
 });
 
-test('windows shorter than two minutes still find a list from 1:45 earlier', async () => {
+test('windows shorter than two minutes still find a list from 1:30 earlier', async () => {
   await using h = await startHub();
+  // Every window is under two minutes, so only the carrier floor reaches the list.
   const limits = parseConditionLimits({
+    cpu: {
+      noteMinutes: 0.25,
+      noteWindowMinutes: 0.25,
+      warningMinutes: 0.5,
+      warningWindowMinutes: 0.5,
+    },
     memory: { percent: 90, warningMinutes: 0.25, warningWindowMinutes: 0.5 },
   });
   const quiet = readings(NOW, 10, () => 10).map((row, i) =>
@@ -812,7 +819,7 @@ test('windows shorter than two minutes still find a list from 1:45 earlier', asy
   );
   await send(h, quiet);
   await evaluate(h, limits);
-  // The raise lands about 1:45 after the only carrier, before the next read's start.
+  // The raise lands 1:30 after the only carrier, before the next read's start.
   await send(
     h,
     readings(NOW + 10 * MINUTE + STEP, 1, () => 10).map((row) =>
@@ -824,6 +831,33 @@ test('windows shorter than two minutes still find a list from 1:45 earlier', asy
     SELECT raised_reason AS reason FROM conditions WHERE kind = 'high_memory' AND system = 'laptop-1'
   `;
   expect(row?.reason).toContain('; largest: postgres 3.1 GiB');
+});
+
+test('a backfilled High memory episode names the holders its samples carried', async () => {
+  await using h = await startHub();
+  const limits = parseConditionLimits({
+    memory: { percent: 90, warningMinutes: 5, warningWindowMinutes: 10 },
+  });
+  await send(
+    h,
+    readings(NOW + 120 * MINUTE, 0, () => 10),
+  );
+  await evaluate(h, limits);
+  const delayed = readings(NOW, 60, () => 10).map((row, i) =>
+    Object.assign(row, {
+      memory: { totalBytes: 1000, usedBytes: i <= 4 * 20 ? 950 : 100 },
+      processes: holderObservation(),
+    }),
+  );
+  await send(h, delayed);
+  await evaluate(h, limits);
+  const found: { reason: string; cleared: boolean }[] = await h.db.sql`
+    SELECT raised_reason AS reason, cleared_at IS NOT NULL AS cleared
+    FROM conditions WHERE kind = 'high_memory' AND system = 'laptop-1'
+  `;
+  expect(found).toHaveLength(1);
+  expect(found[0]?.cleared).toBe(true);
+  expect(found[0]?.reason).toContain('; largest: postgres 3.1 GiB');
 });
 
 const holderObservation = () => ({
