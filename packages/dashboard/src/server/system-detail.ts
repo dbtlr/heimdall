@@ -1,4 +1,4 @@
-import { nextScheduledTime } from '@heimdall/schema';
+import { ConditionLevelSchema, nextScheduledTime } from '@heimdall/schema';
 import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
@@ -8,9 +8,17 @@ import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import { readDiskTrends } from './disk-trends.ts';
-import { isRange, RANGE_MS, RANGES } from './fleet-overview-types.ts';
-import type { Link, Range } from './fleet-overview-types.ts';
 import {
+  isLongRange,
+  isRange,
+  RANGE_BUCKET_MS,
+  RANGE_MS,
+  RANGES,
+  RAW_KEPT_MS,
+} from './fleet-overview-types.ts';
+import type { Link, LongRange, Range } from './fleet-overview-types.ts';
+import {
+  BUCKET_MS,
   bucketStart,
   findGaps,
   isLink,
@@ -24,6 +32,7 @@ import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
 import { readServiceChanges } from './home-cards.ts';
 import type { ServiceChange } from './home-types.ts';
 import {
+  conditionKind,
   byCheck,
   field,
   filesOf,
@@ -37,12 +46,16 @@ import { readMemoryHolders } from './memory-holders.ts';
 import { readServices } from './services.ts';
 import { readSilencedUntil } from './silences.ts';
 import type {
+  BucketInspection,
+  BucketProcess,
+  CostBucket,
   Disk,
   DiskTrend,
   FileIssue,
   HarnessInstall,
   ListedService,
   LoadBucket,
+  LongHistory,
   MemoryBucket,
   ProcessSeries,
   RecordedApplication,
@@ -92,6 +105,19 @@ export const parseSampleInput = (input: unknown): { at: number | undefined; name
   return { at, name };
 };
 
+// The System, long range, and time, in epoch milliseconds, a bucket request
+// asks for; no time asks for the newest bucket.
+export const parseBucketInput = (
+  input: unknown,
+): { at: number | undefined; name: string; range: LongRange } => {
+  const { at, name } = parseSampleInput(input);
+  const range = field(input, 'range');
+  if (!isRange(range) || !isLongRange(range)) {
+    throw new Error(`The range ${JSON.stringify(range)} is not 30d or 1y.`);
+  }
+  return { at, name, range };
+};
+
 type SystemRow = {
   cpu_cores: number | null;
   collector_arch: string | null;
@@ -114,9 +140,169 @@ type LatestRow = {
   uptime_seconds: number;
 };
 
-type MemoryRow = { bucket: Date; total: number; used: number };
+type VitalsRow = BucketRow & {
+  load: number;
+  load_high: number;
+  load_low: number;
+  memory_high: number;
+  memory_low: number;
+  memory_total: number;
+  memory_used: number;
+};
 
-type LoadRow = { bucket: Date; load: number };
+// The origin the Hub bins its rollups from; every width that divides a day
+// bins the same from it as from the epoch.
+const ORIGIN = "timestamptz '2000-01-01 00:00:00+00'";
+
+const intervalOf = (ms: number) => `${String(ms / 1000)} seconds`;
+
+// System `name`'s Vitals from the 5-minute rollups from the bucket holding
+// `from` up to `to`, in buckets of `widthMs`: each its CPU, memory, and 1-minute
+// load, averaged over its samples, with the lowest and highest. A width of 5
+// minutes returns the rollups as they are.
+const readVitalsBuckets = (
+  sql: SQL,
+  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
+): Promise<VitalsRow[]> => sql`
+  WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width)
+  SELECT system, date_bin(w.width, bucket, ${sql.unsafe(ORIGIN)}) AS bucket,
+         sum(samples)::int AS samples, min(cpu_busy_min) AS cpu_busy_min,
+         sum(cpu_busy_sum) AS cpu_busy_sum, max(cpu_busy_max) AS cpu_busy_max,
+         min(memory_used_min)::float8 AS memory_low,
+         (sum(memory_used_sum) / sum(samples))::float8 AS memory_used,
+         max(memory_used_max)::float8 AS memory_high,
+         max(memory_total_max)::float8 AS memory_total,
+         min(load_1_min) AS load_low, (sum(load_1_sum) / sum(samples))::float8 AS load,
+         max(load_1_max) AS load_high
+  FROM vitals_rollups, w
+  WHERE system = ${name}
+    AND bucket >= date_bin(w.width, ${new Date(from)}::timestamptz, ${sql.unsafe(ORIGIN)})
+    AND bucket < ${new Date(to)}
+  GROUP BY 1, 2
+  ORDER BY 2
+`;
+
+// A 5-minute rollup holds a reboot when its smallest uptime is under this, and
+// under the uptime of the rollup before it, which a later rollup of the same
+// boot is not.
+const BOOTED_WITHIN_S = 300;
+
+// The start of each 5-minute rollup of System `name` from `from` up to `to`
+// that holds a reboot.
+const readReboots = async (
+  sql: SQL,
+  { from, name, to }: { from: number; name: string; to: number },
+): Promise<number[]> => {
+  const rows: { bucket: Date }[] = await sql`
+    SELECT bucket FROM (
+      SELECT bucket, uptime_min, lag(uptime_min) OVER (ORDER BY bucket) AS before
+      FROM vitals_rollups
+      WHERE system = ${name} AND bucket >= ${new Date(from - BUCKET_MS)} AND bucket < ${new Date(to)}
+    ) x
+    WHERE uptime_min < ${BOOTED_WITHIN_S} AND (before IS NULL OR before > uptime_min)
+      AND bucket >= ${new Date(from)}
+    ORDER BY bucket
+  `;
+  return rows.map(({ bucket }) => bucket.getTime());
+};
+
+type CostRow = { bucket: Date; cost_usd: number; harness: string; unpriced: number };
+
+// The list-price cost of System `name`'s requests from `from` up to `to`, per
+// bucket of `widthMs` and Harness. As on the Agents chart (ADR-0016), a
+// Session whose requests all fall in one bucket takes its stored total; only
+// a Session crossing a bucket's edge, or the range's, is priced request by
+// request.
+const readCostBuckets = async (
+  sql: SQL,
+  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
+): Promise<CostBucket[]> => {
+  const [fromAt, toAt] = [new Date(from), new Date(to)];
+  const rows: CostRow[] = await sql`
+    WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width),
+    spans AS MATERIALIZED (
+      SELECT k.harness, k.source, k.session_id, f.first_request_at, k.last_request_at,
+             f.first_request_at >= ${fromAt} AND k.last_request_at < ${toAt}
+               AND date_bin(w.width, f.first_request_at, ${sql.unsafe(ORIGIN)})
+                 = date_bin(w.width, k.last_request_at, ${sql.unsafe(ORIGIN)}) AS whole
+      FROM w, (
+        SELECT harness, source, session_id, max(ended_at) AS last_request_at
+        FROM insight.session_stretches
+        WHERE system = ${name} AND ended_at >= ${fromAt}
+        GROUP BY harness, source, session_id
+      ) k
+      CROSS JOIN LATERAL (
+        SELECT min(x.started_at) AS first_request_at
+        FROM insight.session_stretches x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (k.harness, ${name}, k.source, k.session_id)
+      ) f
+      WHERE f.first_request_at < ${toAt}
+    ),
+    costs AS (
+      SELECT date_bin(w.width, k.first_request_at, ${sql.unsafe(ORIGIN)}) AS bucket, k.harness,
+             t.priced_cost_usd AS cost_usd, t.unpriced_requests AS unpriced
+      FROM w, spans k
+      CROSS JOIN LATERAL (
+        SELECT x.priced_cost_usd, x.unpriced_requests
+        FROM insight.session_totals x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (k.harness, ${name}, k.source, k.session_id)
+        OFFSET 0
+      ) t
+      WHERE k.whole
+      UNION ALL
+      SELECT date_bin(w.width, r.at, ${sql.unsafe(ORIGIN)}), k.harness, r.cost_usd,
+             (r.cost_usd IS NULL)::int
+      FROM w, spans k
+      JOIN insight.requests r
+        ON (r.harness, r.system, r.source, r.session_id) = (k.harness, ${name}, k.source, k.session_id)
+      WHERE NOT k.whole AND r.at >= ${fromAt} AND r.at < ${toAt}
+    )
+    SELECT bucket, harness, coalesce(sum(cost_usd), 0)::float8 AS cost_usd,
+           coalesce(sum(unpriced), 0)::int AS unpriced
+    FROM costs
+    GROUP BY bucket, harness
+    ORDER BY bucket, harness
+  `;
+  return rows.map((row): CostBucket => ({
+    costUsd: row.cost_usd,
+    harness: row.harness,
+    t: row.bucket.getTime(),
+    unpriced: row.unpriced,
+  }));
+};
+
+// How many Sessions of System `name` worked, by a stretch of their requests,
+// between `from` and `to`.
+const countSessions = async (
+  sql: SQL,
+  { from, name, to }: { from: number; name: string; to: number },
+): Promise<number> => {
+  const [row]: { n: number }[] = await sql`
+    SELECT count(DISTINCT (harness, source, session_id))::int AS n
+    FROM insight.session_stretches
+    WHERE system = ${name} AND started_at < ${new Date(to)} AND ended_at >= ${new Date(from)}
+  `;
+  return row?.n ?? 0;
+};
+
+// The cost bars of the long ranges are a day wide at both: 3-hour bars over
+// 30 days would be too thin to read.
+const COST_BUCKET_MS = 24 * 60 * 60_000;
+
+// What the long ranges draw in place of Session lanes.
+const readLongHistory = async (
+  sql: SQL,
+  window: { from: number; name: string; to: number },
+): Promise<LongHistory> => {
+  const [costs, sessions, reboots] = await Promise.all([
+    readCostBuckets(sql, { ...window, widthMs: COST_BUCKET_MS }),
+    countSessions(sql, window),
+    readReboots(sql, window),
+  ]);
+  return { costBucketMs: COST_BUCKET_MS, costs, reboots, sessions };
+};
 
 export type CoresRow = {
   bucket: Date;
@@ -197,6 +383,35 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
   return [...sessions.values()];
 };
 
+// The cores each Harness process of System `name` kept busy per bucket of
+// `widthMs` from `from` up to `to`, from the 5-minute process rollups: the
+// rise of its cumulative CPU time across the bucket over the bucket's width,
+// so a process that ran part of a bucket averages over all of it. The long
+// ranges read only these rollups, over the whole range: they are kept a year,
+// where the raw readings end at 14 days, and one source per range keeps a
+// bucket from mixing the two.
+const readProcessRollups = (
+  sql: SQL,
+  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
+): Promise<CoresRow[]> => sql`
+  WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width)
+  SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
+         date_bin(w.width, r.bucket, ${sql.unsafe(ORIGIN)}) AS bucket,
+         CASE WHEN sum(r.samples) > 1
+              THEN ((max(r.cpu_micros_max) - min(r.cpu_micros_min)) / 1e6
+                    / ${widthMs / 1000})::float8
+         END AS cores
+  FROM w, harness_processes p
+  JOIN harness_process_rollups r ON r.process = p.id
+  WHERE p.system = ${name}
+    AND p.started_at < ${new Date(to)}
+    AND (p.ended_at IS NULL OR p.ended_at >= ${new Date(from)})
+    AND r.bucket >= date_bin(w.width, ${new Date(from)}::timestamptz, ${sql.unsafe(ORIGIN)})
+    AND r.bucket < ${new Date(to)}
+  GROUP BY p.id, w.width, 6
+  ORDER BY min(p.started_at), p.id, 6
+`;
+
 // One System over the `range` that ends at `now`: its facts, Vitals, Harness
 // processes, Sessions, and Conditions, on one time axis. A System that is no
 // longer paired keeps its history and reads as unpaired. Undefined for a name
@@ -218,12 +433,12 @@ const readSystemDetailSnapshot = async (
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
   const firstBucket = new Date(bucketStart(from));
+  const long = isLongRange(range);
+  const widthMs = RANGE_BUCKET_MS[range];
   const [
     installs,
     latest,
-    buckets,
-    memory,
-    load,
+    vitals,
     cores,
     stretches,
     marks,
@@ -235,9 +450,7 @@ const readSystemDetailSnapshot = async (
   ]: [
     { installs: HarnessInstall[] }[],
     LatestRow[],
-    BucketRow[],
-    MemoryRow[],
-    LoadRow[],
+    VitalsRow[],
     CoresRow[],
     StretchRow[],
     ConditionRow[],
@@ -255,28 +468,13 @@ const readSystemDetailSnapshot = async (
       FROM vitals_samples WHERE system = ${name}
       ORDER BY t DESC LIMIT 1
     `,
-    sql`
-      SELECT system, bucket, samples, cpu_busy_min, cpu_busy_sum, cpu_busy_max
-      FROM vitals_rollups
-      WHERE system = ${name} AND bucket >= ${firstBucket} AND bucket < ${toAt}
-      ORDER BY bucket
-    `,
-    sql`
-      SELECT bucket, (memory_used_sum / samples)::float8 AS used, memory_total_max::float8 AS total
-      FROM vitals_rollups
-      WHERE system = ${name} AND bucket >= ${firstBucket} AND bucket < ${toAt}
-      ORDER BY bucket
-    `,
-    sql`
-      SELECT bucket, (load_1_sum / samples)::float8 AS load
-      FROM vitals_rollups
-      WHERE system = ${name} AND bucket >= ${firstBucket} AND bucket < ${toAt}
-      ORDER BY bucket
-    `,
-    // Cores per bucket from the first and last reading in it: CPU time is
-    // cumulative, so its rise over the time between is the cores kept busy.
-    // Rollups keep no reading times, and raw readings outlast the longest range.
-    sql`
+    readVitalsBuckets(sql, { from, name, to: now, widthMs }),
+    long
+      ? readProcessRollups(sql, { from, name, to: now, widthMs })
+      : // Cores per bucket from the first and last reading in it: CPU time is
+        // cumulative, so its rise over the time between is the cores kept
+        // busy. Rollups keep no reading times, and raw readings outlast 7 d.
+        sql`
       SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository, r.bucket,
              CASE WHEN r.last_t > r.first_t
                   THEN ((r.cpu_max - r.cpu_min) / 1e6 / extract(epoch FROM r.last_t - r.first_t))::float8
@@ -295,7 +493,7 @@ const readSystemDetailSnapshot = async (
         AND (p.ended_at IS NULL OR p.ended_at >= ${firstBucket})
       ORDER BY p.started_at, p.id, r.bucket
     `,
-    readStretches(sql, { from, systems: [name], to: now }),
+    long ? [] : readStretches(sql, { from, systems: [name], to: now }),
     sql`
       SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
@@ -316,12 +514,16 @@ const readSystemDetailSnapshot = async (
       })),
     ),
   ]);
-  const cpu = buckets.map(toBucket);
+  const cpu = vitals.map(toBucket);
   const newest = latest[0];
   const lastSeenAt = system.last_seen_at?.getTime();
   const sleeps = system.sleeps === true;
-  const transitions = await readConditionTransitions(sql, marks);
+  const [transitions, longHistory] = await Promise.all([
+    readConditionTransitions(sql, marks),
+    long ? readLongHistory(sql, { from, name, to: now }) : undefined,
+  ]);
   return {
+    bucketMs: widthMs,
     changes,
     collectorVersion: system.collector_version ?? undefined,
     conditions: marks.map((row) => toMark(row, transitions.get(row.id) ?? [])),
@@ -331,7 +533,7 @@ const readSystemDetailSnapshot = async (
     from,
     gaps: findGaps(
       cpu.map(({ t }) => t),
-      { from, now },
+      { from, now, widthMs },
     ),
     harnesses: installs[0]?.installs
       .map(({ harness, location, version }): HarnessInstall => ({ harness, location, version }))
@@ -365,11 +567,19 @@ const readSystemDetailSnapshot = async (
             },
             memory: limits.memory.percent,
           },
-    load: load.map((row): LoadBucket => ({ t: row.bucket.getTime(), value: row.load })),
-    memory: memory.map((row): MemoryBucket => ({
+    load: vitals.map((row): LoadBucket => ({
+      high: row.load_high,
+      low: row.load_low,
       t: row.bucket.getTime(),
-      totalBytes: row.total,
-      usedBytes: row.used,
+      value: row.load,
+    })),
+    long: longHistory,
+    memory: vitals.map((row): MemoryBucket => ({
+      highBytes: row.memory_high,
+      lowBytes: row.memory_low,
+      t: row.bucket.getTime(),
+      totalBytes: row.memory_total,
+      usedBytes: row.memory_used,
     })),
     name,
     now,
@@ -608,6 +818,141 @@ export const readSample = async (
     }),
   };
 };
+
+type BucketVitalsRow = {
+  cpu_average: number | null;
+  cpu_high: number | null;
+  cpu_low: number | null;
+  load_average: number | null;
+  load_high: number | null;
+  load_low: number | null;
+  memory_average: number | null;
+  memory_high: number | null;
+  memory_low: number | null;
+  memory_total: number | null;
+  rollups: number;
+};
+
+type BucketProcessRow = {
+  cpu_hours: number | null;
+  cwd: string | null;
+  harness: string;
+  peak_rss_bytes: number | null;
+  pid: number;
+  process_id: number;
+  repository: string | null;
+  sessions: number;
+};
+
+const spread = (average: number | null, low: number | null, high: number | null) =>
+  average === null || low === null || high === null ? undefined : { average, high, low };
+
+// The bucket of a long `range` that holds `at`, or the newest when `at` is
+// undefined, as the inspector shows it: its Vitals from the 5-minute rollups
+// in it, any reboot, its agent cost and Sessions, its Harness processes, and
+// the Conditions open in it. A pin there never reads a raw sample: past 14
+// days the nearest one could be days away. Undefined for a name that is no
+// System. Read-only.
+export const readBucket = (
+  sql: SQL,
+  { at, name, now, range }: { at: number | undefined; name: string; now: number; range: LongRange },
+): Promise<BucketInspection | undefined> =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+    const known: unknown[] = await tx`
+      SELECT 1 FROM systems WHERE name = ${name}
+      UNION ALL SELECT 1 FROM paired_systems WHERE system = ${name}
+    `;
+    if (known.length === 0) {
+      return undefined;
+    }
+    const bucketMs = RANGE_BUCKET_MS[range];
+    const t = Math.floor((at ?? now) / bucketMs) * bucketMs;
+    const end = t + bucketMs;
+    const [startAt, endAt] = [new Date(t), new Date(end)];
+    const [vitals, reboots, costs, sessions, processes, conditions]: [
+      BucketVitalsRow[],
+      number[],
+      CostBucket[],
+      number,
+      BucketProcessRow[],
+      { kind: string; level: string; subject: string }[],
+    ] = await Promise.all([
+      tx`
+        SELECT count(*)::int AS rollups,
+               (sum(cpu_busy_sum) / sum(samples))::float8 AS cpu_average,
+               min(cpu_busy_min)::float8 AS cpu_low, max(cpu_busy_max)::float8 AS cpu_high,
+               (sum(memory_used_sum) / sum(samples))::float8 AS memory_average,
+               min(memory_used_min)::float8 AS memory_low,
+               max(memory_used_max)::float8 AS memory_high,
+               max(memory_total_max)::float8 AS memory_total,
+               (sum(load_1_sum) / sum(samples))::float8 AS load_average,
+               min(load_1_min)::float8 AS load_low, max(load_1_max)::float8 AS load_high
+        FROM vitals_rollups
+        WHERE system = ${name} AND bucket >= ${startAt} AND bucket < ${endAt}
+      `,
+      readReboots(tx, { from: t, name, to: end }),
+      readCostBuckets(tx, { from: t, name, to: end, widthMs: bucketMs }),
+      countSessions(tx, { from: t, name, to: end }),
+      tx`
+        SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
+               CASE WHEN sum(r.samples) > 1
+                    THEN ((max(r.cpu_micros_max) - min(r.cpu_micros_min)) / 3.6e9)::float8
+               END AS cpu_hours,
+               max(r.rss_max)::float8 AS peak_rss_bytes,
+               (SELECT count(DISTINCT (s.harness, s.source, s.session_id))::int
+                FROM insight.session_stretches s
+                WHERE s.system = ${name} AND s.process_id = p.id
+                  AND s.started_at < ${endAt} AND s.ended_at >= ${startAt}) AS sessions
+        FROM harness_processes p
+        LEFT JOIN harness_process_rollups r
+          ON r.process = p.id AND r.bucket >= ${startAt} AND r.bucket < ${endAt}
+        WHERE p.system = ${name}
+          AND p.started_at < ${endAt}
+          AND (p.ended_at IS NULL OR p.ended_at >= ${startAt})
+        GROUP BY p.id
+        ORDER BY cpu_hours DESC NULLS LAST, p.started_at, p.id
+      `,
+      tx`
+        SELECT kind, level, subject FROM conditions
+        WHERE system = ${name} AND raised_at < ${endAt}
+          AND (cleared_at IS NULL OR cleared_at >= ${startAt})
+        ORDER BY raised_at, id
+      `,
+    ]);
+    const row = vitals[0];
+    const memory =
+      row === undefined ? undefined : spread(row.memory_average, row.memory_low, row.memory_high);
+    return {
+      bucketMs,
+      conditions: conditions.map((condition) => ({
+        kind: conditionKind(condition.kind),
+        level: ConditionLevelSchema.parse(condition.level),
+        subject: condition.subject,
+      })),
+      costUsd: costs.reduce((total, cost) => total + cost.costUsd, 0),
+      cpu: row === undefined ? undefined : spread(row.cpu_average, row.cpu_low, row.cpu_high),
+      load1: row === undefined ? undefined : spread(row.load_average, row.load_low, row.load_high),
+      memory:
+        memory === undefined || row?.memory_total == null
+          ? undefined
+          : { ...memory, totalBytes: row.memory_total },
+      processes: processes.map((process): BucketProcess => ({
+        cpuHours: process.cpu_hours ?? undefined,
+        harness: process.harness,
+        peakRssBytes: process.peak_rss_bytes ?? undefined,
+        pid: process.pid,
+        processId: process.process_id,
+        project: projectOf(process.repository, process.cwd),
+        sessions: process.sessions,
+      })),
+      rebootedAt: reboots[0],
+      rollups: row?.rollups ?? 0,
+      samplesPruned: t < now - RAW_KEPT_MS,
+      sessions,
+      t,
+      unpricedRequests: costs.reduce((total, cost) => total + cost.unpriced, 0),
+    };
+  });
 
 // A recorded Service with the checks on it, the supervisor's first.
 export const recordedService = (

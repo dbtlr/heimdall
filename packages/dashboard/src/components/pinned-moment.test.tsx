@@ -51,3 +51,11 @@ test('the card links to the System page at the sample, on the shortest range who
   const recent = await sampleLinks(NOW - 10 * HOUR);
   expect(recent.map((url) => url.searchParams.get('range'))).toEqual(['12h', '12h']);
 });
+
+// HMD-267: a pin from Activity's 30 d range opened a 7 d page that left it out.
+test('a moment older than 7 days links to the 30 d System page, which shows its bucket', async () => {
+  const old = NOW - 20 * 24 * HOUR;
+  const links = await sampleLinks(old);
+  expect(links.map((url) => url.searchParams.get('range'))).toEqual(['30d', '30d']);
+  expect(links[0]?.searchParams.get('at')).toBe(String(old - MIN));
+});

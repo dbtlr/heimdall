@@ -45,5 +45,14 @@ test('a link to a sample opens the shortest range that still holds it', () => {
   expect(rangeHolding(NOW - 7 * HOUR, NOW)).toBe('12h');
   expect(rangeHolding(NOW - 13 * HOUR, NOW)).toBe('24h');
   expect(rangeHolding(NOW - 3 * 24 * HOUR, NOW)).toBe('7d');
-  expect(rangeHolding(NOW - 20 * 24 * HOUR, NOW)).toBe('7d');
+});
+
+// HMD-267: an Activity pin older than 7 days opened a 7 d page that did not show it.
+test('a link to a sample older than 7 days opens 30 d, and one older than 30 days 1 y', () => {
+  const DAY = 24 * 60 * 60_000;
+  const NOW = Date.UTC(2026, 10, 14, 12);
+  expect(rangeHolding(NOW - 8 * DAY, NOW)).toBe('30d');
+  expect(rangeHolding(NOW - 30 * DAY, NOW)).toBe('30d');
+  expect(rangeHolding(NOW - 31 * DAY, NOW)).toBe('1y');
+  expect(rangeHolding(NOW - 400 * DAY, NOW)).toBe('1y');
 });

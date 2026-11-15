@@ -311,6 +311,8 @@ describe('readSystemDetail', () => {
     expect(found.cpu[0]).toMatchObject({ high: 23.4, low: 23.4, t: NOW - HOUR });
     expect(found.cpu[0]?.average).toBeCloseTo(23.4, 9);
     expect(found.memory[0]).toEqual({
+      highBytes: 12_884_901_888,
+      lowBytes: 12_884_901_888,
       t: NOW - HOUR,
       totalBytes: 34_359_738_368,
       usedBytes: 12_884_901_888,

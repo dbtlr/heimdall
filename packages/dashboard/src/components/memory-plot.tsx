@@ -25,19 +25,25 @@ const gibLabel =
     return value === top ? `${figure} GiB` : figure;
   };
 
-// Memory used per 5-minute bucket, as a line over a gradient fill, on a scale
+// Memory used per bucket, 5 minutes unless `bucketMs` says otherwise, as a
+// line over a gradient fill, with each bucket's low to high as a band when
+// `band` asks for it, on a scale
 // from 0 to the memory the System has, widened to a whole GiB from 10 GiB up
 // and a tenth of one below, so every label states its position. With no
 // bucket, the System's memory is unknown and the scale goes unlabelled.
 // `limitPercent` draws the limit the Hub judges memory by, as a share of the
 // memory the System has, not of the scale, which never ends below 1 GiB.
 export function MemoryPlot({
+  band = false,
+  bucketMs,
   buckets,
   height = HEIGHT,
   limitPercent,
   scaleBeside = false,
   window,
 }: {
+  band?: boolean;
+  bucketMs?: number;
   buckets: readonly MemoryBucket[];
   height?: number;
   limitPercent?: number | undefined;
@@ -76,7 +82,7 @@ export function MemoryPlot({
         role="img"
         style={{ height }}
       >
-        <ComposedChart data={memoryRows(buckets, window)} margin={NO_MARGIN}>
+        <ComposedChart data={memoryRows(buckets, window, bucketMs)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"
@@ -92,6 +98,16 @@ export function MemoryPlot({
             isAnimationActive={false}
             stroke="none"
           />
+          {band && (
+            <Area
+              activeDot={false}
+              dataKey="band"
+              fill={PLOT_COLOR}
+              fillOpacity={0.16}
+              isAnimationActive={false}
+              stroke="none"
+            />
+          )}
           <Line
             activeDot={false}
             dataKey="used"

@@ -84,7 +84,7 @@ export function SessionLanes({
 }
 
 // The Harnesses the Sessions ran in, each with its color, as a legend.
-export function HarnessLegend({ sessions }: { sessions: readonly SessionRow[] }) {
+export function HarnessLegend({ sessions }: { sessions: readonly { harness: string }[] }) {
   const harnesses = [...new Set(sessions.map(({ harness }) => harness))].toSorted();
   return (
     <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">

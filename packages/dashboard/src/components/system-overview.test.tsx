@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import type { Recorded, SystemDetail } from '../server/system-detail-types.ts';
+import type { BucketInspection, Recorded, SystemDetail } from '../server/system-detail-types.ts';
 import { DetailAxis, SampleSlider } from './detail-track.tsx';
 import { renderRouted } from './render-routed.tsx';
 import { SystemOverview } from './system-overview.tsx';
@@ -14,6 +14,7 @@ const detail = (
   limitPercent: SystemDetail['limitPercent'],
   overrides: Partial<SystemDetail> = {},
 ): SystemDetail => ({
+  bucketMs: 300_000,
   changes: [],
   collectorVersion: '1.0.0',
   conditions: [],
@@ -34,8 +35,17 @@ const detail = (
     uptimeSeconds: 3_600,
   },
   limitPercent,
-  load: [{ t: NOW - 300_000, value: 1 }],
-  memory: [{ t: NOW - 300_000, totalBytes: 10 * GIB, usedBytes: 4 * GIB }],
+  load: [{ high: 1, low: 1, t: NOW - 300_000, value: 1 }],
+  long: undefined,
+  memory: [
+    {
+      highBytes: 4 * GIB,
+      lowBytes: 4 * GIB,
+      t: NOW - 300_000,
+      totalBytes: 10 * GIB,
+      usedBytes: 4 * GIB,
+    },
+  ],
   name: 'server-1',
   now: NOW,
   paired: true,
@@ -54,11 +64,13 @@ const render = (
   limitPercent: SystemDetail['limitPercent'],
   overrides: Partial<SystemDetail> = {},
   services: Recorded['services'] = [],
+  bucket: BucketInspection | null = null,
 ) =>
   renderRouted(
     <SystemOverview
       at={undefined}
       attention={[]}
+      bucket={bucket}
       detail={detail(limitPercent, overrides)}
       failed={false}
       loading={false}
@@ -95,7 +107,17 @@ test("draws the memory limit at its share of the System's own memory when that i
   const MIB = 1024 ** 2;
   const html = await render(
     { cpu: 60, disk: BANDS, memory: 80 },
-    { memory: [{ t: NOW - 300_000, totalBytes: 512 * MIB, usedBytes: 256 * MIB }] },
+    {
+      memory: [
+        {
+          highBytes: 256 * MIB,
+          lowBytes: 256 * MIB,
+          t: NOW - 300_000,
+          totalBytes: 512 * MIB,
+          usedBytes: 256 * MIB,
+        },
+      ],
+    },
   );
 
   // 80% of 512 MiB is 0.4 GiB, not 80% of the 1 GiB scale.
@@ -143,7 +165,9 @@ const harnessDisclosure = async (processes: SystemDetail['processes']) => {
 test('the Harness process plots keep the gutter of the charts above and draw their scale in it', async () => {
   const disclosure = await harnessDisclosure([harnessProcess(1, 0.5)]);
 
-  expect(tagWith(disclosure, 'aria-label="Harness processes"')).toContain('pl-14');
+  expect(tagWith(disclosure, 'aria-label="Harness processes"')).toContain(
+    'pl-[var(--chart-gutter,3.5rem)]',
+  );
   expect(tagWith(disclosure, 'data-scale-tick="0"')).toContain('right-full');
 });
 
@@ -230,4 +254,67 @@ test('names one current core in the load note and reference line', async () => {
   const html = await render(undefined, { cpuCores: 1 });
   expect(html.match(/1 core now/gu)).toHaveLength(2);
   expect(html).toContain('aria-label="Load (1 min)"');
+});
+
+const DAY = 24 * 3_600_000;
+
+test('over a year: day buckets with bands, cost bars, Conditions folded by kind, and the bucket inspector', async () => {
+  const year = NOW - 365 * DAY;
+  const html = await render(
+    { cpu: 90, disk: BANDS, memory: 80 },
+    {
+      bucketMs: DAY,
+      conditions: [1, 2].map((n) => ({
+        clearedAt: NOW - n * 10 * DAY + 3_600_000,
+        id: String(n),
+        kind: 'high_cpu' as const,
+        level: 'warning' as const,
+        raisedAt: NOW - n * 10 * DAY,
+        subject: '',
+        transitions: [],
+      })),
+      cpuCores: 8,
+      from: year,
+      long: {
+        costBucketMs: DAY,
+        costs: [{ costUsd: 12, harness: 'claude-code', t: NOW - 3 * DAY, unpriced: 0 }],
+        reboots: [NOW - 40 * DAY],
+        sessions: 1214,
+      },
+      range: '1y',
+    },
+    [],
+    {
+      bucketMs: DAY,
+      conditions: [],
+      costUsd: 12,
+      cpu: { average: 20, high: 90, low: 2 },
+      load1: { average: 1, high: 2, low: 0 },
+      memory: { average: 4 * GIB, high: 5 * GIB, low: 3 * GIB, totalBytes: 10 * GIB },
+      processes: [],
+      rebootedAt: undefined,
+      rollups: 288,
+      samplesPruned: true,
+      sessions: 3,
+      t: NOW - 20 * DAY,
+      unpricedRequests: 0,
+    },
+  );
+
+  for (const text of [
+    'average, low–high band · 1-day buckets · limit 90%',
+    'list-price cost per day · 1,214 Sessions in the year',
+    'aria-label="Agent cost per bucket"',
+    'one row per kind · changes per week',
+    'High CPU 2×',
+    'Reboots',
+    'One 1-day bucket: 288 five-minute rollups',
+    'not kept past 14 d',
+    '--chart-gutter:7rem',
+  ]) {
+    expect(html).toContain(text);
+  }
+  // Load is the 1-minute load, banded like the others, with the core count.
+  expect(html).toContain('8 cores now · average, low–high band');
+  expect(limitLines(html)).toContain(8);
 });

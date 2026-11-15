@@ -2,9 +2,11 @@ import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
+import { BucketInspector } from '../components/bucket-inspector.tsx';
 import { PhraseText } from '../components/date-time.tsx';
 import { RangePicker } from '../components/range-picker.tsx';
 import { RecordedPanel } from '../components/recorded-panel.tsx';
+import { SampleInspector } from '../components/sample-inspector.tsx';
 import { SampleSheet } from '../components/sample-sheet.tsx';
 import { SilenceBanner } from '../components/silence-line.tsx';
 import { SystemActivity } from '../components/system-activity.tsx';
@@ -19,9 +21,25 @@ import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
 import { desktopTab, systemSearch } from '../lib/system-search.ts';
+import { isLongRange } from '../server/fleet-overview-types.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
-import { getSample, getSystemDetail } from '../server/system-detail-fn.ts';
-import type { SampleInspection } from '../server/system-detail-types.ts';
+import { getBucket, getSample, getSystemDetail } from '../server/system-detail-fn.ts';
+import type { BucketInspection, SampleInspection } from '../server/system-detail-types.ts';
+
+// What the inspector shows: the sample nearest the pinned time up to 7 d, and
+// over 30 d and 1 y the bucket holding it, since raw samples end at 14 days.
+type Inspected = { bucket: BucketInspection | null; sample: SampleInspection | null };
+
+const NOTHING: Inspected = { bucket: null, sample: null };
+
+const readInspected = async (
+  name: string,
+  at: number | undefined,
+  range: Range,
+): Promise<Inspected> =>
+  isLongRange(range)
+    ? { bucket: await getBucket({ data: { at, name, range } }), sample: null }
+    : { bucket: null, sample: await getSample({ data: { at, name } }) };
 
 export const Route = createFileRoute('/systems/$name')({
   component: SystemPage,
@@ -36,11 +54,11 @@ export const Route = createFileRoute('/systems/$name')({
     params: { name: string };
   }) => {
     const at = atFromSearch(location.search);
-    const [page, sample] = await Promise.all([
+    const [page, inspected] = await Promise.all([
       getSystemDetail({ data: { name: params.name, range: deps.range } }),
-      getSample({ data: { at, name: params.name } }),
+      readInspected(params.name, at, deps.range),
     ]);
-    return { ...page, at, sample };
+    return { ...page, at, inspected };
   },
   loaderDeps: ({ search }) => ({ range: search.range }),
   notFoundComponent: () => (
@@ -53,18 +71,20 @@ export const Route = createFileRoute('/systems/$name')({
   validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => systemSearch(search),
 });
 
-// The sample at `at`: the one the loader read, until `at` moves off it, and
-// whether reading the one asked for failed.
-const useSample = (
+// The sample or bucket at `at`: the one the loader read, until `at` moves off
+// it, and whether reading the one asked for failed. `range` is the loaded
+// range, which decides which of the two is read.
+const useInspected = (
   name: string,
+  range: Range,
   at: number | undefined,
   loadedAt: number | undefined,
-  loadedSample: SampleInspection | null,
+  loaded: Inspected,
 ) => {
-  const [shown, setShown] = useState({ at: loadedAt, failed: false, name, sample: loadedSample });
+  const [shown, setShown] = useState({ at: loadedAt, failed: false, inspected: loaded, name });
   useEffect(() => {
-    setShown({ at: loadedAt, failed: false, name, sample: loadedSample });
-  }, [loadedAt, loadedSample, name]);
+    setShown({ at: loadedAt, failed: false, inspected: loaded, name });
+  }, [loadedAt, loaded, name]);
   useEffect(() => {
     if (at === shown.at && name === shown.name) {
       return undefined;
@@ -72,13 +92,13 @@ const useSample = (
     let current = true;
     const read = async () => {
       try {
-        const sample = await getSample({ data: { at, name } });
+        const inspected = await readInspected(name, at, range);
         if (current) {
-          setShown({ at, failed: false, name, sample });
+          setShown({ at, failed: false, inspected, name });
         }
       } catch {
         if (current) {
-          setShown({ at, failed: true, name, sample: null });
+          setShown({ at, failed: true, inspected: NOTHING, name });
         }
       }
     };
@@ -86,12 +106,12 @@ const useSample = (
     return () => {
       current = false;
     };
-  }, [at, name, shown.at, shown.name]);
+  }, [at, name, range, shown.at, shown.name]);
   const loading = at !== shown.at || name !== shown.name;
   return {
     failed: !loading && shown.failed,
+    inspected: name === shown.name ? shown.inspected : NOTHING,
     loading,
-    sample: name === shown.name ? shown.sample : null,
   };
 };
 
@@ -103,11 +123,18 @@ function SystemPage() {
     detail,
     navigation,
     records,
-    sample: loadedSample,
+    inspected: loadedInspected,
   } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const { failed, loading, sample } = useSample(detail.name, search.at, at, loadedSample);
+  const { failed, inspected, loading } = useInspected(
+    detail.name,
+    detail.range,
+    search.at,
+    at,
+    loadedInspected,
+  );
+  const { bucket, sample } = inspected;
   const header = headerLine(detail, detail.now);
   const charts = search.tab === 'vitals' || search.tab === 'sessions';
   const overview = desktopTab(search.tab) === 'overview';
@@ -147,6 +174,7 @@ function SystemPage() {
             <SystemOverview
               at={search.at}
               attention={attention}
+              bucket={bucket}
               detail={detail}
               failed={failed}
               loading={loading}
@@ -174,6 +202,7 @@ function SystemPage() {
             </div>
             <div className="min-w-0">
               <SystemCharts
+                bucket={bucket}
                 detail={detail}
                 onSelect={select}
                 sample={sample}
@@ -181,10 +210,10 @@ function SystemPage() {
               />
               <button
                 className="my-3 min-h-11 rounded-lg border px-3 text-base text-primary"
-                onClick={() => select(sample?.t ?? detail.now)}
+                onClick={() => select(bucket?.t ?? sample?.t ?? detail.now)}
                 type="button"
               >
-                Inspect sample
+                {detail.long === undefined ? 'Inspect sample' : 'Inspect bucket'}
               </button>
             </div>
             {search.tab === 'vitals' && (
@@ -205,12 +234,16 @@ function SystemPage() {
       </main>
       {overview && (
         <SampleSheet
-          failed={failed}
-          loading={loading}
           onClose={closeSample}
           open={search.at !== undefined}
-          sample={sample}
-        />
+          title={detail.long === undefined ? 'Vitals sample' : 'Vitals bucket'}
+        >
+          {detail.long === undefined ? (
+            <SampleInspector failed={failed} loading={loading} sample={sample} />
+          ) : (
+            <BucketInspector bucket={bucket} failed={failed} loading={loading} />
+          )}
+        </SampleSheet>
       )}
     </>
   );

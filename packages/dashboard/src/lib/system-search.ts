@@ -18,9 +18,9 @@ export const systemSearch = (search: Record<string, unknown>) => {
 };
 
 // The shortest System page range that ends at `now` and still holds `at`, so a
-// link to a sample opens on charts that show it; 7 d for anything older.
+// link to a sample opens on charts that show it; 1 y for anything older.
 export const rangeHolding = (at: number, now: number): Range =>
-  RANGES.find((range) => now - at <= RANGE_MS[range]) ?? '7d';
+  RANGES.find((range) => now - at <= RANGE_MS[range]) ?? '1y';
 
 // From `lg` the page has one Overview where the phone has Now, Vitals, and
 // Sessions; `tab` is the phone tab a link to each opens.

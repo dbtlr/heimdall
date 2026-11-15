@@ -3,10 +3,13 @@ import {
   formatClock,
   formatClockSeconds,
   formatDate,
+  formatDateYear,
+  formatMonth,
   formatWeekday,
   localDayNumber,
   localHourMinute,
   localMidnight,
+  localMonth,
   xPercent,
 } from './time.ts';
 import type { Window } from './time.ts';
@@ -40,16 +43,57 @@ const EDGE_CLEARANCE_PERCENT = 10;
 const NARROW_EDGE_CLEARANCE_PERCENT = 20;
 
 // Round local hours that get a tick, and the multiple of them that is major.
-const HOUR_STEPS: Record<Exclude<Range, '7d'>, { major: number; step: number }> = {
+const HOUR_STEPS: Record<Exclude<Range, '7d' | '30d' | '1y'>, { major: number; step: number }> = {
   '12h': { major: 4, step: 2 },
   '24h': { major: 8, step: 4 },
   '6h': { major: 2, step: 1 },
 };
 
+// Ticks at the first local midnight of each month in a window, labeled by
+// month, January with its year; every other month is minor.
+const monthTicks = (window: Window, timeZone: string): Tick[] => {
+  const ticks: Tick[] = [];
+  let { month, year } = localMonth(window.from, timeZone);
+  for (;;) {
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    // Noon UTC on the 1st is the 1st in every zone a fleet keeps time in.
+    const first = localMidnight(Date.UTC(year, month - 1, 1, 12), timeZone);
+    if (first >= window.to) {
+      return ticks;
+    }
+    const tick = roundTick(
+      first,
+      window,
+      formatMonth(first, timeZone, month === 1),
+      month % 2 === 0,
+    );
+    if (tick !== undefined) {
+      ticks.push(tick);
+    }
+  }
+};
+
 // The ticks along a window: the first at its start, round local times between,
-// and "now" at its end. 7d ticks each local midnight, labeled by weekday.
+// and "now" at its end. 7d ticks each local midnight, labeled by weekday; 30d
+// each Monday by date; 1y the first of each month by its name.
 export const axisTicks = (range: Range, window: Window, timeZone: string): Tick[] => {
   const { from, to } = window;
+  if (range === '30d' || range === '1y') {
+    return [
+      {
+        at: from,
+        edge: 'start',
+        label: range === '1y' ? formatDateYear(from, timeZone) : formatDate(from, timeZone),
+        minor: false,
+      },
+      ...(range === '1y' ? monthTicks(window, timeZone) : dayTicks(window, timeZone)),
+      { at: to, edge: 'end', label: 'now', minor: false },
+    ];
+  }
   const weekly = range === '7d';
   const ticks: Tick[] = [
     {

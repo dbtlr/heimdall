@@ -147,24 +147,42 @@ export const bucketGrid = ({ from, to }: Window, bucketMs = BUCKET_MS): number[]
   return starts;
 };
 
-// The memory plot's points: GiB used per bucket at its middle, null where the
-// Hub has no bucket, so the line breaks there.
+// The memory plot's points: GiB used per bucket at its middle, with the
+// bucket's low to high, null where the Hub has no bucket, so the line breaks
+// there. Buckets are 5 minutes unless `bucketMs` says otherwise.
 export const memoryRows = (
   buckets: readonly MemoryBucket[],
   window: Window,
-): { t: number; used: number | null }[] => {
-  const used = new Map(buckets.map((bucket) => [bucket.t, bucket.usedBytes / GIB]));
-  return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, used: used.get(t) ?? null }));
+  bucketMs = BUCKET_MS,
+): { band: [number, number] | null; t: number; used: number | null }[] => {
+  const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
+  return bucketGrid(window, bucketMs).map((t) => {
+    const bucket = byStart.get(t);
+    return {
+      band: bucket === undefined ? null : [bucket.lowBytes / GIB, bucket.highBytes / GIB],
+      t: t + bucketMs / 2,
+      used: bucket === undefined ? null : bucket.usedBytes / GIB,
+    };
+  });
 };
 
-// The load plot's points: the 1-minute load per bucket at its middle, null
-// where the Hub has no bucket.
+// The load plot's points: the 1-minute load per bucket at its middle, with
+// the bucket's low to high, null where the Hub has no bucket. Buckets are 5
+// minutes unless `bucketMs` says otherwise.
 export const loadRows = (
   buckets: readonly LoadBucket[],
   window: Window,
-): { t: number; value: number | null }[] => {
-  const load = new Map(buckets.map((bucket) => [bucket.t, bucket.value]));
-  return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, value: load.get(t) ?? null }));
+  bucketMs = BUCKET_MS,
+): { band: [number, number] | null; t: number; value: number | null }[] => {
+  const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
+  return bucketGrid(window, bucketMs).map((t) => {
+    const bucket = byStart.get(t);
+    return {
+      band: bucket === undefined ? null : [bucket.low, bucket.high],
+      t: t + bucketMs / 2,
+      value: bucket?.value ?? null,
+    };
+  });
 };
 
 // The process plot's points: each process's cores per bucket at its middle
@@ -205,11 +223,12 @@ export const splitIdleProcesses = (
 export const idleProcessesLabel = (count: number): string =>
   `${String(count)} idle ${count === 1 ? 'process' : 'processes'} in this range`;
 
-// The pinned sample's big step on the time axis: an hour of buckets.
-const LARGE_STEP_MS = 12 * BUCKET_MS;
+// The pinned time's big step on the time axis, in buckets: an hour of 5-minute ones.
+const LARGE_STEP_BUCKETS = 12;
 
 // Where a key on the time axis moves the pinned time from `selected`, the
-// newest time when none is pinned: a bucket for an arrow, an hour with Shift or
+// newest time when none is pinned: a bucket, 5 minutes unless `bucketMs` says
+// otherwise, for an arrow, 12 buckets (an hour of 5-minute ones) with Shift or
 // for Page Up and Page Down, the window's ends for Home and End, and never past
 // either end. Undefined for a key that moves nothing, and for any key held with
 // Alt, Ctrl, or Meta, so the browser's own shortcuts still work.
@@ -223,12 +242,14 @@ export const steppedSample = (
   }: { altKey: boolean; ctrlKey: boolean; key: string; metaKey: boolean; shiftKey: boolean },
   selected: number | undefined,
   { from, to }: Window,
+  bucketMs = BUCKET_MS,
 ): number | undefined => {
   if (altKey || ctrlKey || metaKey) {
     return undefined;
   }
   const at = selected ?? to;
-  const step = shiftKey ? LARGE_STEP_MS : BUCKET_MS;
+  const large = LARGE_STEP_BUCKETS * bucketMs;
+  const step = shiftKey ? large : bucketMs;
   const moved = (by: number) => Math.min(to, Math.max(from, at + by));
   switch (key) {
     case 'ArrowRight':
@@ -240,10 +261,10 @@ export const steppedSample = (
       return moved(-step);
     }
     case 'PageUp': {
-      return moved(LARGE_STEP_MS);
+      return moved(large);
     }
     case 'PageDown': {
-      return moved(-LARGE_STEP_MS);
+      return moved(-large);
     }
     case 'Home': {
       return from;

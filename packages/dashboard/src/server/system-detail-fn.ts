@@ -2,7 +2,14 @@ import { notFound } from '@tanstack/react-router';
 import { createServerFn } from '@tanstack/react-start';
 
 import { database } from './database.ts';
-import { parseDetailInput, parseSampleInput, readSample, readSystemPage } from './system-detail.ts';
+import {
+  parseBucketInput,
+  parseDetailInput,
+  parseSampleInput,
+  readBucket,
+  readSample,
+  readSystemPage,
+} from './system-detail.ts';
 
 // One System's detail over `range` (12h when none is given) with what its
 // provisioner recorded and its Activity, read at the server's clock. An unpaired
@@ -24,3 +31,11 @@ export const getSystemDetail = createServerFn({ method: 'GET' })
 export const getSample = createServerFn({ method: 'GET' })
   .validator(parseSampleInput)
   .handler(async ({ data }) => (await readSample(await database(), data)) ?? null);
+
+// The bucket of a long range holding `at`, or the newest, for the inspector,
+// read at the server's clock; undefined when the name is no System.
+export const getBucket = createServerFn({ method: 'GET' })
+  .validator(parseBucketInput)
+  .handler(
+    async ({ data }) => (await readBucket(await database(), { ...data, now: Date.now() })) ?? null,
+  );

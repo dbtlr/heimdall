@@ -18,6 +18,7 @@ const NOW = 1_800_000_000_000;
 const FROM = NOW - 12 * 60 * MINUTE;
 
 const detail: SystemDetail = {
+  bucketMs: 5 * MINUTE,
   changes: [],
   collectorVersion: '1.0.0',
   conditions: [],
@@ -31,6 +32,7 @@ const detail: SystemDetail = {
   latest: undefined,
   limitPercent: undefined,
   load: [],
+  long: undefined,
   memory: [],
   name: 'server-1',
   now: NOW,
@@ -81,6 +83,7 @@ function Page({ initialAt, stored }: { initialAt?: number; stored?: readonly num
   return (
     <SystemOverview
       at={at}
+      bucket={null}
       attention={[]}
       detail={detail}
       failed={false}
