@@ -152,7 +152,6 @@ The Hub counts measured busy time within rolling windows, so sustained work and 
 | High memory (`high_memory`) | Above 90% on Linux; pressure on macOS | 30 minutes | 60 minutes | warning |
 
 Both Conditions have an empty subject and name their resource in their reason.
-
 The CPU percentage covers all cores. Equality with the percentage limit does not count as busy.
 Duration equality qualifies. Reasons give the measured busy minutes, the window, and its ending sample time.
 A quiet newest reading can leave a qualifying pattern in its window.
@@ -178,8 +177,6 @@ The sample inspector inspects the selected sample. The Condition page inspects t
 They read the newest sample carrying `topByMemory` that is at or before the inspected sample, at most two minutes older than it, and within its uptime, so from the same boot.
 Two minutes covers the Collector's one-minute cadence and one sample missed by a failed process read.
 With no such sample, or an empty list, they show nothing, not even the heading.
-
-Each Vitals sample may carry `cpu.cores`, a positive integer up to 65,536 counting the logical CPUs the operating system reports online, not a container's CPU quota or affinity. The Collector uses the length of `os.cpus()`, the same readings it uses for CPU timing. Missing or invalid counts are dropped without rejecting the Report (ADR-0004). The Hub keeps the newest sample's count and sample time in `systems.cpu_cores` and `systems.cpu_cores_at`, updating them only when that sample is strictly newer than the stored time. A Report whose newest sample omits the count preserves the stored value and time. When known, the System overview's 1-minute load chart names the current count in its note and draws a dashed line at the latest reported count across the range, including it in the scale.
 
 Raising and escalation require enough measured busy time.
 A new current Condition also requires a latest sample no older than two hours.
@@ -211,6 +208,8 @@ Percentages must be greater than zero and at most 100. Durations and windows ran
 Each duration must fit its window. CPU's note duration must be less than its warning duration, and its note window cannot exceed its warning window.
 Unknown fields and invalid inherited combinations stop `serve` before it opens the database.
 Restarting the Hub applies changed limits to subsequent judgments, including its latest stored window, without rewriting recorded history.
+
+Each Vitals sample may carry `cpu.cores`, a positive integer up to 65,536 counting the logical CPUs the operating system reports online, not a container's CPU quota or affinity. The Collector uses the length of `os.cpus()`, the same readings it uses for CPU timing. Missing or invalid counts are dropped without rejecting the Report (ADR-0004). The Hub keeps the newest sample's count and sample time in `systems.cpu_cores` and `systems.cpu_cores_at`, updating them only when that sample is strictly newer than the stored time. A count whose sample time is more than the future-sample tolerance (five minutes) ahead of receipt is ignored, and a current count replaces a stored one dated beyond that tolerance. A Report whose newest sample omits the count preserves the stored value and time. When known, the System overview's 1-minute load chart names the current count in its note and draws a dashed line at the latest reported count across the range, including it in the scale.
 
 ### Hot processes
 

@@ -1,4 +1,10 @@
-import { mirrorChecks, mirrorRecords, mirrorRuns, takeJobRuns } from '@heimdall/schema';
+import {
+  FUTURE_SAMPLE_TOLERANCE_MS,
+  mirrorChecks,
+  mirrorRecords,
+  mirrorRuns,
+  takeJobRuns,
+} from '@heimdall/schema';
 import type {
   ChecksSection,
   ConditionKind,
@@ -51,7 +57,14 @@ export const storeReport = async (
   const result = await sql.begin(async (tx) => {
     const seenAt = new Date(receivedAt);
     const newest = report.samples.at(-1);
-    const coresAt = newest?.cpu.cores === undefined ? null : new Date(newest.t);
+    // A count whose sample time is ahead of receipt by more than the tolerance is
+    // ignored, as other observations are, so it cannot freeze the count.
+    const cores =
+      newest?.cpu.cores !== undefined && newest.t <= receivedAt + FUTURE_SAMPLE_TOLERANCE_MS
+        ? newest.cpu.cores
+        : null;
+    const coresAt = cores === null ? null : new Date(newest!.t);
+    const futureCutoff = new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS);
     await tx`
       INSERT INTO systems (
         name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps, cpu_cores, cpu_cores_at,
@@ -59,7 +72,7 @@ export const storeReport = async (
       )
       VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
               ${report.collector.platform}, ${storable(report.collector.arch)},
-              ${report.timeZone ?? null}, ${report.sleeps ?? null}, ${newest?.cpu.cores ?? null}, ${coresAt},
+              ${report.timeZone ?? null}, ${report.sleeps ?? null}, ${cores}, ${coresAt},
               ${report.sentAt - receivedAt}, ${seenAt})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
@@ -71,10 +84,13 @@ export const storeReport = async (
         time_zone = COALESCE(excluded.time_zone, systems.time_zone),
         -- Likewise a Report without sleeps, from a Collector that predates it.
         sleeps = COALESCE(excluded.sleeps, systems.sleeps),
-        -- Only a strictly newer sample replaces the core count; omission keeps it.
+        -- Only a strictly newer sample replaces the core count; omission keeps it. A
+        -- stored time ahead of receipt by more than the tolerance gives way to any count.
         cpu_cores = CASE WHEN systems.cpu_cores_at IS NULL OR excluded.cpu_cores_at > systems.cpu_cores_at
+          OR systems.cpu_cores_at > ${futureCutoff}
           THEN COALESCE(excluded.cpu_cores, systems.cpu_cores) ELSE systems.cpu_cores END,
         cpu_cores_at = CASE WHEN systems.cpu_cores_at IS NULL OR excluded.cpu_cores_at > systems.cpu_cores_at
+          OR systems.cpu_cores_at > ${futureCutoff}
           THEN COALESCE(excluded.cpu_cores_at, systems.cpu_cores_at) ELSE systems.cpu_cores_at END,
         -- Only the latest offset is kept, whichever way the Hub's clock moved.
         clock_offset_ms = excluded.clock_offset_ms,

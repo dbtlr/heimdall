@@ -40,7 +40,7 @@ test('only a strictly newer sample can replace the core count', async () => {
     [400, undefined, 16],
     [350, 32, 32],
   ] satisfies [number, number | undefined, number][]) {
-    const body = report('server-1', [NOW + offset * 1000]);
+    const body = report('server-1', [NOW + (offset - 400) * 1000]);
     body.samples = body.samples.map((sample) => ({ ...sample, cpu: { ...sample.cpu, cores } }));
     // oxlint-disable-next-line no-await-in-loop -- Arrival order is the behavior under test.
     expect((await push(h.hub, body, { token: 'server-token' })).status).toBe(200);
@@ -69,4 +69,49 @@ test('uses only the newest sample in a Report for the core count', async () => {
     SELECT cpu_cores, cpu_cores_at FROM systems WHERE name = 'server-1'
   `;
   expect(row).toEqual({ cpu_cores: 8, cpu_cores_at: new Date(NOW + 15_000) });
+});
+
+const withCores = (times: number[], cores: number | undefined) => {
+  const body = report('server-1', times);
+  body.samples = body.samples.map((sample) => ({ ...sample, cpu: { ...sample.cpu, cores } }));
+  return body;
+};
+
+const storedCores = async (h: Awaited<ReturnType<typeof startHub>>) => {
+  const [row]: { cpu_cores: number | null; cpu_cores_at: Date | null }[] = await h.db.sql`
+    SELECT cpu_cores, cpu_cores_at FROM systems WHERE name = 'server-1'
+  `;
+  return row;
+};
+
+test('a System that exists without a count takes the first count it hears', async () => {
+  await using h = await startHub();
+  expect((await push(h.hub, withCores([NOW], undefined), { token: 'server-token' })).status).toBe(
+    200,
+  );
+  expect(await storedCores(h)).toEqual({ cpu_cores: null, cpu_cores_at: null });
+  expect((await push(h.hub, withCores([NOW - 60_000], 4), { token: 'server-token' })).status).toBe(
+    200,
+  );
+  expect(await storedCores(h)).toEqual({ cpu_cores: 4, cpu_cores_at: new Date(NOW - 60_000) });
+});
+
+test('a sample far ahead of the Hub does not set the core count', async () => {
+  await using h = await startHub();
+  const future = NOW + 365 * 24 * 60 * 60 * 1000;
+  expect((await push(h.hub, withCores([future], 8), { token: 'server-token' })).status).toBe(200);
+  expect(await storedCores(h)).toEqual({ cpu_cores: null, cpu_cores_at: null });
+  expect((await push(h.hub, withCores([NOW], 4), { token: 'server-token' })).status).toBe(200);
+  expect(await storedCores(h)).toEqual({ cpu_cores: 4, cpu_cores_at: new Date(NOW) });
+});
+
+test('a current count replaces a stored count dated ahead of the Hub', async () => {
+  await using h = await startHub();
+  const future = NOW + 365 * 24 * 60 * 60 * 1000;
+  await h.db.sql`
+    INSERT INTO systems (name, last_seen_at, cpu_cores, cpu_cores_at)
+    VALUES ('server-1', ${new Date(NOW)}, 8, ${new Date(future)})
+  `;
+  expect((await push(h.hub, withCores([NOW], 4), { token: 'server-token' })).status).toBe(200);
+  expect(await storedCores(h)).toEqual({ cpu_cores: 4, cpu_cores_at: new Date(NOW) });
 });
