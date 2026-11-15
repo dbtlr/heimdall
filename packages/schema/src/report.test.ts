@@ -202,10 +202,29 @@ describe('a Report is rejected', () => {
   });
 });
 
-test('logical CPU counts are optional and invalid counts never cost a Vitals sample', () => {
-  for (const cores of [undefined, 1, 8, 0, -1, 1.5, '8', null, Infinity, NaN]) {
-    const parsed = VitalsSampleSchema.parse({ ...sample(0), cpu: { busyPercent: 20, cores } });
-    expect(parsed.cpu.busyPercent).toBe(20);
-    expect(parsed.cpu.cores).toBe(cores === 1 || cores === 8 ? cores : undefined);
+test('logical CPU counts are optional and invalid counts never cost a Report', () => {
+  for (const cores of [
+    undefined,
+    1,
+    8,
+    65_536,
+    65_537,
+    2 ** 31,
+    0,
+    -1,
+    1.5,
+    '8',
+    null,
+    Infinity,
+    NaN,
+  ]) {
+    const parsed = ReportSchema.parse({
+      ...report(),
+      samples: [{ ...sample(0), cpu: { busyPercent: 20, cores } }],
+    });
+    expect(parsed.samples[0]?.cpu.busyPercent).toBe(20);
+    expect(parsed.samples[0]?.cpu.cores).toBe(
+      cores === 1 || cores === 8 || cores === 65_536 ? cores : undefined,
+    );
   }
 });

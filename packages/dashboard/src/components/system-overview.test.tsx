@@ -18,6 +18,7 @@ const detail = (
   collectorVersion: '1.0.0',
   conditions: [],
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 300_000 }],
+  cpuCores: undefined,
   diskTrends: [],
   from: FROM,
   gaps: [],
@@ -211,7 +212,10 @@ test('reads a Service whose installed version is unknown as a muted "unknown", a
 
 test('names known logical cores and draws their dashed load limit within the scale', async () => {
   const html = await render(undefined, { cpuCores: 8 });
-  expect(html).toContain('Load (1 min) · 8 cores');
+  expect(html).toContain('aria-label="Load (1 min)"');
+  expect(html).toContain('8 cores now');
+  expect(html).not.toContain('Load (1 min) ·');
+  expect(html).toContain('border-color:var(--muted-foreground)');
   expect(limitLines(html)).toEqual([8]);
   expect(html).toContain('8 cores');
   expect(html).toContain('border-dashed');
@@ -220,4 +224,10 @@ test('names known logical cores and draws their dashed load limit within the sca
   expect(unknown).toContain('Load (1 min)');
   expect(unknown).not.toContain('Load (1 min) ·');
   expect(limitLines(unknown)).toEqual([]);
+});
+
+test('names one current core in the load note and reference line', async () => {
+  const html = await render(undefined, { cpuCores: 1 });
+  expect(html.match(/1 core now/gu)).toHaveLength(2);
+  expect(html).toContain('aria-label="Load (1 min)"');
 });

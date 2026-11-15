@@ -66,7 +66,8 @@ export type SystemDetail = {
   collectorVersion: string | undefined;
   conditions: ConditionMark[];
   cpu: CpuBucket[];
-  cpuCores?: number | undefined;
+  // The latest reported logical CPU count, undefined until a valid count is stored.
+  cpuCores: number | undefined;
   // Each mount's growth over the 7 days up to its newest reading, for the
   // mounts with readings.
   diskTrends: DiskTrend[];

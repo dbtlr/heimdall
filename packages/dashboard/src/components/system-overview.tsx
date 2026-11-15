@@ -14,7 +14,7 @@ import { CpuPlot } from './cpu-plot.tsx';
 import { DateTime } from './date-time.tsx';
 import { DetailAxis, DetailTrack, SampleSlider } from './detail-track.tsx';
 import { GapShades } from './gap-shades.tsx';
-import { LoadPlot } from './load-plot.tsx';
+import { coreCountNote, LoadPlot } from './load-plot.tsx';
 import { MemoryPlot } from './memory-plot.tsx';
 import { MoreItems } from './more-items.tsx';
 import { ProcessPlot } from './process-plot.tsx';
@@ -192,11 +192,8 @@ export function SystemOverview({
                 </DetailTrack>
               </Chart>
               <Chart
-                title={
-                  detail.cpuCores === undefined
-                    ? 'Load (1 min)'
-                    : `Load (1 min) · ${String(detail.cpuCores)} ${detail.cpuCores === 1 ? 'core' : 'cores'}`
-                }
+                note={detail.cpuCores === undefined ? '' : coreCountNote(detail.cpuCores)}
+                title="Load (1 min)"
               >
                 <DetailTrack>
                   <LoadPlot

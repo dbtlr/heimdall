@@ -1,13 +1,16 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
 import { niceDomain } from '../lib/chart-scale.ts';
-import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { loadRows } from '../lib/detail.ts';
 import type { Window } from '../lib/time.ts';
 import type { LoadBucket } from '../server/system-detail-types.ts';
 import { PLOT_COLOR, PlotGradient, ScaledPlot, usePlotGradientId } from './plot-scale.tsx';
 import { ChartContainer } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
+
+// The latest reported logical core count, used by the note and reference line.
+export const coreCountNote = (cores: number): string =>
+  `${String(cores)} ${cores === 1 ? 'core' : 'cores'} now`;
 
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
 const CONFIG = { value: { color: PLOT_COLOR, label: 'Load' } } satisfies ChartConfig;
@@ -48,8 +51,8 @@ export function LoadPlot({
           ? []
           : [
               {
-                color: LEVEL_STROKE.note,
-                label: `${String(cores)} ${cores === 1 ? 'core' : 'cores'}`,
+                color: 'var(--muted-foreground)',
+                label: coreCountNote(cores),
                 value: cores,
               },
             ]

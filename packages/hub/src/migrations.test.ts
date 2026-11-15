@@ -499,7 +499,8 @@ test('migration 45 leaves existing Systems with an unknown core count', async ()
   );
   await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
   expect(await migrate(db.sql)).toEqual([45]);
-  const [row]: { cpu_cores: number | null }[] = await db.sql`SELECT cpu_cores FROM systems`;
-  expect(row?.cpu_cores).toBeNull();
+  const [row]: { cpu_cores: number | null; cpu_cores_at: Date | null }[] =
+    await db.sql`SELECT cpu_cores, cpu_cores_at FROM systems`;
+  expect(row).toEqual({ cpu_cores: null, cpu_cores_at: null });
   expect(await migrate(db.sql)).toEqual([]);
 });

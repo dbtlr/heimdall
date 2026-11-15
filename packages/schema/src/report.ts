@@ -53,18 +53,22 @@ const amount = z.number().nonnegative();
 
 const DiskSchema = z.object({ mount: z.string().min(1), totalBytes: bytes, usedBytes: bytes });
 
+// Bound optional metadata well below the database integer limit; implausible counts
+// must not make an otherwise valid Report fail storage.
+const MAX_CPU_CORES = 65_536;
+
 // One Vitals sample: the System's host measurements and the Collector's own
 // footprint at one moment. CPU percentages span all cores and average the
 // interval since the previous sample.
 export const VitalsSampleSchema = z.object({
   collector: z.object({ cpuPercent: amount, rssBytes: bytes }),
   // cpu.cores is the optional positive integer count of logical CPUs the OS
-  // reports. Missing or invalid counts preserve the sample (ADR-0004). The Hub
+  // reports. Missing or invalid counts preserve the Report (ADR-0004). The Hub
   // keeps the newest sample's known count in systems.cpu_cores; omission keeps it.
   cpu: z.object({
     busyPercent: amount,
     // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
-    cores: z.number().int().positive().optional().catch(undefined),
+    cores: z.number().int().positive().max(MAX_CPU_CORES).optional().catch(undefined),
   }),
   disks: z.array(DiskSchema).min(1),
   load: z.tuple([amount, amount, amount]),

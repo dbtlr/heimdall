@@ -55,7 +55,7 @@ export const createSampler = (probe: HostProbe): Sampler => {
         },
         cpu: {
           busyPercent: cpuBusyPercent(previous.cpuTimes, current.cpuTimes),
-          cores: current.cpuTimes.length || undefined,
+          ...(current.cpuTimes.length > 0 ? { cores: current.cpuTimes.length } : {}),
         },
         disks,
         load: probe.load(),

@@ -2391,7 +2391,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     // Older Collectors leave the logical CPU count unknown.
-    sql: `ALTER TABLE systems ADD COLUMN cpu_cores integer;`,
+    sql: `ALTER TABLE systems ADD COLUMN cpu_cores integer, ADD COLUMN cpu_cores_at timestamptz;`,
     version: 45,
   },
 ];
