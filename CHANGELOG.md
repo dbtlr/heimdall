@@ -10,6 +10,12 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.13.1 - 2026-11-15
+
+### Fixes
+
+- **A project page loads for a project with real history** (HMD-276). The page's activity lanes, tools, branches, and subagents asked whether each Session had a request in the range in a form that priced every request in the archive first. On a few hundred thousand requests that ran past the dashboard's 30-second statement timeout, and the page failed with `canceling statement due to statement timeout`. Each Session and subagent now looks for its first request in the range by its own index.
+
 ## v0.13.0 - 2026-11-15
 
 ### Features
