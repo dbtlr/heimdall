@@ -22,7 +22,7 @@ const mark = (overrides: Partial<ConditionMark> & Pick<ConditionMark, 'kind'>): 
   ...overrides,
 });
 
-const restart = {
+const serviceStop = {
   at: NOW - 10 * MINUTE,
   kind: 'stop',
   lasted: 4000,
@@ -37,7 +37,7 @@ const lane = (conditions: ConditionMark[]) =>
     <DetailAxis onSelect={() => {}} selected={undefined} window={WINDOW}>
       <ChangesLane
         detail={{
-          changes: [restart],
+          changes: [serviceStop],
           conditions,
           now: NOW,
           paired: true,
@@ -62,7 +62,11 @@ test('lists the latest events under the lane and keeps the earlier ones behind a
   ]);
   const [shown = '', earlier = ''] = html.split('<details');
 
-  for (const text of ['Service down web, alert', 'Job failing backup, alert', 'db restarted']) {
+  for (const text of [
+    'Service down web, alert',
+    'Job failing backup, alert',
+    'db stopped for 4 s',
+  ]) {
     expect(shown).toContain(text);
   }
   expect(earlier).toContain('Show 3 earlier events');
@@ -72,7 +76,7 @@ test('lists the latest events under the lane and keeps the earlier ones behind a
   }
 });
 
-test('shows a recent restart ahead of Conditions open longer, however many are open', () => {
+test('shows a recent stop ahead of Conditions open longer, however many are open', () => {
   const html = lane(
     Array.from({ length: 7 }, (_, i) =>
       mark({ kind: 'low_disk', raisedAt: NOW - (i + 1) * HOUR, subject: `/disk${String(i)}` }),
@@ -80,7 +84,7 @@ test('shows a recent restart ahead of Conditions open longer, however many are o
   );
   const [shown = '', earlier = ''] = html.split('<details');
 
-  expect(shown).toContain('db restarted');
+  expect(shown).toContain('db stopped for 4 s');
   expect(earlier).toContain('Show 2 earlier events');
   for (const text of ['/disk5', '/disk6']) {
     expect(earlier).toContain(text);

@@ -1,6 +1,14 @@
 import { expect, test } from 'bun:test';
 
-import { clockAt, clockSpan, phraseText, phraseTitle, whenAt, zoneFreeText } from './phrase.ts';
+import {
+  clockAt,
+  clockSpan,
+  joinPhrases,
+  phraseText,
+  phraseTitle,
+  whenAt,
+  zoneFreeText,
+} from './phrase.ts';
 
 // 2026-10-13 22:30 UTC: Tuesday 18:30 in New York, Wednesday 00:30 in Berlin.
 const T = Date.UTC(2026, 9, 13, 22, 30, 0);
@@ -34,4 +42,9 @@ test('a clock span ending nowhere ends at "now"', () => {
 test('a title has no text until a zone is known', () => {
   expect(phraseTitle(['at ', clockAt(T)], undefined)).toBeUndefined();
   expect(phraseTitle(['at ', clockAt(T)], 'America/New_York')).toBe('at 18:30');
+});
+
+test('joined phrases skip the empty ones and keep their times', () => {
+  const joined = joinPhrases([['Exited.'], [''], [], ['recovery at ', clockAt(0)]], ' · ');
+  expect(phraseText(joined, 'UTC')).toBe('Exited. · recovery at 00:00');
 });

@@ -67,6 +67,29 @@ describe('systemEvents', () => {
     ]);
   });
 
+  test('says a stop on its own as Activity does', () => {
+    const events = systemEvents(
+      {
+        changes: [
+          {
+            at: NOW - HOUR,
+            kind: 'stop',
+            lasted: 4000,
+            ongoing: false,
+            restarts: 0,
+            service: 'web',
+            system: 'server-1',
+          },
+        ],
+        conditions: [],
+        paired: true,
+      },
+      WINDOW,
+    );
+
+    expect(events).toEqual([{ at: NOW - HOUR, kind: 'change', text: 'web stopped for 4 s' }]);
+  });
+
   test('orders events by the latest time each shows, a cleared Condition by its clear and an open one by its raise, however long it has been open', () => {
     const events = systemEvents(
       {

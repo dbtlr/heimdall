@@ -391,7 +391,7 @@ describe('readHome', () => {
 
     expect(changes.map((group) => changeWords(group).title)).toEqual([
       'dev-db stopped',
-      't3code restarted',
+      't3code stopped, end unknown',
       'Drift cleared on server-1',
       'collector 0.10.0 → 0.10.1',
       'Drift raised on server-1',

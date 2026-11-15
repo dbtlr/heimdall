@@ -61,7 +61,9 @@ test('the list heads each day, shows an alert sent on its Condition, and labels 
   expect(html).toContain('>Today<');
   expect(html).toContain('>Yesterday<');
   expect(html).toContain('alert sent');
-  expect(html).toContain('recovery at 10:00');
+  // The lead's own alert says its recovery once, after "Alert pushed at".
+  expect(html).toContain('Alert pushed at 09:01, recovery at 10:00');
+  expect(html.match(/recovery at 10:00/gu)).toHaveLength(1);
   expect(html).toContain('href="/systems/server-1/conditions/7"');
   expect(html).toContain('ntfy 2.11.0 → 2.12.0');
   expect(html.match(/unpaired/gu)).toHaveLength(1);
@@ -93,4 +95,43 @@ test('a cleared Drift takes the cleared ring, not its level glyph', async () => 
   );
   expect(html).toContain('stroke-status-good');
   expect(html).not.toContain('fill-status-serious');
+});
+
+test('an alert merged into a stop line says when its recovery went out, with its alert and in the list zone', async () => {
+  const html = await renderRouted(
+    <ActivityListBody
+      lines={groupActivity([
+        {
+          at: NOW,
+          kind: 'stop',
+          lasted: 4000,
+          ongoing: false,
+          restarts: 0,
+          service: 'caddy',
+          system: 'server-1',
+        },
+        {
+          at: NOW + MIN,
+          condition: 'service_down',
+          kind: 'alert',
+          open: false,
+          recoveredAt: NOW + 5 * MIN,
+          subject: 'backup',
+          system: 'server-1',
+        },
+      ])}
+      now={NOW}
+      timeZone="Asia/Kolkata"
+      unpaired={new Set()}
+    />,
+    {
+      routePaths: [
+        '/systems/$name',
+        '/systems/$name/conditions/$id',
+        '/systems/$name/services/$service',
+      ],
+    },
+  );
+  // 12:05 UTC is 17:35 in Kolkata.
+  expect(html).toContain('Alert sent for Service down backup, recovery at 17:35');
 });
