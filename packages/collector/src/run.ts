@@ -225,11 +225,12 @@ export const runAction: ActionHandler<typeof run> = async ({
     // The daemon writes the store only to settle job runs: the ones the Hub
     // took, and the held runs the reporter skips because the section cannot
     // carry them (`heldRuns()` settles those as it reads). `record`, `forget`,
-    // and `pair` write the rest. The checks and the reporter each open it on first use, through a connection
-    // of their own, so a store that will not open costs only the checks, the
-    // records, and the runs. The file checks hash on their own schedule and the
-    // Service checks run every minute, each in a loop of its own, and the
-    // reporter sends the parts of both as one section.
+    // and `pair` write the rest. The checks and the reporter each open it on
+    // first use, through a connection of their own, so a store that will not
+    // open costs only the checks, the records, and the runs. The file checks
+    // hash on their own schedule and the Service checks run every minute, each
+    // in a loop of its own, and the reporter sends the parts of both as one
+    // section.
     const fileChecks = startChecks({
       log: runtime,
       now: Date.now,
