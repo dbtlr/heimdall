@@ -1,7 +1,7 @@
 import type { SQL } from 'bun';
 
 import { deliveryFailingShown, isAsleep } from '../lib/fleet.ts';
-import { agoText, judgePass } from '../lib/hub-passes.ts';
+import { agoText, isOverdue, judgePass } from '../lib/hub-passes.ts';
 import type { PassRecord } from '../lib/hub-passes.ts';
 import { harnessName } from '../lib/lane.ts';
 import { joinPhrases, whenAt } from '../lib/phrase.ts';
@@ -10,7 +10,8 @@ import { formatSpanShort } from '../lib/time.ts';
 import type { HubCheck, HubRuntime, HubStatus, HubTable } from './hub-status-types.ts';
 
 // The gap in the Hub's listening record that counts as an outage, as the Hub
-// judges it (LISTENING_GAP_MS in packages/hub/src/listening.ts).
+// judges it (LISTENING_GAP_MS in packages/hub/src/listening.ts). Only an older
+// Hub, which records no listening pass, is judged down by it.
 export const LISTENING_GAP_MS = 2 * 60_000;
 // How many items a list that can grow shows before it says how many more.
 export const LIST_SHOWN = 3;
@@ -74,6 +75,11 @@ const progressText = (p: {
   return Number(p.behind) === 0 ? 'Read through: 0 B behind' : `${sizeText(p.behind)} behind`;
 };
 
+// Whether the Hub asks this upstream for its releases, as the Hub decides it
+// (checkedUpstream in packages/hub/src/upstream-releases.ts). APT and Homebrew
+// upstreams come from the Collector's package observations instead.
+export const checkedUpstream = (upstream: string) => /^(?:github|npm|oci):/u.test(upstream);
+
 // A failing upstream with its reason, when it was checked, and its next try.
 const failingUpstream = (
   u: {
@@ -90,6 +96,13 @@ const failingUpstream = (
     phrase.push(', next try ', { at: u.next_check_at.getTime(), format: 'ahead', now });
   }
   return phrase;
+};
+
+// A pass's record as it would read had its runs not failed.
+const withoutFailure = (run: PassRecord): PassRecord => {
+  const kept = { ...run };
+  delete kept.failing_since;
+  return kept;
 };
 
 type Runtime = {
@@ -134,13 +147,41 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
     const [listening]: { heard_at: Date | null; listening_since: Date | null }[] =
       await tx`SELECT heard_at, listening_since FROM hub_listening`;
     const heard = listening?.heard_at ?? null;
-    const isDown = heard !== null && now - heard.getTime() > LISTENING_GAP_MS;
+    const hubStartedAt = runtime.row?.started_at.getTime();
+    const listeningRun = runtime.row?.last_runs.listening;
+    const listeningInterval = listeningRun?.interval_ms;
+    // The Hub is down once its listening pass is overdue. Until then every pass
+    // is judged as of one listening interval after the Hub was last heard, so
+    // none goes overdue merely because the Hub stopped.
+    let isDown = heard !== null && now - heard.getTime() > LISTENING_GAP_MS;
+    let asOf = now;
+    if (
+      listeningRun !== undefined &&
+      listeningInterval !== undefined &&
+      hubStartedAt !== undefined
+    ) {
+      isDown = isOverdue(listeningRun, now, hubStartedAt);
+      const lastHeard = Math.max(
+        heard?.getTime() ?? hubStartedAt,
+        listeningRun.started_at ?? hubStartedAt,
+        listeningRun.finished_at ?? hubStartedAt,
+      );
+      asOf = Math.min(now, lastHeard + listeningInterval);
+    }
     const down: Phrase | undefined = isDown
       ? ['The Hub is not running: last heard ', ...when(heard, now), `, ${ago(heard, now)}.`]
       : undefined;
-    const hubStartedAt = runtime.row?.started_at.getTime();
-    const pass = (name: string, label: string) =>
-      judgePass({ down: isDown, hubStartedAt, label, now, run: runtime.row?.last_runs[name] });
+    const pass = (name: string, label: string, run = runtime.row?.last_runs[name]) =>
+      judgePass({ asOf, down: isDown, hubStartedAt, label, now, run });
+    // Judged as of now: a listening run that hangs or keeps failing holds the
+    // other passes' clock, so it warns here.
+    const listeningPass = judgePass({
+      down: false,
+      hubStartedAt,
+      label: 'Listening pass',
+      now,
+      run: listeningRun,
+    });
 
     const hubLine: Phrase =
       runtime.row === undefined
@@ -150,6 +191,8 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
       add('Listening', 'unknown', ['No listening recorded yet'], hubLine);
     } else if (isDown) {
       add('Listening', 'warning', ['Not running: last heard ', ...when(heard, now)], hubLine);
+    } else if (listeningPass.stuck) {
+      add('Listening', 'warning', listeningPass.phrase, hubLine);
     } else {
       add(
         'Listening',
@@ -449,11 +492,24 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
       ],
       ' · ',
     );
+    // A failed send fails the delivery pass too, so the pass's own failure
+    // waits for Home's 10 minutes as the delivery status's does. A pass that
+    // falls behind still warns on its own schedule.
+    const deliveryRun = runtime.row?.last_runs.delivery;
+    const deliveryFailures = [
+      delivery?.failing_since?.getTime(),
+      deliveryRun?.failing_since,
+    ].filter((at) => at !== undefined);
     const failingSince = deliveryFailingShown({
-      deliveryFailingSince: delivery?.failing_since?.getTime(),
+      deliveryFailingSince:
+        deliveryFailures.length === 0 ? undefined : Math.min(...deliveryFailures),
       now,
     });
-    const deliveryPass = pass('delivery', 'Delivery pass');
+    const deliveryPass = pass(
+      'delivery',
+      'Delivery pass',
+      deliveryRun === undefined ? undefined : withoutFailure(deliveryRun),
+    );
     if (runtime.row === undefined) {
       add('Alert delivery', 'unknown', ['Configuration unknown'], deliveryDetail);
     } else if (!runtime.row.delivery_configured) {
@@ -475,8 +531,9 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
       add('Alert delivery', deliveryPass.state, deliveryPass.phrase, deliveryDetail);
     }
 
-    // Only upstreams a System records now: the Hub checks no other, so an
-    // upstream no System records any more keeps its last failure forever.
+    // Only upstreams a System records now and the Hub asks for releases: the
+    // Hub checks no other, so an upstream no System records any more keeps its
+    // last failure forever, and an APT or Homebrew one is never checked.
     const upstreams: {
       upstream: string;
       failure: string | null;
@@ -494,14 +551,15 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
       SELECT r.upstream, u.failure, u.checked_at, u.next_check_at
       FROM recorded r LEFT JOIN upstream_checks u ON u.upstream = r.upstream
       ORDER BY r.upstream`;
-    const checked = upstreams.filter((u) => u.checked_at !== null);
-    const failing = upstreams.filter((u) => u.failure !== null);
+    const checkable = upstreams.filter((u) => checkedUpstream(u.upstream));
+    const checked = checkable.filter((u) => u.checked_at !== null);
+    const failing = checkable.filter((u) => u.failure !== null);
     const upstreamPass = pass('upstreams', 'Upstream pass');
     add(
       'Upstream checks',
       failing.length > 0 || upstreamPass.stuck ? 'warning' : upstreamPass.state,
       [
-        `${String(checked.length)} of ${count(upstreams.length, 'upstream')} checked · ${failing.length === 0 ? 'none failing' : `${String(failing.length)} failing`}`,
+        `${String(checked.length)} of ${count(checkable.length, 'upstream')} checked · ${failing.length === 0 ? 'none failing' : `${String(failing.length)} failing`}`,
       ],
       failing.length === 0
         ? upstreamPass.phrase

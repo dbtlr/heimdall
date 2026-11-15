@@ -505,3 +505,25 @@ test('migration 45 leaves existing Systems with an unknown core count', async ()
   expect(row).toEqual({ cpu_cores: null, cpu_cores_at: null });
   expect(await migrate(db.sql, through45)).toEqual([]);
 });
+
+test('migration 46 adds an empty Hub status table to a database that holds rows', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 45),
+  );
+  await db.sql`INSERT INTO systems (name, cpu_cores) VALUES ('laptop-1', 8)`;
+  await db.sql`UPDATE hub_listening SET heard_at = now(), listening_since = now()`;
+  await db.sql`UPDATE delivery_status SET failing_since = now()`;
+  const through46 = MIGRATIONS.filter((m) => m.version <= 46);
+  expect(await migrate(db.sql, through46)).toEqual([46]);
+  expect(await db.sql`SELECT * FROM hub_status`).toEqual([]);
+  expect(await db.sql`SELECT name, cpu_cores FROM systems`).toEqual([
+    { cpu_cores: 8, name: 'laptop-1' },
+  ]);
+  await db.sql`INSERT INTO hub_status (version, started_at, delivery_configured)
+    VALUES ('1.2.3', now(), false)`;
+  const [row]: { last_runs: unknown }[] = await db.sql`SELECT last_runs FROM hub_status`;
+  expect(row?.last_runs).toEqual({});
+  expect(await migrate(db.sql, through46)).toEqual([]);
+});

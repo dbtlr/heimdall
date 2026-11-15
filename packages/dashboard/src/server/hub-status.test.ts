@@ -1,13 +1,21 @@
 import { expect, test } from 'bun:test';
 
-import { NOW, push, report, startHub } from '@heimdall/hub/testing';
+import {
+  checkedUpstream as hubChecksUpstream,
+  deliverAlerts,
+  hubStatusRecorder,
+  NOW,
+  push,
+  report,
+  startHub,
+} from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
 import { hubVerdict } from '../components/hub-status.tsx';
 import { phraseText } from '../lib/phrase.ts';
 import type { Phrase } from '../lib/phrase.ts';
 import type { HubStatus } from './hub-status-types.ts';
-import { readHubStatus, readHubVersion } from './hub-status.ts';
+import { checkedUpstream, readHubStatus, readHubVersion } from './hub-status.ts';
 
 const ZONE = 'UTC';
 const text = (phrase: Phrase | undefined) => (phrase === undefined ? '' : phraseText(phrase, ZONE));
@@ -69,6 +77,18 @@ test('an older Hub without the status table asks for an upgrade; a fresh databas
   expect(text(hubVerdict(older).summary)).toContain('Upgrade the Hub');
 });
 
+test('an older Hub asks for the upgrade alongside any part that needs a look', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DROP TABLE hub_status`;
+  await raise(h, 'server-1', 'system_stale', 'warning');
+  const { summary, verdict } = hubVerdict(await readHubStatus(h.db.sql, NOW));
+  expect(verdict).toBe('1 needs a look');
+  expect(text(summary)).toBe(
+    'Intake needs attention. Upgrade the Hub to record its version, delivery configuration, and timer passes.',
+  );
+});
+
 test('a running Hub with every pass current reads all well, with local times and no raw stamps', async () => {
   await using h = await startHub();
   await runningHub(h);
@@ -125,6 +145,37 @@ test('upstream checks count only upstreams a System records now, and name each f
   });
 });
 
+test('upstream checks leave out the APT and Homebrew upstreams the Hub never checks', async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  await h.db.sql`INSERT INTO mirrored_records (system, kind, name, record)
+    VALUES ('server-1', 'service', 'nginx', '{}'), ('server-1', 'service', 'tool', '{}'),
+      ('server-1', 'service', 'jq', '{}')`;
+  await h.db.sql`INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+    VALUES ('server-1', 'nginx', '1.0', 'apt:nginx', ${new Date(NOW)}),
+      ('server-1', 'jq', '1.7', 'brew:jq', ${new Date(NOW)}),
+      ('server-1', 'tool', '1.0', 'github:example/tool', ${new Date(NOW)})`;
+  await h.db.sql`INSERT INTO upstream_checks (upstream, checked_at, next_check_at)
+    VALUES ('github:example/tool', ${new Date(NOW - 60_000)}, ${new Date(NOW + 3_600_000)})`;
+  expect(row(await readHubStatus(h.db.sql, NOW), 'Upstream checks').text).toBe(
+    '1 of 1 upstream checked · none failing',
+  );
+});
+
+test("the dashboard counts the upstreams the Hub checks, by the Hub's own rule", () => {
+  for (const upstream of [
+    'apt:nginx',
+    'brew:jq',
+    'github:example/tool',
+    'npm:@example/tool',
+    'oci:ghcr.io/example/tool',
+    'pypi:tool',
+    'githubx:example/tool',
+  ]) {
+    expect(checkedUpstream(upstream)).toBe(hubChecksUpstream(upstream));
+  }
+});
+
 test('alert delivery warns only once Home would, and counts the alerts not pushed', async () => {
   await using h = await startHub();
   await runningHub(h);
@@ -140,6 +191,104 @@ test('alert delivery warns only once Home would, and counts the alerts not pushe
   expect(hubVerdict(failing)).toEqual({
     summary: ['Alert delivery needs attention. Everything else is current.'],
     verdict: '1 needs a look',
+  });
+});
+
+// A pass's schedule as serve hands it to the recorder.
+const schedule = (name: 'delivery' | 'listening') => ({
+  budgetMs: SCHEDULES[name].budget_ms,
+  intervalMs: SCHEDULES[name].interval_ms,
+});
+
+const channelDown = async () => {
+  throw new Error('channel unreachable');
+};
+
+// A Hub whose status recorder runs its listening and delivery passes on a
+// clock the test sets: `passesAt` moves the clock, runs listening and, unless
+// told not to, delivery with `deliver`, and reads the Alert delivery row. A
+// failed pass is logged by serve and tried again on its next round.
+const recordingHub = async (h: Hub, deliver: (now: number) => Promise<void>) => {
+  let t = NOW;
+  const status = hubStatusRecorder({ now: () => t, sql: h.db.sql, warn: () => undefined });
+  await status.start({
+    deliveryConfigured: true,
+    passes: { delivery: schedule('delivery'), listening: schedule('listening') },
+    version: '1.2.3',
+  });
+  return async (at: number, { delivers = true } = {}) => {
+    t = at;
+    await status.pass(
+      'listening',
+      () => h.db.sql`UPDATE hub_listening SET heard_at = ${new Date(at)}`,
+    );
+    if (delivers) {
+      try {
+        await status.pass('delivery', () => deliver(at));
+      } catch {
+        // As serve logs it and runs the pass again on its next round.
+      }
+    }
+    return row(await readHubStatus(h.db.sql, at), 'Alert delivery');
+  };
+};
+
+test("a failing send waits for Home's 10 minutes, unless the delivery pass falls behind", async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  await raise(h, 'server-1', 'service_down', 'alert', 'nginx');
+  const passesAt = await recordingHub(h, (now) =>
+    deliverAlerts(h.db.sql, { dashboard: new URL('http://hub.test/'), now, send: channelDown }),
+  );
+  expect((await passesAt(NOW)).state).toBe('ok');
+  expect((await passesAt(NOW + 60_000)).state).toBe('ok');
+  expect(await passesAt(NOW + 200_000, { delivers: false })).toMatchObject({
+    state: 'warning',
+    text: 'Delivery pass overdue: last started 2 min ago',
+  });
+  expect((await passesAt(NOW + 599_000)).state).toBe('ok');
+  expect(await passesAt(NOW + 600_000)).toMatchObject({
+    state: 'warning',
+    text: 'Failing since 12:00 (10 min) · 1 alert not pushed',
+  });
+});
+
+test('a delivery pass that fails before it sends waits for the same 10 minutes', async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  const passesAt = await recordingHub(h, channelDown);
+  expect((await passesAt(NOW)).state).toBe('ok');
+  expect((await passesAt(NOW + 599_000)).state).toBe('ok');
+  expect(await passesAt(NOW + 600_000)).toMatchObject({
+    state: 'warning',
+    text: 'Failing since 12:00 (10 min)',
+  });
+});
+
+test('a Hub that has just stopped reads current until listening is overdue, then says so once', async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  const warnings = async (after: number) => {
+    const status = await readHubStatus(h.db.sql, NOW + after);
+    return {
+      down: status.down !== undefined,
+      warnings: status.checks.filter((c) => c.state === 'warning').map((c) => c.part),
+    };
+  };
+  expect(await warnings(65_000)).toEqual({ down: false, warnings: [] });
+  expect(await warnings(80_000)).toEqual({ down: false, warnings: [] });
+  expect(await warnings(100_000)).toEqual({ down: true, warnings: ['Listening'] });
+  expect(await warnings(121_000)).toEqual({ down: true, warnings: ['Listening'] });
+});
+
+test('a listening run that hangs warns on the Listening row', async () => {
+  await using h = await startHub();
+  await runningHub(h, { runs: { listening: { finished_at: NOW - 30_000, started_at: NOW } } });
+  const status = await readHubStatus(h.db.sql, NOW + 91_000);
+  expect(status.down).toBeUndefined();
+  expect(row(status, 'Listening')).toMatchObject({
+    state: 'warning',
+    text: 'Listening pass running for 1 min, longer than its usual most',
   });
 });
 
@@ -189,6 +338,8 @@ test('an overdue pass warns, and a stalled rebuild says so', async () => {
   await h.db
     .sql`INSERT INTO parse_progress (harness, parser_version, generation, parsed_through, held_seen) VALUES ('codex', 2, 1, 0, 0)`;
   await h.db.sql`UPDATE hub_listening SET heard_at = ${new Date(NOW + 100_000)}`;
+  await h.db.sql`UPDATE hub_status SET last_runs = jsonb_set(last_runs, '{listening}',
+    last_runs->'listening' || ${h.db.sql.json({ finished_at: NOW + 100_000, started_at: NOW + 99_900 })}::jsonb)`;
   const status = await readHubStatus(h.db.sql, NOW + 100_000);
   expect(row(status, 'Session insight')).toMatchObject({
     detail: 'Parser rebuild stalled: Parse pass overdue: last started 1 min ago',

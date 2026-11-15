@@ -38,9 +38,96 @@ test('a pass still running is never overdue, and says how long it has run', () =
   const run = { budget_ms: 30_000, finished_at: T, interval_ms: 15_000, started_at: T + 1000 };
   const now = T + 86_400_000;
   expect(isOverdue(run, now, T)).toBe(false);
-  const judged = judgePass({ down: false, hubStartedAt: T, label: 'Parse pass', now, run });
-  expect(judged.state).toBe('ok');
-  expect(phraseText(judged.phrase, ZONE)).toBe('Parse pass running for 23 h 59 min');
+  const judged = judgePass({
+    down: false,
+    hubStartedAt: T,
+    label: 'Parse pass',
+    now: T + 41_000,
+    run,
+  });
+  expect(judged).toEqual({ phrase: ['Parse pass running for 40 s'], state: 'ok', stuck: false });
+});
+
+test.each(Object.entries(OVERDUE_AFTER))(
+  'a run of the %s pass reads as hung only once it has run longer than twice its interval plus its budget',
+  (_, [schedule, limit]) => {
+    const run = { ...schedule, finished_at: T - 1000, started_at: T };
+    const judge = (now: number) =>
+      judgePass({ down: false, hubStartedAt: T - 60_000, label: 'Pass', now, run });
+    expect(judge(T + limit)).toMatchObject({ state: 'ok', stuck: false });
+    const hung = judge(T + limit + 1);
+    expect(hung).toMatchObject({ state: 'warning', stuck: true });
+    expect(phraseText(hung.phrase, ZONE)).toMatch(
+      /^Pass running for .+, longer than its usual most$/u,
+    );
+  },
+);
+
+test('a first run that never finishes reads as hung past its limit', () => {
+  const run = { budget_ms: 30_000, interval_ms: 15_000, started_at: T };
+  const judged = judgePass({
+    down: false,
+    hubStartedAt: T,
+    label: 'Parse pass',
+    now: T + 3 * 60_000,
+    run,
+  });
+  expect(judged).toEqual({
+    phrase: ['Parse pass running for 3 min, longer than its usual most'],
+    state: 'warning',
+    stuck: true,
+  });
+});
+
+test('a failing pass reads as failing while it runs again, and says for how long', () => {
+  const run = {
+    budget_ms: 30_000,
+    failing_since: T - 5 * 60_000,
+    finished_at: T - 10_000,
+    interval_ms: 60_000,
+    started_at: T - 3000,
+  };
+  const judged = judgePass({
+    down: false,
+    hubStartedAt: T - 86_400_000,
+    label: 'Condition evaluation',
+    now: T,
+    run,
+  });
+  expect(judged).toMatchObject({ state: 'warning', stuck: true });
+  expect(phraseText(judged.phrase, ZONE)).toBe(
+    'Condition evaluation failing since 07:55 (5 min); running again for 3 s',
+  );
+});
+
+test('limits are judged as of `asOf`, while ages are told from now', () => {
+  const run = { budget_ms: 30_000, finished_at: T, interval_ms: 15_000, started_at: T - 100 };
+  const judge = (asOf: number) =>
+    judgePass({
+      asOf,
+      down: false,
+      hubStartedAt: T - 60_000,
+      label: 'Parse pass',
+      now: T + 65_000,
+      run,
+    });
+  expect(judge(T + 30_000)).toEqual({
+    phrase: ['Parse pass ran 1 min ago'],
+    state: 'ok',
+    stuck: false,
+  });
+  expect(judge(T + 65_000).state).toBe('warning');
+  const running = { ...run, started_at: T + 1000 };
+  expect(
+    judgePass({
+      asOf: T + 30_000,
+      down: false,
+      hubStartedAt: T - 60_000,
+      label: 'Parse pass',
+      now: T + 3 * 60_000,
+      run: running,
+    }),
+  ).toEqual({ phrase: ['Parse pass running for 2 min'], state: 'ok', stuck: false });
 });
 
 test('a pass that keeps failing reads as failing since its first failure, however recent its last run', () => {

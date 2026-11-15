@@ -515,22 +515,30 @@ warning and fails neither startup nor the pass.
 
 The dashboard's version links to `/hub`, a checklist of Hub health, then Systems
 and Collectors, Session insight, and storage, with Condition evaluations and the
-applied migrations folded under Details. A pass that has started and not finished
-is running, however long it takes, and the page says for how long. A pass that is
-not running is overdue once no run has started within twice its interval plus its
-budget and none has finished within twice its interval; one that never ran counts
-from when the Hub started. With the intervals above, that is 150 seconds for
-Conditions, 90 seconds for listening and delivery, 60 seconds for parse, 70 seconds
-for refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
-prune. A pass whose runs keep failing shows as failing since its first failure.
-When the Hub has not recorded that it listens for more than the two-minute outage
-limit, the page says once that the Hub is not running, and no pass shows as
-overdue on its own. Intake counts open Stale System Conditions, upstream checks
-count only upstreams some System records, and alert delivery shows as failing
-after the 10 minutes Home waits. Missing runtime fields show as unknown, and the
-page asks for a Hub upgrade only when the table itself is missing. Parser failure
-reasons never reach the dashboard. Rebuild start time and rejected Report counts
-are not recorded.
+applied migrations folded under Details. A pass's usual most is twice its
+interval plus its budget. A pass that has started and not finished is running,
+and the page says for how long; a run that has gone on longer than its usual
+most shows as running too long, so a hung pass is caught. A pass that is not
+running is overdue once no run has started within its usual most and none has
+finished within twice its interval; one that never ran counts from when the Hub
+started. With the intervals above, that is 150 seconds for Conditions, 90
+seconds for listening and delivery, 60 seconds for parse, 70 seconds for
+refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
+prune. A pass whose runs keep failing shows as failing since its first failure,
+even while a new run is in progress. Every pass is judged as of one listening
+interval after the Hub was last heard, or now if sooner, so no pass shows as
+overdue merely because the Hub stopped. Once the listening pass is overdue, the
+page says once that the Hub is not running; a Hub without the status table is
+judged by the two-minute outage limit instead. Intake counts open Stale System
+Conditions, and upstream checks count only upstreams some System records and
+the Hub asks for releases, which leaves out APT and Homebrew upstreams. Alert
+delivery shows as failing after the 10 minutes Home waits, whether the failure
+is recorded in the delivery status or on the delivery pass; a delivery pass that
+falls behind shows as overdue on its own schedule. Missing runtime fields show
+as unknown, and while the table itself is missing the page asks for a Hub
+upgrade alongside anything else it reports. Parser failure reasons never reach
+the dashboard. Rebuild start time and rejected Report counts are not
+recorded.
 
 ## Reading the records back
 

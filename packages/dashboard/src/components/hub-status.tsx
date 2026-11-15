@@ -12,11 +12,15 @@ const listText = (items: string[]) =>
     ? items.join(' and ')
     : `${items.slice(0, -1).join(', ')}, and ${items.at(-1) ?? ''}`;
 
+const UPGRADE = 'Upgrade the Hub to record its version, delivery configuration, and timer passes.';
+
 // The page's verdict and the sentence under it. A Hub that is not running says
-// so once, instead of every part it leaves behind warning on its own.
+// so once, instead of every part it leaves behind warning on its own. A Hub
+// older than its status table is asked to upgrade whatever else the page says.
 export const hubVerdict = (status: HubStatus): { verdict: string; summary: Phrase } => {
+  const upgrade = status.runtime === 'missing' ? [` ${UPGRADE}`] : [];
   if (status.down !== undefined) {
-    return { summary: status.down, verdict: 'Hub not running' };
+    return { summary: [...status.down, ...upgrade], verdict: 'Hub not running' };
   }
   const warnings = status.checks.filter((c) => c.state === 'warning').map((c) => c.part);
   const unknown = status.checks.some((c) => c.state === 'unknown');
@@ -25,15 +29,13 @@ export const hubVerdict = (status: HubStatus): { verdict: string; summary: Phras
     return {
       summary: [
         `${listText(warnings)} ${one ? 'needs' : 'need'} attention.${unknown ? '' : ' Everything else is current.'}`,
+        ...upgrade,
       ],
       verdict: `${String(warnings.length)} ${one ? 'needs' : 'need'} a look`,
     };
   }
   if (status.runtime === 'missing') {
-    return {
-      summary: ['Upgrade the Hub to record its version, delivery configuration, and timer passes.'],
-      verdict: 'Some status unknown',
-    };
+    return { summary: [UPGRADE], verdict: 'Some status unknown' };
   }
   if (status.runtime === 'empty') {
     return {
