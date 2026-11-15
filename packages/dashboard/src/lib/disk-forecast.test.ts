@@ -50,7 +50,7 @@ test('gives no forecast without a trend, which needs a day of readings', () => {
 test('says growth and the next band in words, and why there is no forecast', () => {
   const growth = diskForecast({ bands: BANDS, disk: disk(74), growth: growing(2) });
   expect(forecastWords(growth)).toBe('+2.0 GiB a day · 80% in about 3 days');
-  expect(forecastWords({ kind: 'none', reason: 'not-growing' })).toBe(
+  expect(forecastWords({ kind: 'none', reason: 'not-growing' }, false, 7 * 86_400_000)).toBe(
     'Not growing over the last 7 days, so no forecast.',
   );
   expect(forecastWords({ kind: 'none', reason: 'few-readings' })).toBe(
@@ -77,7 +77,7 @@ test('quiet forecasts anchor both the countdown and the not-growing window to th
   expect(
     forecastWords(diskForecast({ bands: BANDS, disk: disk(74), growth: growing(2) }), true),
   ).toBe('+2.0 GiB a day · 80% in about 3 days from the newest reading');
-  expect(forecastWords({ kind: 'none', reason: 'not-growing' }, true)).toBe(
+  expect(forecastWords({ kind: 'none', reason: 'not-growing' }, true, 7 * 86_400_000)).toBe(
     'Not growing over the 7 days to the newest reading, so no forecast.',
   );
 });
@@ -94,4 +94,24 @@ test('a quiet full mount was full at its newest reading rather than now', () => 
       true,
     ),
   ).toBe('+1.0 GiB a day · full at the newest reading');
+});
+
+test('recent size changes and flat fits explain the actual fitted interval', () => {
+  expect(
+    forecastWords(
+      diskForecast({ bands: BANDS, disk: disk(50), growth: undefined, sizeChanged: true }),
+    ),
+  ).toBe('Size changed under a day ago, so no forecast.');
+  const flat = diskForecast({
+    bands: BANDS,
+    disk: disk(50),
+    growth: growing(0),
+    sizeChanged: true,
+  });
+  expect(forecastWords(flat, false, 3 * 86_400_000)).toBe(
+    'Not growing over the last 3 days, so no forecast.',
+  );
+  expect(forecastWords(flat, true, 3 * 86_400_000)).toBe(
+    'Not growing over the 3 days to the newest reading, so no forecast.',
+  );
 });

@@ -50,10 +50,15 @@ export type SessionRow = {
 // One mount of the newest Vitals sample.
 export type Disk = { mount: string; totalBytes: number; usedBytes: number };
 
-// How fast a mount filled over the 7 days up to the System's newest disk
-// reading, whatever the page's range; growth is undefined with under a day of
-// readings.
-export type DiskTrend = { growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined; mount: string };
+// How fast a mount filled over up to seven days ending at the System’s
+// newest disk reading, after its last material size change. The fitted span
+// excludes the mixed change bucket; under a day yields no growth.
+export type DiskTrend = {
+  growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined;
+  mount: string;
+  spanMs: number;
+  sizeChanged: boolean;
+};
 
 // One install of a Harness: which, its version, and the kind of place the
 // Collector found it in, such as npm or native.

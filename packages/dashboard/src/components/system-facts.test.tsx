@@ -83,8 +83,13 @@ const DATA = { mount: '/data', totalBytes: 100 * GIB, usedBytes: 10 * GIB };
 const disksDetail = ({ bands }: { bands: boolean }) => ({
   conditions: [],
   diskTrends: [
-    { growth: { bytesPerDay: 5 * GIB }, mount: '/data' },
-    { growth: { bytesPerDay: 2 * GIB }, mount: '/' },
+    {
+      growth: { bytesPerDay: 5 * GIB },
+      mount: '/data',
+      sizeChanged: false,
+      spanMs: 7 * 86_400_000,
+    },
+    { growth: { bytesPerDay: 2 * GIB }, mount: '/', sizeChanged: false, spanMs: 7 * 86_400_000 },
   ],
   latest: {
     cpuBusyPercent: 1,
@@ -114,7 +119,11 @@ test("each disk draws the Hub's bands as ticks and forecasts from its own mount'
     [DATA, 5 * GIB],
   ] as const) {
     expect(html).toContain(
-      forecastWords(diskForecast({ bands: BANDS, disk, growth: { bytesPerDay } })),
+      forecastWords(
+        diskForecast({ bands: BANDS, disk, growth: { bytesPerDay } }),
+        false,
+        7 * 86_400_000,
+      ),
     );
   }
 });
@@ -134,7 +143,7 @@ test('both disk cards date a quiet System window and countdown from its newest r
     expect(html).toContain('over the 7 days to the newest reading');
     expect(html).toContain('80% in about 3 days from the newest reading');
     expect(html).not.toContain('over the last 7 days');
-    expect(html).toContain('dateTime="1970-01-01T00:00:00.000Z"');
+    expect(html).not.toContain('Growth over the 7 days');
   }
 });
 
@@ -147,4 +156,34 @@ test('both disk cards show the reason a zero-size mount has no forecast', () => 
   ]) {
     expect(html).toContain('Disk size is unknown or zero, so no forecast.');
   }
+});
+
+test('both cards show the actual fitted span and distinguish a recently changed size', () => {
+  const detail = { ...disksDetail({ bands: true }), harnesses: undefined };
+  detail.diskTrends = detail.diskTrends.map((trend) => ({
+    ...trend,
+    sizeChanged: true,
+    spanMs: 3 * 86_400_000,
+  }));
+  for (const Card of [SystemDisks, SystemFacts]) {
+    const html = renderToStaticMarkup(<Card detail={detail} />);
+    expect(html).toContain('+2.0 GiB a day over the last 3 days');
+    expect(html).not.toContain('growth over 7 days');
+    const short = {
+      ...detail,
+      diskTrends: [{ growth: undefined, mount: '/', sizeChanged: true, spanMs: 3_600_000 }],
+    };
+    expect(renderToStaticMarkup(<Card detail={short} />)).toContain(
+      'Size changed under a day ago, so no forecast.',
+    );
+  }
+});
+
+test('quiet disk facts do not repeat the heading date on the growth line', () => {
+  const detail = { ...disksDetail({ bands: true }), harnesses: undefined, now: 3 * 86_400_000 };
+  const html = renderToStaticMarkup(<SystemDisks detail={detail} />);
+  expect(html).not.toContain('Growth over the');
+  // Heading dates render after the viewer’s time zone is known. No separate
+  // date element belongs in the growth line, even during server rendering.
+  expect(html).not.toContain('<time');
 });

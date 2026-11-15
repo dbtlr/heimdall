@@ -7,6 +7,7 @@ import { readAttention } from './attention.ts';
 import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
+import { readDiskTrends } from './disk-trends.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
 import { readMemoryHoldersAsOf } from './memory-holders.ts';
@@ -217,7 +218,7 @@ export const readConditionDetail = async (
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
   const readSeries = SERIES_READERS[kind];
-  const [transitions, limits, series, attention, packages, platform, memoryHolders] =
+  const [transitions, limits, series, attention, packages, platform, memoryHolders, diskTrends] =
     await Promise.all([
       readConditionTransitions(sql, [row]),
       readConditionLimits(sql, name),
@@ -230,6 +231,9 @@ export const readConditionDetail = async (
       // The chart's newest sample: the System's newest while open.
       kind === 'high_memory'
         ? readMemoryHoldersAsOf(sql, { at: clearedAt, system: name })
+        : undefined,
+      kind === 'low_disk' && clearedAt === undefined
+        ? readDiskTrends(sql, { mount: row.subject, now, system: name })
         : undefined,
     ]);
   const vitals =
@@ -245,6 +249,18 @@ export const readConditionDetail = async (
   return {
     attention,
     clearedAt,
+    diskTrend: diskTrends?.map(
+      ({ mount, growth, spanMs, sizeChanged, latestUsedBytes, totalBytes }) => ({
+        daysUntilFull:
+          growth !== undefined && growth.bytesPerDay > 0 && totalBytes > 0
+            ? Math.max(0, totalBytes - latestUsedBytes) / growth.bytesPerDay
+            : undefined,
+        growth,
+        mount,
+        sizeChanged,
+        spanMs,
+      }),
+    )[0],
     from: window.from,
     id: row.id,
     kind,

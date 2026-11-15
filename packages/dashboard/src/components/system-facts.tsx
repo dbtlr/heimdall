@@ -11,7 +11,7 @@ import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
-import { DateTime, PhraseText } from './date-time.tsx';
+import { PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
 const LOAD_PERIODS = ['1 min', '5 min', '15 min'] as const;
@@ -110,7 +110,7 @@ function DiskRow({
 }
 
 // Each mount of the newest sample as a row, with its open Low disk level, its
-// growth over the last 7 days, and the next band it heads for.
+// growth over its fitted span, and the next band it heads for.
 function DiskRows({
   detail,
   disks,
@@ -126,12 +126,6 @@ function DiskRows({
   const quiet = now - at > QUIET_AFTER_MS;
   return (
     <div>
-      {quiet && (
-        <p className="text-xs text-muted-foreground">
-          Growth over the 7 days to the newest reading (
-          <DateTime at={at} format="when" now={now} />)
-        </p>
-      )}
       <ul>
         {disks.map((disk, index) => (
           // A mount can be listed twice.
@@ -144,8 +138,12 @@ function DiskRows({
                 bands,
                 disk,
                 growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
+                sizeChanged:
+                  detail.diskTrends.find((trend) => trend.mount === disk.mount)?.sizeChanged ??
+                  false,
               }),
               quiet,
+              detail.diskTrends.find((trend) => trend.mount === disk.mount)?.spanMs,
             )}
             key={`${disk.mount}-${String(index)}`}
             level={
@@ -244,7 +242,7 @@ const WIDE_HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-di
 
 // The card of each disk's use, under the charts on a wide screen: used of
 // total with a tick at each band the Hub judges disks by, the Low disk level
-// when one is open on it, and its growth over 7 days with the next band it
+// when one is open on it, and its growth over its fitted span with the next band it
 // reaches, dated as the System facts are when the sample is no longer current.
 // Nothing without a sample.
 export function SystemDisks({
@@ -261,9 +259,7 @@ export function SystemDisks({
       <h2 className={WIDE_HEADING}>
         Disks
         <SampleAsOf at={latest.t} now={now} />{' '}
-        <span className="font-normal tracking-normal normal-case">
-          {now - latest.t > QUIET_AFTER_MS ? 'growth forecast' : 'growth over 7 days'}
-        </span>
+        <span className="font-normal tracking-normal normal-case">growth forecast</span>
       </h2>
       {latest.disks.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">The Collector reported no disk.</p>

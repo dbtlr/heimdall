@@ -16,7 +16,7 @@ import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
 import { memoryHoldersView } from './detail.ts';
 import type { MemoryHoldersView } from './detail.ts';
-import { diskGrowth, gibWords, growthWords, isGrowing, reachWords } from './disk-growth.ts';
+import { gibWords, growthWords, isGrowing, reachWords, spanWords } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';
 import type { Window } from './time.ts';
@@ -94,12 +94,6 @@ export type ConditionDetailView = {
   // shade; undefined for a Condition that charts its own series.
   vitals: { shade: Window; window: VitalsWindow } | undefined;
 };
-
-// "7 days" or "24 h": a length of time.
-const spanWords = (span: number) =>
-  span >= 2 * DAY_MS
-    ? `${String(Math.round(span / DAY_MS))} days`
-    : `${String(Math.round(span / HOUR_MS))} h`;
 
 // The length of the chart's window.
 const windowWords = ({ from, to }: Window) => spanWords(to - from);
@@ -302,10 +296,9 @@ type Leading = {
   chart: ChartView | undefined;
   hero: HeroView | undefined;
   provenance: string;
-  rate: ConditionDetailView['rate'];
 };
 
-const NOTHING: Leading = { chart: undefined, hero: undefined, provenance: '', rate: undefined };
+const NOTHING: Leading = { chart: undefined, hero: undefined, provenance: '' };
 
 // "used. 38 GiB free of 431 GiB on /."; after a clearing, "used when it cleared."
 const diskHeroText = (
@@ -318,25 +311,20 @@ const diskHeroText = (
 ];
 
 const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
-  const growth =
-    detail.series?.kind === 'disk' && detail.clearedAt === undefined
-      ? diskGrowth(detail.series.points)
-      : undefined;
-  const readings = detail.series?.kind === 'disk' ? detail.series.points : [];
-  const first = readings[0];
-  const last = readings.at(-1);
+  const trend = detail.diskTrend;
+  const growth = detail.clearedAt === undefined ? trend?.growth : undefined;
   if (
     growth === undefined ||
-    first === undefined ||
-    last === undefined ||
+    trend === undefined ||
     !isGrowing(growth) ||
-    growth.daysUntilFull === undefined
+    trend.daysUntilFull === undefined
   ) {
     return undefined;
   }
+  const daysUntilFull = trend.daysUntilFull;
   return {
     estimate: true,
-    text: `${growthWords(growth.bytesPerDay)} over the last ${spanWords(last.t - first.t)}. At that rate it is full ${reachWords(growth.daysUntilFull)}.`,
+    text: `${growthWords(growth.bytesPerDay)} over the last ${spanWords(trend.spanMs)}. At that rate it is full ${reachWords(daysUntilFull)}.`,
   };
 };
 
@@ -352,7 +340,7 @@ const leadingOf = (detail: ConditionDetail): Leading => {
   const values = present(reading.points);
   const latest = reading.points.findLast((point) => point.value !== null)?.value ?? undefined;
   const chart = values.length >= 2 ? chartOf(detail, reading, values) : undefined;
-  const lead = { chart, provenance: reading.provenance, rate: rateOf(detail) };
+  const lead = { chart, provenance: reading.provenance };
   if (series.kind === 'disk') {
     // No newest reading with a size leads with the Vitals instead.
     const newest = series.points.at(-1);
@@ -485,7 +473,7 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
     provenance: [leading.provenance, updatedAgo(attention?.checkedAt, now)]
       .filter((part) => part !== '')
       .join(' '),
-    rate: leading.rate,
+    rate: rateOf(detail),
     system: detail.system,
     title: subject === '' ? kindName : `${kindName} ${subject}`,
     vitals:

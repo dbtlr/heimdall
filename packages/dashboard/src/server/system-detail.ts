@@ -306,7 +306,14 @@ const readSystemDetailSnapshot = async (
     readSilencedUntil(sql, { now, systems: [name] }),
     readServiceChanges(sql, { now, since: from, system: name }),
     readConditionLimits(sql, name),
-    readDiskTrends(sql, { now, system: name }),
+    readDiskTrends(sql, { now, system: name }).then((trends) =>
+      trends.map(({ mount, growth, spanMs, sizeChanged }) => ({
+        growth,
+        mount,
+        sizeChanged,
+        spanMs,
+      })),
+    ),
   ]);
   const cpu = buckets.map(toBucket);
   const newest = latest[0];
