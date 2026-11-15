@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { axisTicks } from '../lib/axis.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
+import { binMiddle } from '../lib/long-history.ts';
 import { formatClock, formatDate, pinnedX } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
@@ -179,7 +180,7 @@ export function SystemOverview({
   const longRange = isLongRange(range) ? range : undefined;
   const banded = longRange === undefined ? [] : ['average, low–high band'];
   // The pinned bucket's middle, or the pinned sample.
-  const selected = bucket === null ? sample?.t : (bucket.t + bucket.end) / 2;
+  const selected = bucket === null ? sample?.t : binMiddle(bucket, window);
   const sampleX = selected === undefined ? undefined : pinnedX(selected, window);
   const total = latest === undefined ? undefined : formatGiB(latest.memoryTotalBytes);
   return (

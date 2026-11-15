@@ -55,6 +55,9 @@ function Row({
 // Conditions start with the first bucket, which may begin before the window,
 // so the lane shows what that bucket's inspector lists; a mark there stands at
 // the window's start.
+// How a level ranks when spans overlap: the higher draws over the lower.
+const SEVERITY = { alert: 2, note: 0, warning: 1 } as const;
+
 export function FoldedChangesLane({
   detail,
   labelsInside = false,
@@ -104,8 +107,16 @@ export function FoldedChangesLane({
           </Row>
           {rows.map((row) => (
             <Row inside={labelsInside} key={row.kind} label={`${row.name} ${String(row.count)}×`}>
-              {row.marks.flatMap((mark) =>
-                levelSegments(mark, mark.clearedAt ?? window.to).map((segment) => {
+              {row.marks
+                .flatMap((mark) =>
+                  levelSegments(mark, mark.clearedAt ?? window.to).map((segment) => ({
+                    id: mark.id,
+                    segment,
+                  })),
+                )
+                // Higher levels draw last, over a lower one that overlaps them.
+                .toSorted((a, b) => SEVERITY[a.segment.level] - SEVERITY[b.segment.level])
+                .map(({ id, segment }) => {
                   const { left, width } = spanBox(segment, window);
                   return (
                     <div
@@ -113,12 +124,11 @@ export function FoldedChangesLane({
                         'absolute top-0.5 h-2 min-w-[3px] rounded-[2px]',
                         LEVEL_FILL[segment.level],
                       )}
-                      key={`${mark.id}-${String(segment.start)}`}
+                      key={`${id}-${String(segment.start)}`}
                       style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
                     />
                   );
-                }),
-              )}
+                })}
             </Row>
           ))}
         </div>

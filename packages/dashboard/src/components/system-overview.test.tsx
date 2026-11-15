@@ -345,6 +345,77 @@ test('over 30 days, a Condition raised and cleared in the first bucket before th
   expect(html).toContain('High CPU 1×');
 });
 
+test("over 30 days, a pin on today's bucket, which runs past now, keeps its marker", async () => {
+  const from = NOW - 30 * DAY;
+  const edges = dayEdges(from);
+  const html = await render(
+    undefined,
+    {
+      bucketMs: 3 * 3_600_000,
+      edges,
+      from,
+      long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+      range: '30d',
+    },
+    [],
+    {
+      bucketMs: 3 * 3_600_000,
+      conditions: [],
+      costUsd: 0,
+      cpu: { average: 20, high: 30, low: 10 },
+      day: undefined,
+      end: NOW + 2 * 3_600_000,
+      load1: { average: 1, high: 2, low: 0 },
+      memory: { average: 4 * GIB, high: 5 * GIB, low: 3 * GIB, totalBytes: 10 * GIB },
+      processes: [],
+      rebootedAt: undefined,
+      rollups: 12,
+      samplesPruned: false,
+      sessions: 0,
+      t: NOW - 3_600_000,
+      unpricedRequests: 0,
+    },
+  );
+  expect(html).toContain('rounded bg-select px-2');
+});
+
+test('over 30 days, a folded row draws its higher levels over lower ones that overlap them', async () => {
+  const from = NOW - 30 * DAY;
+  const edges = dayEdges(from);
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    // Two disks: the earlier at warning, the later, overlapping it, at note.
+    conditions: [
+      {
+        clearedAt: NOW - 2 * DAY,
+        id: '1',
+        kind: 'low_disk' as const,
+        level: 'warning' as const,
+        raisedAt: NOW - 5 * DAY,
+        subject: '/',
+        transitions: [],
+      },
+      {
+        clearedAt: NOW - DAY,
+        id: '2',
+        kind: 'low_disk' as const,
+        level: 'note' as const,
+        raisedAt: NOW - 4 * DAY,
+        subject: '/data',
+        transitions: [],
+      },
+    ],
+    edges,
+    from,
+    long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+    range: '30d',
+  });
+  const row = html.slice(html.indexOf('Low disk 2×'));
+  // A warning fills bg-status-serious, a note bg-status-warning.
+  expect(row.indexOf('bg-status-serious')).toBeGreaterThan(row.indexOf('bg-status-warning'));
+  expect(row.indexOf('bg-status-warning')).toBeGreaterThan(-1);
+});
+
 test('over a year: day buckets with bands, cost bars, Conditions folded by kind, and the bucket inspector', async () => {
   const year = NOW - 365 * DAY;
   const html = await render(

@@ -70,8 +70,12 @@ export const changeCounts = (
 // Where a mark for a bin of a long range sits, in percent along `window`: the
 // middle of the bin's part inside it, so today's bin, which runs past now, and
 // the first, which starts before the window, both stay on the chart.
-export const binMarkPercent = ({ end, t }: { end: number; t: number }, window: Window): number =>
-  xPercent((Math.max(t, window.from) + Math.min(end, window.to)) / 2, window);
+export const binMarkPercent = (bin: { end: number; t: number }, window: Window): number =>
+  xPercent(binMiddle(bin, window), window);
+
+// The middle of a bin's part inside `window`, the time a pin on it stands at.
+export const binMiddle = ({ end, t }: { end: number; t: number }, window: Window): number =>
+  (Math.max(t, window.from) + Math.min(end, window.to)) / 2;
 
 // The cores a process kept busy, summed over its buckets.
 const busy = (process: ProcessSeries) =>
@@ -119,7 +123,12 @@ export const kindRows = (
 ): KindRow[] => {
   const rows = new Map<ConditionKind, ConditionMark[]>();
   for (const mark of laneConditions(conditions, { paired, window })) {
-    rows.set(mark.kind, [...(rows.get(mark.kind) ?? []), mark]);
+    const marks = rows.get(mark.kind);
+    if (marks === undefined) {
+      rows.set(mark.kind, [mark]);
+    } else {
+      marks.push(mark);
+    }
   }
   return [...rows]
     .map(([kind, marks]): KindRow => ({

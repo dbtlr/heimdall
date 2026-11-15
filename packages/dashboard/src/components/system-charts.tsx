@@ -1,5 +1,6 @@
 import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
+import { binMiddle } from '../lib/long-history.ts';
 import { formatClock, formatDate, pinnedX } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
@@ -219,7 +220,7 @@ export function SystemCharts({
 }) {
   const timeZone = useTimeZone();
   const window = { from: detail.from, to: detail.to };
-  const selected = bucket === null ? sample?.t : (bucket.t + bucket.end) / 2;
+  const selected = bucket === null ? sample?.t : binMiddle(bucket, window);
   const sampleX = selected === undefined ? undefined : pinnedX(selected, window);
   return (
     <DetailAxis bucketMs={detail.bucketMs} onSelect={onSelect} selected={selected} window={window}>
