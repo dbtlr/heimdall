@@ -10,6 +10,7 @@ import { parseConditionLimits } from './condition-limits.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { evaluateLoadConditions, judgeLoadConditions } from './load-conditions.ts';
 import type { LoadConditionFacts } from './load-conditions.ts';
+import { holdersAt } from './memory-holders.ts';
 import { unpair } from './pairing.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { NOW, push, report, startHub, storeToken } from './testing/hub.ts';
@@ -688,4 +689,93 @@ test('sleep and reboot leave intervals unknown instead of inventing measured bus
     coverage: { cpuKnown: false, memoryKnown: false },
     transitions: [],
   });
+});
+
+const GIB = 2 ** 30;
+const holder = (name: string, rssBytes: number) => ({ name, pid: 1, rssBytes, start: 'a' });
+
+// Linux memory at 95% for an hour, or macOS pressure; `carrying` picks which
+// samples carry a holders list.
+const memoryFacts = (
+  platform: 'darwin' | 'linux',
+  carrying: (t: number, minute: number) => ReturnType<typeof holder>[] | null,
+) => {
+  const facts = loadFacts(readings(NOW, 60, () => 5));
+  for (const [i, row] of facts.rows.entries()) {
+    Object.assign(row, {
+      collector_platform: platform,
+      memory_pressure: platform === 'darwin' ? 'critical' : null,
+      memory_total_bytes: String(16 * GIB),
+      memory_used_bytes: String(15.2 * GIB),
+      top_by_memory: carrying(row.t.getTime(), i / 4),
+    });
+  }
+  return facts;
+};
+
+const memoryReason = (facts: LoadConditionFacts) => {
+  const verdict = judgedLoad(facts).transitions.findLast(
+    (transition) => transition.kind === 'high_memory',
+  )?.verdict;
+  return typeof verdict === 'object' ? verdict.raise : undefined;
+};
+
+const THREE = [
+  holder('postgres', 3.1 * GIB),
+  holder('node', 1.2 * GIB),
+  holder('bun', 800 * 2 ** 20),
+];
+const PLAIN = /^Memory above 90% for [\d.]+ minutes in the 60 minutes ending \S+Z\.$/;
+
+test('a raised High memory reason names the largest processes, largest first', () => {
+  const reason = memoryReason(memoryFacts('linux', (_, m) => (m % 1 === 0 ? THREE : null)));
+  expect(reason).toMatch(
+    /^Memory above 90% for [\d.]+ minutes in the 60 minutes ending \S+Z; largest: postgres 3\.1 GiB, node 1\.2 GiB, bun 800 MiB\.$/,
+  );
+  expect(reason?.match(/\.$/g)).toHaveLength(1);
+});
+
+test('macOS pressure wording keeps its prefix and names the holders', () => {
+  const reason = memoryReason(memoryFacts('darwin', () => THREE));
+  expect(reason).toMatch(
+    /^Memory pressure for [\d.]+ minutes in the .* ending \S+Z; largest: postgres 3\.1 GiB/,
+  );
+});
+
+test('without a qualifying list the High memory reason is the plain sentence', () => {
+  expect(memoryReason(memoryFacts('linux', () => null))).toMatch(PLAIN);
+  expect(memoryReason(memoryFacts('linux', () => []))).toMatch(PLAIN);
+  // A list only from the first minutes is far older than two minutes at the raise.
+  expect(memoryReason(memoryFacts('linux', (_, m) => (m === 0 ? THREE : null)))).toMatch(PLAIN);
+});
+
+test('holders from before the boot or too long ago are not used', () => {
+  const facts = memoryFacts('linux', (_, m) => (m === 0 ? THREE : null));
+  expect(holdersAt(facts.rows, 8)).toHaveLength(3);
+  expect(holdersAt(facts.rows, 9)).toEqual([]);
+  // Rebooted 20 seconds before row 4: the carrier at row 0 is from the old boot.
+  const rebooted = memoryFacts('linux', (_, m) => (m === 0 ? THREE : null)).rows;
+  Object.assign(rebooted[4] ?? {}, { uptime_seconds: 20 });
+  expect(holdersAt(rebooted, 4)).toEqual([]);
+});
+
+test('High CPU reasons never name memory holders', () => {
+  const facts = loadFacts(readings(NOW, 60, () => 95));
+  for (const row of facts.rows) {
+    Object.assign(row, { top_by_memory: THREE });
+  }
+  const verdicts = judgedLoad(facts).transitions.filter((t) => t.kind === 'high_cpu');
+  expect(verdicts.length).toBeGreaterThan(0);
+  for (const { verdict } of verdicts) {
+    expect(typeof verdict === 'object' ? verdict.raise : '').not.toContain('largest');
+  }
+});
+
+test('five long process names keep the reason inside a push line', () => {
+  const long = Array.from({ length: 5 }, (_, i) =>
+    holder(`${'x'.repeat(80)}${String(i)}`, 2 * GIB),
+  );
+  const reason = memoryReason(memoryFacts('linux', () => long)) ?? '';
+  expect(reason).toContain('largest:');
+  expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(380);
 });

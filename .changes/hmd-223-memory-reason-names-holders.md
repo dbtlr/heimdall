@@ -1,0 +1,1 @@
+- **A High memory alert names the processes holding the memory** (HMD-223). When the Hub raises or re-raises a High memory Condition, its reason, the phone alert and Activity's line, now ends with the largest processes, such as `largest: postgres 3.1 GiB, node 1.2 GiB`, when a recent sample carried them.

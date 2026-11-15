@@ -6,6 +6,7 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 import { recordHistoricalLoad } from './load-history.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
+import { holdersAt } from './memory-holders.ts';
 import { trackEpisodeSample } from './sampled-history.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
@@ -45,7 +46,7 @@ export const judgeLoadConditions = (facts: LoadConditionFacts, now: number) => {
   const current = new Map(facts.held.map(({ kind, level }) => [kind, level]));
   let previous: Reading | undefined;
   let coverage = { cpuKnown: false, memoryKnown: false };
-  for (const row of facts.rows) {
+  for (const [index, row] of facts.rows.entries()) {
     const at = row.t.getTime();
     coverage = feedRules(rules, row, previous);
     previous = row;
@@ -89,7 +90,7 @@ export const judgeLoadConditions = (facts: LoadConditionFacts, now: number) => {
         if (qualifying.level === level && row !== latest) {
           continue;
         }
-        const reason = reasonFor(qualifying, row);
+        const reason = reasonFor(qualifying, row, holdersAt(facts.rows, index));
         transitions.push({ at: row.t, kind, verdict: { level: qualifying.level, raise: reason } });
         current.set(kind, qualifying.level);
       }
@@ -171,7 +172,8 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
           );
     const rows: Reading[] = await tx`
       SELECT t, cpu_busy_percent, memory_total_bytes, memory_used_bytes,
-             memory_pressure, collector_platform, uptime_seconds
+             memory_pressure, collector_platform, uptime_seconds,
+             processes->'topByMemory' AS top_by_memory
       FROM vitals_samples
       WHERE system = ${system} AND (${after}::timestamptz IS NULL OR t >= ${after})
         AND t <= ${newest.t}
