@@ -17,6 +17,7 @@ import { SystemNavigationHeader } from '../components/system-navigation.tsx';
 import { SystemMaintenance, SystemOpenConditions } from '../components/system-open-conditions.tsx';
 import { SystemOverview } from '../components/system-overview.tsx';
 import { UnpairedBanner } from '../components/unpaired-banner.tsx';
+import { spanHolding } from '../lib/bucket-edges.ts';
 import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
@@ -38,14 +39,31 @@ const NOTHING: Inspected = { bucket: null, sample: null };
 // so the zone arriving in the URL reads nothing again there.
 const zoneOf = (range: Range, zone: string | undefined) => (isLongRange(range) ? zone : undefined);
 
+// The bucket of the loaded page's `edges` that holds `at`, or the newest, so a
+// pin inspects the bar drawn even when the page has been open past local
+// midnight. Undefined before the page's edges are known.
+const drawnBucket = (edges: readonly number[] | undefined, at: number | undefined) => {
+  const [first, last] = [edges?.[0], edges?.at(-1)];
+  if (first === undefined || last === undefined || last <= first) {
+    return undefined;
+  }
+  return spanHolding(edges ?? [], Math.min(last - 1, Math.max(first, at ?? last - 1)));
+};
+
 const readInspected = async (
   name: string,
   at: number | undefined,
   range: Range,
   timeZone: string | undefined,
+  edges?: readonly number[],
 ): Promise<Inspected> =>
   isLongRange(range)
-    ? { bucket: await getBucket({ data: { at, name, range, timeZone } }), sample: null }
+    ? {
+        bucket: await getBucket({
+          data: { at, name, range, span: drawnBucket(edges, at), timeZone },
+        }),
+        sample: null,
+      }
     : { bucket: null, sample: await getSample({ data: { at, name } }) };
 
 export const Route = createFileRoute('/systems/$name')({
@@ -88,6 +106,7 @@ const useInspected = (
   at: number | undefined,
   loadedAt: number | undefined,
   loaded: Inspected,
+  edges: readonly number[] | undefined,
 ) => {
   const [shown, setShown] = useState({ at: loadedAt, failed: false, inspected: loaded, name });
   useEffect(() => {
@@ -100,7 +119,7 @@ const useInspected = (
     let current = true;
     const read = async () => {
       try {
-        const inspected = await readInspected(name, at, range, zone);
+        const inspected = await readInspected(name, at, range, zone, edges);
         if (current) {
           setShown({ at, failed: false, inspected, name });
         }
@@ -114,7 +133,7 @@ const useInspected = (
     return () => {
       current = false;
     };
-  }, [at, name, range, shown.at, shown.name, zone]);
+  }, [at, edges, name, range, shown.at, shown.name, zone]);
   const loading = at !== shown.at || name !== shown.name;
   return {
     failed: !loading && shown.failed,
@@ -152,6 +171,7 @@ function SystemPage() {
     search.at,
     at,
     loadedInspected,
+    detail.edges,
   );
   const { bucket, sample } = inspected;
   const header = headerLine(detail, detail.now);

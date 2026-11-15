@@ -34,8 +34,8 @@ export const getSample = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => (await readSample(await database(), data)) ?? null);
 
 // The bucket of a long range holding `at`, or the newest, for the inspector,
-// read at the server's clock in `timeZone`, else UTC; undefined when the name
-// is no System.
+// read at the server's clock in `timeZone`, else UTC, or exactly the `span` the
+// page drew; undefined when the name is no System.
 export const getBucket = createServerFn({ method: 'GET' })
   .validator(parseBucketInput)
   .handler(

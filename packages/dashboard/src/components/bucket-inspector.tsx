@@ -8,6 +8,7 @@ import { formatBucket, formatClock, formatCost } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { BucketInspection, BucketProcess } from '../server/system-detail-types.ts';
 import { InZone } from './date-time.tsx';
+import { MoreItems } from './more-items.tsx';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -39,6 +40,48 @@ const processDetail = (process: BucketProcess): string => {
   ].join(', ');
   return [usage, plural(process.sessions, 'Session')].filter((part) => part !== '').join(' · ');
 };
+
+// How many of a bucket's Harness processes are listed before the rest fold.
+const LISTED_PROCESSES = 8;
+
+const ProcessItem = ({ process }: { process: BucketProcess }) => (
+  <li className="flex items-start gap-2 py-[5px] text-[13.5px]">
+    <i
+      className="mt-[5px] inline-block h-2 w-3.5 flex-none rounded-[2px] bg-current"
+      style={{ color: harnessColor(process.harness) }}
+    />
+    <span>
+      <b className="font-semibold">{process.project ?? harnessName(process.harness)}</b> · pid{' '}
+      {process.pid}
+      <br />
+      <span className="text-xs text-muted-foreground">{processDetail(process)}</span>
+    </span>
+  </li>
+);
+
+// The busiest processes by CPU, which the read orders first, and the rest
+// folded into a disclosure, so a day of 173 processes stays a short panel.
+function ProcessList({ processes }: { processes: readonly BucketProcess[] }) {
+  const rest = processes.slice(LISTED_PROCESSES);
+  return (
+    <>
+      <ul>
+        {processes.slice(0, LISTED_PROCESSES).map((process) => (
+          <ProcessItem key={process.processId} process={process} />
+        ))}
+      </ul>
+      {rest.length > 0 && (
+        <MoreItems label={`${String(rest.length)} more processes`} scrolls={false}>
+          <ul>
+            {rest.map((process) => (
+              <ProcessItem key={process.processId} process={process} />
+            ))}
+          </ul>
+        </MoreItems>
+      )}
+    </>
+  );
+}
 
 function Heading({ children }: { children: ReactNode }) {
   return (
@@ -161,27 +204,7 @@ export function BucketInspector({
           {bucket.processes.length === 0 ? (
             <p className="text-[13.5px] text-muted-foreground">No Harness process.</p>
           ) : (
-            <ul>
-              {bucket.processes.map((process) => (
-                <li
-                  className="flex items-start gap-2 py-[5px] text-[13.5px]"
-                  key={process.processId}
-                >
-                  <i
-                    className="mt-[5px] inline-block h-2 w-3.5 flex-none rounded-[2px] bg-current"
-                    style={{ color: harnessColor(process.harness) }}
-                  />
-                  <span>
-                    <b className="font-semibold">
-                      {process.project ?? harnessName(process.harness)}
-                    </b>{' '}
-                    · pid {process.pid}
-                    <br />
-                    <span className="text-xs text-muted-foreground">{processDetail(process)}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <ProcessList processes={bucket.processes} />
           )}
           {bucket.conditions.length > 0 && (
             <>

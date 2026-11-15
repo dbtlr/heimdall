@@ -108,3 +108,21 @@ test('reports reading instead of claiming there is no bucket', () => {
   expect(html).toContain('Reading bucket');
   expect(html).not.toContain('No bucket');
 });
+
+test('lists the eight busiest processes and folds the rest into a disclosure', () => {
+  const [one] = day.processes;
+  if (one === undefined) {
+    throw new Error('no process');
+  }
+  const many = Array.from({ length: 173 }, (_, index) => ({
+    ...one,
+    pid: 1000 + index,
+    processId: index,
+  }));
+  const html = render({ ...day, processes: many });
+  const [shown = ''] = html.split('<details');
+  expect(shown.match(/pid \d+/g)).toHaveLength(8);
+  expect(html).toContain('165 more processes');
+  expect(html).toContain('pid 1172');
+  expect(render({ ...day, processes: many.slice(0, 8) })).not.toContain('more process');
+});

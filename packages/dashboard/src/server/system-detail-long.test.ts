@@ -622,6 +622,57 @@ describe('reboots', () => {
   });
 });
 
+const versions = async (h: Hub, at: number) => {
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at) VALUES
+      ('server-1', 'web', '1.0.0', null, ${new Date(at - 40 * DAY)}),
+      ('server-1', 'web', '1.0.1', null, ${new Date(at)})
+  `;
+};
+
+describe('the first bucket, which starts before the range does', () => {
+  for (const timeZone of ['UTC', 'Europe/Berlin']) {
+    test(`counts a version change 11 hours before the 1 y range starts, inside its first week, in ${timeZone}`, async () => {
+      await using h = await startHub();
+      await hear(h);
+      const from = NOW - 365 * DAY;
+      await versions(h, from - 11 * HOUR);
+
+      const found = await detail(h, '1y', { timeZone });
+
+      expect(found.changes.map(({ at, kind }) => [kind, at])).toEqual([
+        ['version', from - 11 * HOUR],
+      ]);
+      expect(found.long?.changeEdges[0]).toBeLessThanOrEqual(from - 11 * HOUR);
+    });
+  }
+
+  test('draws a Condition cleared in the first bucket before the range starts, and the inspector lists it', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const first = TODAY - 365 * DAY;
+    await addCondition(h.db.sql, {
+      clearedAt: (first + 3 * HOUR - NOW) / 1000,
+      kind: 'high_cpu',
+      raisedAt: (first + HOUR - NOW) / 1000,
+      system: 'server-1',
+    });
+
+    const found = await detail(h, '1y');
+    const bucket = await readBucket(h.db.sql, {
+      at: first + HOUR,
+      name: 'server-1',
+      now: NOW,
+      range: '1y',
+    });
+
+    expect(found.edges?.[0]).toBe(first);
+    expect(found.conditions.map(({ kind }) => kind)).toEqual(['high_cpu']);
+    expect(bucket?.conditions.map(({ kind }) => kind)).toEqual(['high_cpu']);
+  });
+});
+
 describe('readBucket', () => {
   test('inspects the day a 1 y pin falls in: its Vitals, reboot, cost, Sessions, processes, and Conditions', async () => {
     await using h = await startHub();
@@ -785,6 +836,53 @@ describe('readBucket', () => {
 
     expect(empty).toMatchObject({ cpu: undefined, rollups: 0, t: TODAY - 100 * DAY });
     expect(newest?.t).toBe(TODAY);
+  });
+
+  test('inspects the bucket the page drew, not the one a later clock makes first', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const drawn = await detail(h, '1y');
+    const [start, end] = [drawn.edges?.[0] ?? 0, drawn.edges?.[1] ?? 0];
+    // The page was left open past midnight: the server's day edges moved on.
+    const later = NOW + 13 * HOUR;
+
+    const pinned = await readBucket(h.db.sql, {
+      at: undefined,
+      name: 'server-1',
+      now: later,
+      range: '1y',
+      span: { end, start },
+    });
+    const recomputed = await readBucket(h.db.sql, {
+      at: start + HOUR,
+      name: 'server-1',
+      now: later,
+      range: '1y',
+    });
+
+    expect(pinned).toMatchObject({ end, t: start });
+    expect(recomputed?.t).not.toBe(start);
+  });
+
+  test('refuses a span that is empty, too wide for the range, or in the future', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const ask = (range: '1y' | '30d', start: number, end: number) =>
+      readBucket(h.db.sql, {
+        at: undefined,
+        name: 'server-1',
+        now: NOW,
+        range,
+        span: { end, start },
+      });
+    const t = TODAY - 10 * DAY;
+
+    expect(() => ask('1y', t, t)).toThrow('span');
+    expect(() => ask('1y', t, t + 26 * HOUR)).toThrow('span');
+    expect(() => ask('30d', t, t + 5 * HOUR)).toThrow('span');
+    expect(() => ask('1y', NOW + HOUR, NOW + 2 * HOUR)).toThrow('span');
+    expect(await ask('1y', t, t + 25 * HOUR)).toMatchObject({ t });
+    expect(await ask('30d', t, t + 3 * HOUR)).toMatchObject({ t });
   });
 
   test('answers nothing for a name that is no System', async () => {

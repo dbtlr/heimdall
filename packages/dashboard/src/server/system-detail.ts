@@ -114,17 +114,68 @@ export const parseSampleInput = (input: unknown): { at: number | undefined; name
   return { at, name };
 };
 
+// A bucket the page drew, from its start to its end in epoch milliseconds.
+export type BucketSpan = { end: number; start: number };
+
+const parseSpan = (value: unknown): BucketSpan | undefined => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const [start, end] = [field(value, 'start'), field(value, 'end')];
+  if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start + end)) {
+    throw new Error('The span needs a start and an end in milliseconds.');
+  }
+  return { end, start };
+};
+
+// The widest bucket a range draws: a local day of 25 hours over 1 y, and a
+// 3-hour bucket a clock change stretches to 4 over 30 d.
+const WIDEST_BUCKET_MS = { '1y': 25 * 3_600_000, '30d': 4 * 3_600_000 };
+
+// `span` when it can be a bucket of `range` at `now`, else an error.
+const checkedSpan = (span: BucketSpan, range: LongRange, now: number): BucketSpan => {
+  if (span.end <= span.start || span.end - span.start > WIDEST_BUCKET_MS[range]) {
+    throw new Error(`The span ${JSON.stringify(span)} is not a bucket of ${range}.`);
+  }
+  if (span.start > now) {
+    throw new Error(`The span ${JSON.stringify(span)} starts in the future.`);
+  }
+  return span;
+};
+
+// The local day holding `t` in `timeZone`, from its first instant to the next day's.
+const dayHolding = (t: number, timeZone: string): BucketSpan => {
+  const start = Temporal.Instant.fromEpochMilliseconds(t).toZonedDateTimeISO(timeZone).startOfDay();
+  return {
+    end: start.add({ days: 1 }).startOfDay().epochMilliseconds,
+    start: start.epochMilliseconds,
+  };
+};
+
 // The System, long range, and time, in epoch milliseconds, a bucket request
 // asks for; no time asks for the newest bucket.
 export const parseBucketInput = (
   input: unknown,
-): { at: number | undefined; name: string; range: LongRange; timeZone: string | undefined } => {
+): {
+  at: number | undefined;
+  name: string;
+  range: LongRange;
+  span?: BucketSpan;
+  timeZone: string | undefined;
+} => {
   const { at, name } = parseSampleInput(input);
   const range = field(input, 'range');
   if (!isRange(range) || !isLongRange(range)) {
     throw new Error(`The range ${JSON.stringify(range)} is not 30d or 1y.`);
   }
-  return { at, name, range, timeZone: validZone(field(input, 'timeZone')) };
+  const span = parseSpan(field(input, 'span'));
+  return {
+    at,
+    name,
+    range,
+    ...(span === undefined ? {} : { span }),
+    timeZone: validZone(field(input, 'timeZone')),
+  };
 };
 
 type SystemRow = {
@@ -431,11 +482,15 @@ const readSystemDetailSnapshot = async (
     return undefined;
   }
   const from = now - RANGE_MS[range];
-  const [fromAt, toAt] = [new Date(from), new Date(now)];
+  const toAt = new Date(now);
   const firstBucket = new Date(bucketStart(from));
   const widthMs = RANGE_BUCKET_MS[range];
   const edges = isLongRange(range) ? longEdges(range, from, now, timeZone) : undefined;
   const long = edges !== undefined;
+  // A long range's first bucket starts before `from`, and the lane and the
+  // change marks read from its edge, so each shows what its inspector lists.
+  const laneFrom = new Date(edges?.buckets[0] ?? from);
+  const changesFrom = edges?.changes[0] ?? from;
   const [
     installs,
     latest,
@@ -501,12 +556,12 @@ const readSystemDetailSnapshot = async (
       SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
       FROM conditions
       WHERE system = ${name}
-        AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${fromAt}))
+        AND (cleared_at IS NULL OR (raised_at <= ${toAt} AND cleared_at >= ${laneFrom}))
       ORDER BY raised_at, id
     `,
     sql`SELECT count(*)::int AS n FROM conditions WHERE system = ${name} AND cleared_at IS NULL AND level <> 'note'`,
     readSilencedUntil(sql, { now, systems: [name] }),
-    readServiceChanges(sql, { now, since: from, system: name }),
+    readServiceChanges(sql, { now, since: changesFrom, system: name }),
     readConditionLimits(sql, name),
     readDiskTrends(sql, { now, system: name }).then((trends) =>
       trends.map(({ mount, growth, spanMs, sizeChanged }) => ({
@@ -867,12 +922,14 @@ export const readBucket = (
     name,
     now,
     range,
+    span,
     timeZone = 'UTC',
   }: {
     at: number | undefined;
     name: string;
     now: number;
     range: LongRange;
+    span?: BucketSpan | undefined;
     timeZone?: string | undefined;
   },
 ): Promise<BucketInspection | undefined> =>
@@ -885,12 +942,18 @@ export const readBucket = (
       return undefined;
     }
     // The chart's buckets and days, so the inspector reads the bucket drawn.
-    const edges = longEdges(range, now - RANGE_MS[range], now, timeZone);
-    const first = edges.buckets[0] ?? now;
+    // With `span`, the bucket the page drew, since its edges came from a clock
+    // that may have crossed local midnight; else the one holding `at` now.
+    const edges =
+      span === undefined ? longEdges(range, now - RANGE_MS[range], now, timeZone) : undefined;
+    const first = edges?.buckets[0] ?? now;
     const holding = (list: readonly number[]) =>
       spanHolding(list, Math.min(now, Math.max(first, at ?? now))) ?? { end: now, start: now };
-    const { end, start: t } = holding(edges.buckets);
-    const day = range === '30d' ? holding(edges.days) : undefined;
+    const drawn = span === undefined ? undefined : checkedSpan(span, range, now);
+    const { end, start: t } = drawn ?? holding(edges?.buckets ?? []);
+    const dayOf = () =>
+      drawn === undefined ? holding(edges?.days ?? []) : dayHolding(t, timeZone);
+    const day = range === '30d' ? dayOf() : undefined;
     const [startAt, endAt] = [new Date(t), new Date(end)];
     const [vitals, reboots, costs, sessions, processes, marks]: [
       BucketVitalsRow[],
