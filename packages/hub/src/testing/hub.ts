@@ -44,13 +44,22 @@ export const startHub = async () => {
   await storeToken(db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
   const clock = { elapsed: 0, now: NOW };
   const errors: unknown[] = [];
+  const warnings: string[] = [];
   const hub = createHub({
     elapsed: () => clock.elapsed,
     now: () => clock.now,
     onError: (error) => errors.push(error),
+    onWarn: (message) => warnings.push(message),
     sql: db.sql,
   });
-  return { clock, db, errors, hub, [Symbol.asyncDispose]: () => db[Symbol.asyncDispose]() };
+  return {
+    clock,
+    db,
+    errors,
+    hub,
+    warnings,
+    [Symbol.asyncDispose]: () => db[Symbol.asyncDispose](),
+  };
 };
 
 export type Hub = Awaited<ReturnType<typeof startHub>>;

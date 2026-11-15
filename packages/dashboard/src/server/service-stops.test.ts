@@ -28,6 +28,7 @@ const sentStop = (fields: Partial<SentServiceStop>) => ({ ...STOP, ...fields });
 
 const send = (h: Hub, stops: SentServiceStop[], system = 'laptop-1') =>
   storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 410,
     report: { ...report(system, []), serviceStops: { stops } },
   });

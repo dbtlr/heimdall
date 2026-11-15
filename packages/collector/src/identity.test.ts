@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { chmod, mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { readIdentity, stillPaired } from './identity.ts';
+import { daemonStillPaired, readIdentity, stillPaired } from './identity.ts';
 import { givenIdentity, TOKEN } from './testing/cli.ts';
 import { tempStateDir } from './testing/fixtures.ts';
 
@@ -124,4 +124,18 @@ test('a daemon that cannot read the identity is not told it was paired again', a
   );
 
   expect(String(error)).toContain('could not read');
+});
+
+// The daemon's check is wired from its Hub URL, state directory, and token; a
+// wrong one would read as unpaired and stop every job run without a sound.
+test('the daemon check matches the identity by the Hub origin, state directory, and token it was given', async () => {
+  await using dir = await tempStateDir();
+  await using other = await tempStateDir();
+  await givenIdentity(dir.path);
+  const given = { hub: new URL('http://h.example/base/path'), stateDir: dir.path, token: TOKEN };
+
+  expect(await daemonStillPaired(given)()).toBe(true);
+  expect(await daemonStillPaired({ ...given, hub: new URL('http://other.example') })()).toBe(false);
+  expect(await daemonStillPaired({ ...given, stateDir: other.path })()).toBe(false);
+  expect(await daemonStillPaired({ ...given, token: 'another-token' })()).toBe(false);
 });

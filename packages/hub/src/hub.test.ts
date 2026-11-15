@@ -319,6 +319,7 @@ test('the health check gives up on a database that hangs', async () => {
     healthTimeoutMs: 50,
     now: () => NOW,
     onError: (error) => h.errors.push(error),
+    onWarn: (message) => h.warnings.push(message),
     sql,
   });
 

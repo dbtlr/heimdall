@@ -184,6 +184,9 @@ const serveUntilStopped = async ({
       onError: (error) => {
         void log.warn(clean(`Could not answer a request: ${describeError(error)}`));
       },
+      onWarn: (message) => {
+        void log.warn(clean(message));
+      },
       sql,
     });
     const server = listenOrFail({

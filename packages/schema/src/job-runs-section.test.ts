@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { MAX_JOB_RUNS_PER_REPORT } from './job-runs-section.ts';
+import { FUTURE_SAMPLE_TOLERANCE_MS } from './conditions.ts';
+import { JobRunsSectionSchema, MAX_JOB_RUNS_PER_REPORT, takeJobRuns } from './job-runs-section.ts';
 import type { JobRunsSection, SentJobRun } from './job-runs-section.ts';
 import { ReportSchema } from './report.ts';
 import { sample } from './testing.ts';
@@ -28,16 +29,14 @@ const SUCCEEDED: SentJobRun = {
   started: '2026-10-01T03:30:00Z',
 };
 
-// `count` runs of one job, a second apart, oldest first.
-const runsOfOneJob = (count: number): SentJobRun[] =>
-  Array.from({ length: count }, (_, index) => {
-    const started = new Date(Date.parse(SUCCEEDED.started) + index * 1000)
-      .toISOString()
-      .replace('.000Z', 'Z');
-    return { exitStatus: 0, finished: started, job: 'rotate-logs', started };
-  });
+// The Hub's clock when the Reports in these tests arrive.
+const ARRIVAL = Date.parse('2026-10-05T00:00:00Z');
 
 const parsedRuns = (runs: unknown[]) => ReportSchema.safeParse(report({ jobRuns: { runs } }));
+
+const at = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
+
+const nulls = (count: number) => Array.from({ length: count }, () => null);
 
 describe('a Report', () => {
   test('carries runs of one job and of another job started at the same time, with and without an output file', () => {
@@ -46,6 +45,7 @@ describe('a Report', () => {
     };
 
     expect(ReportSchema.parse(report({ jobRuns })).jobRuns).toEqual(jobRuns);
+    expect(JobRunsSectionSchema.parse(jobRuns)).toEqual(jobRuns);
   });
 
   test('from a Collector that predates the job runs section is accepted and has none', () => {
@@ -63,41 +63,66 @@ describe('a Report', () => {
       output: { ...SUCCEEDED.output, sha256: 'ab' },
     };
 
-    expect(ReportSchema.parse(report({ jobRuns: { runs: [fromNewerCollector] } })).jobRuns).toEqual(
-      { runs: [SUCCEEDED] },
-    );
-  });
-
-  test('refuses two runs with the same job and start, even with different details', () => {
-    const parsed = parsedRuns([FAILED, { ...FAILED, exitStatus: 0 }]);
-
-    expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues).toContainEqual(
-      expect.objectContaining({ message: 'duplicate job run', path: ['jobRuns', 'runs'] }),
-    );
+    expect(takeJobRuns([fromNewerCollector], ARRIVAL)).toEqual({ dropped: [], taken: [SUCCEEDED] });
   });
 
   // The Collector sends the oldest first, which the Hub does not check.
-  test('accepts runs in any order', () => {
-    const runs = [FAILED, SUCCEEDED];
-
-    expect(parsedRuns(runs).data?.jobRuns).toEqual({ runs });
+  test('takes runs in any order', () => {
+    expect(takeJobRuns([FAILED, SUCCEEDED], ARRIVAL).taken).toEqual([FAILED, SUCCEEDED]);
   });
 
-  // The Hub stores every time the section accepts, including years PostgreSQL
-  // does not parse as text, so a run from a broken clock never fails a Report.
-  test.each([
-    ['the first second of year 0000', '0000-01-01T00:00:00Z'],
-    ['the last second of year 9999', '9999-12-31T23:59:59Z'],
-  ])('accepts a run started at %s', (_, time) => {
-    const run = { ...FAILED, finished: time, started: time };
+  test('keeps the first run of a key and drops a later one, with different details or not', () => {
+    const { dropped, taken } = takeJobRuns([FAILED, { ...FAILED, exitStatus: 0 }], ARRIVAL);
 
-    expect(parsedRuns([run]).data?.jobRuns).toEqual({ runs: [run] });
+    expect(taken).toEqual([FAILED]);
+    expect(dropped).toEqual([
+      { job: FAILED.job, reason: expect.stringContaining('repeats'), started: FAILED.started },
+    ]);
   });
 
-  test(`accepts ${String(MAX_JOB_RUNS_PER_REPORT)} runs and refuses one more`, () => {
-    expect(parsedRuns(runsOfOneJob(MAX_JOB_RUNS_PER_REPORT)).success).toBe(true);
-    expect(parsedRuns(runsOfOneJob(MAX_JOB_RUNS_PER_REPORT + 1)).success).toBe(false);
+  test('does not let an invalid run shadow a later valid run of the same key', () => {
+    const invalid = { ...FAILED, exitStatus: 256 };
+
+    const { dropped, taken } = takeJobRuns([invalid, FAILED], ARRIVAL);
+
+    expect(taken).toEqual([FAILED]);
+    expect(dropped).toHaveLength(1);
+  });
+
+  test('drops an entry that is not an object, naming nothing', () => {
+    const { dropped, taken } = takeJobRuns([null, 'backup', 7, [], SUCCEEDED], ARRIVAL);
+
+    expect(taken).toEqual([SUCCEEDED]);
+    expect(dropped).toEqual(Array.from({ length: 4 }, () => ({ reason: expect.any(String) })));
+  });
+
+  test('names the job and start of a dropped run only when they are strings', () => {
+    const { dropped } = takeJobRuns([{ job: 'Not A Name', started: 5 }], ARRIVAL);
+
+    expect(dropped).toEqual([{ job: 'Not A Name', reason: expect.stringContaining('job') }]);
+  });
+
+  test('drops a run that starts more than 5 minutes after the Hub clock and keeps one exactly 5 minutes ahead', () => {
+    const run = (started: number): SentJobRun => ({
+      ...FAILED,
+      finished: at(started),
+      started: at(started),
+    });
+    const edge = run(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS);
+    const over = run(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS + 1000);
+
+    const { dropped, taken } = takeJobRuns([edge, over], ARRIVAL);
+
+    expect(taken).toEqual([edge]);
+    expect(dropped).toEqual([
+      { job: FAILED.job, reason: expect.stringContaining('5 minutes'), started: over.started },
+    ]);
+  });
+
+  test('takes a run from the first second of year 0000', () => {
+    const run = { ...FAILED, finished: '0000-01-01T00:00:00Z', started: '0000-01-01T00:00:00Z' };
+
+    expect(takeJobRuns([run], ARRIVAL).taken).toEqual([run]);
   });
 
   test.each([
@@ -113,7 +138,39 @@ describe('a Report', () => {
     ['an output file with a directory', { output: { file: 'out/backup.tar', sizeBytes: 1 } }],
     ['an output file of ..', { output: { file: '..', sizeBytes: 1 } }],
     ['a negative output size', { output: { file: 'backup.tar', sizeBytes: -1 } }],
-  ])('refuses a run with %s', (_, change) => {
-    expect(parsedRuns([{ ...FAILED, ...change }]).success).toBe(false);
+  ])('drops a run with %s', (_, change) => {
+    const { dropped, taken } = takeJobRuns([{ ...FAILED, ...change }], ARRIVAL);
+
+    expect(taken).toEqual([]);
+    expect(dropped).toHaveLength(1);
+  });
+
+  test('the strict section schema, kept for the Collector, still fails a run that breaks a rule or repeats a key', () => {
+    expect(JobRunsSectionSchema.safeParse({ runs: [{ ...FAILED, exitStatus: 256 }] }).success).toBe(
+      false,
+    );
+    expect(JobRunsSectionSchema.safeParse({ runs: [FAILED, FAILED] }).success).toBe(false);
+  });
+});
+
+describe('a Report whose job runs section is not a list of at most 1,000 entries', () => {
+  test.each([
+    ['a jobRuns that is not an object', 'runs'],
+    ['a jobRuns that is null', null],
+    ['a runs that is not an array', { runs: 'x' }],
+    ['a jobRuns without runs', {}],
+  ])('is invalid with %s', (_, jobRuns) => {
+    expect(ReportSchema.safeParse(report({ jobRuns })).success).toBe(false);
+  });
+
+  test(`takes ${String(MAX_JOB_RUNS_PER_REPORT)} entries of any kind and refuses one more`, () => {
+    expect(parsedRuns(nulls(MAX_JOB_RUNS_PER_REPORT)).success).toBe(true);
+    expect(parsedRuns(nulls(MAX_JOB_RUNS_PER_REPORT + 1)).success).toBe(false);
+  });
+
+  test('keeps a run that breaks a rule for the Hub to judge', () => {
+    const broken = { ...FAILED, exitStatus: 256 };
+
+    expect(parsedRuns([broken, null]).data?.jobRuns).toEqual({ runs: [broken, null] });
   });
 });

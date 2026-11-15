@@ -1,4 +1,4 @@
-import { mirrorChecks, mirrorRecords, mirrorRuns } from '@heimdall/schema';
+import { mirrorChecks, mirrorRecords, mirrorRuns, takeJobRuns } from '@heimdall/schema';
 import type {
   ChecksSection,
   ConditionKind,
@@ -7,7 +7,7 @@ import type {
   RecordsSection,
   Report,
   RunsSection,
-  JobRunsSection,
+  ReportedJobRunsSection,
   ServiceStopsSection,
   TranscriptsSection,
 } from '@heimdall/schema';
@@ -16,6 +16,7 @@ import type { SQL } from 'bun';
 import { clear, raise } from './conditions.ts';
 import { storeHarnessProcesses } from './harness-processes.ts';
 import { storeServiceVersions } from './service-versions.ts';
+import { shortened } from './shortened.ts';
 import { storable, storableJson } from './storable.ts';
 import { storeUpdates } from './update-observations.ts';
 
@@ -35,11 +36,19 @@ export const seeSystem = async (sql: SQL, { at, system }: { at: number; system: 
 // clock when the request arrived: the System is seen at that time, its clock
 // offset is the Report's sent time less that time, and each sample is stored
 // unless the Hub already holds one for the same System and time (ADR-0004).
-export const storeReport = (
+// `onWarn` is told of each part of the Report dropped while the rest is stored,
+// only once the Report commits, so a Report that fails and is sent again warns
+// once.
+export const storeReport = async (
   sql: SQL,
-  { receivedAt, report }: { receivedAt: number; report: Report },
-): Promise<StoreResult> =>
-  sql.begin(async (tx) => {
+  {
+    onWarn,
+    receivedAt,
+    report,
+  }: { onWarn: (message: string) => void; receivedAt: number; report: Report },
+): Promise<StoreResult> => {
+  const warnings: string[] = [];
+  const result = await sql.begin(async (tx) => {
     const seenAt = new Date(receivedAt);
     await tx`
       INSERT INTO systems (
@@ -196,7 +205,14 @@ export const storeReport = (
       await storeServiceStops(tx, { receivedAt: seenAt, report, section: report.serviceStops });
     }
     if (report.jobRuns !== undefined) {
-      await storeJobRuns(tx, { receivedAt: seenAt, report, section: report.jobRuns });
+      warnings.push(
+        ...(await storeJobRuns(tx, {
+          arrival: receivedAt,
+          receivedAt: seenAt,
+          report,
+          section: report.jobRuns,
+        })),
+      );
     }
     if (report.updates !== undefined) {
       await storeUpdates(tx, { receivedAt, section: report.updates, system: report.system });
@@ -212,6 +228,11 @@ export const storeReport = (
     await clear(tx, { kind: REPORTS_REJECTED, now: seenAt, subject: '', system: report.system });
     return { skipped: report.samples.length - stored.length, stored: stored.length };
   });
+  for (const warning of warnings) {
+    onWarn(warning);
+  }
+  return result;
+};
 
 // Replaces the System's set of transcript sources and its spool with a
 // Report's, unless the Hub holds a set from a Report sent later (ADR-0013). A
@@ -457,15 +478,43 @@ const storeServiceStops = async (
   `;
 };
 
+// The longest a dropped run's job, start, or reason is shown in a warning.
+const MAX_SHOWN = 200;
+
+const shown = (text: string) => shortened(text, MAX_SHOWN);
+
 // Each run is the whole run, so a run sent again replaces its row, `output`
 // included, under the same sent-time guard as Service stops. Times convert from
 // epoch milliseconds as for stops, since PostgreSQL does not read year 0000 as
-// text, and the section accepts years 0000 to 9999.
+// text. The Hub takes the entries one at a time (ADR-0004): a run it drops
+// never touches the row it would have replaced, and the warning for it is
+// returned, for the caller to log once the Report commits.
 const storeJobRuns = async (
   sql: SQL,
-  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: JobRunsSection },
-) => {
-  const runs = section.runs.map(({ exitStatus, finished, job, output, started }) => ({
+  {
+    arrival,
+    receivedAt,
+    report,
+    section,
+  }: {
+    arrival: number;
+    receivedAt: Date;
+    report: Report;
+    section: ReportedJobRunsSection;
+  },
+): Promise<string[]> => {
+  const { dropped, taken } = takeJobRuns(section.runs, arrival);
+  const warnings = dropped.map(({ job, reason, started }) => {
+    const named = [
+      job === undefined ? undefined : `job ${shown(job)}`,
+      started === undefined ? undefined : `started ${shown(started)}`,
+    ].filter((part) => part !== undefined);
+    return `Dropped a job run from ${report.system}${named.length > 0 ? ` (${named.join(', ')})` : ''}: ${shown(reason)}.`;
+  });
+  if (taken.length === 0) {
+    return warnings;
+  }
+  const runs = taken.map(({ exitStatus, finished, job, output, started }) => ({
     exitStatus,
     finished: Date.parse(finished),
     job,
@@ -497,6 +546,7 @@ const storeJobRuns = async (
     WHERE job_runs.sent_at <= excluded.sent_at
        OR job_runs.sent_at > ${receivedAt}
   `;
+  return warnings;
 };
 
 const REPORTS_REJECTED: ConditionKind = 'reports_rejected';

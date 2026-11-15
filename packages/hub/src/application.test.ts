@@ -112,6 +112,40 @@ test('a System paired with pair redeems its code from serve, and its token inges
   expect(code).toBe(130);
 });
 
+// A dropped job run shows only in the Hub's log, so serve must route the
+// warning there.
+test('serve logs one warning for a job run it drops, naming the System and why', async () => {
+  await using db = await migratedDatabase();
+  await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
+  await using config = await hubConfig(db);
+  let ingested = 0;
+
+  const { stdout } = await invoke(['serve', ...configArgs(config)], {
+    whileServing: async (hub) => {
+      const now = Date.now();
+      const started = new Date(now - 3_600_000).toISOString().replace(/\.\d{3}Z$/u, 'Z');
+      const response = await fetch(new URL('api/v1/reports', hub), {
+        body: JSON.stringify({
+          collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },
+          jobRuns: { runs: [{ exitStatus: 256, finished: started, job: 'backup', started }] },
+          samples: [sample(now)],
+          schemaVersion: REPORT_SCHEMA_VERSION,
+          sentAt: now,
+          system: 'laptop-1',
+        }),
+        headers: { authorization: 'Bearer laptop-token', 'content-type': 'application/json' },
+        method: 'POST',
+      });
+      ingested = response.status;
+    },
+  });
+
+  expect(ingested).toBe(200);
+  expect(
+    stdout.match(/Dropped a job run from laptop-1 \(job backup, .*exitStatus.*/gu),
+  ).toHaveLength(1);
+});
+
 test('serve counts the paired Systems as it starts', async () => {
   await using db = await migratedDatabase();
   await storeToken(db.sql, { pairedAt: Date.now(), system: 'laptop-1', token: 'laptop-token' });
@@ -356,6 +390,7 @@ const databaseWithOldSample = async () => {
   const db = await migratedDatabase();
   const now = Date.now();
   await storeReport(db.sql, {
+    onWarn: () => undefined,
     receivedAt: now,
     report: {
       collector: { arch: 'arm64', platform: 'darwin', version: '0.1.0' },

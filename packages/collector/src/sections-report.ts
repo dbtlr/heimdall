@@ -271,7 +271,9 @@ const createStopsState = ({
 // Hub has not taken (ADR-0023). It asks the store only when another process
 // committed a write (a run recorded, pruned, or forgotten, or pairing) or
 // while the last look found held runs, so an idle Collector costs no query. A
-// delivered Report settles the runs it carried; a failed delivery keeps them,
+// delivered Report settles the runs it carried, and reading the held runs
+// settles at once those the section cannot carry, so a read writes the store
+// too; a failed delivery keeps the runs it carried,
 // and so does the Hub's refusal (422), which holds them back until `refreshMs`
 // has passed. A store that cannot be read costs the runs, never the Vitals, and
 // is warned about once until it works again. Once `pair` stored another

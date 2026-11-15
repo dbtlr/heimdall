@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { failureCap } from './failure-cap.ts';
 import type { CapSlot } from './failure-cap.ts';
 import { readCode, redeemCode } from './pairing.ts';
+import { shortened } from './shortened.ts';
 import { recordRejection, seeSystem, storeReport } from './store.ts';
 import { systemForToken } from './tokens.ts';
 import { appendChunk, openGeneration } from './transcripts.ts';
@@ -33,6 +34,10 @@ export type HubDependencies = {
   now: () => number;
   // Told of each request the Hub could not answer, such as one the database refused.
   onError: (error: unknown) => void;
+  // Told of each part of a Report the Hub dropped while storing the rest, such as
+  // a job run it could not take, once the rest is stored. It is the drop's only
+  // trace, so the Hub's log takes it.
+  onWarn: (message: string) => void;
   sql: SQL;
 };
 
@@ -114,7 +119,7 @@ const parseJson = (body: string): { kind: 'json'; value: unknown } | { kind: 'in
 // that System even when rejected, and raises its Reports-rejected Condition
 // (ADR-0005). The Hub's clock is read once on arrival, before the body, so a
 // large Report's upload time never reads as the System's clock skew.
-const ingest = async (request: Request, { now, onError, sql }: HubDependencies) => {
+const ingest = async (request: Request, { now, onError, onWarn, sql }: HubDependencies) => {
   const arrival = now();
   const auth = await authenticate(request, sql);
   if (auth.kind === 'missing') {
@@ -125,7 +130,7 @@ const ingest = async (request: Request, { now, onError, sql }: HubDependencies) 
   }
   const { system } = auth;
   const reject = async (status: 403 | 422, reason: string) => {
-    const shown = reason.slice(0, MAX_REASON_LENGTH);
+    const shown = shortened(reason, MAX_REASON_LENGTH);
     // The answer tells the Collector whether to drop the Report, so it stands
     // even when the database cannot record the rejection (ADR-0004).
     await recordRejection(sql, { reason: shown, receivedAt: arrival, system }).catch(onError);
@@ -147,7 +152,9 @@ const ingest = async (request: Request, { now, onError, sql }: HubDependencies) 
   if (parsed.data.system !== system) {
     return reject(403, `This token belongs to ${system}, not ${parsed.data.system}.`);
   }
-  return Response.json(await storeReport(sql, { receivedAt: arrival, report: parsed.data }));
+  return Response.json(
+    await storeReport(sql, { onWarn, receivedAt: arrival, report: parsed.data }),
+  );
 };
 
 // The System a transcript upload's token names, or the answer to a request
