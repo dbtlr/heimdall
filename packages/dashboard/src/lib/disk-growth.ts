@@ -1,51 +1,10 @@
-// How fast a mount fills, from the readings the chart shows.
+// Disk growth's type and the words both disk pages use for growth and time.
 
-export type DiskReading = { t: number; totalBytes: number; usedBytes: number };
-
-export type DiskGrowth = {
-  bytesPerDay: number;
-  // Days until the mount is full at that rate, measured from the newest
-  // reading; undefined when it is not growing.
-  daysUntilFull: number | undefined;
-};
+export type DiskGrowth = { bytesPerDay: number };
 
 const DAY_MS = 86_400_000;
 const MIB = 1024 ** 2;
 const GIB = 1024 ** 3;
-
-// Fewer hours of readings than this are too few to call a trend.
-const MIN_SPAN_MS = DAY_MS;
-
-// A least-squares line through used bytes over time, or undefined when there
-// are fewer than two readings or they span less than a day.
-export const diskGrowth = (readings: readonly DiskReading[]): DiskGrowth | undefined => {
-  const newest = readings.at(-1);
-  const oldest = readings[0];
-  if (newest === undefined || oldest === undefined || newest.t - oldest.t < MIN_SPAN_MS) {
-    return undefined;
-  }
-  const count = readings.length;
-  // Times counted in days from the first reading keep the sums small.
-  const days = readings.map((reading) => (reading.t - oldest.t) / DAY_MS);
-  const meanDay = days.reduce((sum, day) => sum + day, 0) / count;
-  const meanUsed = readings.reduce((sum, reading) => sum + reading.usedBytes, 0) / count;
-  let covariance = 0;
-  let variance = 0;
-  for (const [index, reading] of readings.entries()) {
-    const dayOffset = (days[index] ?? 0) - meanDay;
-    covariance += dayOffset * (reading.usedBytes - meanUsed);
-    variance += dayOffset * dayOffset;
-  }
-  if (variance === 0) {
-    return undefined;
-  }
-  const bytesPerDay = covariance / variance;
-  const free = Math.max(0, newest.totalBytes - newest.usedBytes);
-  return {
-    bytesPerDay,
-    daysUntilFull: bytesPerDay > 0 ? free / bytesPerDay : undefined,
-  };
-};
 
 // Growth slower than a MiB a day is a mount's churn bending the fitted line,
 // not a trend: it gets no rate and no forecast.
@@ -58,9 +17,12 @@ export const gibWords = (bytes: number): string => {
   return `${value >= 10 ? String(Math.round(value)) : value.toFixed(1)} GiB`;
 };
 
-// "+2.1 GiB a day", or "+300 MiB a day" below a GiB.
-export const growthWords = (bytesPerDay: number): string =>
-  `+${bytesPerDay >= GIB ? gibWords(bytesPerDay) : `${String(Math.round(bytesPerDay / MIB))} MiB`} a day`;
+// "+2.1 GiB a day", or "+300 MiB a day" below a GiB. The unit is chosen after
+// rounding, so a rate a hair under a GiB reads "+1.0 GiB", not "+1024 MiB".
+export const growthWords = (bytesPerDay: number): string => {
+  const mib = Math.round(bytesPerDay / MIB);
+  return `+${mib >= 1024 ? gibWords(bytesPerDay) : `${String(mib)} MiB`} a day`;
+};
 
 // When a growing mount reaches a mark it is `days` from: "now" once there,
 // "in under a day", "in about 18 days", or "in over a year".
@@ -77,3 +39,9 @@ export const reachWords = (days: number): string => {
   const whole = Math.round(days);
   return `in about ${String(whole)} ${whole === 1 ? 'day' : 'days'}`;
 };
+
+// The fitted span, in the same units as the Condition chart's window.
+export const spanWords = (span: number): string =>
+  span >= 2 * DAY_MS
+    ? `${String(Math.round(span / DAY_MS))} days`
+    : `${String(Math.round(span / 3_600_000))} h`;

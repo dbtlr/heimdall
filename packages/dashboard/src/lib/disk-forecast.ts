@@ -1,5 +1,6 @@
+import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk } from '../server/system-detail-types.ts';
-import { growthWords, isGrowing, reachWords } from './disk-growth.ts';
+import { growthWords, isGrowing, reachWords, spanWords } from './disk-growth.ts';
 import type { DiskGrowth } from './disk-growth.ts';
 
 // The used percents at which the Hub raises a Low disk note, warning, and alert.
@@ -9,7 +10,7 @@ export type DiskBands = { alert: number; note: number; warning: number };
 // 100 for full; or why no forecast can be made.
 export type DiskForecast =
   | { bytesPerDay: number; days: number; kind: 'growing'; percent: number }
-  | { kind: 'none'; reason: 'few-readings' | 'not-growing' };
+  | { kind: 'none'; reason: 'few-readings' | 'not-growing' | 'unknown-size' | 'size-changed' };
 
 // The next band above the mount's use, else full, and the days to reach it at
 // the fitted growth: 0 for a mount already full. `growth` is undefined with
@@ -18,15 +19,20 @@ export const diskForecast = ({
   bands,
   disk,
   growth,
+  sizeChanged = false,
 }: {
   bands: DiskBands | undefined;
+  sizeChanged?: boolean;
   disk: Disk;
   growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined;
 }): DiskForecast => {
-  if (growth === undefined) {
-    return { kind: 'none', reason: 'few-readings' };
+  if (disk.totalBytes <= 0) {
+    return { kind: 'none', reason: 'unknown-size' };
   }
-  if (!isGrowing(growth) || disk.totalBytes <= 0) {
+  if (growth === undefined) {
+    return { kind: 'none', reason: sizeChanged ? 'size-changed' : 'few-readings' };
+  }
+  if (!isGrowing(growth)) {
     return { kind: 'none', reason: 'not-growing' };
   }
   const used = (disk.usedBytes / disk.totalBytes) * 100;
@@ -43,14 +49,46 @@ export const diskForecast = ({
   };
 };
 
+// Whether the System's newest disk reading, taken at `at`, is no longer
+// current at `now`; its facts are then dated to that reading, not to now.
+export const isQuietReading = (at: number, now: number): boolean => now - at > QUIET_AFTER_MS;
+
+// The fitted span as both pages word it: "over the last 3 days", or, once the
+// System is quiet, "over the 3 days to the newest reading".
+export const spanWindowWords = (spanMs: number, fromNewestReading: boolean): string =>
+  fromNewestReading
+    ? ` over the ${spanWords(spanMs)} to the newest reading`
+    : ` over the last ${spanWords(spanMs)}`;
+
+// When a growing mount is reached, counted from the newest reading once quiet;
+// a quiet mount already full was full at its newest reading.
+export const countdownWords = (days: number, fromNewestReading: boolean): string => {
+  if (!fromNewestReading) {
+    return reachWords(days);
+  }
+  return days <= 0 ? 'at the newest reading' : `${reachWords(days)} from the newest reading`;
+};
+
 // A forecast as the Disks card says it, in the Condition page's words for
-// growth and time: "+2.1 GiB a day · 80% in about 3 days".
-export const forecastWords = (forecast: DiskForecast): string => {
+// growth and time, with the actual fitted span when one is available.
+export const forecastWords = (
+  forecast: DiskForecast,
+  fromNewestReading = false,
+  spanMs?: number,
+): string => {
+  const window = spanMs === undefined ? '' : spanWindowWords(spanMs, fromNewestReading);
   if (forecast.kind === 'none') {
-    return forecast.reason === 'few-readings'
-      ? 'Under a day of readings, so no forecast.'
-      : 'Not growing over the last 7 days, so no forecast.';
+    if (forecast.reason === 'size-changed') {
+      return 'Under a day of readings since the size changed, so no forecast.';
+    }
+    if (forecast.reason === 'unknown-size') {
+      return 'Disk size is unknown or zero, so no forecast.';
+    }
+    if (forecast.reason === 'few-readings') {
+      return 'Under a day of readings, so no forecast.';
+    }
+    return `Not growing${window}, so no forecast.`;
   }
   const target = forecast.percent >= 100 ? 'full' : `${String(forecast.percent)}%`;
-  return `${growthWords(forecast.bytesPerDay)} · ${target} ${reachWords(forecast.days)}`;
+  return `${growthWords(forecast.bytesPerDay)}${window} · ${target} ${countdownWords(forecast.days, fromNewestReading)}`;
 };

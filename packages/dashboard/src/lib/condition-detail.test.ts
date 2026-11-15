@@ -74,6 +74,14 @@ const diskAttention: Attention = {
 const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail => ({
   attention: diskAttention,
   clearedAt: undefined,
+  diskTrend: {
+    daysUntilFull: 38 / 2.1,
+    growth: { bytesPerDay: 2.1 * GIB },
+    mount: '/',
+    newestSampleAt: NOW,
+    sizeChanged: false,
+    spanMs: 7 * DAY,
+  },
   from: NOW - 7 * DAY,
   id: 'c1',
   kind: 'low_disk',
@@ -123,22 +131,100 @@ test('a low disk estimates growth and when it fills, marked as an estimate', () 
 });
 
 test('the rate names the span the readings cover, not the window', () => {
-  const days = conditionDetailView(diskDetail({ series: diskSeries(2.1, 3) }), NOW).rate;
+  const days = conditionDetailView(
+    diskDetail({
+      diskTrend: {
+        daysUntilFull: 38 / 2.1,
+        growth: { bytesPerDay: 2.1 * GIB },
+        mount: '/',
+        newestSampleAt: NOW,
+        sizeChanged: true,
+        spanMs: 3 * DAY,
+      },
+    }),
+    NOW,
+  ).rate;
   expect(days?.text).toStartWith('+2.1 GiB a day over the last 3 days.');
-  const hours = conditionDetailView(diskDetail({ series: diskSeries(2.1, 26 / 24) }), NOW).rate;
+  const hours = conditionDetailView(
+    diskDetail({
+      diskTrend: {
+        daysUntilFull: 38 / 2.1,
+        growth: { bytesPerDay: 2.1 * GIB },
+        mount: '/',
+        newestSampleAt: NOW,
+        sizeChanged: true,
+        spanMs: 26 * 3_600_000,
+      },
+    }),
+    NOW,
+  ).rate;
   expect(hours?.text).toStartWith('+2.1 GiB a day over the last 26 h.');
 });
 
 test('a low disk growing under 1 MiB a day shows no rate', () => {
   const crawl = 0.5 / 1024; // GiB a day
-  expect(conditionDetailView(diskDetail({ series: diskSeries(crawl) }), NOW).rate).toBeUndefined();
+  expect(
+    conditionDetailView(
+      diskDetail({
+        diskTrend: {
+          daysUntilFull: 38 / 2.1,
+          growth: { bytesPerDay: crawl * GIB },
+          mount: '/',
+          newestSampleAt: NOW,
+          sizeChanged: false,
+          spanMs: 7 * DAY,
+        },
+      }),
+      NOW,
+    ).rate,
+  ).toBeUndefined();
 });
 
 test('a low disk that is not growing, or has under a day of readings, shows no rate', () => {
-  expect(conditionDetailView(diskDetail({ series: diskSeries(0) }), NOW).rate).toBeUndefined();
-  expect(conditionDetailView(diskDetail({ series: diskSeries(-1) }), NOW).rate).toBeUndefined();
   expect(
-    conditionDetailView(diskDetail({ series: diskSeries(2.1, 0.5) }), NOW).rate,
+    conditionDetailView(
+      diskDetail({
+        diskTrend: {
+          daysUntilFull: 38 / 2.1,
+          growth: { bytesPerDay: 0 },
+          mount: '/',
+          newestSampleAt: NOW,
+          sizeChanged: false,
+          spanMs: 7 * DAY,
+        },
+      }),
+      NOW,
+    ).rate,
+  ).toBeUndefined();
+  expect(
+    conditionDetailView(
+      diskDetail({
+        diskTrend: {
+          daysUntilFull: 38 / 2.1,
+          growth: { bytesPerDay: -GIB },
+          mount: '/',
+          newestSampleAt: NOW,
+          sizeChanged: false,
+          spanMs: 7 * DAY,
+        },
+      }),
+      NOW,
+    ).rate,
+  ).toBeUndefined();
+  expect(
+    conditionDetailView(
+      diskDetail({
+        diskTrend: {
+          daysUntilFull: undefined,
+          growth: undefined,
+          mount: '/',
+          newestSampleAt: NOW,
+          sizeChanged: true,
+          spanMs: DAY / 2,
+        },
+      }),
+      NOW,
+    ).rate,
   ).toBeUndefined();
 });
 
@@ -197,7 +283,7 @@ test('a low disk falls back to the Vitals on the attention when no readings came
   const missing = conditionDetailView(diskDetail({ series: undefined }), NOW);
   expect(missing.hero.value).toBe('91');
   expect(missing.chart).toBeUndefined();
-  expect(missing.rate).toBeUndefined();
+  expect(missing.rate?.text).toStartWith('+2.1 GiB a day');
 
   const empty = conditionDetailView(diskDetail({ series: { kind: 'disk', points: [] } }), NOW);
   expect(empty.hero.value).toBe('91');

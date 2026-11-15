@@ -2,13 +2,12 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { ReactNode } from 'react';
 
 import { LEVEL_FILL } from '../lib/conditions.ts';
-import { diskForecast, forecastWords } from '../lib/disk-forecast.ts';
+import { diskForecast, forecastWords, isQuietReading } from '../lib/disk-forecast.ts';
 import type { DiskBands } from '../lib/disk-forecast.ts';
 import { diskUsage, formatLoad } from '../lib/facts.ts';
 import { harnessName } from '../lib/lane.ts';
 import { whenAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
-import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { PhraseText } from './date-time.tsx';
@@ -46,7 +45,7 @@ function Fact({
 // The rest of a heading that dates facts from a sample taken at `at`: ", as of
 // <when>" once the sample is no longer current, else nothing.
 function SampleAsOf({ at, now }: { at: number; now: number }) {
-  return now - at > QUIET_AFTER_MS ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
+  return isQuietReading(at, now) ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
 }
 
 type DiskDetail = Pick<SystemDetail, 'conditions' | 'diskTrends' | 'limitPercent'>;
@@ -110,9 +109,20 @@ function DiskRow({
 }
 
 // Each mount of the newest sample as a row, with its open Low disk level, its
-// growth over the last 7 days, and the next band it heads for.
-function DiskRows({ detail, disks }: { detail: DiskDetail; disks: readonly Disk[] }) {
+// growth over its fitted span, and the next band it heads for.
+function DiskRows({
+  detail,
+  disks,
+  at,
+  now,
+}: {
+  detail: DiskDetail;
+  disks: readonly Disk[];
+  at: number;
+  now: number;
+}) {
   const bands = detail.limitPercent?.disk;
+  const quiet = isQuietReading(at, now);
   return (
     <ul>
       {disks.map((disk, index) => (
@@ -126,7 +136,11 @@ function DiskRows({ detail, disks }: { detail: DiskDetail; disks: readonly Disk[
               bands,
               disk,
               growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
+              sizeChanged:
+                detail.diskTrends.find((trend) => trend.mount === disk.mount)?.sizeChanged ?? false,
             }),
+            quiet,
+            detail.diskTrends.find((trend) => trend.mount === disk.mount)?.spanMs,
           )}
           key={`${disk.mount}-${String(index)}`}
           level={
@@ -199,7 +213,7 @@ export function SystemFacts({
       {latest !== undefined && (
         <Fact asOf={asOf} grow={1.5} title="Disks">
           <div className="max-h-[30dvh] overflow-y-auto">
-            <DiskRows detail={detail} disks={latest.disks} />
+            <DiskRows at={latest.t} detail={detail} disks={latest.disks} now={now} />
           </div>
         </Fact>
       )}
@@ -224,7 +238,7 @@ const WIDE_HEADING = 'mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-di
 
 // The card of each disk's use, under the charts on a wide screen: used of
 // total with a tick at each band the Hub judges disks by, the Low disk level
-// when one is open on it, and its growth over 7 days with the next band it
+// when one is open on it, and its growth over its fitted span with the next band it
 // reaches, dated as the System facts are when the sample is no longer current.
 // Nothing without a sample.
 export function SystemDisks({
@@ -241,12 +255,12 @@ export function SystemDisks({
       <h2 className={WIDE_HEADING}>
         Disks
         <SampleAsOf at={latest.t} now={now} />{' '}
-        <span className="font-normal tracking-normal normal-case">growth over 7 days</span>
+        <span className="font-normal tracking-normal normal-case">growth forecast</span>
       </h2>
       {latest.disks.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">The Collector reported no disk.</p>
       ) : (
-        <DiskRows detail={detail} disks={latest.disks} />
+        <DiskRows at={latest.t} detail={detail} disks={latest.disks} now={now} />
       )}
     </section>
   );

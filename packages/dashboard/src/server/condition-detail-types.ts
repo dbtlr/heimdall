@@ -9,7 +9,7 @@ import type {
 } from '@heimdall/schema';
 
 import type { Attention } from './attention-types.ts';
-import type { MemoryHolders } from './system-detail-types.ts';
+import type { DiskTrend, MemoryHolders } from './system-detail-types.ts';
 import type { VitalsWindow } from './vitals-window-types.ts';
 
 // The culprit's readings over the chart's window, oldest first, by what the
@@ -38,6 +38,10 @@ export type ConditionDetail = {
   // undefined once the occurrence has cleared.
   attention: Attention | undefined;
   clearedAt: number | undefined;
+  // The shared SQL fit; chart buckets are only for drawing and current use.
+  diskTrend?:
+    | (DiskTrend & { daysUntilFull: number | undefined; newestSampleAt: number })
+    | undefined;
   // The chart's window: the 7 days (disk) or 24 hours (other series) ending
   // at the clearing time, or at the read time while open.
   from: number;

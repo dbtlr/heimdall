@@ -53,7 +53,7 @@ try {
   assert(old.startsWith('Disks, as of '), `An old sample's disks are dated, not "${old}"`);
   const current = heading(NOW - 60_000);
   assert(
-    current === 'Disks growth over 7 days',
+    current === 'Disks growth forecast',
     `A current sample's disks are not dated, not "${current}"`,
   );
   document.body.textContent = 'System disks DOM tests passed';
