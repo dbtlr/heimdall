@@ -496,22 +496,39 @@ When two Hubs share a database, as during an upgrade, one delivery pass runs at 
 
 ## Hub runtime status
 
-The Hub records its own health in the single-row `hub_status` table. Startup
-stores `version`, `started_at`, and `delivery_configured`, a boolean that never
-includes a destination, topic, or credential. `last_runs` maps each timer pass
-(`listening`, `prune`, `conditions`, `delivery`, `parse`, `refresh`, and
-`upstreams`) to the epoch milliseconds when its latest attempt finished,
-including failed attempts. Startup clears the previous process's pass times.
-A failed status write logs a warning and does not fail startup or the pass.
+The Hub records its own health in the single-row `hub_status` table. Once it
+listens, and before any timer pass runs, it stores `version`, `started_at`, and
+`delivery_configured`, a boolean that never includes a destination, topic, or
+credential. A Hub that fails to start, such as one that cannot bind its port,
+leaves the running Hub's row alone. `last_runs` maps each timer pass the Hub runs
+(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, and
+`delivery` when delivery is configured) to its schedule, `interval_ms` and
+`budget_ms`, and, in epoch milliseconds, when its latest run started
+(`started_at`) and finished (`finished_at`), when a run last succeeded
+(`succeeded_at`), and, while its runs keep failing, when the first of them failed
+(`failing_since`). Starting replaces the previous process's passes. A pass's
+budget is the longest one run is meant to take: for refresh, its 10-second
+budget plus one 30-second statement timeout; for every other pass, which has no
+time cap of its own, one statement timeout. A status write waits at most one
+second for a lock another session holds on the row. A failed status write logs a
+warning and fails neither startup nor the pass.
 
-The dashboard's version links to `/hub`, a checklist of Hub health with Systems
-and Collectors, Session insight, storage, and applied migrations. Missing runtime
-fields, including when an older Hub has not created the table, show as unknown.
-A pass is overdue after twice its scheduling interval: prune after two hours,
-Conditions after two minutes, delivery after one minute, parse and refresh after
-30 seconds, and upstream checks after ten minutes. Listening keeps its existing
-two-minute outage limit. These times describe completed attempts, not successful
-work; delivery and parser failures have their own stored evidence. Parser failure
+The dashboard's version links to `/hub`, a checklist of Hub health, then Systems
+and Collectors, Session insight, and storage, with Condition evaluations and the
+applied migrations folded under Details. A pass that has started and not finished
+is running, however long it takes, and the page says for how long. A pass that is
+not running is overdue once no run has started within twice its interval plus its
+budget and none has finished within twice its interval; one that never ran counts
+from when the Hub started. With the intervals above, that is 150 seconds for
+Conditions, 90 seconds for listening and delivery, 60 seconds for parse, 70 seconds
+for refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
+prune. A pass whose runs keep failing shows as failing since its first failure.
+When the Hub has not recorded that it listens for more than the two-minute outage
+limit, the page says once that the Hub is not running, and no pass shows as
+overdue on its own. Intake counts open Stale System Conditions, upstream checks
+count only upstreams some System records, and alert delivery shows as failing
+after the 10 minutes Home waits. Missing runtime fields show as unknown, and the
+page asks for a Hub upgrade only when the table itself is missing. Parser failure
 reasons never reach the dashboard. Rebuild start time and rejected Report counts
 are not recorded.
 

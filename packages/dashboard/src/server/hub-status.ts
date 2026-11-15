@@ -1,100 +1,183 @@
 import type { SQL } from 'bun';
 
-import type { HubCheck, HubStatus, HubTable } from './hub-status-types.ts';
+import { deliveryFailingShown, isAsleep } from '../lib/fleet.ts';
+import { agoText, judgePass } from '../lib/hub-passes.ts';
+import type { PassRecord } from '../lib/hub-passes.ts';
+import { harnessName } from '../lib/lane.ts';
+import { joinPhrases, whenAt } from '../lib/phrase.ts';
+import type { Moment, Phrase } from '../lib/phrase.ts';
+import { formatSpanShort } from '../lib/time.ts';
+import type { HubCheck, HubRuntime, HubStatus, HubTable } from './hub-status-types.ts';
 
-// Twice the scheduling interval leaves room for a pass's work. Listening uses
-// its existing two-minute outage rule. Keep aligned with serve.ts's intervals.
-export const HUB_OVERDUE_MS = {
-  conditions: 120_000,
-  delivery: 60_000,
-  listening: 120_000,
-  parse: 30_000,
-  prune: 7_200_000,
-  refresh: 30_000,
-  upstreams: 600_000,
+// The gap in the Hub's listening record that counts as an outage, as the Hub
+// judges it (LISTENING_GAP_MS in packages/hub/src/listening.ts).
+export const LISTENING_GAP_MS = 2 * 60_000;
+// How many items a list that can grow shows before it says how many more.
+export const LIST_SHOWN = 3;
+// How many of the largest tables Storage names before "everything else".
+const TABLES_SHOWN = 5;
+
+const KIB = 1024;
+const MIB = KIB * 1024;
+const GIB = MIB * 1024;
+
+// "21.3 GiB", "48 MiB", "12 KiB", or "512 B".
+export const sizeText = (value: number | string) => {
+  const n = Number(value);
+  if (n >= GIB) {
+    return `${(n / GIB).toFixed(1)} GiB`;
+  }
+  if (n >= MIB) {
+    return `${String(Math.round(n / MIB))} MiB`;
+  }
+  return n >= KIB ? `${String(Math.round(n / KIB))} KiB` : `${String(n)} B`;
 };
-const SYSTEM_OVERDUE_MS = 600_000;
-const SLEEPING_SYSTEM_OVERDUE_MS = 7 * 86_400_000;
-const stamp = (date: Date | null | undefined) =>
-  date?.toISOString().replace('T', ' ').replace('.000Z', ' UTC') ?? 'unknown';
-const bytes = (value: number | string) => `${(Number(value) / 1024 ** 3).toFixed(2)} GiB`;
+
+// "1 System" or "2 Systems".
+export const count = (n: number, one: string, many = `${one}s`) =>
+  `${String(n)} ${n === 1 ? one : many}`;
+
+// The first LIST_SHOWN of `items` and, past them, "N more".
+const capped = (items: string[]) =>
+  items.length > LIST_SHOWN
+    ? [...items.slice(0, LIST_SHOWN), `${String(items.length - LIST_SHOWN)} more`]
+    : items;
+
+const when = (at: Date | null | undefined, now: number): Phrase =>
+  at == null ? ['unknown'] : [whenAt(at.getTime(), now)];
+
+const ago = (at: Date | null | undefined, now: number) =>
+  at == null ? 'unknown' : agoText(at.getTime(), now);
+
+// A clock offset as "+0.2 s" or "−0.1 s".
+const offsetText = (ms: number | null) => {
+  if (ms === null) {
+    return 'unknown';
+  }
+  const seconds = (ms / 1000).toFixed(1);
+  return ms > 0 ? `+${seconds} s` : `${seconds.replace('-', '−')} s`;
+};
+
+// A parser's progress: a rebuild's share of generations read, else how far
+// it trails what the archive holds.
+const progressText = (p: {
+  target: number;
+  version: number;
+  read: number;
+  total: number;
+  behind: string;
+}) => {
+  if (p.target > p.version) {
+    const percent = p.total === 0 ? 0 : Math.floor((100 * p.read) / p.total);
+    return `Rebuilding to v${String(p.target)}: ${String(p.read)} of ${count(p.total, 'generation')} (${String(percent)}%)`;
+  }
+  return Number(p.behind) === 0 ? 'Read through: 0 B behind' : `${sizeText(p.behind)} behind`;
+};
+
+// A failing upstream with its reason, when it was checked, and its next try.
+const failingUpstream = (
+  u: {
+    upstream: string;
+    failure: string | null;
+    checked_at: Date | null;
+    next_check_at: Date | null;
+  },
+  now: number,
+): Phrase => {
+  const phrase: (Moment | string)[] = [`${u.upstream} ${u.failure ?? ''}, checked `];
+  phrase.push(...when(u.checked_at, now));
+  if (u.next_check_at !== null) {
+    phrase.push(', next try ', { at: u.next_check_at.getTime(), format: 'ahead', now });
+  }
+  return phrase;
+};
+
 type Runtime = {
   version: string;
   started_at: Date;
   delivery_configured: boolean;
-  last_runs: Record<string, number>;
+  last_runs: Record<string, PassRecord>;
 };
 
-// A missing table is expected during an upgrade. Do this outside the snapshot:
-// a missing-relation error would otherwise abort the whole transaction.
-const readRuntime = async (sql: SQL): Promise<Runtime | undefined> => {
+// A missing table is expected while a Hub older than its status table runs.
+// Read it outside the snapshot: a missing-relation error would otherwise abort
+// the whole transaction.
+const readRuntime = async (sql: SQL): Promise<{ kind: HubRuntime; row: Runtime | undefined }> => {
   try {
     const [row]: Runtime[] =
       await sql`SELECT version, started_at, delivery_configured, last_runs FROM hub_status`;
-    return row;
+    return { kind: row === undefined ? 'empty' : 'recorded', row };
   } catch (error) {
     if (error instanceof Error && 'errno' in error && error.errno === '42P01') {
-      return undefined;
+      return { kind: 'missing', row: undefined };
     }
     throw error;
   }
 };
 
+// The Hub version its status row records, for the footer; undefined when the
+// row or its table is missing.
+export const readHubVersion = async (sql: SQL) => (await readRuntime(sql)).row?.version;
+
 // Direct database reads, with counts only from parser failures. No transcript
-// content or delivery configuration is selected or sent to the browser.
+// content, failure reason, or delivery destination is selected or sent to the
+// browser.
 export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> => {
   const runtime = await readRuntime(sql);
   return sql.begin(async (tx) => {
     await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
     const checks: HubCheck[] = [];
-    const tables: HubTable[] = [];
-    const add = (part: string, state: HubCheck['state'], text: string, detail = '') => {
+    const add = (part: string, state: HubCheck['state'], text: Phrase, detail: Phrase = []) => {
       checks.push({ detail, part, state, text });
     };
-    const timer = (name: keyof typeof HUB_OVERDUE_MS) => {
-      const last = runtime?.last_runs[name];
-      const base = last ?? runtime?.started_at.getTime();
-      if (base === undefined) {
-        return 'unknown';
-      }
-      if (now - base > (HUB_OVERDUE_MS[name] ?? 0)) {
-        return 'overdue';
-      }
-      return last === undefined ? 'awaiting first pass' : 'current';
-    };
-    const timerState = (name: keyof typeof HUB_OVERDUE_MS): HubCheck['state'] => {
-      if (timer(name) === 'unknown') {
-        return 'unknown';
-      }
-      return timer(name) === 'overdue' ? 'warning' : 'ok';
-    };
-    const lastPass = (name: keyof typeof HUB_OVERDUE_MS) => {
-      const at = runtime?.last_runs[name];
-      return at === undefined ? 'unknown' : stamp(new Date(at));
-    };
+
     const [listening]: { heard_at: Date | null; listening_since: Date | null }[] =
       await tx`SELECT heard_at, listening_since FROM hub_listening`;
-    let listeningState: HubCheck['state'] = 'unknown';
-    if (listening?.heard_at != null) {
-      listeningState =
-        now - listening.heard_at.getTime() > HUB_OVERDUE_MS.listening ? 'warning' : 'ok';
+    const heard = listening?.heard_at ?? null;
+    const isDown = heard !== null && now - heard.getTime() > LISTENING_GAP_MS;
+    const down: Phrase | undefined = isDown
+      ? ['The Hub is not running: last heard ', ...when(heard, now), `, ${ago(heard, now)}.`]
+      : undefined;
+    const hubStartedAt = runtime.row?.started_at.getTime();
+    const pass = (name: string, label: string) =>
+      judgePass({ down: isDown, hubStartedAt, label, now, run: runtime.row?.last_runs[name] });
+
+    const hubLine: Phrase =
+      runtime.row === undefined
+        ? ['Hub version unknown']
+        : [`Hub v${runtime.row.version}, started `, ...when(runtime.row.started_at, now)];
+    if (heard === null) {
+      add('Listening', 'unknown', ['No listening recorded yet'], hubLine);
+    } else if (isDown) {
+      add('Listening', 'warning', ['Not running: last heard ', ...when(heard, now)], hubLine);
+    } else {
+      add(
+        'Listening',
+        'ok',
+        ['Since ', ...when(listening?.listening_since, now), `, last recorded ${ago(heard, now)}`],
+        hubLine,
+      );
     }
-    add(
-      'Listening',
-      listeningState,
-      `Since ${stamp(listening?.listening_since)}`,
-      `Last recorded ${stamp(listening?.heard_at)} · Hub v${runtime?.version ?? 'unknown'} · started ${stamp(runtime?.started_at)}`,
-    );
+
     const migrations: { version: number; applied_at: Date }[] =
       await tx`SELECT version, applied_at FROM schema_migrations ORDER BY version DESC`;
     const [size]: { bytes: string }[] =
       await tx`SELECT pg_database_size(current_database())::text AS bytes`;
+    const tablesBySize: { name: string; bytes: string }[] = await tx`
+      SELECT relname AS name, pg_total_relation_size(relid)::text AS bytes
+      FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC`;
+    const total = Number(size?.bytes ?? 0);
+    const [largest] = tablesBySize;
     add(
       'Database',
       'ok',
-      `${bytes(size?.bytes ?? 0)} · schema ${migrations[0]?.version ?? 'unknown'}`,
-      `Applied ${stamp(migrations[0]?.applied_at)}`,
+      [
+        `${sizeText(total)} · schema ${String(migrations[0]?.version ?? 'unknown')}, applied `,
+        ...when(migrations[0]?.applied_at, now),
+      ],
+      largest === undefined ? [] : [`Largest: ${largest.name} ${sizeText(largest.bytes)}`],
     );
+
     const systems: {
       name: string;
       last_seen_at: Date | null;
@@ -103,55 +186,93 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
       clock_offset_ms: number | null;
       spool_bytes: string | null;
       spool_oldest_at: Date | null;
+      stale: boolean;
     }[] = await tx`
       SELECT p.system AS name, s.last_seen_at, s.collector_version, s.sleeps, s.clock_offset_ms,
-        t.spool_bytes::text, t.spool_oldest_at FROM paired_systems p
-      LEFT JOIN systems s ON s.name = p.system LEFT JOIN transcript_sources t ON t.system = p.system ORDER BY p.system`;
-    const quiet = systems.filter(
-      (s) =>
-        s.last_seen_at === null ||
-        now - s.last_seen_at.getTime() >
-          (s.sleeps === true ? SLEEPING_SYSTEM_OVERDUE_MS : SYSTEM_OVERDUE_MS),
-    );
+        t.spool_bytes::text, t.spool_oldest_at,
+        EXISTS (SELECT 1 FROM conditions c WHERE c.system = p.system
+          AND c.kind = 'system_stale' AND c.cleared_at IS NULL) AS stale
+      FROM paired_systems p
+      LEFT JOIN systems s ON s.name = p.system
+      LEFT JOIN transcript_sources t ON t.system = p.system
+      ORDER BY p.system`;
+    const lastSeen = (s: (typeof systems)[number]) => {
+      if (s.last_seen_at === null) {
+        return 'never seen';
+      }
+      const asleep = isAsleep(
+        { lastSeenAt: s.last_seen_at.getTime(), sleeps: s.sleeps === true },
+        now,
+      );
+      return `${agoText(s.last_seen_at.getTime(), now)}${asleep ? ' · asleep' : ''}`;
+    };
+    // The Hub's own Stale System Conditions decide which Systems are stale,
+    // so pairing grace and the Hub's outages count as the Hub counts them.
+    const stale = systems.filter((s) => s.stale);
     add(
       'Intake',
-      quiet.length ? 'warning' : 'ok',
-      `${systems.length} Systems paired · ${quiet.length} not reporting`,
-      quiet.map((s) => s.name).join(', '),
+      stale.length > 0 ? 'warning' : 'ok',
+      [
+        `${count(systems.length, 'System')} paired · ${stale.length === 0 ? 'none' : String(stale.length)} stale`,
+      ],
+      [capped(stale.map((s) => `${s.name} last seen ${lastSeen(s)}`)).join(' · ')],
     );
+
+    const parts: { system: string; part: string; budget: string; unreadable: number }[] = await tx`
+      SELECT r.system, 'records' AS part, coalesce(r.over_budget_bytes, 0)::text AS budget,
+        jsonb_array_length(r.unreadable)::int AS unreadable
+        FROM record_sets r JOIN paired_systems p ON p.system = r.system
+      UNION ALL SELECT r.system, 'runs', coalesce(r.over_budget_bytes, 0)::text,
+        jsonb_array_length(r.unreadable)::int
+        FROM run_sets r JOIN paired_systems p ON p.system = r.system
+      UNION ALL SELECT r.system, 'checks',
+        (coalesce(r.files_over_budget_bytes, 0) + coalesce(r.services_over_budget_bytes, 0))::text, 0
+        FROM check_sets r JOIN paired_systems p ON p.system = r.system`;
+    const partsOf = (system: string) =>
+      parts
+        .filter((p) => p.system === system && (Number(p.budget) > 0 || p.unreadable > 0))
+        .map((p) =>
+          [
+            Number(p.budget) > 0 ? `${p.part} over budget, ${sizeText(p.budget)}` : '',
+            p.unreadable > 0 ? `${p.part}: ${String(p.unreadable)} unreadable` : '',
+          ]
+            .filter(Boolean)
+            .join(', '),
+        )
+        .join(' · ');
+    const codes: { system: string; expires_at: Date }[] =
+      await tx`SELECT system, expires_at FROM pairing_codes WHERE expires_at > ${new Date(now)} ORDER BY system`;
+    const tables: HubTable[] = [];
     tables.push({
-      columns: ['System', 'Last Report', 'Collector', 'Clock offset', 'Transcripts waiting'],
+      columns: [
+        'System',
+        'Last seen',
+        'Collector',
+        'Clock offset',
+        'Transcripts waiting on the System',
+        'Report parts',
+      ],
+      notes: capped(
+        codes.map(
+          (c) =>
+            `Pairing code issued for ${c.system}, expires in ${formatSpanShort(c.expires_at.getTime() - now)}.`,
+        ),
+      ).map((text) => [text]),
       rows: systems.map((s) => [
-        s.name,
-        `${stamp(s.last_seen_at)}${s.sleeps ? ' · sleeps' : ''}`,
-        s.collector_version ?? 'unknown',
-        s.clock_offset_ms === null ? 'unknown' : `${s.clock_offset_ms / 1000} s`,
-        `${s.spool_bytes ?? '0'} B · oldest ${stamp(s.spool_oldest_at)}`,
+        [s.name],
+        [lastSeen(s)],
+        [s.collector_version ?? 'unknown'],
+        [offsetText(s.clock_offset_ms)],
+        [
+          Number(s.spool_bytes ?? 0) > 0
+            ? `${sizeText(s.spool_bytes ?? 0)}, oldest ${ago(s.spool_oldest_at, now)}`
+            : '—',
+        ],
+        [partsOf(s.name) || '—'],
       ]),
       title: 'Systems and Collectors',
     });
-    const parts: { system: string; part: string; budget: string | null; unreadable: number }[] =
-      await tx`
-      SELECT r.system, 'Records' AS part, r.over_budget_bytes::text AS budget, jsonb_array_length(r.unreadable)::int AS unreadable
-        FROM record_sets r JOIN paired_systems p ON p.system = r.system
-      UNION ALL SELECT r.system, 'Runs', r.over_budget_bytes::text, jsonb_array_length(r.unreadable)::int
-        FROM run_sets r JOIN paired_systems p ON p.system = r.system
-      UNION ALL SELECT r.system, 'Checks', (coalesce(r.files_over_budget_bytes, 0) + coalesce(r.services_over_budget_bytes, 0))::text, 0
-        FROM check_sets r JOIN paired_systems p ON p.system = r.system`;
-    tables.push({
-      columns: ['System', 'Part', 'Over budget', 'Unreadable'],
-      rows: parts
-        .filter((p) => Number(p.budget) > 0 || p.unreadable > 0)
-        .map((p) => [p.system, p.part, `${p.budget ?? 0} B`, String(p.unreadable)]),
-      title: 'Report parts needing attention',
-    });
-    const codes: { system: string; expires_at: Date }[] =
-      await tx`SELECT system, expires_at FROM pairing_codes WHERE expires_at > ${new Date(now)} ORDER BY system`;
-    tables.push({
-      columns: ['System', 'Expires'],
-      rows: codes.map((c) => [c.system, stamp(c.expires_at)]),
-      title: 'Pending Pairing codes',
-    });
+
     const parsers: {
       harness: string;
       version: number;
@@ -177,172 +298,298 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
         UNION SELECT harness, generation FROM parse_progress
       ) generations ON generations.harness = t.harness
       LEFT JOIN transcript_generations g ON g.id = generations.id AND g.deleted_at IS NULL
-      LEFT JOIN parse_progress p ON p.harness = t.harness AND p.parser_version = t.target AND p.generation = g.id GROUP BY t.harness, c.version, t.target ORDER BY t.harness`;
+      LEFT JOIN parse_progress p ON p.harness = t.harness AND p.parser_version = t.target AND p.generation = g.id
+      GROUP BY t.harness, c.version, t.target ORDER BY t.harness`;
     const failed = parsers.reduce((sum, p) => sum + p.failed, 0);
-    const rebuilding = parsers.some((p) => p.target > p.version);
     const behind = parsers.reduce((sum, p) => sum + Number(p.behind), 0);
+    const percent = (p: (typeof parsers)[number]) =>
+      p.total === 0 ? 0 : Math.floor((100 * p.read) / p.total);
+    const rebuilds = parsers
+      .filter((p) => p.target > p.version)
+      .map(
+        (p) =>
+          `${harnessName(p.harness)} parser rebuilding to v${String(p.target)}, ${String(percent(p))}%`,
+      );
+    const parse = pass('parse', 'Parse pass');
+    const readThrough = behind === 0 ? 'Read through' : `${sizeText(behind)} behind`;
     add(
       'Session insight',
-      failed || timer('parse') === 'overdue' ? 'warning' : timerState('parse'),
-      `${failed} generation failed · ${rebuilding ? 'Parser rebuilding' : `${behind} B behind`} · parse pass ${timer('parse')}`,
-      rebuilding && timer('parse') === 'overdue'
-        ? 'Parser rebuild stalled: parse pass overdue'
-        : `Last parse pass ${lastPass('parse')}. Failure reasons are kept out of the dashboard.`,
+      failed > 0 || parse.stuck ? 'warning' : parse.state,
+      [
+        `${rebuilds.length > 0 ? rebuilds.join(' · ') : readThrough} · ${failed === 0 ? '0 failed' : `${count(failed, 'generation')} failed`}`,
+      ],
+      rebuilds.length > 0 && parse.stuck
+        ? ['Parser rebuild stalled: ', ...parse.phrase]
+        : parse.phrase,
     );
-    tables.push({
-      columns: ['Harness', 'Parser', 'Progress', 'Failed'],
-      rows: parsers.map((p) => [
-        p.harness,
-        `v${p.version}`,
-        `${p.target > p.version ? `Rebuilding to v${p.target}: ${p.read} of ${p.total} generations · ` : ''}${p.behind} B behind`,
-        `${p.failed} generations · up to ${p.attempts} attempts`,
-      ]),
-      title: 'Session insight',
-    });
     const failures: { system: string; source: string; failed_attempts: number; failed_at: Date }[] =
       await tx`
       SELECT g.system, g.source, p.failed_attempts, p.failed_at FROM parse_progress p
       JOIN transcript_generations g ON g.id = p.generation
-      WHERE g.deleted_at IS NULL AND p.failed_at IS NOT NULL AND p.parser_version >= coalesce((SELECT version FROM current_parsers c WHERE c.harness = p.harness), 0)
-      ORDER BY g.system, g.source`;
+      WHERE g.deleted_at IS NULL AND p.failed_at IS NOT NULL
+        AND p.parser_version >= coalesce((SELECT version FROM current_parsers c WHERE c.harness = p.harness), 0)
+      ORDER BY p.failed_at DESC, g.system, g.source`;
+    const failureNotes: Phrase[] = failures
+      .slice(0, LIST_SHOWN)
+      .map((f) => [
+        `Failed generation: ${f.system}, source ${f.source}, ${count(f.failed_attempts, 'attempt')}, failed `,
+        whenAt(f.failed_at.getTime(), now),
+        '.',
+      ]);
+    if (failures.length > LIST_SHOWN) {
+      failureNotes.push([
+        `${count(failures.length - LIST_SHOWN, 'more failed generation', 'more failed generations')}.`,
+      ]);
+    }
+    if (failures.length > 0) {
+      failureNotes.push(['The reason is kept out of the dashboard.']);
+    }
     tables.push({
-      columns: ['System', 'Source', 'Attempts', 'Failed at'],
-      rows: failures.map((f) => [
-        f.system,
-        f.source,
-        String(f.failed_attempts),
-        stamp(f.failed_at),
+      columns: ['Harness', 'Parser', 'Progress', 'Failed'],
+      notes: failureNotes,
+      rows: parsers.map((p) => [
+        [harnessName(p.harness)],
+        [`v${String(p.version)}`],
+        [progressText(p)],
+        [
+          p.failed === 0
+            ? '—'
+            : `${count(p.failed, 'generation')} failed, up to ${count(p.attempts, 'time')}`,
+        ],
       ]),
-      title: 'Failed generations',
+      title: 'Session insight',
     });
-    const [stale]: { sessions: number; ranges: number; rederiving: number; retries: number }[] =
+
+    const [backlog]: { sessions: number; ranges: number; rederiving: number; retries: number }[] =
       await tx`SELECT
       (SELECT count(*)::int FROM stale_sessions) AS sessions,
       (SELECT count(*)::int FROM stale_ranges) AS ranges,
       (SELECT count(*)::int FROM rederiving_sessions) AS rederiving,
       (SELECT count(*)::int FROM stale_sessions WHERE attempts > 0) AS retries`;
+    const refresh = pass('refresh', 'Refresh');
+    const retries = backlog?.retries ?? 0;
     add(
       'Stored Session totals',
-      stale &&
-        (stale.retries > 0 ||
-          (stale.sessions + stale.ranges + stale.rederiving > 0 && timer('refresh') === 'overdue'))
-        ? 'warning'
-        : timerState('refresh'),
-      `${stale?.sessions ?? 0} Sessions waiting to refresh · ${stale?.ranges ?? 0} ranges · ${stale?.rederiving ?? 0} rederiving · ${stale?.retries ?? 0} refresh retry`,
-      `Refresh pass ${timer('refresh')} · last completed ${lastPass('refresh')}`,
+      retries > 0 || refresh.stuck ? 'warning' : refresh.state,
+      [
+        [
+          `${count(backlog?.sessions ?? 0, 'Session')} waiting to refresh`,
+          count(backlog?.ranges ?? 0, 'range'),
+          `${String(backlog?.rederiving ?? 0)} rederiving`,
+          retries === 0 ? 'no refresh retries' : count(retries, 'refresh retry', 'refresh retries'),
+        ].join(' · '),
+      ],
+      refresh.phrase,
     );
+
     const evaluations: { system: string; load: Date | null; process: Date | null }[] = await tx`
       SELECT p.system, l.through AS load, h.through AS process FROM paired_systems p
       LEFT JOIN load_evaluations l ON l.system = p.system
       LEFT JOIN hot_process_evaluations h ON h.system = p.system ORDER BY p.system`;
-    tables.push({
-      columns: ['System', 'Load evaluated through', 'Hot processes evaluated through'],
-      rows: evaluations.map((e) => [e.system, stamp(e.load), stamp(e.process)]),
-      title: 'Condition evaluations',
-    });
-    add(
-      'Conditions',
-      timerState('conditions'),
-      `Condition evaluation ${timer('conditions')}`,
-      `Last pass ${lastPass('conditions')}`,
-    );
-    const [delivery]: { failing_since: Date | null; open: number; last_push: Date | null }[] =
-      await tx`SELECT failing_since,
+    const throughs = evaluations.flatMap((e) => [e.load, e.process]);
+    const oldest = throughs.every((t) => t !== null)
+      ? throughs.reduce<Date | null>(
+          (min, t) => (min === null || (t !== null && t < min) ? t : min),
+          null,
+        )
+      : null;
+    const conditions = pass('conditions', 'Condition evaluation');
+    const notEvaluated = evaluations.filter((e) => e.load === null || e.process === null);
+    let evaluatedDetail: Phrase = [];
+    if (notEvaluated.length > 0) {
+      evaluatedDetail = [
+        `Load and hot processes not yet evaluated on ${capped(notEvaluated.map((e) => e.system)).join(', ')}`,
+      ];
+    } else if (oldest !== null) {
+      evaluatedDetail = [
+        `Load and hot processes evaluated through ${ago(oldest, now)} on every System`,
+      ];
+    }
+    add('Conditions', conditions.state, conditions.phrase, evaluatedDetail);
+
+    const [delivery]: {
+      failing_since: Date | null;
+      open: number;
+      unpushed: number;
+      last_push: Date | null;
+    }[] = await tx`SELECT failing_since,
       (SELECT count(*)::int FROM deliveries WHERE closed_at IS NULL) AS open,
-      (SELECT max(pushed_at) FROM deliveries) AS last_push FROM delivery_status`;
-    let deliveryState = timerState('delivery');
-    let deliveryText = 'Configuration unknown';
-    if (runtime !== undefined) {
-      deliveryText = runtime.delivery_configured
-        ? `Configured · pass ${timer('delivery')}`
-        : 'Not configured';
-      if (!runtime.delivery_configured) {
-        deliveryState = 'ok';
-      }
-    }
-    if (delivery?.failing_since != null) {
-      deliveryState = 'warning';
-      deliveryText = `Failing since ${stamp(delivery.failing_since)}`;
-    }
-    add(
-      'Alert delivery',
-      deliveryState,
-      deliveryText,
-      `${delivery?.open ?? 0} open deliveries · last push ${stamp(delivery?.last_push)} · last delivery pass ${lastPass('delivery')}`,
-    );
+      (SELECT max(pushed_at) FROM deliveries) AS last_push,
+      -- What the Hub's next delivery pass would push (duePushes in packages/hub/src/delivery.ts).
+      (SELECT count(*)::int FROM conditions c JOIN paired_systems p ON p.system = c.system
+        WHERE c.cleared_at IS NULL AND c.level = 'alert'
+          AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE (d.system, d.kind, d.subject) = (c.system, c.kind, c.subject) AND d.closed_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM silences s WHERE s.system = c.system AND s.until > ${new Date(now)})
+      ) AS unpushed
+      FROM delivery_status`;
     const silences: { system: string; until: Date }[] =
-      await tx`SELECT system, until FROM silences WHERE until > ${new Date(now)} ORDER BY system`;
-    tables.push({
-      columns: ['System', 'Until'],
-      rows: silences.map((s) => [s.system, stamp(s.until)]),
-      title: 'Active silences',
+      await tx`SELECT system, until FROM silences WHERE until > ${new Date(now)} ORDER BY until, system`;
+    const silenced: Phrase = joinPhrases(
+      [
+        ...silences
+          .slice(0, LIST_SHOWN)
+          .map((s): Phrase => [
+            `${s.system} silenced until `,
+            { at: s.until.getTime(), format: 'ahead', now } satisfies Moment,
+          ]),
+        ...(silences.length > LIST_SHOWN
+          ? [[count(silences.length - LIST_SHOWN, 'more silence')]]
+          : []),
+      ],
+      ' · ',
+    );
+    const deliveryDetail = joinPhrases(
+      [
+        [
+          'Last push ',
+          ...(delivery?.last_push == null ? ['none yet'] : when(delivery.last_push, now)),
+        ],
+        [count(delivery?.open ?? 0, 'open delivery', 'open deliveries')],
+        silenced,
+      ],
+      ' · ',
+    );
+    const failingSince = deliveryFailingShown({
+      deliveryFailingSince: delivery?.failing_since?.getTime(),
+      now,
     });
-    const [upstream]: { total: number; failed: number }[] =
-      await tx`SELECT count(*)::int AS total, count(*) FILTER (WHERE failure IS NOT NULL)::int AS failed FROM upstream_checks`;
+    const deliveryPass = pass('delivery', 'Delivery pass');
+    if (runtime.row === undefined) {
+      add('Alert delivery', 'unknown', ['Configuration unknown'], deliveryDetail);
+    } else if (!runtime.row.delivery_configured) {
+      add('Alert delivery', 'ok', ['Not configured'], silenced);
+    } else if (failingSince !== undefined && !isDown) {
+      const unpushed = delivery?.unpushed ?? 0;
+      add(
+        'Alert delivery',
+        'warning',
+        [
+          'Failing since ',
+          whenAt(failingSince, now),
+          ` (${formatSpanShort(now - failingSince)})`,
+          ...(unpushed > 0 ? [` · ${count(unpushed, 'alert')} not pushed`] : []),
+        ],
+        deliveryDetail,
+      );
+    } else {
+      add('Alert delivery', deliveryPass.state, deliveryPass.phrase, deliveryDetail);
+    }
+
+    // Only upstreams a System records now: the Hub checks no other, so an
+    // upstream no System records any more keeps its last failure forever.
+    const upstreams: {
+      upstream: string;
+      failure: string | null;
+      checked_at: Date | null;
+      next_check_at: Date | null;
+    }[] = await tx`
+      WITH current AS (
+        SELECT DISTINCT ON (v.system, v.service) v.system, v.service, v.upstream
+        FROM service_versions v ORDER BY v.system, v.service, v.first_seen_at DESC
+      ), recorded AS (
+        SELECT DISTINCT c.upstream FROM current c
+        JOIN mirrored_records r ON r.system = c.system AND r.kind = 'service' AND r.name = c.service
+        WHERE c.upstream IS NOT NULL
+      )
+      SELECT r.upstream, u.failure, u.checked_at, u.next_check_at
+      FROM recorded r LEFT JOIN upstream_checks u ON u.upstream = r.upstream
+      ORDER BY r.upstream`;
+    const checked = upstreams.filter((u) => u.checked_at !== null);
+    const failing = upstreams.filter((u) => u.failure !== null);
+    const upstreamPass = pass('upstreams', 'Upstream pass');
     add(
       'Upstream checks',
-      upstream?.failed ? 'warning' : timerState('upstreams'),
-      `${upstream?.total ?? 0} upstreams · ${upstream?.failed ?? 0} failing · pass ${timer('upstreams')}`,
-      `Last pass ${lastPass('upstreams')}`,
+      failing.length > 0 || upstreamPass.stuck ? 'warning' : upstreamPass.state,
+      [
+        `${String(checked.length)} of ${count(upstreams.length, 'upstream')} checked · ${failing.length === 0 ? 'none failing' : `${String(failing.length)} failing`}`,
+      ],
+      failing.length === 0
+        ? upstreamPass.phrase
+        : joinPhrases(
+            [
+              ...failing.slice(0, LIST_SHOWN).map((u) => failingUpstream(u, now)),
+              ...(failing.length > LIST_SHOWN
+                ? [[`${String(failing.length - LIST_SHOWN)} more failing`]]
+                : []),
+            ],
+            ' · ',
+          ),
     );
+
     const [prices]: { models: number; configured: number }[] =
       await tx`SELECT count(DISTINCT model)::int AS models, count(DISTINCT model) FILTER (WHERE source = 'configured')::int AS configured FROM model_prices`;
     const [unpriced]: { requests: string }[] =
       await tx`SELECT coalesce(sum(unpriced_requests), 0)::text AS requests FROM insight.session_model_totals`;
+    const unpricedCount = Number(unpriced?.requests ?? 0);
     add(
       'Price table',
       'ok',
-      `${prices?.models ?? 0} models · ${prices?.configured ?? 0} configured`,
-      `${unpriced?.requests ?? 0} unpriced requests in stored Session totals`,
+      [`${count(prices?.models ?? 0, 'model')}, ${String(prices?.configured ?? 0)} configured`],
+      [
+        unpricedCount === 0
+          ? 'Every stored request has a price'
+          : `${count(unpricedCount, 'unpriced request')} in stored Session totals`,
+      ],
     );
-    const [oldest]: { raw: Date | null; rollup: Date | null }[] = await tx`
+
+    const [kept]: { raw: Date | null; rollup: Date | null }[] = await tx`
       SELECT min(v.t) AS raw, min(r.bucket) AS rollup FROM systems s
       LEFT JOIN LATERAL (SELECT t FROM vitals_samples WHERE system = s.name ORDER BY t LIMIT 1) v ON true
       LEFT JOIN LATERAL (SELECT bucket FROM vitals_rollups WHERE system = s.name ORDER BY bucket LIMIT 1) r ON true`;
+    const prune = pass('prune', 'Prune');
+    const age = (at: Date | null | undefined) =>
+      at == null ? 'none' : formatSpanShort(Math.max(0, now - at.getTime()));
     add(
       'Retention',
-      timerState('prune'),
-      `Prune pass ${timer('prune')}`,
-      `Last prune ${lastPass('prune')} · raw Vitals: 14 days · rollups: 365 days · oldest raw ${stamp(oldest?.raw)} · oldest rollup ${stamp(oldest?.rollup)}`,
+      prune.state,
+      [`Oldest raw sample ${age(kept?.raw)} · oldest rollup ${age(kept?.rollup)}`],
+      joinPhrases([prune.phrase, ['raw Vitals kept 14 days, rollups 365 days']], ' · '),
     );
-    const storage: { name: string; bytes: string }[] =
-      await tx`SELECT relname AS name, pg_total_relation_size(relid)::text AS bytes FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 8`;
-    tables.push({
-      columns: ['Table', 'Size'],
-      rows: storage.map((s) => [s.name, bytes(s.bytes)]),
-      title: 'Storage',
-    });
+
+    const shown = tablesBySize.slice(0, TABLES_SHOWN);
+    const rest = total - shown.reduce((sum, t) => sum + Number(t.bytes), 0);
     const [archive]: {
-      generations: string;
+      generations: number;
       held: string;
       stored: string;
       uploaded: Date | null;
-    }[] =
-      await tx`SELECT count(*)::text AS generations, coalesce(sum(held), 0)::text AS held, coalesce(sum(stored_bytes), 0)::text AS stored, max(last_upload_at) AS uploaded FROM transcript_generations`;
-    if (archive) {
-      tables.push({
-        columns: ['Generations', 'As written', 'Stored', 'Last upload'],
-        rows: [
-          [
-            archive.generations,
-            bytes(archive.held),
-            bytes(archive.stored),
-            stamp(archive.uploaded),
-          ],
-        ],
-        title: 'Transcript archive',
-      });
-    }
+    }[] = await tx`SELECT count(*)::int AS generations, coalesce(sum(held), 0)::text AS held,
+        coalesce(sum(stored_bytes), 0)::text AS stored, max(last_upload_at) AS uploaded
+        FROM transcript_generations`;
     tables.push({
-      columns: ['Migration', 'Applied'],
-      rows: migrations.map((m) => [String(m.version), stamp(m.applied_at)]),
-      title: 'Migrations applied',
+      aside: sizeText(total),
+      columns: ['Table', 'Size'],
+      notes:
+        archive === undefined
+          ? []
+          : [
+              [
+                `Transcript archive: ${count(archive.generations, 'generation')}, ${sizeText(archive.held)} as written, ${sizeText(archive.stored)} stored · last upload ${ago(archive.uploaded, now)}.`,
+              ],
+            ],
+      rows: [
+        ...shown.map((t) => [[t.name], [sizeText(t.bytes)]]),
+        ...(tablesBySize.length > TABLES_SHOWN
+          ? [[['everything else'], [sizeText(Math.max(0, rest))]]]
+          : []),
+      ],
+      title: 'Storage',
     });
-    return {
-      checks,
-      started: stamp(runtime?.started_at),
-      tables,
-      version: runtime?.version ?? 'unknown',
-    };
+
+    const details: HubTable[] = [
+      {
+        columns: ['System', 'Load evaluated through', 'Hot processes evaluated through'],
+        notes: [],
+        rows: evaluations.map((e) => [[e.system], when(e.load, now), when(e.process, now)]),
+        title: 'Condition evaluations',
+      },
+      {
+        columns: ['Migration', 'Applied'],
+        notes: [],
+        rows: migrations.map((m) => [[String(m.version)], when(m.applied_at, now)]),
+        title: 'Migrations applied',
+      },
+    ];
+    return { checks, details, down, runtime: runtime.kind, tables, version: runtime.row?.version };
   });
 };

@@ -11,46 +11,108 @@ export type HubPass =
   | 'listening'
   | 'upstreams';
 
-// Runtime bookkeeping must never prevent the work it describes. last_runs
-// records completed attempts (including failed attempts), using epoch milliseconds.
+// How serve runs a pass: `every` starts the next run `intervalMs` after the
+// previous one finished, and `budgetMs` is the longest one run is meant to
+// take. The dashboard judges a pass overdue from both (docs/spec.md).
+export type PassSchedule = { intervalMs: number; budgetMs: number };
+
+// What `last_runs` holds for one pass, its times in epoch milliseconds: its
+// schedule, when its latest run started and finished, when a run last
+// succeeded, and, while its runs keep failing, when the first of them failed.
+// A run in progress has a `started_at` later than its `finished_at`.
+export type PassRecord = {
+  interval_ms: number;
+  budget_ms: number;
+  started_at?: number;
+  finished_at?: number;
+  succeeded_at?: number;
+  failing_since?: number;
+};
+
+// How long a status write waits for a lock another session holds on the row,
+// so a held row costs a timer pass at most this before it carries on.
+export const STATUS_LOCK_TIMEOUT_MS = 1000;
+
+// Runtime bookkeeping must never prevent the work it describes: a failed
+// write, a held lock included, is logged through `warn` and the pass goes on.
+// One process writes its passes' records, so they are kept here and each
+// write stores a pass's whole record. `start` replaces the previous process's
+// row, so serve calls it only once it listens: a Hub that fails to start
+// leaves the running Hub's row alone.
 export const hubStatusRecorder = ({
-  sql,
+  lockTimeoutMs = STATUS_LOCK_TIMEOUT_MS,
   now,
+  sql,
   warn,
 }: {
-  sql: SQL;
+  lockTimeoutMs?: number;
   now: () => number;
+  sql: SQL;
   warn: (message: string) => void;
 }) => {
-  const safely = async (write: () => Promise<unknown>) => {
+  let runs: Partial<Record<HubPass, PassRecord>> = {};
+  const safely = async (write: (tx: SQL) => Promise<unknown>) => {
     try {
-      await write();
+      await sql.begin(async (tx) => {
+        await tx`SELECT set_config('lock_timeout', ${`${String(lockTimeoutMs)}ms`}, true)`;
+        await write(tx);
+      });
     } catch (error) {
       warn(`Could not record Hub status: ${describeError(error)}`);
     }
   };
+  const store = (name: HubPass, change: (run: PassRecord) => PassRecord) => {
+    const run = change(runs[name] ?? { budget_ms: 0, interval_ms: 0 });
+    runs[name] = run;
+    return safely(
+      (tx) =>
+        tx`UPDATE hub_status SET last_runs = last_runs || ${tx.json({ [name]: run })}::jsonb
+          WHERE only_row`,
+    );
+  };
   return {
     pass: async (name: HubPass, task: () => Promise<unknown>) => {
+      await store(name, (run) => ({ ...run, started_at: now() }));
       try {
         await task();
-      } finally {
-        await safely(
-          () => sql`
-          UPDATE hub_status SET last_runs = last_runs || ${sql.json({ [name]: now() })}::jsonb
-          WHERE only_row
-        `,
-        );
+      } catch (error) {
+        await store(name, (run) => {
+          const at = now();
+          return { ...run, failing_since: run.failing_since ?? at, finished_at: at };
+        });
+        throw error;
       }
+      await store(name, (run) => {
+        const at = now();
+        const succeeded: PassRecord = { ...run, finished_at: at, succeeded_at: at };
+        delete succeeded.failing_since;
+        return succeeded;
+      });
     },
-    start: ({ version, deliveryConfigured }: { version: string; deliveryConfigured: boolean }) =>
-      safely(
-        () => sql`
-      INSERT INTO hub_status (version, started_at, delivery_configured)
-      VALUES (${version}, ${new Date(now())}, ${deliveryConfigured})
-      ON CONFLICT (only_row) DO UPDATE SET version = EXCLUDED.version,
-        started_at = EXCLUDED.started_at, delivery_configured = EXCLUDED.delivery_configured,
-        last_runs = '{}'::jsonb
-    `,
-      ),
+    start: ({
+      deliveryConfigured,
+      passes,
+      version,
+    }: {
+      deliveryConfigured: boolean;
+      passes: Partial<Record<HubPass, PassSchedule>>;
+      version: string;
+    }) => {
+      runs = Object.fromEntries(
+        Object.entries(passes).map(([name, { budgetMs, intervalMs }]) => [
+          name,
+          { budget_ms: budgetMs, interval_ms: intervalMs },
+        ]),
+      );
+      return safely(
+        (tx) => tx`
+          INSERT INTO hub_status (version, started_at, delivery_configured, last_runs)
+          VALUES (${version}, ${new Date(now())}, ${deliveryConfigured}, ${tx.json(runs)}::jsonb)
+          ON CONFLICT (only_row) DO UPDATE SET version = EXCLUDED.version,
+            started_at = EXCLUDED.started_at, delivery_configured = EXCLUDED.delivery_configured,
+            last_runs = EXCLUDED.last_runs
+        `,
+      );
+    },
   };
 };
