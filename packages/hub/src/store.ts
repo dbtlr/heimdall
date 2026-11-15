@@ -52,12 +52,12 @@ export const storeReport = async (
     const seenAt = new Date(receivedAt);
     await tx`
       INSERT INTO systems (
-        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps,
+        name, last_seen_at, collector_version, collector_platform, collector_arch, time_zone, sleeps, cpu_cores,
         clock_offset_ms, clock_offset_at
       )
       VALUES (${report.system}, ${seenAt}, ${storable(report.collector.version)},
               ${report.collector.platform}, ${storable(report.collector.arch)},
-              ${report.timeZone ?? null}, ${report.sleeps ?? null},
+              ${report.timeZone ?? null}, ${report.sleeps ?? null}, ${report.samples.at(-1)?.cpu.cores ?? null},
               ${report.sentAt - receivedAt}, ${seenAt})
       ON CONFLICT (name) DO UPDATE SET
         last_seen_at = GREATEST(systems.last_seen_at, excluded.last_seen_at),
@@ -69,6 +69,8 @@ export const storeReport = async (
         time_zone = COALESCE(excluded.time_zone, systems.time_zone),
         -- Likewise a Report without sleeps, from a Collector that predates it.
         sleeps = COALESCE(excluded.sleeps, systems.sleeps),
+        -- The newest sample supplies capacity; older Collectors leave it alone.
+        cpu_cores = COALESCE(excluded.cpu_cores, systems.cpu_cores),
         -- Only the latest offset is kept, whichever way the Hub's clock moved.
         clock_offset_ms = excluded.clock_offset_ms,
         clock_offset_at = excluded.clock_offset_at

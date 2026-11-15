@@ -58,7 +58,14 @@ const DiskSchema = z.object({ mount: z.string().min(1), totalBytes: bytes, usedB
 // interval since the previous sample.
 export const VitalsSampleSchema = z.object({
   collector: z.object({ cpuPercent: amount, rssBytes: bytes }),
-  cpu: z.object({ busyPercent: amount }),
+  // cpu.cores is the optional positive integer count of logical CPUs the OS
+  // reports. Missing or invalid counts preserve the sample (ADR-0004). The Hub
+  // keeps the newest sample's known count in systems.cpu_cores; omission keeps it.
+  cpu: z.object({
+    busyPercent: amount,
+    // oxlint-disable-next-line promise/prefer-await-to-then -- zod's catch, not a promise's.
+    cores: z.number().int().positive().optional().catch(undefined),
+  }),
   disks: z.array(DiskSchema).min(1),
   load: z.tuple([amount, amount, amount]),
   memory: z.object({

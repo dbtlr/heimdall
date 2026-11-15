@@ -77,7 +77,7 @@ test('a sample carries the host readings at wall-clock time and passes the Repor
 
   expect(sample).toEqual({
     collector: { cpuPercent: 0, rssBytes: 41_943_040 },
-    cpu: { busyPercent: 50 },
+    cpu: { busyPercent: 50, cores: 2 },
     disks: [{ mount: '/', totalBytes: 1000, usedBytes: 400 }],
     load: [1.5, 1, 0.5],
     memory: { totalBytes: 2048, usedBytes: 1024 },

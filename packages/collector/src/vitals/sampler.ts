@@ -53,7 +53,10 @@ export const createSampler = (probe: HostProbe): Sampler => {
           cpuPercent: capacityMicros > 0 ? Math.max(0, (processMicros / capacityMicros) * 100) : 0,
           rssBytes: probe.processRssBytes(),
         },
-        cpu: { busyPercent: cpuBusyPercent(previous.cpuTimes, current.cpuTimes) },
+        cpu: {
+          busyPercent: cpuBusyPercent(previous.cpuTimes, current.cpuTimes),
+          cores: current.cpuTimes.length || undefined,
+        },
         disks,
         load: probe.load(),
         memory,

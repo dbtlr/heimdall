@@ -208,3 +208,16 @@ test('reads a Service whose installed version is unknown as a muted "unknown", a
 
   expect(rail).toContain('<span class="text-muted-foreground">unknown</span>');
 });
+
+test('names known logical cores and draws their dashed load limit within the scale', async () => {
+  const html = await render(undefined, { cpuCores: 8 });
+  expect(html).toContain('Load (1 min) · 8 cores');
+  expect(limitLines(html)).toEqual([8]);
+  expect(html).toContain('8 cores');
+  expect(html).toContain('border-dashed');
+  expect(html).toContain('data-scale-tick="8"');
+  const unknown = await render(undefined);
+  expect(unknown).toContain('Load (1 min)');
+  expect(unknown).not.toContain('Load (1 min) ·');
+  expect(limitLines(unknown)).toEqual([]);
+});

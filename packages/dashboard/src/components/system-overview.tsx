@@ -191,10 +191,21 @@ export function SystemOverview({
                   />
                 </DetailTrack>
               </Chart>
-              {/* No line at the core count: no Collector reports one yet. */}
-              <Chart title="Load (1 min)">
+              <Chart
+                title={
+                  detail.cpuCores === undefined
+                    ? 'Load (1 min)'
+                    : `Load (1 min) · ${String(detail.cpuCores)} ${detail.cpuCores === 1 ? 'core' : 'cores'}`
+                }
+              >
                 <DetailTrack>
-                  <LoadPlot scaleBeside buckets={detail.load} height={80} window={window} />
+                  <LoadPlot
+                    scaleBeside
+                    cores={detail.cpuCores}
+                    buckets={detail.load}
+                    height={80}
+                    window={window}
+                  />
                 </DetailTrack>
               </Chart>
               <Chart aside={<ChangesLegend />} title="Conditions and changes">

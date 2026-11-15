@@ -152,6 +152,9 @@ The Hub counts measured busy time within rolling windows, so sustained work and 
 | High memory (`high_memory`) | Above 90% on Linux; pressure on macOS | 30 minutes | 60 minutes | warning |
 
 Both Conditions have an empty subject and name their resource in their reason.
+
+Each Vitals sample may carry `cpu.cores`, a positive integer counting the logical CPUs the operating system reports. The Collector uses the length of `os.cpus()`, the same readings it uses for CPU timing. Missing or invalid counts are dropped without rejecting the sample (ADR-0004). The Hub keeps the newest sample's count from each stored Report in the nullable `systems.cpu_cores` column; a Report whose newest sample omits it preserves the stored value. When known, the System overview's 1-minute load chart names the count and draws a dashed line at it, including it in the scale.
+
 The CPU percentage covers all cores. Equality with the percentage limit does not count as busy.
 Duration equality qualifies. Reasons give the measured busy minutes, the window, and its ending sample time.
 A quiet newest reading can leave a qualifying pattern in its window.
