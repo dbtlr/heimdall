@@ -162,7 +162,9 @@ const jobRow = (
   });
   // The job existed from when the Hub first mirrored it, or from any run the
   // Hub received since then, such as the Collector's first backlog, which can
-  // span several Reports. A run the Hub stored before a record was forgotten
+  // span several Reports. With no first-mirrored row it existed from the
+  // history's reach, HISTORY_MS ago, or from an earlier run the strip holds,
+  // as before this rule. A run the Hub stored before a record was forgotten
   // and recorded again (a Report left it out, a later one listed it, and
   // `forget` kept its runs) does not count: the gap is not the job's missed
   // times. Two limits are known. (a) When a forget and the re-record both
