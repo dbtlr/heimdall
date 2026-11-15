@@ -1,13 +1,16 @@
-import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
+import { createRootRoute, HeadContent, Link, Outlet, Scripts } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
 import { TopBar } from '../components/top-bar.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
+import { getHubVersion } from '../server/hub-status-fn.ts';
 import { getJumpIndex } from '../server/jump-index-fn.ts';
 import { getServiceAttentionCount } from '../server/services-fn.ts';
+import { DASHBOARD_VERSION } from '../version.ts';
 
 import appCss from '../styles.css?url';
 
@@ -16,6 +19,16 @@ import appCss from '../styles.css?url';
 const readFleetSummary = async () => {
   try {
     return fleetSummary(await getFleetGlance({ data: { unpaired: false } }));
+  } catch {
+    return undefined;
+  }
+};
+
+// The footer's Hub version. A failed read leaves it unknown rather than
+// failing every page.
+const readHubVersion = async () => {
+  try {
+    return await getHubVersion();
   } catch {
     return undefined;
   }
@@ -40,8 +53,12 @@ export const Route = createRootRoute({
     ],
   }),
   loader: async () => {
-    const [count, fleet] = await Promise.all([getServiceAttentionCount(), readFleetSummary()]);
-    return { count, fleet };
+    const [count, fleet, hubVersion] = await Promise.all([
+      getServiceAttentionCount(),
+      readFleetSummary(),
+      readHubVersion(),
+    ]);
+    return { count, fleet, hubVersion };
   },
   shellComponent: ({ children }: { children: ReactNode }) => (
     <html className="dark" lang="en">
@@ -63,12 +80,20 @@ export const Route = createRootRoute({
 });
 
 function Root() {
-  const { count, fleet } = Route.useLoaderData();
+  const { count, fleet, hubVersion } = Route.useLoaderData();
   return (
     <ServiceAttentionCount value={count}>
       <AutoRefresh />
       <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
       <Outlet />
+      <footer
+        className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
+      >
+        <Link className="hover:text-foreground" to="/hub">
+          Heimdall dashboard v{DASHBOARD_VERSION} · Hub{' '}
+          {hubVersion === undefined ? 'version unknown' : `v${hubVersion}`} · Hub status ›
+        </Link>
+      </footer>
       <div className="sm:hidden">
         <AppNavigation />
       </div>

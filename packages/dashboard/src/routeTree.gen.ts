@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as CompareRouteImport } from './routes/compare'
+import { Route as HubRouteImport } from './routes/hub'
 import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as MoreRouteImport } from './routes/more'
@@ -46,6 +47,11 @@ const AgentsRoute = AgentsRouteImport.update({
 const CompareRoute = CompareRouteImport.update({
   id: '/compare',
   path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HubRoute = HubRouteImport.update({
+  id: '/hub',
+  path: '/hub',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JobsRoute = JobsRouteImport.update({
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ActivityRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/hub': typeof HubRoute
   '/jobs': typeof JobsRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/activity': typeof ActivityRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/hub': typeof HubRoute
   '/jobs': typeof JobsRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/activity': typeof ActivityRoute
   '/agents': typeof AgentsRoute
   '/compare': typeof CompareRoute
+  '/hub': typeof HubRoute
   '/jobs': typeof JobsRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
@@ -189,6 +198,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/agents'
     | '/compare'
+    | '/hub'
     | '/jobs'
     | '/maintenance'
     | '/more'
@@ -209,6 +219,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/agents'
     | '/compare'
+    | '/hub'
     | '/jobs'
     | '/maintenance'
     | '/more'
@@ -229,6 +240,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/agents'
     | '/compare'
+    | '/hub'
     | '/jobs'
     | '/maintenance'
     | '/more'
@@ -250,6 +262,7 @@ export interface RootRouteChildren {
   ActivityRoute: typeof ActivityRoute
   AgentsRoute: typeof AgentsRoute
   CompareRoute: typeof CompareRoute
+  HubRoute: typeof HubRoute
   JobsRoute: typeof JobsRoute
   MaintenanceRoute: typeof MaintenanceRoute
   MoreRoute: typeof MoreRoute
@@ -294,6 +307,13 @@ declare module '@tanstack/react-router' {
       path: '/compare'
       fullPath: '/compare'
       preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/hub': {
+      id: '/hub'
+      path: '/hub'
+      fullPath: '/hub'
+      preLoaderRoute: typeof HubRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/jobs': {
@@ -402,6 +422,7 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityRoute: ActivityRoute,
   AgentsRoute: AgentsRoute,
   CompareRoute: CompareRoute,
+  HubRoute: HubRoute,
   JobsRoute: JobsRoute,
   MaintenanceRoute: MaintenanceRoute,
   MoreRoute: MoreRoute,

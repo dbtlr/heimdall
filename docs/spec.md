@@ -494,6 +494,60 @@ Every 30 seconds, the Hub compares the Conditions it stores with its record of d
 
 When two Hubs share a database, as during an upgrade, one delivery pass runs at a time across them, so a message is never sent twice. Delivery covers paired Systems only. An unpaired System's open Conditions send nothing, and unpairing a System closes its open deliveries without a recovered message. Each delivery records when it closed and, apart, when its recovered message went out, so a delivery closed without one is told apart whether its System is paired again or not. The Hub publishes with one JSON request to the server's address and treats a redirect as a failed send.
 
+## Hub runtime status
+
+The Hub records its own health in the single-row `hub_status` table. Once it
+listens, and before any timer pass runs, it stores `version`, `started_at`, and
+`delivery_configured`, a boolean that never includes a destination, topic, or
+credential. A Hub that fails to start, such as one that cannot bind its port,
+leaves the running Hub's row alone. `last_runs` maps each timer pass the Hub runs
+(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, and
+`delivery` when delivery is configured) to its schedule, `interval_ms` and
+`budget_ms`, and, in epoch milliseconds, when its latest run started
+(`started_at`) and finished (`finished_at`), when a run last succeeded
+(`succeeded_at`), and, while its runs keep failing, when the first of them failed
+(`failing_since`). Starting replaces the previous process's passes. A pass's
+budget is the longest one run is meant to take: for refresh, its 10-second
+budget plus one 30-second statement timeout; for every other pass, which has no
+time cap of its own, one statement timeout. A status write waits at most one
+second for a lock another session holds on the row. A failed status write logs a
+warning and fails neither startup nor the pass.
+
+The dashboard's version links to `/hub`, a checklist of Hub health, then Systems
+and Collectors, Session insight, and storage, with Condition evaluations and the
+applied migrations folded under Details. A pass's usual most is twice its
+interval plus its budget. A pass that has started and not finished is running,
+and the page says for how long; a run that has gone on longer than its usual
+most shows as running too long, so a hung pass is caught. A pass that is not
+running is overdue once no run has started within its usual most and none has
+finished within twice its interval; one that never ran counts from when the Hub
+started. With the intervals above, that is 150 seconds for Conditions, 90
+seconds for listening and delivery, 60 seconds for parse, 70 seconds for
+refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
+prune. A pass whose runs keep failing shows as failing since its first failure,
+even while a new run is in progress. The Hub was last heard at the newest of
+`hub_listening.heard_at`, the row's `started_at`, and every pass's
+`started_at`, `finished_at`, and `succeeded_at`, since the running Hub wrote
+each. Every pass is judged as of one listening interval after the Hub was last
+heard, or now if sooner, so no pass shows as overdue merely because the Hub
+stopped; ages still count from now. The listening pass is judged as of now, with
+a heartbeat no older than its recorded start counting as a run then, so the
+Listening row warns on its own when that pass hangs, keeps failing, or falls
+behind while other passes still record. Once the Hub has recorded nothing for
+longer than the listening pass's usual most, 90 seconds, the page says once that
+the Hub has recorded nothing for that long and may be stopped or stuck; a Hub
+without the status table is judged by its heartbeat and the two-minute outage
+limit instead. Intake counts open Stale System
+Conditions, and upstream checks count only upstreams some System records and
+the Hub asks for releases, which leaves out APT and Homebrew upstreams. Alert
+delivery shows as failing after the 10 minutes Home waits, whether the failure
+is recorded in the delivery status or on the delivery pass; a delivery pass that
+falls behind shows as overdue on its own schedule. Missing runtime fields show
+as unknown, and while the table itself is missing the page asks for a Hub
+upgrade alongside anything else it reports. Parser failure reasons never reach
+the dashboard. Rebuild start time and rejected Report counts are not
+recorded.
+
 ## Reading the records back
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.

@@ -8,12 +8,14 @@ import type { ActionHandler } from '@loomcli/core';
 import type { serve } from './application.ts';
 import { parseConditionLimits, storeConditionLimits } from './condition-limits.ts';
 import type { ConditionLimits } from './condition-limits.ts';
-import { openDatabase } from './database.ts';
+import { openDatabase, STATEMENT_TIMEOUT_MS } from './database.ts';
 import { parseDeliveryChannel } from './delivery-config.ts';
 import type { DeliveryChannel } from './delivery-config.ts';
 import { clearFailingRun, deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
+import { hubStatusRecorder } from './hub-status.ts';
+import type { HubPass, PassSchedule } from './hub-status.ts';
 import { createHub } from './hub.ts';
 import { keepInsightReaderGranted } from './insight-reader.ts';
 import { recordListening } from './listening.ts';
@@ -24,11 +26,12 @@ import { BUNDLED_PRICES } from './prices.ts';
 import type { PriceEntry } from './prices.ts';
 import { projectionNotes, projectTranscripts } from './projection.ts';
 import { pruneJobRuns, pruneServiceStops, pruneVitals } from './retention.ts';
-import { refreshSessionInsight } from './stored-insight.ts';
+import { REFRESH_BUDGET_MS, refreshSessionInsight } from './stored-insight.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 import { checkUpstreams } from './upstream-checks.ts';
 import { listReleases } from './upstream-releases.ts';
+import { HUB_VERSION } from './version.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
@@ -46,6 +49,22 @@ const PROJECT_INTERVAL_MS = 15_000;
 // UPSTREAM_CHECK_INTERVAL_MS between its checks; this only bounds how soon a
 // newly recorded one is first checked.
 const UPSTREAM_PASS_INTERVAL_MS = 300_000;
+
+// Each timer pass's interval and budget, which the Hub status row records so
+// the dashboard can tell a late pass from a slow one. A refresh stops taking
+// Sessions after REFRESH_BUDGET_MS and overshoots by at most one statement.
+// The other passes have no time cap of their own, so their budget is one
+// statement's timeout; the dashboard never calls a pass that is still running
+// overdue, and waits two intervals after a run finishes (docs/spec.md).
+export const PASS_SCHEDULES = {
+  conditions: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: CONDITIONS_INTERVAL_MS },
+  delivery: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: DELIVERY_INTERVAL_MS },
+  listening: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: LISTENING_INTERVAL_MS },
+  parse: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
+  prune: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PRUNE_INTERVAL_MS },
+  refresh: { budgetMs: REFRESH_BUDGET_MS + STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
+  upstreams: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: UPSTREAM_PASS_INTERVAL_MS },
+} as const satisfies Record<HubPass, PassSchedule>;
 
 const systemCount = (n: number) => `${String(n)} ${n === 1 ? 'System' : 'Systems'}`;
 
@@ -195,6 +214,14 @@ const serveUntilStopped = async ({
       hostname: options.host,
       port: options.port,
     });
+    const status = hubStatusRecorder({
+      now: Date.now,
+      sql,
+      warn: (message) => {
+        void log.warn(clean(message));
+      },
+    });
+    const { delivery: deliverySchedule, ...otherSchedules } = PASS_SCHEDULES;
     // Pruning, judging Conditions, delivering alerts, parsing transcripts, and
     // checking upstreams are routine, so only a failure, a parser switch, or a
     // parser left behind is logged, and the next round tries again. A failed
@@ -208,19 +235,26 @@ const serveUntilStopped = async ({
     let stopChecking: (() => Promise<void>) | undefined;
     const outdatedLogged = new Set<string>();
     try {
+      // Only a Hub that listens replaces the status row, and before any pass
+      // writes to it, since starting clears the previous process's passes.
+      await status.start({
+        deliveryConfigured: delivery !== undefined,
+        passes: delivery === undefined ? otherSchedules : PASS_SCHEDULES,
+        version: HUB_VERSION,
+      });
       const paired = await pairedSystemCount(sql);
       await log.info(clean(`Listening on ${server.url.href} for ${systemCount(paired)}.`));
       stopListening = every({
-        intervalMs: LISTENING_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.listening.intervalMs,
         onError: (error) => {
           void log.warn(
             clean(`Could not record that the Hub is listening: ${describeError(error)}`),
           );
         },
-        task: () => recordListening(sql, Date.now()),
+        task: () => status.pass('listening', () => recordListening(sql, Date.now())),
       });
       stopPruning = every({
-        intervalMs: PRUNE_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.prune.intervalMs,
         onError: (error) => {
           void log.warn(
             clean(
@@ -228,68 +262,76 @@ const serveUntilStopped = async ({
             ),
           );
         },
-        task: async () => {
-          const now = Date.now();
-          await pruneVitals(sql, now);
-          await pruneServiceStops(sql, now);
-          await pruneJobRuns(sql, now);
-        },
+        task: () =>
+          status.pass('prune', async () => {
+            const now = Date.now();
+            await pruneVitals(sql, now);
+            await pruneServiceStops(sql, now);
+            await pruneJobRuns(sql, now);
+          }),
       });
       stopJudging = every({
-        intervalMs: CONDITIONS_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.conditions.intervalMs,
         onError: (error) => {
           void log.warn(clean(`Could not judge Conditions: ${describeError(error)}`));
         },
         // Recording first means no judgment runs unless the Hub could record
         // that it listens, so none misses an outage the record would reveal.
-        task: async () => {
-          await recordListening(sql, Date.now());
-          await evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits });
-        },
+        task: () =>
+          status.pass('conditions', async () => {
+            await recordListening(sql, Date.now());
+            await evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits });
+          }),
       });
       if (delivery !== undefined) {
         // The server's host is no secret; the topic and token never reach the log.
         await log.info(clean(`Delivering alerts through ${delivery.url.host}.`));
         const send = ntfySender(delivery);
         stopDelivering = every({
-          intervalMs: DELIVERY_INTERVAL_MS,
+          intervalMs: deliverySchedule.intervalMs,
           onError: (error) => {
             void log.warn(clean(`Could not deliver alerts: ${describeError(error)}`));
           },
-          task: () => deliverAlerts(sql, { dashboard: delivery.dashboard, now: Date.now(), send }),
+          task: () =>
+            status.pass('delivery', () =>
+              deliverAlerts(sql, { dashboard: delivery.dashboard, now: Date.now(), send }),
+            ),
         });
       }
       stopProjecting = every({
-        intervalMs: PROJECT_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.parse.intervalMs,
         onError: (error) => {
           void log.warn(clean(`Could not derive Session insight: ${describeError(error)}`));
         },
-        task: async () => {
-          const projected = await projectTranscripts(sql);
-          for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
-            // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
-            await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
-          }
-        },
+        task: () =>
+          status.pass('parse', async () => {
+            const projected = await projectTranscripts(sql);
+            for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
+              // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+              await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
+            }
+          }),
       });
       stopRefreshing = every({
-        intervalMs: PROJECT_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.refresh.intervalMs,
         onError: (error) => {
           void log.warn(clean(`Could not store Session insight: ${describeError(error)}`));
         },
-        task: () => refreshSessionInsight(sql),
+        task: () => status.pass('refresh', () => refreshSessionInsight(sql)),
       });
       stopChecking = every({
-        intervalMs: UPSTREAM_PASS_INTERVAL_MS,
+        intervalMs: PASS_SCHEDULES.upstreams.intervalMs,
         onError: (error) => {
           void log.warn(clean(`Could not check upstreams: ${describeError(error)}`));
         },
         task: () =>
-          checkUpstreams(sql, {
-            list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
-            now: Date.now,
-            signal,
-          }),
+          status.pass('upstreams', () =>
+            checkUpstreams(sql, {
+              list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
+              now: Date.now,
+              signal,
+            }),
+          ),
       });
       if (!signal.aborted) {
         await once(signal, 'abort');

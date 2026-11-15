@@ -76,9 +76,10 @@ function More() {
           <span className="font-semibold">Jump to</span>
           <JumpBox loadIndex={() => getJumpIndex()} wide />
         </li>
-        <li className={ROW}>
-          <span className="font-semibold">Version</span>
-          <span className="text-sm text-muted-foreground">v{DASHBOARD_VERSION}</span>
+        <li>
+          <Link className={ROW} to="/hub">
+            <RowLink label="Version">v{DASHBOARD_VERSION} · Hub status</RowLink>
+          </Link>
         </li>
       </ul>
     </main>
