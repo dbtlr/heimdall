@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { breakdownRows, LEGEND_SHOWN } from '../lib/agents-breakdown.ts';
 import { barStacks, costDomain, hourNames, OTHERS_KEY } from '../lib/agents-chart.ts';
 import type { BarStack } from '../lib/agents-chart.ts';
@@ -116,7 +118,11 @@ export function AgentsChart({
   by,
   overview,
   pick,
+  dossier = false,
+  belowPlot,
 }: {
+  belowPlot?: ReactNode;
+  dossier?: boolean;
   by: AgentsBreakdown;
   overview: AgentsOverview;
   pick: string | undefined;
@@ -161,10 +167,10 @@ export function AgentsChart({
           follows the chart there instead of pushing the chart off the screen. */}
       <div className="mt-3 flex flex-col gap-3 max-lg:contents lg:flex-row lg:items-start">
         <div className="shrink-0 max-lg:mt-3">
-          <AgentsBreakdownSwitch current={by} />
+          {!dossier && <AgentsBreakdownSwitch current={by} />}
         </div>
         <div className="min-w-0 max-lg:order-last max-lg:mt-4">
-          <AgentsLegend key={by} pick={pick} rows={rows} />
+          <AgentsLegend by={by} key={by} pick={pick} rows={rows} />
         </div>
       </div>
       <div className="mt-4">
@@ -214,6 +220,7 @@ export function AgentsChart({
           ))}
         </div>
       </div>
+      {belowPlot !== undefined && <div className="mt-3 pl-8">{belowPlot}</div>}
     </section>
   );
 }

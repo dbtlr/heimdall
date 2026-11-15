@@ -20,7 +20,7 @@ import { sessionSpans } from './session-spans.ts';
 // The period whose requests count, and the earliest latest request that
 // selects a Session, `from` unless given: Home's running Sessions are those
 // with a recent request, each priced over all of its requests.
-export type Period = { from: Date; lastRequestFrom?: Date; to: Date };
+export type Period = { from: Date; lastRequestFrom?: Date; project?: string | undefined; to: Date };
 
 type SessionRow = {
   first_cwd: string | null;
@@ -57,9 +57,9 @@ const sessionIdentity = (row: Pick<SessionRow, 'harness' | 'session_id' | 'sourc
 // request pricing; whole-Session totals retain the Hub's refresh semantics.
 const readSessionRows = (
   sql: SQL,
-  { from, lastRequestFrom = from, to }: Period,
+  { from, lastRequestFrom = from, project, to }: Period,
 ): Promise<SessionRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, to })})
+  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, project, to })})
   SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at,
          s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
          t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
@@ -98,9 +98,9 @@ const readSessionRows = (
 // query's.
 const readModelRows = (
   sql: SQL,
-  { from, lastRequestFrom = from, to }: Period,
+  { from, lastRequestFrom = from, project, to }: Period,
 ): Promise<ModelRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, to })})
+  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, project, to })})
   SELECT k.harness, k.system, k.source, k.session_id,
          t.model,
          t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
@@ -222,22 +222,33 @@ export const agentsPeriod = ({
 // The period's Sessions are read whole, since the totals, the breakdown, and
 // the running count cover all of them, and leave as sums and one page of the
 // table. `table` is the table's query, the page's default unless given.
-const readSnapshot = async (
+export const readAgentsSnapshot = async (
   sql: SQL,
   {
     now,
     range,
+    project,
     table = sessionsQueryOf(agentsSearch({})),
     timeZone,
-  }: { now: number; range: AgentsRange; table?: SessionsQuery; timeZone: string },
+  }: {
+    now: number;
+    range: AgentsRange;
+    project?: string | undefined;
+    table?: SessionsQuery;
+    timeZone: string;
+  },
 ): Promise<AgentsOverview> => {
-  const period = agentsPeriod({ now, range, timeZone });
+  const period = { ...agentsPeriod({ now, range, timeZone }), project };
   const [{ models, sessions }, chart, todays, earlier] = await Promise.all([
     readPeriodSessions(sql, period),
     readCostChart(sql, { now, period, range, timeZone }),
     // The period's own Sessions are today's when the period is Today.
-    range === 'today' ? undefined : readPeriodSessions(sql, todayPeriod(now, timeZone)),
-    readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1)),
+    range === 'today'
+      ? undefined
+      : readPeriodSessions(sql, { ...todayPeriod(now, timeZone), project }),
+    project === undefined
+      ? readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1))
+      : [],
   ]);
   const totals = periodTotals(sessions);
   return {
@@ -259,5 +270,5 @@ const readSnapshot = async (
 
 // Read one database snapshot. Stored totals can lag request pricing until the
 // Hub refreshes them (ADR-0016); the fleet total sums the displayed amounts.
-export const readAgentsOverview = (sql: SQL, input: Parameters<typeof readSnapshot>[1]) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readSnapshot(tx, input));
+export const readAgentsOverview = (sql: SQL, input: Parameters<typeof readAgentsSnapshot>[1]) =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readAgentsSnapshot(tx, input));

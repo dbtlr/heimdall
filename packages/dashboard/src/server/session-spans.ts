@@ -1,5 +1,7 @@
 import type { SQL } from 'bun';
 
+import { sessionProjectSql } from './project-sql.ts';
+
 // The Sessions whose latest request is at or after `from` and whose first is
 // at or before `to`, each with those two times over all its stored stretches
 // (ADR-0016), as a fragment to nest in a statement. A Session's latest request
@@ -9,7 +11,10 @@ import type { SQL } from 'bun';
 // the earliest start of its own stretches, read by key. The cost follows the
 // stretches ending since `from` and those Sessions' stretches, not the whole
 // archive.
-export const sessionSpans = (sql: SQL, { from, to }: { from: Date; to: Date }) => sql`
+export const sessionSpans = (
+  sql: SQL,
+  { from, to, project }: { from: Date; to: Date; project?: string | undefined },
+) => sql`
   SELECT k.harness, k.system, k.source, k.session_id, f.first_request_at, k.last_request_at
   FROM (
     SELECT harness, system, source, session_id, max(ended_at) AS last_request_at
@@ -24,4 +29,13 @@ export const sessionSpans = (sql: SQL, { from, to }: { from: Date; to: Date }) =
         = (k.harness, k.system, k.source, k.session_id)
   ) f
   WHERE f.first_request_at <= ${to}
+    ${
+      project === undefined
+        ? sql``
+        : sql`AND EXISTS (
+      SELECT 1 FROM insight.sessions s
+      WHERE (s.harness, s.system, s.source, s.session_id) = (k.harness, k.system, k.source, k.session_id)
+        AND ${sessionProjectSql(sql)} = ${project}
+    )`
+    }
 `;

@@ -19,6 +19,7 @@ import { Route as MoreRouteImport } from './routes/more'
 import { Route as ServicesRouteImport } from './routes/services'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as ProjectsNameRouteImport } from './routes/projects.$name'
 import { Route as SystemsIndexRouteImport } from './routes/systems.index'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
 import { Route as ApiV1RecordsRouteImport } from './routes/api.v1.records'
@@ -77,6 +78,11 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsNameRoute = ProjectsNameRouteImport.update({
+  id: '/projects/$name',
+  path: '/projects/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SystemsIndexRoute = SystemsIndexRouteImport.update({
   id: '/systems/',
   path: '/systems/',
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems/': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -145,6 +152,7 @@ export interface FileRoutesByTo {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -165,6 +173,7 @@ export interface FileRoutesById {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems/': typeof SystemsIndexRoute
   '/api/v1/records': typeof ApiV1RecordsRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/projects/$name'
     | '/systems/$name'
     | '/systems/'
     | '/api/v1/records'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/projects/$name'
     | '/systems/$name'
     | '/systems'
     | '/api/v1/records'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/projects/$name'
     | '/systems/$name'
     | '/systems/'
     | '/api/v1/records'
@@ -244,6 +256,7 @@ export interface RootRouteChildren {
   ServicesRoute: typeof ServicesRoute
   TimelineRoute: typeof TimelineRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ProjectsNameRoute: typeof ProjectsNameRoute
   SystemsNameRoute: typeof SystemsNameRoute
   SystemsIndexRoute: typeof SystemsIndexRoute
   ApiV1RecordsRoute: typeof ApiV1RecordsRoute
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/$name': {
+      id: '/projects/$name'
+      path: '/projects/$name'
+      fullPath: '/projects/$name'
+      preLoaderRoute: typeof ProjectsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/systems/': {
       id: '/systems/'
       path: '/systems'
@@ -388,6 +408,7 @@ const rootRouteChildren: RootRouteChildren = {
   ServicesRoute: ServicesRoute,
   TimelineRoute: TimelineRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ProjectsNameRoute: ProjectsNameRoute,
   SystemsNameRoute: SystemsNameRoute,
   SystemsIndexRoute: SystemsIndexRoute,
   ApiV1RecordsRoute: ApiV1RecordsRoute,

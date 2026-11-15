@@ -1,0 +1,1 @@
+- **Each project has a dossier** (HMD-271). Open a project from Agents, a Session, or the jump box to see its cost, active time, Sessions, Systems, models, tools and skills, branches, and Harness process CPU. Projects use repository folder names (ADR-0019), so two repositories with the same folder name merge into one project.

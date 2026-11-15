@@ -93,8 +93,8 @@ test('each kind opens its own page', () => {
     to: '/systems/$name/services/$service',
   });
   expect(jumpTarget({ kind: 'project', name: 'norn' })).toEqual({
-    search: { by: 'project', pick: 'norn', range: '30d' },
-    to: '/agents',
+    params: { name: 'norn' },
+    to: '/projects/$name',
   });
   expect(jumpTarget({ kind: 'session', ...session('5e7a0c') })).toEqual({
     params: {

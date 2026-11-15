@@ -114,7 +114,14 @@ export function SessionTitle({
       <Link className="text-muted-foreground" params={{ name: view.system }} to="/systems/$name">
         {view.system}
       </Link>{' '}
-      / {view.project ?? `${harnessName(view.harness)} Session`}
+      /{' '}
+      {view.project === undefined ? (
+        `${harnessName(view.harness)} Session`
+      ) : (
+        <Link params={{ name: view.project }} to="/projects/$name">
+          {view.project}
+        </Link>
+      )}
       {view.branch !== undefined && (
         <span className="font-medium text-muted-foreground"> on {view.branch}</span>
       )}
