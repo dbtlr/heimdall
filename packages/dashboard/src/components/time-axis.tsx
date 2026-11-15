@@ -9,6 +9,12 @@ import { cn } from '../lib/utils.ts';
 
 const ALIGN = { end: '-translate-x-full', middle: '-translate-x-1/2', start: '' } as const;
 
+// The axis's padding above its labels and their line, in pixels. A placeholder
+// that holds the axis's room before the zone is known reads its height.
+const TIME_AXIS_PADDING = 2;
+const TIME_AXIS_LINE = 16;
+export const TIME_AXIS_HEIGHT = TIME_AXIS_PADDING + TIME_AXIS_LINE;
+
 // The labels under the lanes at `ticks`, with any `children` over them. A
 // narrow screen drops the minor ones and any that would crowd an end's label.
 export function TimeAxis({
@@ -24,9 +30,17 @@ export function TimeAxis({
   window: Window;
 }) {
   return (
-    <div className={cn(!bare && LANE_GRID, 'pt-0.5')}>
+    <div
+      className={cn(!bare && LANE_GRID)}
+      data-time-axis
+      style={{ paddingTop: TIME_AXIS_PADDING }}
+    >
       {!bare && <div className="hidden sm:block" />}
-      <div className="relative h-4 text-xs text-muted-foreground tabular-nums">
+      <div
+        className="relative text-xs text-muted-foreground tabular-nums"
+        data-time-axis-ticks
+        style={{ height: TIME_AXIS_LINE }}
+      >
         {ticks.map((tick) => (
           <span
             className={cn(

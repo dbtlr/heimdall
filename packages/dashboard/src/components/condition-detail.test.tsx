@@ -213,3 +213,22 @@ test('a high memory Condition names the processes holding the most memory, and o
   expect(page).toContain('Resident memory, sampled at');
   expect(html(diskView)).not.toContain('Processes holding the most memory');
 });
+
+test('shades the open span in the Condition level color, not the selection color', () => {
+  const page = html({
+    ...diskView,
+    vitals: {
+      shade: { from: NOW - 3_600_000, to: NOW },
+      window: {
+        bucketMs: 60_000,
+        from: NOW - 7_200_000,
+        limits: { cpuPercent: 90, memoryPercent: 90 },
+        points: [{ cpu: 40, load: 1, memory: 60, t: NOW - 60_000 }],
+        source: 'samples',
+        to: NOW,
+      },
+    },
+  });
+  expect(page).toContain('bg-status-serious/20');
+  expect(page).not.toContain('bg-select/20');
+});

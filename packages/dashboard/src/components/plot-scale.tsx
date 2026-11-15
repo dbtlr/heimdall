@@ -79,8 +79,10 @@ function ScaleTicks({
   );
 }
 
-// The room the scale labels laid over a plot take from its left edge: the
-// widest label, the inset, and the backing.
+// The room the scale labels laid over a plot take from its left edge: the width
+// of the widest label in `ch` (the unit resolves at the font size of the element
+// that carries this offset, so that element is text-xs like the ticks) plus
+// 0.875rem for the labels' left inset and backing padding.
 export const tickClearance = (domain: Domain, format: (value: number) => string): string => {
   const widest = Math.max(...scaleTicks(domain).map(({ value }) => format(value).length));
   return `calc(${String(widest)}ch + 0.875rem)`;
@@ -102,7 +104,7 @@ function LimitLines({
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0"
+      className="pointer-events-none absolute inset-0 text-xs"
       data-limit-lines
       style={clearLeft === undefined ? undefined : { left: clearLeft }}
     >

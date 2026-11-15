@@ -10,6 +10,7 @@ const HOUR = 3_600_000;
 
 const detail = (over: Partial<ServiceDetail> = {}): ServiceDetail => ({
   downs: [],
+  existedSince: undefined,
   installed: { missingApplication: undefined, upstream: null, version: null },
   installs: [],
   note: undefined,

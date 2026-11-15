@@ -17,14 +17,63 @@ import { KindGlyph } from './activity-list.tsx';
 import type { Pin } from './activity-list.tsx';
 import { ConditionGlyph } from './condition-glyph.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
-import { TimeAxis } from './time-axis.tsx';
+import { TIME_AXIS_HEIGHT, TimeAxis } from './time-axis.tsx';
 
-const LANE_HEIGHT = 44;
+// The sizes of the axis's parts, in pixels. Each element takes its size from
+// these, and the placeholder that holds the axis's room until the time zone is
+// known adds them up, so the page does not shift when the zone arrives.
+// A lane, top to bottom: its border, padding, marks strip, plot, and stretches
+// strip, then padding. Every lane but the first of its group has the border.
+const LANE_BORDER = 1;
+const LANE_PADDING = 4;
+const MARKS_STRIP_HEIGHT = 16;
+const LANE_PLOT_HEIGHT = 44;
+const STRETCHES_STRIP_HEIGHT = 8;
+// On a phone a lane's label stacks above its track: one line and the gap under it.
+// From sm up it sits beside the track, which is the taller.
+const LANE_LABEL_LINE = 16;
+const LANE_LABEL_GAP = 6;
+// The line of the 12.5 px text of the unpaired divider and the legend, and the
+// room above each.
+const NOTE_LINE = 18.75;
+const DIVIDER_MARGIN = 8;
+const LEGEND_PADDING = 8;
+
+// A change mark's glyph is 16 px (size-4); its hit area is a 24 px pseudo-element
+// centered on it, which takes no room in the strip.
+const MARK_HIT =
+  "before:absolute before:top-1/2 before:left-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
+
+// The height of a group of `count` lanes, with the stacked labels when `phone`.
+const groupHeight = (count: number, phone: boolean): number =>
+  count === 0
+    ? 0
+    : count *
+        (2 * LANE_PADDING +
+          MARKS_STRIP_HEIGHT +
+          LANE_PLOT_HEIGHT +
+          STRETCHES_STRIP_HEIGHT +
+          (phone ? LANE_LABEL_LINE + LANE_LABEL_GAP : 0)) +
+      (count - 1) * LANE_BORDER;
+
+// The height of the axis over `lanes`, on a phone when `phone`: the paired
+// lanes, the divider and the unpaired lanes when there are any, the time axis,
+// and one line of the legend. A legend that wraps to more lines is taller.
+const axisHeight = (lanes: readonly AxisLane[], phone: boolean): number => {
+  const unpaired = lanes.filter((lane) => lane.unpaired).length;
+  return (
+    groupHeight(lanes.length - unpaired, phone) +
+    (unpaired === 0 ? 0 : DIVIDER_MARGIN + NOTE_LINE + groupHeight(unpaired, phone)) +
+    TIME_AXIS_HEIGHT +
+    LEGEND_PADDING +
+    NOTE_LINE
+  );
+};
 
 // The divider above the unpaired Systems' lanes, which are greyed: their
 // history is kept, and no new Report arrives.
 const UNPAIRED_DIVIDER =
-  'mt-2 flex items-center gap-3 text-[12.5px] font-normal text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed';
+  'flex items-center gap-3 text-[12.5px] font-normal text-muted-foreground before:flex-1 before:border-t before:border-dashed after:flex-1 after:border-t after:border-dashed';
 
 // The unpaired Systems' lanes, greyed.
 const UNPAIRED_LANES = 'text-muted-foreground saturate-50 [&_svg]:opacity-60';
@@ -33,7 +82,12 @@ const UNPAIRED_LANES = 'text-muted-foreground saturate-50 [&_svg]:opacity-60';
 // Harness: a color that means nothing else.
 function Stretches({ lane, window }: { lane: AxisLane; window: Window }) {
   return (
-    <div aria-hidden="true" className="relative h-2 overflow-hidden">
+    <div
+      aria-hidden="true"
+      className="relative overflow-hidden"
+      data-stretches
+      style={{ height: STRETCHES_STRIP_HEIGHT }}
+    >
       {lane.stretches.map((stretch) => {
         const { left, width } = spanBox({ end: stretch.endedAt, start: stretch.startedAt }, window);
         return (
@@ -77,7 +131,10 @@ function Marks({
         return (
           <button
             aria-label={`${formatClock(line.at, timeZone)} ${words.title} ${words.subject}`.trim()}
-            className="absolute top-0 z-10 flex size-4 -translate-x-1/2 items-center justify-center"
+            className={cn(
+              'absolute top-0 z-10 flex size-4 -translate-x-1/2 items-center justify-center',
+              MARK_HIT,
+            )}
             key={`${String(line.at)}-${lead.kind}`}
             onClick={() => {
               onPin({ at: line.at, system: line.system });
@@ -147,6 +204,7 @@ export const trackPointer = ({ at, onDrag, onPin }: Drag) => {
 // on this System.
 function Lane({
   bucketMs,
+  first,
   lane,
   lines,
   onDrag,
@@ -157,6 +215,8 @@ function Lane({
   window,
 }: {
   bucketMs: number;
+  // The first lane of its group, which has no border above it.
+  first: boolean;
   lane: AxisLane;
   lines: readonly ActivityLine[];
   onDrag: (at: number | undefined) => void;
@@ -203,10 +263,20 @@ function Lane({
     });
   };
   return (
-    <div className={cn(LANE_GRID, 'relative items-center border-t py-1 first:border-t-0')}>
+    <div
+      className={cn(LANE_GRID, 'relative items-center')}
+      data-lane
+      style={{
+        borderTopWidth: first ? 0 : LANE_BORDER,
+        paddingBlock: LANE_PADDING,
+        rowGap: LANE_LABEL_GAP,
+      }}
+    >
       <Link
         className="max-w-full truncate text-xs font-semibold sm:text-sm"
+        data-lane-label
         params={{ name: lane.system }}
+        style={{ lineHeight: `${String(LANE_LABEL_LINE)}px` }}
         to="/systems/$name"
       >
         {lane.system}
@@ -222,14 +292,14 @@ function Lane({
         {...pointer}
       >
         {/* Marks sit in a strip above the plot, so none covers a scale label or the limit label. */}
-        <div className="relative h-4" data-marks-strip>
+        <div className="relative" data-marks-strip style={{ height: MARKS_STRIP_HEIGHT }}>
           <Marks lines={lines} onPin={onPin} timeZone={timeZone} window={window} />
         </div>
         <div className="relative">
           <CpuPlot
             bucketMs={bucketMs}
             buckets={lane.buckets}
-            height={LANE_HEIGHT}
+            height={LANE_PLOT_HEIGHT}
             label={`${lane.system} CPU busy`}
             limits={
               lane.cpuLimit === undefined
@@ -270,7 +340,11 @@ const LEGEND_ITEM = 'inline-flex items-center gap-[5px]';
 // What the axis's lines, bars, and marks mean.
 function AxisLegend() {
   return (
-    <p className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 text-[12.5px] text-muted-foreground">
+    <p
+      className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-muted-foreground"
+      data-axis-legend
+      style={{ lineHeight: `${String(NOTE_LINE)}px`, paddingTop: LEGEND_PADDING }}
+    >
       <span className={LEGEND_ITEM}>
         <i className="inline-block h-[7px] w-3.5 flex-none rounded-[2px] border-t-2 border-plot bg-plot/25" />
         CPU busy, 0 to 100%, dashed at the Hub&apos;s limit
@@ -328,9 +402,10 @@ export function ActivityAxisBody({
   // While a drag is under way the line follows it; the pin lands on release.
   const [drag, setDrag] = useState<number | undefined>();
   const linesOf = Map.groupBy(lines, (line) => line.system);
-  const laneOf = (lane: AxisLane) => (
+  const laneOf = (lane: AxisLane, index: number) => (
     <Lane
       bucketMs={bucketMs}
+      first={index === 0}
       key={lane.system}
       lane={lane}
       lines={linesOf.get(lane.system) ?? []}
@@ -349,7 +424,13 @@ export function ActivityAxisBody({
       {paired.map(laneOf)}
       {unpaired.length > 0 && (
         <>
-          <h3 className={UNPAIRED_DIVIDER}>Unpaired, history kept</h3>
+          <h3
+            className={UNPAIRED_DIVIDER}
+            data-unpaired-divider
+            style={{ lineHeight: `${String(NOTE_LINE)}px`, marginTop: DIVIDER_MARGIN }}
+          >
+            Unpaired, history kept
+          </h3>
           <div className={UNPAIRED_LANES}>{unpaired.map(laneOf)}</div>
         </>
       )}
@@ -361,11 +442,15 @@ export function ActivityAxisBody({
 
 // A lane for each System on one time axis over the range that ends now: CPU
 // busy, the Sessions running, and a mark for each change. A pinned moment is
-// the line across every lane. Until the zone is known it holds the lanes' room.
+// the line across every lane. Until the zone is known it holds the axis's room,
+// all but the legend's lines past the first.
 export function ActivityAxis(props: AxisProps) {
   const timeZone = useTimeZone();
   return timeZone === undefined ? (
-    <div style={{ height: props.lanes.length * (LANE_HEIGHT + 36) }} />
+    <>
+      <div className="max-sm:hidden" style={{ height: axisHeight(props.lanes, false) }} />
+      <div className="sm:hidden" style={{ height: axisHeight(props.lanes, true) }} />
+    </>
   ) : (
     <ActivityAxisBody {...props} timeZone={timeZone} />
   );

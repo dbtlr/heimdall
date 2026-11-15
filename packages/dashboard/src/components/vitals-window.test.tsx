@@ -37,3 +37,35 @@ test('the shade lies under each plot, so it never runs through a scale label', (
     expect(plot).toContain('data-scale-tick=');
   }
 });
+
+const shadeClass = (tone?: 'alert' | 'note' | 'select' | 'warning') => {
+  const html = renderToStaticMarkup(
+    <VitalsWindowCard
+      shade={{ from: NOW - 58 * MINUTE, to: NOW }}
+      title="Around"
+      tone={tone}
+      vitals={vitals}
+    />,
+  );
+  return /class="([^"]*)"[^>]*data-shade/u.exec(html)?.[1] ?? '';
+};
+
+test('the shade is the selection color by default, and the level color for a Condition', () => {
+  const expected: [Parameters<typeof shadeClass>[0], string[]][] = [
+    ['alert', ['border-status-critical/50', 'bg-status-critical/20']],
+    ['note', ['border-status-warning/50', 'bg-status-warning/20']],
+    ['select', ['border-select/50', 'bg-select/20']],
+    ['warning', ['border-status-serious/50', 'bg-status-serious/20']],
+  ];
+  expect(shadeClass().split(' ')).toEqual(
+    expect.arrayContaining(['border-select/50', 'bg-select/20']),
+  );
+  for (const [tone, classes] of expected) {
+    const found = shadeClass(tone).split(' ');
+    expect(found).toEqual(expect.arrayContaining([...classes]));
+    // No other tone's color leaks in.
+    expect(
+      found.filter((name) => /^(?:bg|border)-(?:status|select)/u.test(name)).toSorted(),
+    ).toEqual([...classes].toSorted());
+  }
+});

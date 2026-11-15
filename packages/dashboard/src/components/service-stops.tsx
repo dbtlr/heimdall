@@ -14,12 +14,14 @@ import { cn } from '../lib/utils.ts';
 import type { ServiceDetail } from '../server/service-detail-types.ts';
 import { DateTime, InZone, PhraseText } from './date-time.tsx';
 
-// A day's cell: the Hub's status colors for up, restarted, and down, and a
-// neutral one for a day the System sent no Vitals.
+// A day's cell: the Hub's status colors for up, restarted, and down, a neutral
+// one for a day the System sent no Vitals, and none for a day before the Hub had
+// any evidence of the Service, so the strip starts where its history does.
 const CELL: Record<DayState, string> = {
   down: 'bg-status-critical',
   quiet: 'bg-muted',
   restarted: 'bg-status-warning',
+  unseen: 'bg-transparent',
   up: 'bg-status-good',
 };
 
@@ -27,6 +29,7 @@ const STATE_WORDS: Record<DayState, string> = {
   down: 'down',
   quiet: 'no Reports',
   restarted: 'restarted',
+  unseen: 'not seen yet',
   up: 'up',
 };
 
@@ -35,11 +38,17 @@ const PHONE_DAYS = 30;
 
 // The strip's cells, one per local day in `timeZone`, and the dates under them.
 // The phone shows the last PHONE_DAYS.
-function Strip({ detail, timeZone }: { detail: ServiceDetail; timeZone: string }) {
-  const { downs, now, reported, stops } = detail;
+export function AvailabilityStrip({
+  detail,
+  timeZone,
+}: {
+  detail: ServiceDetail;
+  timeZone: string;
+}) {
+  const { downs, existedSince, now, reported, stops } = detail;
   const days = useMemo(
-    () => stripDays({ downs, now, reported, stops, timeZone }),
-    [downs, now, reported, stops, timeZone],
+    () => stripDays({ downs, existedSince, now, reported, stops, timeZone }),
+    [downs, existedSince, now, reported, stops, timeZone],
   );
   const dateOf = (index: number) => {
     const day = days[index];
@@ -74,14 +83,15 @@ function Strip({ detail, timeZone }: { detail: ServiceDetail; timeZone: string }
   );
 }
 
-// The 90 days as one cell each, the share of the time the Service was up, and
-// the count of down periods and other stops. The phone shows the last 30 days.
+// The 90 days as one cell each, and, over the time since the Service was first
+// seen, up to the 90 days, the share of the time it was up and the count of
+// down periods and other stops. The phone shows the last 30 days.
 // The Service restarted note, when open, links to its page.
 export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
-  const { downs, now, note, reported, stops, system } = detail;
+  const { downs, existedSince, now, note, reported, stops, system } = detail;
   const totals = useMemo(
-    () => availabilityTotals({ downs, now, reported, stops }),
-    [downs, now, reported, stops],
+    () => availabilityTotals({ downs, existedSince, now, reported, stops }),
+    [downs, existedSince, now, reported, stops],
   );
   const percent = percentWords(totals.percent);
   return (
@@ -96,7 +106,7 @@ export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
           </span>
         </p>
       </div>
-      <InZone>{(timeZone) => <Strip detail={detail} timeZone={timeZone} />}</InZone>
+      <InZone>{(timeZone) => <AvailabilityStrip detail={detail} timeZone={timeZone} />}</InZone>
       <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {(['up', 'restarted', 'down', 'quiet'] as const).map((state) => (
           <span className="flex items-center gap-1.5" key={state}>
@@ -106,7 +116,8 @@ export function AvailabilityCard({ detail }: { detail: ServiceDetail }) {
         ))}
       </p>
       <p className="mt-1 text-xs text-muted-foreground sm:hidden">
-        Shows the last {PHONE_DAYS} days; the percentage covers {WINDOW_DAYS}.
+        Shows the last {PHONE_DAYS} days; the percentage covers the time since the Service was first
+        seen, up to {WINDOW_DAYS} days.
       </p>
       {note !== undefined && (
         <p className="mt-2 text-sm">

@@ -428,6 +428,33 @@ test(`reads ${upstream} observations on the same System, skipping withdrawn and 
 // Seconds after NOW, as the Hub's fixtures take them, of a time `ms` before it.
 const secondsAgo = (ms: number) => -ms / 1000;
 
+// A Hub that has heard server-1 and laptop-1 record `web`, with no version and
+// no first-mirrored time left, so a test adds the evidence it needs.
+const bare = async () => {
+  const h = await startHub();
+  await hear(h, 'server-1', { records });
+  await hear(h, 'laptop-1', { records });
+  await h.db.sql`DELETE FROM service_versions`;
+  await h.db.sql`DELETE FROM records_first_mirrored`;
+  return h;
+};
+
+const mirrored = (h: Hub, rows: { at: number; kind: string; record: string; system: string }[]) =>
+  Promise.all(
+    rows.map(
+      ({ at, kind, record, system }) => h.db.sql`
+        INSERT INTO records_first_mirrored (system, kind, name, first_mirrored_at)
+        VALUES (${system}, ${kind}, ${record}, ${new Date(at)})
+      `,
+    ),
+  );
+
+const version = (h: Hub, system: string, service: string, at: number) =>
+  h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+    VALUES (${system}, ${service}, ${String(at)}, null, ${new Date(at)})
+  `;
+
 describe('the availability strip and the selected stop', () => {
   const { addVitals } = timeline(NOW);
 
@@ -449,6 +476,86 @@ describe('the availability strip and the selected stop', () => {
       { from: NOW - 40 * DAY, to: NOW - 40 * DAY + 5 * MINUTE },
       { from: NOW - 2 * HOUR, to: NOW - 2 * HOUR + 10 * MINUTE },
     ]);
+  });
+
+  describe('when the Service was first seen', () => {
+    test('has no bound when the Hub has no evidence of the Service', async () => {
+      await using h = await bare();
+      expect((await read(h))?.existedSince).toBeUndefined();
+    });
+
+    test('is when the Hub first mirrored its record', async () => {
+      await using h = await bare();
+      await mirrored(h, [
+        { at: NOW - 30 * DAY, kind: 'service', record: 'web', system: 'server-1' },
+        { at: NOW - 80 * DAY, kind: 'job', record: 'web', system: 'server-1' },
+        { at: NOW - 80 * DAY, kind: 'service', record: 'api', system: 'server-1' },
+        { at: NOW - 80 * DAY, kind: 'service', record: 'web', system: 'laptop-1' },
+      ]);
+      expect((await read(h))?.existedSince).toBe(NOW - 30 * DAY);
+    });
+
+    test('is its first version, when that came before', async () => {
+      await using h = await bare();
+      await mirrored(h, [
+        { at: NOW - 10 * DAY, kind: 'service', record: 'web', system: 'server-1' },
+      ]);
+      await version(h, 'server-1', 'web', NOW - 3 * DAY);
+      await version(h, 'server-1', 'web', NOW - 20 * DAY);
+      await version(h, 'server-1', 'api', NOW - 50 * DAY);
+      await version(h, 'laptop-1', 'web', NOW - 60 * DAY);
+      expect((await read(h))?.existedSince).toBe(NOW - 20 * DAY);
+    });
+
+    test('is its first stop, even one older than its first version', async () => {
+      await using h = await bare();
+      await hear(h, 'server-1', {
+        records,
+        serviceStops: {
+          stops: [
+            stop({ startedAt: NOW - 40 * DAY + MINUTE, stoppedAt: NOW - 40 * DAY }),
+            stop({
+              service: 'other',
+              startedAt: NOW - 70 * DAY + MINUTE,
+              stoppedAt: NOW - 70 * DAY,
+            }),
+          ],
+        },
+      });
+      await hear(h, 'laptop-1', {
+        records,
+        serviceStops: {
+          stops: [stop({ startedAt: NOW - 70 * DAY + MINUTE, stoppedAt: NOW - 70 * DAY })],
+        },
+      });
+      await h.db.sql`DELETE FROM service_versions`;
+      await h.db.sql`DELETE FROM records_first_mirrored`;
+      await version(h, 'server-1', 'web', NOW - 20 * DAY);
+      expect((await read(h))?.existedSince).toBe(NOW - 40 * DAY);
+    });
+
+    test('is the first raise of its Service down, however long ago', async () => {
+      await using h = await bare();
+      await version(h, 'server-1', 'web', NOW - 20 * DAY);
+      const down = (over: {
+        clearedAt?: number;
+        kind?: 'service_down' | 'service_restarted';
+        raisedAt: number;
+        subject?: string;
+        system?: string;
+      }) =>
+        addCondition(h.db.sql, {
+          kind: 'service_down',
+          subject: 'web',
+          system: 'server-1',
+          ...over,
+        });
+      await down({ clearedAt: -99 * 86_400, raisedAt: -100 * 86_400 });
+      await down({ clearedAt: -60, raisedAt: -120 * 86_400, subject: 'other' });
+      await down({ clearedAt: -60, raisedAt: -120 * 86_400, system: 'laptop-1' });
+      await down({ clearedAt: -60, kind: 'service_restarted', raisedAt: -120 * 86_400 });
+      expect((await read(h))?.existedSince).toBe(NOW - 100 * DAY);
+    });
   });
 
   test('selects the newest stop, or the one asked for, with the Vitals around it', async () => {
