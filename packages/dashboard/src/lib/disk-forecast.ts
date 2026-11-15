@@ -9,7 +9,7 @@ export type DiskBands = { alert: number; note: number; warning: number };
 // 100 for full; or why no forecast can be made.
 export type DiskForecast =
   | { bytesPerDay: number; days: number; kind: 'growing'; percent: number }
-  | { kind: 'none'; reason: 'few-readings' | 'not-growing' };
+  | { kind: 'none'; reason: 'few-readings' | 'not-growing' | 'unknown-size' };
 
 // The next band above the mount's use, else full, and the days to reach it at
 // the fitted growth: 0 for a mount already full. `growth` is undefined with
@@ -23,10 +23,13 @@ export const diskForecast = ({
   disk: Disk;
   growth: Pick<DiskGrowth, 'bytesPerDay'> | undefined;
 }): DiskForecast => {
+  if (disk.totalBytes <= 0) {
+    return { kind: 'none', reason: 'unknown-size' };
+  }
   if (growth === undefined) {
     return { kind: 'none', reason: 'few-readings' };
   }
-  if (!isGrowing(growth) || disk.totalBytes <= 0) {
+  if (!isGrowing(growth)) {
     return { kind: 'none', reason: 'not-growing' };
   }
   const used = (disk.usedBytes / disk.totalBytes) * 100;
@@ -45,12 +48,21 @@ export const diskForecast = ({
 
 // A forecast as the Disks card says it, in the Condition page's words for
 // growth and time: "+2.1 GiB a day · 80% in about 3 days".
-export const forecastWords = (forecast: DiskForecast): string => {
+export const forecastWords = (forecast: DiskForecast, fromNewestReading = false): string => {
   if (forecast.kind === 'none') {
-    return forecast.reason === 'few-readings'
-      ? 'Under a day of readings, so no forecast.'
+    if (forecast.reason === 'unknown-size') {
+      return 'Disk size is unknown or zero, so no forecast.';
+    }
+    if (forecast.reason === 'few-readings') {
+      return 'Under a day of readings, so no forecast.';
+    }
+    return fromNewestReading
+      ? 'Not growing over the 7 days to the newest reading, so no forecast.'
       : 'Not growing over the last 7 days, so no forecast.';
   }
   const target = forecast.percent >= 100 ? 'full' : `${String(forecast.percent)}%`;
-  return `${growthWords(forecast.bytesPerDay)} · ${target} ${reachWords(forecast.days)}`;
+  if (fromNewestReading && forecast.days <= 0) {
+    return `${growthWords(forecast.bytesPerDay)} · ${target} at the newest reading`;
+  }
+  return `${growthWords(forecast.bytesPerDay)} · ${target} ${reachWords(forecast.days)}${fromNewestReading ? ' from the newest reading' : ''}`;
 };

@@ -11,7 +11,7 @@ import { cn } from '../lib/utils.ts';
 import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
-import { PhraseText } from './date-time.tsx';
+import { DateTime, PhraseText } from './date-time.tsx';
 import { MoreItems } from './more-items.tsx';
 
 const LOAD_PERIODS = ['1 min', '5 min', '15 min'] as const;
@@ -111,35 +111,55 @@ function DiskRow({
 
 // Each mount of the newest sample as a row, with its open Low disk level, its
 // growth over the last 7 days, and the next band it heads for.
-function DiskRows({ detail, disks }: { detail: DiskDetail; disks: readonly Disk[] }) {
+function DiskRows({
+  detail,
+  disks,
+  at,
+  now,
+}: {
+  detail: DiskDetail;
+  disks: readonly Disk[];
+  at: number;
+  now: number;
+}) {
   const bands = detail.limitPercent?.disk;
+  const quiet = now - at > QUIET_AFTER_MS;
   return (
-    <ul>
-      {disks.map((disk, index) => (
-        // A mount can be listed twice.
-        // oxlint-disable-next-line react/no-array-index-key
-        <DiskRow
-          bands={bands}
-          disk={disk}
-          forecast={forecastWords(
-            diskForecast({
-              bands,
-              disk,
-              growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
-            }),
-          )}
-          key={`${disk.mount}-${String(index)}`}
-          level={
-            detail.conditions.find(
-              (condition) =>
-                condition.kind === 'low_disk' &&
-                condition.subject === disk.mount &&
-                condition.clearedAt === undefined,
-            )?.level
-          }
-        />
-      ))}
-    </ul>
+    <div>
+      {quiet && (
+        <p className="text-xs text-muted-foreground">
+          Growth over the 7 days to the newest reading (
+          <DateTime at={at} format="when" now={now} />)
+        </p>
+      )}
+      <ul>
+        {disks.map((disk, index) => (
+          // A mount can be listed twice.
+          // oxlint-disable-next-line react/no-array-index-key
+          <DiskRow
+            bands={bands}
+            disk={disk}
+            forecast={forecastWords(
+              diskForecast({
+                bands,
+                disk,
+                growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
+              }),
+              quiet,
+            )}
+            key={`${disk.mount}-${String(index)}`}
+            level={
+              detail.conditions.find(
+                (condition) =>
+                  condition.kind === 'low_disk' &&
+                  condition.subject === disk.mount &&
+                  condition.clearedAt === undefined,
+              )?.level
+            }
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -199,7 +219,7 @@ export function SystemFacts({
       {latest !== undefined && (
         <Fact asOf={asOf} grow={1.5} title="Disks">
           <div className="max-h-[30dvh] overflow-y-auto">
-            <DiskRows detail={detail} disks={latest.disks} />
+            <DiskRows at={latest.t} detail={detail} disks={latest.disks} now={now} />
           </div>
         </Fact>
       )}
@@ -241,12 +261,14 @@ export function SystemDisks({
       <h2 className={WIDE_HEADING}>
         Disks
         <SampleAsOf at={latest.t} now={now} />{' '}
-        <span className="font-normal tracking-normal normal-case">growth over 7 days</span>
+        <span className="font-normal tracking-normal normal-case">
+          {now - latest.t > QUIET_AFTER_MS ? 'growth forecast' : 'growth over 7 days'}
+        </span>
       </h2>
       {latest.disks.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">The Collector reported no disk.</p>
       ) : (
-        <DiskRows detail={detail} disks={latest.disks} />
+        <DiskRows at={latest.t} detail={detail} disks={latest.disks} now={now} />
       )}
     </section>
   );

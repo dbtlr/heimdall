@@ -124,3 +124,27 @@ test('a disk draws no ticks while the Hub has stored no bands', () => {
     renderToStaticMarkup(<SystemDisks detail={disksDetail({ bands: false })} />),
   ).not.toContain('data-band');
 });
+
+test('both disk cards date a quiet System window and countdown from its newest reading', () => {
+  const detail = { ...disksDetail({ bands: true }), harnesses: undefined, now: 3 * 86_400_000 };
+  for (const html of [
+    renderToStaticMarkup(<SystemDisks detail={detail} />),
+    renderToStaticMarkup(<SystemFacts detail={detail} />),
+  ]) {
+    expect(html).toContain('over the 7 days to the newest reading');
+    expect(html).toContain('80% in about 3 days from the newest reading');
+    expect(html).not.toContain('over the last 7 days');
+    expect(html).toContain('dateTime="1970-01-01T00:00:00.000Z"');
+  }
+});
+
+test('both disk cards show the reason a zero-size mount has no forecast', () => {
+  const detail = disksDetail({ bands: true });
+  detail.latest.disks = [{ ...ROOT, totalBytes: 0 }];
+  for (const html of [
+    renderToStaticMarkup(<SystemDisks detail={detail} />),
+    renderToStaticMarkup(<SystemFacts detail={{ ...detail, harnesses: undefined }} />),
+  ]) {
+    expect(html).toContain('Disk size is unknown or zero, so no forecast.');
+  }
+});

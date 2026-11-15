@@ -64,3 +64,34 @@ test('a full mount that still grows is full now', () => {
     '+1.0 GiB a day · full now',
   );
 });
+
+test('a zero-size mount says its size is unknown even without enough readings', () => {
+  for (const growth of [undefined, growing(2), growing(0)]) {
+    const forecast = diskForecast({ bands: BANDS, disk: { ...disk(0), totalBytes: 0 }, growth });
+    expect(forecast).toEqual({ kind: 'none', reason: 'unknown-size' });
+    expect(forecastWords(forecast)).toBe('Disk size is unknown or zero, so no forecast.');
+  }
+});
+
+test('quiet forecasts anchor both the countdown and the not-growing window to the newest reading', () => {
+  expect(
+    forecastWords(diskForecast({ bands: BANDS, disk: disk(74), growth: growing(2) }), true),
+  ).toBe('+2.0 GiB a day · 80% in about 3 days from the newest reading');
+  expect(forecastWords({ kind: 'none', reason: 'not-growing' }, true)).toBe(
+    'Not growing over the 7 days to the newest reading, so no forecast.',
+  );
+});
+
+test('a quiet full mount was full at its newest reading rather than now', () => {
+  expect(
+    forecastWords(
+      {
+        bytesPerDay: GIB,
+        days: 0,
+        kind: 'growing',
+        percent: 100,
+      },
+      true,
+    ),
+  ).toBe('+1.0 GiB a day · full at the newest reading');
+});

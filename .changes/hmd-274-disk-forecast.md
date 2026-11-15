@@ -1,0 +1,1 @@
+- **Disk forecasts follow the current volume** (HMD-274). The System page fits growth in SQL using only readings since the mount's last size change. Zero-size disks explain why no forecast is available, and quiet Systems date their growth window and countdown from the newest reading.
