@@ -51,12 +51,18 @@ export const hubStatusRecorder = ({
   warn: (message: string) => void;
 }) => {
   let runs: Partial<Record<HubPass, PassRecord>> = {};
+  // The start row while the database has refused it: each later write tries it
+  // first, so a transient failure at start does not leave the row missing and
+  // every pass write updating nothing until the next restart.
+  let unstarted: ((tx: SQL) => Promise<unknown>) | undefined;
   const safely = async (write: (tx: SQL) => Promise<unknown>) => {
     try {
       await sql.begin(async (tx) => {
         await tx`SELECT set_config('lock_timeout', ${`${String(lockTimeoutMs)}ms`}, true)`;
+        await unstarted?.(tx);
         await write(tx);
       });
+      unstarted = undefined;
     } catch (error) {
       warn(`Could not record Hub status: ${describeError(error)}`);
     }
@@ -104,15 +110,17 @@ export const hubStatusRecorder = ({
           { budget_ms: budgetMs, interval_ms: intervalMs },
         ]),
       );
-      return safely(
-        (tx) => tx`
-          INSERT INTO hub_status (version, started_at, delivery_configured, last_runs)
-          VALUES (${version}, ${new Date(now())}, ${deliveryConfigured}, ${tx.json(runs)}::jsonb)
-          ON CONFLICT (only_row) DO UPDATE SET version = EXCLUDED.version,
-            started_at = EXCLUDED.started_at, delivery_configured = EXCLUDED.delivery_configured,
-            last_runs = EXCLUDED.last_runs
-        `,
-      );
+      const startedAt = new Date(now());
+      // Writes the passes as they stand when it lands, so a retried start keeps
+      // what the passes have recorded since.
+      unstarted = (tx) => tx`
+        INSERT INTO hub_status (version, started_at, delivery_configured, last_runs)
+        VALUES (${version}, ${startedAt}, ${deliveryConfigured}, ${tx.json(runs)}::jsonb)
+        ON CONFLICT (only_row) DO UPDATE SET version = EXCLUDED.version,
+          started_at = EXCLUDED.started_at, delivery_configured = EXCLUDED.delivery_configured,
+          last_runs = EXCLUDED.last_runs
+      `;
+      return safely(async () => {});
     },
   };
 };

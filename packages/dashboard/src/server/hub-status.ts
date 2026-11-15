@@ -392,26 +392,33 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
         ? ['Parser rebuild stalled: ', ...parse.phrase]
         : parse.phrase,
     );
-    const failures: { system: string; source: string; failed_attempts: number; failed_at: Date }[] =
-      await tx`
-      SELECT g.system, g.source, p.failed_attempts, p.failed_at FROM parse_progress p
+    // Only the failures shown come back, with how many there are in all.
+    const failures: {
+      system: string;
+      source: string;
+      failed_attempts: number;
+      failed_at: Date;
+      total: number;
+    }[] = await tx`
+      SELECT g.system, g.source, p.failed_attempts, p.failed_at, (count(*) OVER ())::int AS total
+      FROM parse_progress p
       JOIN transcript_generations g ON g.id = p.generation
       WHERE g.deleted_at IS NULL AND p.failed_at IS NOT NULL
         AND p.parser_version >= coalesce((SELECT version FROM current_parsers c WHERE c.harness = p.harness), 0)
-      ORDER BY p.failed_at DESC, g.system, g.source`;
-    const failureNotes: Phrase[] = failures
-      .slice(0, LIST_SHOWN)
-      .map((f) => [
-        `Failed generation: ${f.system}, source ${f.source}, ${count(f.failed_attempts, 'attempt')}, failed `,
-        whenAt(f.failed_at.getTime(), now),
-        '.',
-      ]);
-    if (failures.length > LIST_SHOWN) {
+      ORDER BY p.failed_at DESC, g.system, g.source
+      LIMIT ${LIST_SHOWN}`;
+    const failuresInAll = failures[0]?.total ?? 0;
+    const failureNotes: Phrase[] = failures.map((f) => [
+      `Failed generation: ${f.system}, source ${f.source}, ${count(f.failed_attempts, 'attempt')}, failed `,
+      whenAt(f.failed_at.getTime(), now),
+      '.',
+    ]);
+    if (failuresInAll > LIST_SHOWN) {
       failureNotes.push([
-        `${count(failures.length - LIST_SHOWN, 'more failed generation', 'more failed generations')}.`,
+        `${count(failuresInAll - LIST_SHOWN, 'more failed generation', 'more failed generations')}.`,
       ]);
     }
-    if (failures.length > 0) {
+    if (failuresInAll > 0) {
       failureNotes.push(['The reason is kept out of the dashboard.']);
     }
     tables.push({

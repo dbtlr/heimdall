@@ -151,6 +151,37 @@ describe('the status recorder', () => {
       await holder.release();
     }
   }, 15_000);
+
+  test('a start the database refused is written by the next pass that can write', async () => {
+    await using h = await startHub();
+    const clock = { now: T0 };
+    const warnings: string[] = [];
+    const status = recorder(h.db.sql, clock, warnings);
+    const holder = await h.db.sql.reserve();
+    try {
+      await holder`BEGIN`;
+      await holder`LOCK TABLE hub_status IN ACCESS EXCLUSIVE MODE`;
+      await status.start({ deliveryConfigured: true, passes: SCHEDULE, version: 'test' });
+    } finally {
+      await holder`ROLLBACK`;
+      await holder.release();
+    }
+    expect(warnings).toHaveLength(1);
+    expect(await statusRow(h.db.sql)).toBeUndefined();
+    clock.now = T0 + 60_000;
+    await status.pass('conditions', async () => {});
+    const row = await statusRow(h.db.sql);
+    expect(row).toMatchObject({
+      delivery_configured: true,
+      started_at: new Date(T0),
+      version: 'test',
+    });
+    expect(row?.last_runs.conditions).toMatchObject({
+      finished_at: T0 + 60_000,
+      interval_ms: 60_000,
+      succeeded_at: T0 + 60_000,
+    });
+  }, 15_000);
 });
 
 test('each pass schedule is its timer interval and the longest one run is meant to take', () => {
