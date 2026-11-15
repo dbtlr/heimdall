@@ -8,13 +8,17 @@ import { PLOT_COLOR, PlotGradient, ScaledPlot, usePlotGradientId } from './plot-
 import { ChartContainer } from './ui/chart.tsx';
 import type { ChartConfig } from './ui/chart.tsx';
 
+// The latest reported logical core count, used by the note and reference line.
+export const coreCountNote = (cores: number): string =>
+  `${String(cores)} ${cores === 1 ? 'core' : 'cores'} now`;
+
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
 const CONFIG = { value: { color: PLOT_COLOR, label: 'Load' } } satisfies ChartConfig;
 
-// The scale's top: the highest load over the window, widened so its top,
+// The scale's top: the highest load or known core count, widened so its top,
 // middle, and bottom are whole numbers, and never under 2.
-export const loadDomain = (buckets: readonly LoadBucket[]) => {
-  const high = Math.max(2, ...buckets.map(({ value }) => value));
+export const loadDomain = (buckets: readonly LoadBucket[], cores?: number) => {
+  const high = Math.max(2, cores ?? 0, ...buckets.map(({ value }) => value));
   return niceDomain([0, high], high > 10 ? 5 : 1);
 };
 
@@ -22,24 +26,37 @@ export const loadDomain = (buckets: readonly LoadBucket[]) => {
 // fill on a scale from 0. A gap in the Vitals is a break in the line.
 export function LoadPlot({
   buckets,
+  cores,
   height,
   scaleBeside = false,
   window,
 }: {
   buckets: readonly LoadBucket[];
+  cores?: number | undefined;
   height: number;
   scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
-  const domain = loadDomain(buckets);
+  const domain = loadDomain(buckets, cores);
   return (
     <ScaledPlot
       beside={scaleBeside}
       domain={domain}
       format={(value) => String(value)}
       height={height}
-      labelled={buckets.length > 0}
+      labelled={buckets.length > 0 || cores !== undefined}
+      limits={
+        cores === undefined
+          ? []
+          : [
+              {
+                color: 'var(--muted-foreground)',
+                label: coreCountNote(cores),
+                value: cores,
+              },
+            ]
+      }
     >
       <PlotGradient color={PLOT_COLOR} id={fill} />
       <ChartContainer

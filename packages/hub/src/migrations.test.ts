@@ -490,3 +490,17 @@ test('the surviving occurrence carries the reason of its level change', async ()
     { id: lone, latest_reason: 'Merged into one Condition for its package source.' },
   ]);
 });
+
+test('migration 45 leaves existing Systems with an unknown core count', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 44),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  expect(await migrate(db.sql)).toEqual([45]);
+  const [row]: { cpu_cores: number | null; cpu_cores_at: Date | null }[] =
+    await db.sql`SELECT cpu_cores, cpu_cores_at FROM systems`;
+  expect(row).toEqual({ cpu_cores: null, cpu_cores_at: null });
+  expect(await migrate(db.sql)).toEqual([]);
+});

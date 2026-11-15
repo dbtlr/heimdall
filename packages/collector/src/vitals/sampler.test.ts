@@ -5,8 +5,8 @@ import { VitalsSampleSchema } from '@heimdall/schema';
 import { createSampler } from './sampler.ts';
 import type { HostProbe } from './sampler.ts';
 
-// A host with two cores whose readings advance by hand.
-const fakeHost = () => {
+// A host with a configurable number of cores whose readings advance by hand.
+const fakeHost = (cores = 2) => {
   const state = {
     busyTicks: 0,
     idleTicks: 0,
@@ -16,7 +16,7 @@ const fakeHost = () => {
   };
   const core = () => ({ idle: state.idleTicks, irq: 0, nice: 0, sys: 0, user: state.busyTicks });
   const probe: HostProbe = {
-    cpuTimes: () => [core(), core()],
+    cpuTimes: () => Array.from({ length: cores }, core),
     disks: () => Promise.resolve([{ mount: '/', totalBytes: 1000, usedBytes: 400 }]),
     load: () => [1.5, 1, 0.5],
     memory: () => Promise.resolve({ totalBytes: 2048, usedBytes: 1024 }),
@@ -77,7 +77,7 @@ test('a sample carries the host readings at wall-clock time and passes the Repor
 
   expect(sample).toEqual({
     collector: { cpuPercent: 0, rssBytes: 41_943_040 },
-    cpu: { busyPercent: 50 },
+    cpu: { busyPercent: 50, cores: 2 },
     disks: [{ mount: '/', totalBytes: 1000, usedBytes: 400 }],
     load: [1.5, 1, 0.5],
     memory: { totalBytes: 2048, usedBytes: 1024 },
@@ -85,4 +85,15 @@ test('a sample carries the host readings at wall-clock time and passes the Repor
     uptimeSeconds: 86_400.5,
   });
   expect(VitalsSampleSchema.safeParse(sample).success).toBe(true);
+});
+
+test('reports the three logical CPUs returned by the host', async () => {
+  const host = fakeHost(3);
+  host.advance(0.25, 0);
+  expect((await createSampler(host.probe).sample()).cpu.cores).toBe(3);
+});
+
+test('omits the core count when the host returns no CPUs', async () => {
+  const host = fakeHost(0);
+  expect((await createSampler(host.probe).sample()).cpu).not.toHaveProperty('cores');
 });

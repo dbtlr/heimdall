@@ -2389,6 +2389,11 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 44,
   },
+  {
+    // Older Collectors leave the logical CPU count unknown.
+    sql: `ALTER TABLE systems ADD COLUMN cpu_cores integer, ADD COLUMN cpu_cores_at timestamptz;`,
+    version: 45,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

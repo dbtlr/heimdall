@@ -209,6 +209,12 @@ Each duration must fit its window. CPU's note duration must be less than its war
 Unknown fields and invalid inherited combinations stop `serve` before it opens the database.
 Restarting the Hub applies changed limits to subsequent judgments, including its latest stored window, without rewriting recorded history.
 
+### Core count
+
+Each Vitals sample may carry `cpu.cores`, a positive integer up to 65,536 counting the logical CPUs the operating system reports online, not a container's CPU quota or affinity. The Collector uses the length of `os.cpus()`, the same readings it uses for CPU timing. Missing or invalid counts are dropped without rejecting the Report (ADR-0004).
+The Hub keeps the count of a Report's newest sample, with that sample's time, in `systems.cpu_cores` and `systems.cpu_cores_at`. It replaces them when that sample is strictly newer than the stored time, or when the stored time is more than the future-sample tolerance (five minutes) ahead of receipt; a sample itself more than the tolerance ahead of receipt never sets them. A Report whose newest sample omits the count preserves the stored value and time.
+When known, the System overview's 1-minute load chart names the current count in its note and draws a dashed line at the latest reported count across the range, including it in the scale.
+
 ### Hot processes
 
 The Hub raises `hot_process` for an individual process above 0.5 CPU core for 30 measured minutes within an hour at note,

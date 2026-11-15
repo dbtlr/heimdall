@@ -14,7 +14,7 @@ import { CpuPlot } from './cpu-plot.tsx';
 import { DateTime } from './date-time.tsx';
 import { DetailAxis, DetailTrack, SampleSlider } from './detail-track.tsx';
 import { GapShades } from './gap-shades.tsx';
-import { LoadPlot } from './load-plot.tsx';
+import { coreCountNote, LoadPlot } from './load-plot.tsx';
 import { MemoryPlot } from './memory-plot.tsx';
 import { MoreItems } from './more-items.tsx';
 import { ProcessPlot } from './process-plot.tsx';
@@ -191,10 +191,18 @@ export function SystemOverview({
                   />
                 </DetailTrack>
               </Chart>
-              {/* No line at the core count: no Collector reports one yet. */}
-              <Chart title="Load (1 min)">
+              <Chart
+                note={detail.cpuCores === undefined ? '' : coreCountNote(detail.cpuCores)}
+                title="Load (1 min)"
+              >
                 <DetailTrack>
-                  <LoadPlot scaleBeside buckets={detail.load} height={80} window={window} />
+                  <LoadPlot
+                    scaleBeside
+                    cores={detail.cpuCores}
+                    buckets={detail.load}
+                    height={80}
+                    window={window}
+                  />
                 </DetailTrack>
               </Chart>
               <Chart aside={<ChangesLegend />} title="Conditions and changes">

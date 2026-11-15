@@ -93,6 +93,7 @@ export const parseSampleInput = (input: unknown): { at: number | undefined; name
 };
 
 type SystemRow = {
+  cpu_cores: number | null;
   collector_arch: string | null;
   collector_platform: string | null;
   collector_version: string | null;
@@ -205,7 +206,7 @@ const readSystemDetailSnapshot = async (
   { name, now, range }: { name: string; now: number; range: Range },
 ): Promise<SystemDetail | undefined> => {
   const [system]: SystemRow[] = await sql`
-    SELECT s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch, s.collector_version,
+    SELECT s.cpu_cores, s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch, s.collector_version,
            p.system IS NOT NULL AS paired
     FROM paired_systems p
     FULL JOIN systems s ON s.name = p.system
@@ -318,6 +319,7 @@ const readSystemDetailSnapshot = async (
     collectorVersion: system.collector_version ?? undefined,
     conditions: marks.map((row) => toMark(row, transitions.get(row.id) ?? [])),
     cpu,
+    cpuCores: system.cpu_cores ?? undefined,
     diskTrends,
     from,
     gaps: findGaps(

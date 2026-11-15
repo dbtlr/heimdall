@@ -1292,3 +1292,13 @@ describe('the processes holding the most memory', () => {
     expect((await inspect(h, NOW - 45_000)).memoryHolders).toBeUndefined();
   });
 });
+
+test('System detail reads the latest known logical core count from the Hub', async () => {
+  await using h = await startHub();
+  const read = () => readSystemDetail(h.db.sql, { name: 'server-1', now: NOW, range: '12h' });
+  expect((await read())?.cpuCores).toBeUndefined();
+  await hear(h, 'server-1', { samples: [{ ...sample(NOW), cpu: { busyPercent: 20, cores: 8 } }] });
+  expect((await read())?.cpuCores).toBe(8);
+  await hear(h, 'server-1');
+  expect((await read())?.cpuCores).toBe(8);
+});
