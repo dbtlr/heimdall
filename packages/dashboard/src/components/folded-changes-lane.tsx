@@ -46,6 +46,9 @@ function Row({
   );
 }
 
+// How a level ranks when spans overlap: the higher draws over the lower.
+const SEVERITY = { alert: 2, note: 0, warning: 1 } as const;
+
 // The Conditions and changes lane over a long range, folded so a year stays
 // legible: a diamond for each day's or week's Service changes with their count,
 // in the middle of the part of its bin on the chart, a ring at each reboot,
@@ -55,9 +58,6 @@ function Row({
 // Conditions start with the first bucket, which may begin before the window,
 // so the lane shows what that bucket's inspector lists; a mark there stands at
 // the window's start.
-// How a level ranks when spans overlap: the higher draws over the lower.
-const SEVERITY = { alert: 2, note: 0, warning: 1 } as const;
-
 export function FoldedChangesLane({
   detail,
   labelsInside = false,
