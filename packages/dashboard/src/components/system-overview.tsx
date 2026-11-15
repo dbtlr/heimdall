@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { axisTicks } from '../lib/axis.ts';
 import { LEVEL_STROKE } from '../lib/conditions.ts';
 import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
-import { CHANGE_BIN_MS } from '../lib/long-history.ts';
 import { formatClock, formatDate, pinnedX } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
@@ -95,10 +94,12 @@ const limitWords = (limit: number | undefined) =>
 // no Harness process in the window, there is nothing to disclose.
 function HarnessProcesses({
   bucketMs,
+  edges,
   processes,
   window,
 }: {
   bucketMs: number;
+  edges: SystemDetail['edges'];
   processes: SystemDetail['processes'];
   window: Window;
 }) {
@@ -114,14 +115,26 @@ function HarnessProcesses({
           {bucketMs > 5 * 60_000 && `, ${bucketWords(bucketMs)}, from 5-minute rollups`}
         </p>
         <DetailTrack>
-          <ProcessPlot bucketMs={bucketMs} processes={active} scaleBeside window={window} />
+          <ProcessPlot
+            bucketMs={bucketMs}
+            edges={edges}
+            processes={active}
+            scaleBeside
+            window={window}
+          />
         </DetailTrack>
       </section>
       {idle.length > 0 && (
         <MoreItems label={idleProcessesLabel(idle.length)} scrolls={false}>
           <div className={cn(GUTTER, 'pt-1')}>
             <DetailTrack>
-              <ProcessPlot bucketMs={bucketMs} processes={idle} scaleBeside window={window} />
+              <ProcessPlot
+                bucketMs={bucketMs}
+                edges={edges}
+                processes={idle}
+                scaleBeside
+                window={window}
+              />
             </DetailTrack>
           </div>
         </MoreItems>
@@ -162,11 +175,11 @@ export function SystemOverview({
 }) {
   const timeZone = useTimeZone();
   const window = { from: detail.from, to: detail.to };
-  const { bucketMs, latest, limitPercent, long, range } = detail;
+  const { bucketMs, edges, latest, limitPercent, long, range } = detail;
   const longRange = isLongRange(range) ? range : undefined;
   const banded = longRange === undefined ? [] : ['average, low–high band'];
   // The pinned bucket's middle, or the pinned sample.
-  const selected = bucket === null ? sample?.t : bucket.t + bucket.bucketMs / 2;
+  const selected = bucket === null ? sample?.t : (bucket.t + bucket.end) / 2;
   const sampleX = selected === undefined ? undefined : pinnedX(selected, window);
   const total = latest === undefined ? undefined : formatGiB(latest.memoryTotalBytes);
   return (
@@ -206,6 +219,7 @@ export function SystemOverview({
                     scaleBeside
                     bucketMs={bucketMs}
                     buckets={detail.cpu}
+                    edges={edges}
                     height={140}
                     label="CPU busy"
                     limits={
@@ -233,15 +247,15 @@ export function SystemOverview({
                   note={`list-price cost per day · ${long.sessions.toLocaleString('en-GB')} ${long.sessions === 1 ? 'Session' : 'Sessions'} in ${RANGE_PLACE[longRange]}`}
                   title="Agent Sessions"
                 >
-                  <CostBars
-                    scaleBeside
-                    bucketMs={long.costBucketMs}
-                    costs={long.costs}
-                    window={window}
-                  />
+                  <CostBars scaleBeside costs={long.costs} edges={long.dayEdges} window={window} />
                 </Chart>
               )}
-              <HarnessProcesses bucketMs={bucketMs} processes={detail.processes} window={window} />
+              <HarnessProcesses
+                bucketMs={bucketMs}
+                edges={edges}
+                processes={detail.processes}
+                window={window}
+              />
               <Chart
                 note={[
                   ...(total === undefined ? [] : [`of ${total} GiB`]),
@@ -256,6 +270,7 @@ export function SystemOverview({
                     band={longRange !== undefined}
                     bucketMs={bucketMs}
                     buckets={detail.memory}
+                    edges={edges}
                     height={110}
                     limitPercent={limitPercent?.memory}
                     window={window}
@@ -275,6 +290,7 @@ export function SystemOverview({
                     band={longRange !== undefined}
                     bucketMs={bucketMs}
                     cores={detail.cpuCores}
+                    edges={edges}
                     buckets={detail.load}
                     height={80}
                     window={window}
@@ -291,11 +307,7 @@ export function SystemOverview({
                   note={`one row per kind · changes per ${longRange === '1y' ? 'week' : 'day'}`}
                   title="Conditions and changes"
                 >
-                  <FoldedChangesLane
-                    binMs={CHANGE_BIN_MS[longRange]}
-                    detail={detail}
-                    window={window}
-                  />
+                  <FoldedChangesLane detail={detail} window={window} />
                 </Chart>
               )}
               <div className={GUTTER}>

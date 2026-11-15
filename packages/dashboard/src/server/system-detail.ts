@@ -1,9 +1,15 @@
-import { ConditionLevelSchema, nextScheduledTime } from '@heimdall/schema';
+import { nextScheduledTime } from '@heimdall/schema';
 import type { ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { validZone } from '../lib/agents-search.ts';
+import { edgeSpans, longEdges, spanHolding } from '../lib/bucket-edges.ts';
+import type { LongEdges } from '../lib/bucket-edges.ts';
+import { foldQuietProcesses } from '../lib/long-history.ts';
+import { laneConditions } from '../lib/system-events.ts';
 import { SYSTEM_ACTIVITY_RANGE } from './activity-types.ts';
 import { readActivitySnapshot } from './activity.ts';
+import { readCells } from './agents-costs.ts';
 import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
@@ -18,7 +24,6 @@ import {
 } from './fleet-overview-types.ts';
 import type { Link, LongRange, Range } from './fleet-overview-types.ts';
 import {
-  BUCKET_MS,
   bucketStart,
   findGaps,
   isLink,
@@ -32,7 +37,6 @@ import type { BucketRow, ConditionRow, StretchRow } from './fleet-overview.ts';
 import { readServiceChanges } from './home-cards.ts';
 import type { ServiceChange } from './home-types.ts';
 import {
-  conditionKind,
   byCheck,
   field,
   filesOf,
@@ -82,16 +86,21 @@ const systemName = (input: unknown): string => {
 };
 
 // The System and range a detail request asks for; the page opens on 12 hours.
-export const parseDetailInput = (input: unknown): { name: string; range: Range } => {
+export const parseDetailInput = (
+  input: unknown,
+): { name: string; range: Range; timeZone: string | undefined } => {
   const name = systemName(input);
   const asked = field(input, 'range');
+  // The viewer's zone, which the long ranges' days follow; a zone no runtime
+  // knows reads as none.
+  const timeZone = validZone(field(input, 'timeZone'));
   if (asked === undefined) {
-    return { name, range: '12h' };
+    return { name, range: '12h', timeZone };
   }
   if (!isRange(asked)) {
     throw new Error(`The range ${JSON.stringify(asked)} is not one of ${RANGES.join(', ')}.`);
   }
-  return { name, range: asked };
+  return { name, range: asked, timeZone };
 };
 
 // The System and time, in epoch milliseconds, a sample request asks for; no
@@ -109,13 +118,13 @@ export const parseSampleInput = (input: unknown): { at: number | undefined; name
 // asks for; no time asks for the newest bucket.
 export const parseBucketInput = (
   input: unknown,
-): { at: number | undefined; name: string; range: LongRange } => {
+): { at: number | undefined; name: string; range: LongRange; timeZone: string | undefined } => {
   const { at, name } = parseSampleInput(input);
   const range = field(input, 'range');
   if (!isRange(range) || !isLongRange(range)) {
     throw new Error(`The range ${JSON.stringify(range)} is not 30d or 1y.`);
   }
-  return { at, name, range };
+  return { at, name, range, timeZone: validZone(field(input, 'timeZone')) };
 };
 
 type SystemRow = {
@@ -150,41 +159,57 @@ type VitalsRow = BucketRow & {
   memory_used: number;
 };
 
-// The origin the Hub bins its rollups from; every width that divides a day
-// bins the same from it as from the epoch.
-const ORIGIN = "timestamptz '2000-01-01 00:00:00+00'";
+// A bucket's Vitals from its 5-minute rollups `v`: CPU, memory, and 1-minute
+// load averaged over every sample, however the rollups divide them, with the
+// lowest and highest.
+const VITALS = `
+  sum(v.samples)::int AS samples, min(v.cpu_busy_min) AS cpu_busy_min,
+  sum(v.cpu_busy_sum) AS cpu_busy_sum, max(v.cpu_busy_max) AS cpu_busy_max,
+  min(v.memory_used_min)::float8 AS memory_low,
+  (sum(v.memory_used_sum) / sum(v.samples))::float8 AS memory_used,
+  max(v.memory_used_max)::float8 AS memory_high,
+  max(v.memory_total_max)::float8 AS memory_total,
+  min(v.load_1_min) AS load_low, (sum(v.load_1_sum) / sum(v.samples))::float8 AS load,
+  max(v.load_1_max) AS load_high
+`;
 
-const intervalOf = (ms: number) => `${String(ms / 1000)} seconds`;
+// `edges` as a PostgreSQL array of times, for width_bucket to find the bucket
+// each rollup falls in by binary search, as no join by range could.
+const edgeArray = (edges: readonly number[]) =>
+  `{${edges.map((t) => new Date(t).toISOString()).join(',')}}`;
 
-// System `name`'s Vitals from the 5-minute rollups from the bucket holding
-// `from` up to `to`, in buckets of `widthMs`: each its CPU, memory, and 1-minute
-// load, averaged over its samples, with the lowest and highest. A width of 5
-// minutes returns the rollups as they are.
+// System `name`'s 5-minute Vitals rollups from the one holding `from` up to `to`.
+const readVitalsRollups = (
+  sql: SQL,
+  { from, name, to }: { from: number; name: string; to: number },
+): Promise<VitalsRow[]> => sql`
+  SELECT v.system, v.bucket, ${sql.unsafe(VITALS)}
+  FROM vitals_rollups v
+  WHERE v.system = ${name} AND v.bucket >= ${new Date(bucketStart(from))} AND v.bucket < ${new Date(to)}
+  GROUP BY v.system, v.bucket
+  ORDER BY v.bucket
+`;
+
+// System `name`'s Vitals up to `to` in the buckets of `edges`, from their
+// 5-minute rollups.
 const readVitalsBuckets = (
   sql: SQL,
-  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
+  { edges, name, to }: { edges: readonly number[]; name: string; to: number },
 ): Promise<VitalsRow[]> => sql`
-  WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width)
-  SELECT system, date_bin(w.width, bucket, ${sql.unsafe(ORIGIN)}) AS bucket,
-         sum(samples)::int AS samples, min(cpu_busy_min) AS cpu_busy_min,
-         sum(cpu_busy_sum) AS cpu_busy_sum, max(cpu_busy_max) AS cpu_busy_max,
-         min(memory_used_min)::float8 AS memory_low,
-         (sum(memory_used_sum) / sum(samples))::float8 AS memory_used,
-         max(memory_used_max)::float8 AS memory_high,
-         max(memory_total_max)::float8 AS memory_total,
-         min(load_1_min) AS load_low, (sum(load_1_sum) / sum(samples))::float8 AS load,
-         max(load_1_max) AS load_high
-  FROM vitals_rollups, w
-  WHERE system = ${name}
-    AND bucket >= date_bin(w.width, ${new Date(from)}::timestamptz, ${sql.unsafe(ORIGIN)})
-    AND bucket < ${new Date(to)}
+  WITH e AS (SELECT ${edgeArray(edges)}::timestamptz[] AS edges)
+  SELECT v.system, e.edges[width_bucket(v.bucket, e.edges)] AS bucket, ${sql.unsafe(VITALS)}
+  FROM vitals_rollups v, e
+  WHERE v.system = ${name} AND v.bucket >= ${new Date(edges[0] ?? to)}
+    AND v.bucket < ${new Date(Math.min(to, edges.at(-1) ?? to))}
   GROUP BY 1, 2
   ORDER BY 2
 `;
 
-// A 5-minute rollup holds a reboot when its smallest uptime is under this, and
-// under the uptime of the rollup before it, which a later rollup of the same
-// boot is not.
+// The System's first 5-minute rollup holds a reboot when its smallest uptime
+// is under this. Any later one holds a reboot when its smallest uptime is below
+// the one before it: however late after the boot the Collector began, uptime
+// only falls when the System starts again, and it keeps counting through a
+// laptop's sleep.
 const BOOTED_WITHIN_S = 300;
 
 // The start of each 5-minute rollup of System `name` from `from` up to `to`
@@ -193,84 +218,44 @@ const readReboots = async (
   sql: SQL,
   { from, name, to }: { from: number; name: string; to: number },
 ): Promise<number[]> => {
+  const fromAt = new Date(from);
   const rows: { bucket: Date }[] = await sql`
     SELECT bucket FROM (
-      SELECT bucket, uptime_min, lag(uptime_min) OVER (ORDER BY bucket) AS before
+      SELECT bucket, uptime_min,
+             coalesce(
+               lag(uptime_min) OVER (ORDER BY bucket),
+               (SELECT p.uptime_min FROM vitals_rollups p
+                WHERE p.system = ${name} AND p.bucket < ${fromAt}
+                ORDER BY p.bucket DESC LIMIT 1)
+             ) AS before
       FROM vitals_rollups
-      WHERE system = ${name} AND bucket >= ${new Date(from - BUCKET_MS)} AND bucket < ${new Date(to)}
+      WHERE system = ${name} AND bucket >= ${fromAt} AND bucket < ${new Date(to)}
     ) x
-    WHERE uptime_min < ${BOOTED_WITHIN_S} AND (before IS NULL OR before > uptime_min)
-      AND bucket >= ${new Date(from)}
+    WHERE CASE WHEN before IS NULL THEN uptime_min < ${BOOTED_WITHIN_S} ELSE uptime_min < before END
     ORDER BY bucket
   `;
   return rows.map(({ bucket }) => bucket.getTime());
 };
 
-type CostRow = { bucket: Date; cost_usd: number; harness: string; unpriced: number };
-
-// The list-price cost of System `name`'s requests from `from` up to `to`, per
-// bucket of `widthMs` and Harness. As on the Agents chart (ADR-0016), a
-// Session whose requests all fall in one bucket takes its stored total; only
-// a Session crossing a bucket's edge, or the range's, is priced request by
-// request.
+// The list-price cost of System `name`'s requests up to `now` in each bucket
+// of `edges`, per Harness, priced as the Agents chart prices a bar (see
+// readCells), so a bar here and Agents' bar for the System on that day agree.
 const readCostBuckets = async (
   sql: SQL,
-  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
+  { edges, name, now }: { edges: readonly number[]; name: string; now: number },
 ): Promise<CostBucket[]> => {
-  const [fromAt, toAt] = [new Date(from), new Date(to)];
-  const rows: CostRow[] = await sql`
-    WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width),
-    spans AS MATERIALIZED (
-      SELECT k.harness, k.source, k.session_id, f.first_request_at, k.last_request_at,
-             f.first_request_at >= ${fromAt} AND k.last_request_at < ${toAt}
-               AND date_bin(w.width, f.first_request_at, ${sql.unsafe(ORIGIN)})
-                 = date_bin(w.width, k.last_request_at, ${sql.unsafe(ORIGIN)}) AS whole
-      FROM w, (
-        SELECT harness, source, session_id, max(ended_at) AS last_request_at
-        FROM insight.session_stretches
-        WHERE system = ${name} AND ended_at >= ${fromAt}
-        GROUP BY harness, source, session_id
-      ) k
-      CROSS JOIN LATERAL (
-        SELECT min(x.started_at) AS first_request_at
-        FROM insight.session_stretches x
-        WHERE (x.harness, x.system, x.source, x.session_id)
-            = (k.harness, ${name}, k.source, k.session_id)
-      ) f
-      WHERE f.first_request_at < ${toAt}
-    ),
-    costs AS (
-      SELECT date_bin(w.width, k.first_request_at, ${sql.unsafe(ORIGIN)}) AS bucket, k.harness,
-             t.priced_cost_usd AS cost_usd, t.unpriced_requests AS unpriced
-      FROM w, spans k
-      CROSS JOIN LATERAL (
-        SELECT x.priced_cost_usd, x.unpriced_requests
-        FROM insight.session_totals x
-        WHERE (x.harness, x.system, x.source, x.session_id)
-            = (k.harness, ${name}, k.source, k.session_id)
-        OFFSET 0
-      ) t
-      WHERE k.whole
-      UNION ALL
-      SELECT date_bin(w.width, r.at, ${sql.unsafe(ORIGIN)}), k.harness, r.cost_usd,
-             (r.cost_usd IS NULL)::int
-      FROM w, spans k
-      JOIN insight.requests r
-        ON (r.harness, r.system, r.source, r.session_id) = (k.harness, ${name}, k.source, k.session_id)
-      WHERE NOT k.whole AND r.at >= ${fromAt} AND r.at < ${toAt}
-    )
-    SELECT bucket, harness, coalesce(sum(cost_usd), 0)::float8 AS cost_usd,
-           coalesce(sum(unpriced), 0)::int AS unpriced
-    FROM costs
-    GROUP BY bucket, harness
-    ORDER BY bucket, harness
-  `;
-  return rows.map((row): CostBucket => ({
-    costUsd: row.cost_usd,
-    harness: row.harness,
-    t: row.bucket.getTime(),
-    unpriced: row.unpriced,
-  }));
+  const spans = edgeSpans(edges);
+  const period = { from: new Date(edges[0] ?? now), to: new Date(now) };
+  const costs = new Map<string, CostBucket>();
+  for (const row of await readCells(sql, period, spans, name)) {
+    const t = spans[row.bucket]?.start ?? 0;
+    const key = JSON.stringify([t, row.harness]);
+    const cost = costs.get(key) ?? { costUsd: 0, harness: row.harness, t, unpriced: 0 };
+    cost.costUsd += row.priced_cost_usd;
+    cost.unpriced += row.unpriced_requests;
+    costs.set(key, cost);
+  }
+  return [...costs.values()].toSorted((a, b) => a.t - b.t || a.harness.localeCompare(b.harness));
 };
 
 // How many Sessions of System `name` worked, by a stretch of their requests,
@@ -287,21 +272,18 @@ const countSessions = async (
   return row?.n ?? 0;
 };
 
-// The cost bars of the long ranges are a day wide at both: 3-hour bars over
-// 30 days would be too thin to read.
-const COST_BUCKET_MS = 24 * 60 * 60_000;
-
-// What the long ranges draw in place of Session lanes.
+// What the long ranges draw in place of Session lanes, from the first edge of
+// each bucket list, so every chart and count starts at the same day.
 const readLongHistory = async (
   sql: SQL,
-  window: { from: number; name: string; to: number },
+  { edges, name, now }: { edges: LongEdges; name: string; now: number },
 ): Promise<LongHistory> => {
   const [costs, sessions, reboots] = await Promise.all([
-    readCostBuckets(sql, { ...window, widthMs: COST_BUCKET_MS }),
-    countSessions(sql, window),
-    readReboots(sql, window),
+    readCostBuckets(sql, { edges: edges.days, name, now }),
+    countSessions(sql, { from: edges.days[0] ?? now, name, to: now }),
+    readReboots(sql, { from: edges.buckets[0] ?? now, name, to: now }),
   ]);
-  return { costBucketMs: COST_BUCKET_MS, costs, reboots, sessions };
+  return { changeEdges: edges.changes, costs, dayEdges: edges.days, reboots, sessions };
 };
 
 export type CoresRow = {
@@ -383,42 +365,60 @@ const toSessions = (rows: readonly StretchRow[]): SessionRow[] => {
   return [...sessions.values()];
 };
 
-// The cores each Harness process of System `name` kept busy per bucket of
-// `widthMs` from `from` up to `to`, from the 5-minute process rollups: the
-// rise of its cumulative CPU time across the bucket over the bucket's width,
-// so a process that ran part of a bucket averages over all of it. The long
-// ranges read only these rollups, over the whole range: they are kept a year,
-// where the raw readings end at 14 days, and one source per range keeps a
-// bucket from mixing the two.
+// The cores each Harness process of System `name` kept busy in each bucket of
+// `edges` up to `now`, from the 5-minute process rollups: the rise of its
+// cumulative CPU time across the bucket over the time the bucket has covered,
+// its whole width but for the newest, which ends at `now`. A process that ran
+// part of a bucket averages over all of it. The long ranges read only these
+// rollups, over the whole range: they are kept a year, where the raw readings
+// end at 14 days, and one source per range keeps a bucket from mixing the two.
 const readProcessRollups = (
   sql: SQL,
-  { from, name, to, widthMs }: { from: number; name: string; to: number; widthMs: number },
-): Promise<CoresRow[]> => sql`
-  WITH w AS (SELECT ${intervalOf(widthMs)}::interval AS width)
-  SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
-         date_bin(w.width, r.bucket, ${sql.unsafe(ORIGIN)}) AS bucket,
-         CASE WHEN sum(r.samples) > 1
-              THEN ((max(r.cpu_micros_max) - min(r.cpu_micros_min)) / 1e6
-                    / ${widthMs / 1000})::float8
-         END AS cores
-  FROM w, harness_processes p
-  JOIN harness_process_rollups r ON r.process = p.id
-  WHERE p.system = ${name}
-    AND p.started_at < ${new Date(to)}
-    AND (p.ended_at IS NULL OR p.ended_at >= ${new Date(from)})
-    AND r.bucket >= date_bin(w.width, ${new Date(from)}::timestamptz, ${sql.unsafe(ORIGIN)})
-    AND r.bucket < ${new Date(to)}
-  GROUP BY p.id, w.width, 6
-  ORDER BY min(p.started_at), p.id, 6
-`;
+  { edges, name, now }: { edges: readonly number[]; name: string; now: number },
+): Promise<CoresRow[]> => {
+  const [fromAt, toAt] = [new Date(edges[0] ?? now), new Date(now)];
+  return sql`
+    WITH e AS (SELECT ${edgeArray(edges)}::timestamptz[] AS edges)
+    SELECT process_id, harness, pid, cwd, repository, edges[i] AS bucket,
+           CASE WHEN samples > 1
+                THEN (cpu_seconds / extract(epoch FROM least(edges[i + 1], ${toAt}) - edges[i]))::float8
+           END AS cores
+    FROM (
+      SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
+             min(p.started_at) AS started_at, e.edges, width_bucket(r.bucket, e.edges) AS i,
+             sum(r.samples) AS samples,
+             (max(r.cpu_micros_max) - min(r.cpu_micros_min)) / 1e6 AS cpu_seconds
+      FROM harness_processes p
+      JOIN harness_process_rollups r ON r.process = p.id
+      CROSS JOIN e
+      WHERE p.system = ${name}
+        AND p.started_at < ${toAt}
+        AND (p.ended_at IS NULL OR p.ended_at >= ${fromAt})
+        AND r.bucket >= ${fromAt} AND r.bucket < ${toAt}
+        AND r.bucket < ${new Date(edges.at(-1) ?? now)}
+      GROUP BY p.id, e.edges, i
+    ) x
+    ORDER BY started_at, process_id, i
+  `;
+};
+
+// How many Harness processes the long ranges draw by name, the busiest over
+// the range; the rest are summed into one.
+const PROCESSES_SHOWN = 8;
 
 // One System over the `range` that ends at `now`: its facts, Vitals, Harness
 // processes, Sessions, and Conditions, on one time axis. A System that is no
 // longer paired keeps its history and reads as unpaired. Undefined for a name
-// that is no System. Read-only.
+// that is no System. Over 30 d and 1 y its buckets are local days, or 3 hours
+// of the local clock, in `timeZone`, the viewer's. Read-only.
 const readSystemDetailSnapshot = async (
   sql: SQL,
-  { name, now, range }: { name: string; now: number; range: Range },
+  {
+    name,
+    now,
+    range,
+    timeZone = 'UTC',
+  }: { name: string; now: number; range: Range; timeZone?: string | undefined },
 ): Promise<SystemDetail | undefined> => {
   const [system]: SystemRow[] = await sql`
     SELECT s.cpu_cores, s.last_seen_at, s.sleeps, s.collector_platform, s.collector_arch, s.collector_version,
@@ -433,8 +433,9 @@ const readSystemDetailSnapshot = async (
   const from = now - RANGE_MS[range];
   const [fromAt, toAt] = [new Date(from), new Date(now)];
   const firstBucket = new Date(bucketStart(from));
-  const long = isLongRange(range);
   const widthMs = RANGE_BUCKET_MS[range];
+  const edges = isLongRange(range) ? longEdges(range, from, now, timeZone) : undefined;
+  const long = edges !== undefined;
   const [
     installs,
     latest,
@@ -468,9 +469,11 @@ const readSystemDetailSnapshot = async (
       FROM vitals_samples WHERE system = ${name}
       ORDER BY t DESC LIMIT 1
     `,
-    readVitalsBuckets(sql, { from, name, to: now, widthMs }),
-    long
-      ? readProcessRollups(sql, { from, name, to: now, widthMs })
+    edges === undefined
+      ? readVitalsRollups(sql, { from, name, to: now })
+      : readVitalsBuckets(sql, { edges: edges.buckets, name, to: now }),
+    edges !== undefined
+      ? readProcessRollups(sql, { edges: edges.buckets, name, now })
       : // Cores per bucket from the first and last reading in it: CPU time is
         // cumulative, so its rise over the time between is the cores kept
         // busy. Rollups keep no reading times, and raw readings outlast 7 d.
@@ -520,7 +523,7 @@ const readSystemDetailSnapshot = async (
   const sleeps = system.sleeps === true;
   const [transitions, longHistory] = await Promise.all([
     readConditionTransitions(sql, marks),
-    long ? readLongHistory(sql, { from, name, to: now }) : undefined,
+    edges === undefined ? undefined : readLongHistory(sql, { edges, name, now }),
   ]);
   return {
     bucketMs: widthMs,
@@ -530,10 +533,11 @@ const readSystemDetailSnapshot = async (
     cpu,
     cpuCores: system.cpu_cores ?? undefined,
     diskTrends,
+    edges: edges?.buckets,
     from,
     gaps: findGaps(
       cpu.map(({ t }) => t),
-      { from, now, widthMs },
+      { edges: edges?.buckets, from, now },
     ),
     harnesses: installs[0]?.installs
       .map(({ harness, location, version }): HarnessInstall => ({ harness, location, version }))
@@ -588,7 +592,10 @@ const readSystemDetailSnapshot = async (
       system.collector_platform === null || system.collector_arch === null
         ? undefined
         : { arch: system.collector_arch, os: system.collector_platform },
-    processes: toProcesses(cores),
+    processes:
+      edges === undefined
+        ? toProcesses(cores)
+        : foldQuietProcesses(toProcesses(cores), PROCESSES_SHOWN),
     range,
     sessions: toSessions(stretches),
     silencedUntil: silenced.get(name),
@@ -855,27 +862,43 @@ const spread = (average: number | null, low: number | null, high: number | null)
 // System. Read-only.
 export const readBucket = (
   sql: SQL,
-  { at, name, now, range }: { at: number | undefined; name: string; now: number; range: LongRange },
+  {
+    at,
+    name,
+    now,
+    range,
+    timeZone = 'UTC',
+  }: {
+    at: number | undefined;
+    name: string;
+    now: number;
+    range: LongRange;
+    timeZone?: string | undefined;
+  },
 ): Promise<BucketInspection | undefined> =>
   sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
-    const known: unknown[] = await tx`
-      SELECT 1 FROM systems WHERE name = ${name}
-      UNION ALL SELECT 1 FROM paired_systems WHERE system = ${name}
+    const [known]: { paired: boolean; system: boolean }[] = await tx`
+      SELECT EXISTS (SELECT 1 FROM systems WHERE name = ${name}) AS system,
+             EXISTS (SELECT 1 FROM paired_systems WHERE system = ${name}) AS paired
     `;
-    if (known.length === 0) {
+    if (known === undefined || (!known.system && !known.paired)) {
       return undefined;
     }
-    const bucketMs = RANGE_BUCKET_MS[range];
-    const t = Math.floor((at ?? now) / bucketMs) * bucketMs;
-    const end = t + bucketMs;
+    // The chart's buckets and days, so the inspector reads the bucket drawn.
+    const edges = longEdges(range, now - RANGE_MS[range], now, timeZone);
+    const first = edges.buckets[0] ?? now;
+    const holding = (list: readonly number[]) =>
+      spanHolding(list, Math.min(now, Math.max(first, at ?? now))) ?? { end: now, start: now };
+    const { end, start: t } = holding(edges.buckets);
+    const day = range === '30d' ? holding(edges.days) : undefined;
     const [startAt, endAt] = [new Date(t), new Date(end)];
-    const [vitals, reboots, costs, sessions, processes, conditions]: [
+    const [vitals, reboots, costs, sessions, processes, marks]: [
       BucketVitalsRow[],
       number[],
-      CostBucket[],
+      Awaited<ReturnType<typeof readCells>>,
       number,
       BucketProcessRow[],
-      { kind: string; level: string; subject: string }[],
+      ConditionRow[],
     ] = await Promise.all([
       tx`
         SELECT count(*)::int AS rollups,
@@ -891,7 +914,13 @@ export const readBucket = (
         WHERE system = ${name} AND bucket >= ${startAt} AND bucket < ${endAt}
       `,
       readReboots(tx, { from: t, name, to: end }),
-      readCostBuckets(tx, { from: t, name, to: end, widthMs: bucketMs }),
+      // The bucket's cost, then its day's.
+      readCells(
+        tx,
+        { from: new Date(day?.start ?? t), to: new Date(now) },
+        [{ end, start: t }, ...(day === undefined ? [] : [day])],
+        name,
+      ),
       countSessions(tx, { from: t, name, to: end }),
       tx`
         SELECT p.id::float8 AS process_id, p.harness, p.pid, p.cwd, p.repository,
@@ -913,7 +942,8 @@ export const readBucket = (
         ORDER BY cpu_hours DESC NULLS LAST, p.started_at, p.id
       `,
       tx`
-        SELECT kind, level, subject FROM conditions
+        SELECT id, system, kind, level, subject, raised_at, cleared_at, latest_reason
+        FROM conditions
         WHERE system = ${name} AND raised_at < ${endAt}
           AND (cleared_at IS NULL OR cleared_at >= ${startAt})
         ORDER BY raised_at, id
@@ -922,15 +952,27 @@ export const readBucket = (
     const row = vitals[0];
     const memory =
       row === undefined ? undefined : spread(row.memory_average, row.memory_low, row.memory_high);
+    const costOf = (bucket: number) => {
+      const rows = costs.filter((cost) => cost.bucket === bucket);
+      return {
+        costUsd: rows.reduce((total, cost) => total + cost.priced_cost_usd, 0),
+        unpricedRequests: rows.reduce((total, cost) => total + cost.unpriced_requests, 0),
+      };
+    };
+    const transitions = await readConditionTransitions(tx, marks);
+    // The Conditions the lane draws, so the inspector names no note the open
+    // Conditions leave to Maintenance or Services.
+    const conditions = laneConditions(
+      marks.map((mark) => toMark(mark, transitions.get(mark.id) ?? [])),
+      { paired: known.paired, window: { from: t, to: end - 1 } },
+    );
     return {
-      bucketMs,
-      conditions: conditions.map((condition) => ({
-        kind: conditionKind(condition.kind),
-        level: ConditionLevelSchema.parse(condition.level),
-        subject: condition.subject,
-      })),
-      costUsd: costs.reduce((total, cost) => total + cost.costUsd, 0),
+      bucketMs: RANGE_BUCKET_MS[range],
+      conditions: conditions.map(({ kind, level, subject }) => ({ kind, level, subject })),
+      ...costOf(0),
       cpu: row === undefined ? undefined : spread(row.cpu_average, row.cpu_low, row.cpu_high),
+      day: day === undefined ? undefined : { ...day, ...costOf(1) },
+      end,
       load1: row === undefined ? undefined : spread(row.load_average, row.load_low, row.load_high),
       memory:
         memory === undefined || row?.memory_total == null
@@ -950,7 +992,6 @@ export const readBucket = (
       samplesPruned: t < now - RAW_KEPT_MS,
       sessions,
       t,
-      unpricedRequests: costs.reduce((total, cost) => total + cost.unpriced, 0),
     };
   });
 

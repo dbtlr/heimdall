@@ -202,8 +202,16 @@ describe('parseDetailInput', () => {
     expect(parseDetailInput({ name: 'server-1', range: '7d' })).toEqual({
       name: 'server-1',
       range: '7d',
+      timeZone: undefined,
     });
-    expect(parseDetailInput({ name: 'server-1' })).toEqual({ name: 'server-1', range: '12h' });
+    expect(parseDetailInput({ name: 'server-1' })).toEqual({
+      name: 'server-1',
+      range: '12h',
+      timeZone: undefined,
+    });
+    expect(
+      parseDetailInput({ name: 'server-1', range: '1y', timeZone: 'America/Los_Angeles' }).timeZone,
+    ).toBe('America/Los_Angeles');
   });
 
   test('refuses a missing System or a range that is not offered', () => {

@@ -21,6 +21,7 @@ const detail = (
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 300_000 }],
   cpuCores: undefined,
   diskTrends: [],
+  edges: undefined,
   from: FROM,
   gaps: [],
   harnesses: [],
@@ -258,6 +259,67 @@ test('names one current core in the load note and reference line', async () => {
 
 const DAY = 24 * 3_600_000;
 
+// UTC days from the one holding `from` through the one after now.
+const dayEdges = (from: number) => {
+  const edges: number[] = [];
+  for (let t = Math.floor(from / DAY) * DAY; t <= NOW + DAY; t += DAY) {
+    edges.push(t);
+  }
+  return edges;
+};
+
+// Where each change diamond sits along the lane, in percent.
+const diamonds = (html: string) =>
+  [...html.matchAll(/left:([0-9.]+)%"[^>]*title="[0-9]+ changes?"/gu)].map(([, left]) =>
+    Number(left),
+  );
+
+test('over 30 days, the change diamonds of the first and the current day stay on the chart', async () => {
+  const from = NOW - 30 * DAY;
+  const days = dayEdges(from);
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    changes: [
+      {
+        at: from + 3_600_000,
+        from: '1',
+        kind: 'version',
+        service: 'web',
+        system: 'server-1',
+        to: '2',
+      },
+      {
+        at: NOW - 3_600_000,
+        from: '2',
+        kind: 'version',
+        service: 'web',
+        system: 'server-1',
+        to: '3',
+      },
+    ],
+    edges: days,
+    from,
+    long: {
+      changeEdges: days,
+      costs: [],
+      dayEdges: days,
+      reboots: [from - 3_600_000],
+      sessions: 0,
+    },
+    range: '30d',
+  });
+
+  const today = days.findLast((edge) => edge <= NOW) ?? NOW;
+  const first = days[1] ?? NOW;
+  const percent = (t: number) => ((t - from) / (NOW - from)) * 100;
+  const [early, late] = diamonds(html);
+  expect(early).toBeCloseTo(percent((from + first) / 2), 6);
+  expect(late).toBeCloseTo(percent((today + NOW) / 2), 6);
+  expect(late).toBeLessThan(100);
+  // A reboot in the first bucket, before the range starts, stands at its start.
+  expect(html).toMatch(/left:0%"[^>]*title="Rebooted"/u);
+});
+
 test('over a year: day buckets with bands, cost bars, Conditions folded by kind, and the bucket inspector', async () => {
   const year = NOW - 365 * DAY;
   const html = await render(
@@ -274,10 +336,12 @@ test('over a year: day buckets with bands, cost bars, Conditions folded by kind,
         transitions: [],
       })),
       cpuCores: 8,
+      edges: dayEdges(year),
       from: year,
       long: {
-        costBucketMs: DAY,
+        changeEdges: [],
         costs: [{ costUsd: 12, harness: 'claude-code', t: NOW - 3 * DAY, unpriced: 0 }],
+        dayEdges: dayEdges(year),
         reboots: [NOW - 40 * DAY],
         sessions: 1214,
       },
@@ -289,6 +353,8 @@ test('over a year: day buckets with bands, cost bars, Conditions folded by kind,
       conditions: [],
       costUsd: 12,
       cpu: { average: 20, high: 90, low: 2 },
+      day: undefined,
+      end: NOW - 19 * DAY,
       load1: { average: 1, high: 2, low: 0 },
       memory: { average: 4 * GIB, high: 5 * GIB, low: 3 * GIB, totalBytes: 10 * GIB },
       processes: [],

@@ -268,6 +268,41 @@ describe('chart rows', () => {
     ).toEqual({ band: [1, 4], t: start + DAY / 2, value: 2.5 });
   });
 
+  test("lay a long range's rows at the middle of each bucket the edges give, a 25-hour day as one", () => {
+    const day = Date.UTC(2026, 10, 1, 7);
+    const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR];
+    const span = { from: day - 12 * HOUR, to: day + 40 * HOUR };
+    expect(loadRows([{ high: 4, low: 1, t: day, value: 2.5 }], span, DAY, edges)).toEqual([
+      { band: null, t: day - 12 * HOUR, value: null },
+      { band: [1, 4], t: day + 12.5 * HOUR, value: 2.5 },
+      { band: null, t: day + 37 * HOUR, value: null },
+    ]);
+    expect(
+      memoryRows(
+        [{ highBytes: 3 * GIB, lowBytes: GIB, t: day, totalBytes: 4 * GIB, usedBytes: 2 * GIB }],
+        span,
+        DAY,
+        edges,
+      ).map(({ t }) => t),
+    ).toEqual([day - 12 * HOUR, day + 12.5 * HOUR, day + 37 * HOUR]);
+    expect(
+      processRows(
+        [
+          {
+            harness: 'codex',
+            pid: 1,
+            points: [{ cores: 1, t: day }],
+            processId: 7,
+            project: undefined,
+          },
+        ],
+        span,
+        DAY,
+        edges,
+      )[1],
+    ).toEqual({ p7: 1, t: day + 12.5 * HOUR });
+  });
+
   test('give each process its cores under its own key', () => {
     const rows = processRows(
       [

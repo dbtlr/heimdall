@@ -28,13 +28,14 @@ export const loadDomain = (buckets: readonly LoadBucket[], cores?: number, band 
 };
 
 // The 1-minute load average per bucket, 5 minutes unless `bucketMs` says
-// otherwise, as a line over a gradient fill on a scale from 0, with each
+// otherwise or `edges` lays a long range's, as a line over a gradient fill on a scale from 0, with each
 // bucket's low to high as a band when `band` asks for it. A gap in the Vitals
 // is a break in the line.
 export function LoadPlot({
   band = false,
   bucketMs,
   buckets,
+  edges,
   cores,
   height,
   scaleBeside = false,
@@ -43,6 +44,7 @@ export function LoadPlot({
   band?: boolean;
   bucketMs?: number;
   buckets: readonly LoadBucket[];
+  edges?: readonly number[] | undefined;
   cores?: number | undefined;
   height: number;
   scaleBeside?: boolean;
@@ -78,7 +80,7 @@ export function LoadPlot({
         role="img"
         style={{ height }}
       >
-        <ComposedChart data={loadRows(buckets, window, bucketMs)} margin={NO_MARGIN}>
+        <ComposedChart data={loadRows(buckets, window, bucketMs, edges)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"

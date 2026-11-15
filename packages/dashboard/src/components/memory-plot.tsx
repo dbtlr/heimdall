@@ -25,7 +25,8 @@ const gibLabel =
     return value === top ? `${figure} GiB` : figure;
   };
 
-// Memory used per bucket, 5 minutes unless `bucketMs` says otherwise, as a
+// Memory used per bucket, 5 minutes unless `bucketMs` says otherwise or
+// `edges` lays a long range's (see bucketSpans), as a
 // line over a gradient fill, with each bucket's low to high as a band when
 // `band` asks for it, on a scale
 // from 0 to the memory the System has, widened to a whole GiB from 10 GiB up
@@ -37,6 +38,7 @@ export function MemoryPlot({
   band = false,
   bucketMs,
   buckets,
+  edges,
   height = HEIGHT,
   limitPercent,
   scaleBeside = false,
@@ -45,6 +47,7 @@ export function MemoryPlot({
   band?: boolean;
   bucketMs?: number;
   buckets: readonly MemoryBucket[];
+  edges?: readonly number[] | undefined;
   height?: number;
   limitPercent?: number | undefined;
   scaleBeside?: boolean;
@@ -82,7 +85,7 @@ export function MemoryPlot({
         role="img"
         style={{ height }}
       >
-        <ComposedChart data={memoryRows(buckets, window, bucketMs)} margin={NO_MARGIN}>
+        <ComposedChart data={memoryRows(buckets, window, bucketMs, edges)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"

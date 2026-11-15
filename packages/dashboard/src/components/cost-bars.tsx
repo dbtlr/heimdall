@@ -1,3 +1,4 @@
+import { spanHolding } from '../lib/bucket-edges.ts';
 import { niceDomain } from '../lib/chart-scale.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
 import { costBars } from '../lib/long-history.ts';
@@ -10,19 +11,19 @@ import { ScaledPlot } from './plot-scale.tsx';
 // A whole-dollar figure for the scale.
 const dollars = (value: number): string => `$${String(Math.round(value))}`;
 
-// The list-price cost of the System's requests per bucket over a long range,
-// one bar per bucket stacked by Harness in its color, on a scale from $0 to the
-// costliest bucket. A bar spans its bucket on the shared axis, so it lines up
-// with the Vitals buckets above and below it.
+// The list-price cost of the System's requests per local day over a long
+// range, one bar per day of `edges` stacked by Harness in its color, on a scale
+// from $0 to the costliest day. A bar spans its day on the shared axis, so it
+// lines up with the Vitals buckets above and below it.
 export function CostBars({
-  bucketMs,
   costs,
+  edges,
   height = 64,
   scaleBeside = false,
   window,
 }: {
-  bucketMs: number;
   costs: readonly CostBucket[];
+  edges: readonly number[];
   height?: number;
   scaleBeside?: boolean;
   window: Window;
@@ -41,7 +42,10 @@ export function CostBars({
       >
         <div aria-label="Agent cost per bucket" className="absolute inset-0" role="img">
           {bars.map((bar) => {
-            const { left, width } = spanBox({ end: bar.t + bucketMs, start: bar.t }, window);
+            const { left, width } = spanBox(
+              { end: spanHolding(edges, bar.t)?.end ?? bar.t, start: bar.t },
+              window,
+            );
             return (
               <div
                 className="absolute inset-y-0 flex flex-col-reverse"

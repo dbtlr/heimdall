@@ -38,18 +38,25 @@ export type CostBucket = { costUsd: number; harness: string; t: number; unpriced
 // What the 30 d and 1 y ranges draw in place of Session lanes and
 // per-Condition spans, which a year holds too many of to read.
 export type LongHistory = {
-  // Request cost per bucket of `costBucketMs` and Harness, from the first.
-  costBucketMs: number;
+  // The edges of the change counts' bins: the local days over 30 d, and the
+  // weeks from Monday over 1 y (see LongEdges).
+  changeEdges: number[];
+  // Request cost per local day and Harness, each starting at an edge of
+  // `dayEdges`.
   costs: CostBucket[];
+  dayEdges: number[];
   // When the System rebooted, by the 5-minute rollups: each one whose smallest
-  // uptime is under 5 minutes and below the uptime of the rollup before it.
+  // uptime is below the one before it, or, for the System's first rollup,
+  // under 5 minutes.
   reboots: number[];
   // How many Sessions had a request in the range.
   sessions: number;
 };
 
 // One Harness process over the window: the CPU cores its process tree kept
-// busy in each 5-minute bucket, null where the bucket before is missing.
+// busy in each bucket, null where the bucket before is missing. Over the long
+// ranges, past the busiest few, the rest are summed into one series with the
+// harness `other` and process id 0.
 export type ProcessSeries = {
   harness: string;
   pid: number;
@@ -89,7 +96,7 @@ export type HarnessInstall = { harness: string; location: string; version: strin
 
 export type SystemDetail = {
   // The width of each Vitals and process bucket: 5 minutes up to 7 d, wider
-  // over the long ranges.
+  // over the long ranges, where it is the usual width and `edges` the real one.
   bucketMs: number;
   // The System's Service changes over the range: versions and stops.
   changes: ServiceChange[];
@@ -102,6 +109,10 @@ export type SystemDetail = {
   // Each mount's growth over the 7 days up to its newest reading, for the
   // mounts with readings.
   diskTrends: DiskTrend[];
+  // Over 30 d and 1 y, the edges of the Vitals and process buckets in the
+  // viewer's zone, local days or 3 hours of the local clock (see LongEdges);
+  // undefined up to 7 d, whose buckets are `bucketMs` wide from the epoch.
+  edges: number[] | undefined;
   from: number;
   gaps: Gap[];
   // Each installed Harness, as the Collector last found them: empty for a
@@ -223,10 +234,15 @@ export type Spread = { average: number; high: number; low: number };
 // and the Sessions working in it, its Harness processes, and the Conditions
 // open in it.
 export type BucketInspection = {
+  // The usual width of the range's buckets; `t` to `end` is this one's.
   bucketMs: number;
   conditions: { kind: ConditionKind; level: ConditionLevel; subject: string }[];
   costUsd: number;
   cpu: Spread | undefined;
+  // Over 30 d, the local day holding the bucket, whose cost its cost bar
+  // shows; undefined over 1 y, where the bucket is that day.
+  day: { costUsd: number; end: number; start: number; unpricedRequests: number } | undefined;
+  end: number;
   load1: Spread | undefined;
   memory: (Spread & { totalBytes: number }) | undefined;
   processes: BucketProcess[];

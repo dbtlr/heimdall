@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test';
 
 import type { ConditionMark } from '../server/fleet-overview-types.ts';
 import type { ServiceChange } from '../server/home-types.ts';
-import { changeCounts, costBars, kindRows } from './long-history.ts';
+import {
+  binMarkPercent,
+  changeCounts,
+  costBars,
+  foldQuietProcesses,
+  kindRows,
+} from './long-history.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -72,11 +78,11 @@ describe('changeCounts', () => {
           paired: true,
         },
         YEAR,
-        7 * DAY,
+        [MONDAY - 7 * DAY, MONDAY, MONDAY + 7 * DAY, MONDAY + 14 * DAY + HOUR],
       ),
     ).toEqual([
-      { count: 2, t: MONDAY },
-      { count: 1, t: MONDAY + 7 * DAY },
+      { count: 2, end: MONDAY + 7 * DAY, t: MONDAY },
+      { count: 1, end: MONDAY + 14 * DAY + HOUR, t: MONDAY + 7 * DAY },
     ]);
   });
 
@@ -101,9 +107,61 @@ describe('changeCounts', () => {
           paired: true,
         },
         { from: NOW - 30 * DAY, to: NOW },
-        DAY,
+        [MONDAY - DAY, MONDAY, MONDAY + DAY],
       ),
-    ).toEqual([{ count: 1, t: MONDAY }]);
+    ).toEqual([{ count: 1, end: MONDAY + DAY, t: MONDAY }]);
+  });
+
+  test('count by the local days the edges give, a 25-hour day as one', () => {
+    // 1 Nov 2026 in Los Angeles: 07:00 UTC to 08:00 UTC the next day.
+    const day = Date.UTC(2026, 10, 1, 7);
+    expect(
+      changeCounts(
+        {
+          changes: [version(day + 30 * 60_000), version(day + 24.5 * HOUR)],
+          conditions: [],
+          paired: true,
+        },
+        { from: day - DAY, to: day + 2 * DAY },
+        [day, day + 25 * HOUR, day + 49 * HOUR],
+      ),
+    ).toEqual([{ count: 2, end: day + 25 * HOUR, t: day }]);
+  });
+});
+
+describe('binMarkPercent', () => {
+  const window = { from: 1000, to: 2000 };
+
+  test("sits in the middle of a bin's part inside the window", () => {
+    expect(binMarkPercent({ end: 1400, t: 1200 }, window)).toBe(30);
+    // Today's bin runs past now, and the first bin starts before the window.
+    expect(binMarkPercent({ end: 2600, t: 1800 }, window)).toBe(90);
+    expect(binMarkPercent({ end: 1200, t: 400 }, window)).toBe(10);
+  });
+});
+
+// A process with one point per cores figure, a millisecond apart.
+const series = (processId: number, cores: (number | null)[]) => ({
+  harness: 'codex',
+  pid: processId,
+  points: cores.map((value, index) => ({ cores: value, t: index })),
+  processId,
+  project: undefined,
+});
+
+describe('foldQuietProcesses', () => {
+  test('keep the busiest by name and sum the rest into one series', () => {
+    const folded = foldQuietProcesses(
+      [series(1, [0.1, null]), series(2, [2, 2]), series(3, [0.2, 0.3]), series(4, [1, 1])],
+      2,
+    );
+    expect(folded.map(({ processId }) => processId)).toEqual([2, 4, 0]);
+    expect(folded[2]).toMatchObject({ harness: 'other', pid: 0, project: '2 other processes' });
+    expect(folded[2]?.points.map(({ cores }) => cores)).toEqual([0.30000000000000004, 0.3]);
+  });
+
+  test('fold nothing when there are no more than it shows', () => {
+    expect(foldQuietProcesses([series(1, [1])], 8)).toHaveLength(1);
   });
 });
 

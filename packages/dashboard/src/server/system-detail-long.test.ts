@@ -7,6 +7,10 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
+import { localDays } from '../lib/home-agents.ts';
+import { readCostChart } from './agents-costs.ts';
+import { agentsPeriod } from './agents-overview.ts';
+import { readDayCosts } from './day-costs.ts';
 import { parseBucketInput, readBucket, readSystemDetail } from './system-detail.ts';
 
 beforeAll(async () => {
@@ -78,8 +82,12 @@ const price = (h: Hub) => h.db.sql`
   VALUES ('priced-model', '2020-01-01', 'bundled', 1000000, 2000000, 100000)
 `;
 
-const detail = async (h: Hub, range: '30d' | '1y' | '7d') => {
-  const found = await readSystemDetail(h.db.sql, { name: 'server-1', now: NOW, range });
+const detail = async (
+  h: Hub,
+  range: '30d' | '1y' | '7d',
+  { now = NOW, timeZone = 'UTC' }: { now?: number; timeZone?: string } = {},
+) => {
+  const found = await readSystemDetail(h.db.sql, { name: 'server-1', now, range, timeZone });
   if (found === undefined) {
     throw new Error('no detail for server-1');
   }
@@ -238,7 +246,8 @@ describe('the System page over 30 d and 1 y', () => {
 
     const { long } = await detail(h, '30d');
 
-    expect(long?.costBucketMs).toBe(DAY);
+    expect(long?.dayEdges[0]).toBe(TODAY - 30 * DAY);
+    expect(long?.dayEdges.at(-1)).toBe(TODAY + DAY);
     expect(long?.costs).toEqual([
       { costUsd: 10, harness: 'claude-code', t: TODAY - 3 * DAY, unpriced: 0 },
       { costUsd: 5, harness: 'codex', t: TODAY - DAY, unpriced: 0 },
@@ -262,6 +271,354 @@ describe('the System page over 30 d and 1 y', () => {
     const { long } = await detail(h, '1y');
 
     expect(long?.reboots).toEqual([boot]);
+  });
+});
+
+// Seconds from NOW to `t`, as the timeline fixtures take times.
+const offset = (t: number) => (t - NOW) / 1000;
+
+// What Agents' cost chart puts on `system` per bar over its 30 days, by the
+// bar's start.
+const agentsCosts = async (h: Hub, timeZone: string, system = 'server-1') => {
+  const chart = await readCostChart(h.db.sql, {
+    now: NOW,
+    period: agentsPeriod({ now: NOW, range: '30d', timeZone }),
+    range: '30d',
+    timeZone,
+  });
+  const byStart = new Map<number, number>();
+  for (const cell of chart.cells.filter((found) => found.system === system)) {
+    const start = chart.buckets[cell.bucket]?.start ?? 0;
+    byStart.set(start, (byStart.get(start) ?? 0) + cell.pricedCostUsd);
+  }
+  return byStart;
+};
+
+const barTotals = (costs: readonly { costUsd: number; t: number }[]) => {
+  const totals = new Map<number, number>();
+  for (const { costUsd, t } of costs) {
+    totals.set(t, (totals.get(t) ?? 0) + costUsd);
+  }
+  return totals;
+};
+
+describe("the long ranges in the viewer's zone", () => {
+  // 20 Sep 2026 in Berlin, CEST, starts at 22:00 UTC the day before.
+  const BERLIN_20 = Date.UTC(2026, 8, 19, 22);
+  const BERLIN_19 = BERLIN_20 - DAY;
+
+  const storeBerlinSessions = async (h: Hub) => {
+    await price(h);
+    // 00:30 and 00:40 on the 20th in Berlin, 22:30 UTC on the 19th: $10.
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [offset(BERLIN_20 + 30 * MINUTE), offset(BERLIN_20 + 40 * MINUTE)],
+      system: 'server-1',
+    });
+    // Across Berlin's midnight: $5 on each day.
+    await addSession(h.db.sql, {
+      harness: 'codex',
+      id: 's2',
+      model: 'priced-model',
+      requests: [offset(BERLIN_20 - 10 * MINUTE), offset(BERLIN_20 + 10 * MINUTE)],
+      system: 'server-1',
+    });
+    // Noon on the 20th in Berlin: $5.
+    await addSession(h.db.sql, {
+      id: 's3',
+      model: 'priced-model',
+      requests: [offset(BERLIN_20 + 12 * HOUR)],
+      system: 'server-1',
+    });
+    // Another System's Session the next day stays off server-1's bars.
+    await addSession(h.db.sql, {
+      id: 's4',
+      model: 'priced-model',
+      requests: [offset(BERLIN_20 + DAY + HOUR)],
+      system: 'laptop-1',
+    });
+  };
+
+  test('a year in Berlin bins Vitals and cost by local day, as Agents and Home count that day', async () => {
+    await using h = await startHub();
+    await hear(h);
+    await hear(h, 'laptop-1');
+    await storeRollups(h, [
+      flat(BERLIN_20 - BUCKET),
+      flat(BERLIN_20),
+      flat(BERLIN_20 + DAY - BUCKET),
+    ]);
+    await storeBerlinSessions(h);
+
+    const found = await detail(h, '1y', { timeZone: 'Europe/Berlin' });
+
+    // 6 Oct 2025, the range's first day, starts at 22:00 UTC on the 5th in Berlin.
+    expect(found.edges?.[0]).toBe(Date.UTC(2025, 9, 5, 22));
+    expect(found.edges?.at(-1)).toBe(Date.UTC(2026, 9, 6, 22));
+    expect(found.cpu.map(({ t }) => t)).toEqual([BERLIN_19, BERLIN_20]);
+    expect(found.memory.map(({ t }) => t)).toEqual([BERLIN_19, BERLIN_20]);
+    const bars = barTotals(found.long?.costs ?? []);
+    expect(bars).toEqual(
+      new Map([
+        [BERLIN_19, 5],
+        [BERLIN_20, 20],
+      ]),
+    );
+    const agents = await agentsCosts(h, 'Europe/Berlin');
+    expect(agents.get(BERLIN_19)).toBe(bars.get(BERLIN_19));
+    expect(agents.get(BERLIN_20)).toBe(bars.get(BERLIN_20));
+    // Home's days: the 20th is 16 days before the 6th.
+    const [home] = await readDayCosts(h.db.sql, localDays(NOW, 'Europe/Berlin', 17));
+    expect(home?.pricedCostUsd).toBe(bars.get(BERLIN_20));
+    expect(found.long?.dayEdges).toEqual(found.edges);
+    // Weeks from Monday in Berlin: 6 Oct 2025 was a Monday.
+    expect(found.long?.changeEdges[1]).toBe(Date.UTC(2025, 9, 12, 22));
+  });
+
+  test('30 days in Berlin bins by 3 hours of the local clock from local midnight, and the cost by local day', async () => {
+    await using h = await startHub();
+    await hear(h);
+    await storeRollups(h, [
+      flat(BERLIN_20 + 10 * MINUTE),
+      flat(BERLIN_20 + 2 * HOUR + 50 * MINUTE),
+      flat(BERLIN_20 + 3 * HOUR),
+    ]);
+    await storeBerlinSessions(h);
+
+    const found = await detail(h, '30d', { timeZone: 'Europe/Berlin' });
+
+    expect(found.cpu.map(({ t }) => t)).toEqual([BERLIN_20, BERLIN_20 + 3 * HOUR]);
+    expect(found.edges).toContain(BERLIN_20);
+    expect(barTotals(found.long?.costs ?? []).get(BERLIN_20)).toBe(20);
+    expect(found.long?.dayEdges).toContain(BERLIN_20);
+    expect(found.long?.dayEdges).not.toContain(BERLIN_20 + 3 * HOUR);
+  });
+
+  test("the inspector's bucket and day are the chart's, in Berlin", async () => {
+    await using h = await startHub();
+    await hear(h);
+    await storeBerlinSessions(h);
+
+    const day = await readBucket(h.db.sql, {
+      at: BERLIN_20 + 30 * MINUTE,
+      name: 'server-1',
+      now: NOW,
+      range: '1y',
+      timeZone: 'Europe/Berlin',
+    });
+    const bucket = await readBucket(h.db.sql, {
+      at: BERLIN_20 + 30 * MINUTE,
+      name: 'server-1',
+      now: NOW,
+      range: '30d',
+      timeZone: 'Europe/Berlin',
+    });
+
+    expect(day).toMatchObject({
+      costUsd: 20,
+      day: undefined,
+      end: BERLIN_20 + DAY,
+      sessions: 3,
+      t: BERLIN_20,
+    });
+    // The 3-hour bucket holds s1 and half of s2; its day holds s3 as well.
+    expect(bucket).toMatchObject({
+      costUsd: 15,
+      day: { costUsd: 20, end: BERLIN_20 + DAY, start: BERLIN_20, unpricedRequests: 0 },
+      end: BERLIN_20 + 3 * HOUR,
+      sessions: 2,
+      t: BERLIN_20,
+    });
+  });
+
+  test('a year in Los Angeles gives the day the clocks went back its 25 hours, and a Session at 00:30 the day it began', async () => {
+    await using h = await startHub();
+    await hear(h);
+    await price(h);
+    // 2 Nov 2025 in Los Angeles: midnight PDT is 07:00 UTC, the next midnight PST 08:00 UTC.
+    const fallBack = Date.UTC(2025, 10, 2, 7);
+    const next = fallBack + 25 * HOUR;
+    await storeRollups(h, [flat(fallBack), flat(next - BUCKET), flat(next)]);
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [offset(next + 30 * MINUTE)],
+      system: 'server-1',
+    });
+
+    const found = await detail(h, '1y', { timeZone: 'America/Los_Angeles' });
+
+    expect(found.cpu.map(({ t }) => t)).toEqual([fallBack, next]);
+    expect(found.long?.costs.map(({ t }) => t)).toEqual([next]);
+    const days = localDays(NOW, 'America/Los_Angeles', 400);
+    const index = days.findIndex(({ start }) => start === next);
+    expect(index).toBeGreaterThan(0);
+    const home = await readDayCosts(h.db.sql, days);
+    expect(home[index]?.pricedCostUsd).toBe(found.long?.costs[0]?.costUsd);
+    expect(found.gaps).not.toContainEqual(expect.objectContaining({ from: fallBack }));
+  });
+});
+
+describe('reads that agree on the bucket', () => {
+  test('averages over every sample, however unevenly the rollups hold them', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const day = TODAY - 20 * DAY;
+    await storeRollups(h, [
+      { cpu: [90, 90, 90], load: [9, 9, 9], memory: [30, 30, 30], samples: 1, t: day },
+      {
+        cpu: [10, 59 * 10, 10],
+        load: [1, 59, 1],
+        memory: [6, 59 * 6, 6],
+        samples: 59,
+        t: day + HOUR,
+      },
+    ]);
+
+    const found = await detail(h, '1y');
+    const bucket = await readBucket(h.db.sql, { at: day, name: 'server-1', now: NOW, range: '1y' });
+
+    // (90 + 590) / 60, not the mean of 90 and 10.
+    expect(found.cpu[0]?.average).toBeCloseTo(680 / 60, 6);
+    expect(found.memory[0]?.usedBytes).toBeCloseTo((384 / 60) * GIB, 0);
+    expect(found.load[0]?.value).toBeCloseTo(68 / 60, 6);
+    expect(bucket?.cpu?.average).toBeCloseTo(680 / 60, 6);
+    expect(bucket?.memory?.average).toBeCloseTo((384 / 60) * GIB, 0);
+    expect(bucket?.load1?.average).toBeCloseTo(68 / 60, 6);
+  });
+
+  test("divides the newest bucket's process CPU by the time it has covered", async () => {
+    await using h = await startHub();
+    await hear(h);
+    // One core from NOW, an hour into the 3-hour bucket from NOW.
+    await addProcess(h.db.sql, {
+      cpuCores: 1,
+      pid: 10,
+      readings: 'rollups',
+      seenTo: 3600,
+      start: 0,
+      system: 'server-1',
+    });
+
+    const { processes } = await detail(h, '30d', { now: NOW + HOUR });
+
+    expect(processes[0]?.points.at(-1)?.t).toBe(NOW);
+    expect(processes[0]?.points.at(-1)?.cores).toBeCloseTo(1, 2);
+  });
+
+  test('a reboot, a Session, and a process in the first bucket before the range starts show on the chart and in the inspector', async () => {
+    await using h = await startHub();
+    await hear(h);
+    await price(h);
+    // NOW is noon, so the year's first day starts 12 hours before its start.
+    const first = TODAY - 365 * DAY;
+    const boot = first + 3 * HOUR;
+    await storeRollups(h, [flat(boot - BUCKET, 500_000), flat(boot, 100)]);
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [offset(first + 6 * HOUR)],
+      system: 'server-1',
+    });
+    await addProcess(h.db.sql, {
+      cpuCores: 1,
+      end: offset(first + 7 * HOUR),
+      pid: 10,
+      readings: 'rollups',
+      start: offset(first + 6 * HOUR),
+      system: 'server-1',
+    });
+
+    const found = await detail(h, '1y');
+    const bucket = await readBucket(h.db.sql, {
+      at: NOW - 365 * DAY,
+      name: 'server-1',
+      now: NOW,
+      range: '1y',
+    });
+
+    expect(found.edges?.[0]).toBe(first);
+    expect(found.long?.reboots).toEqual([boot]);
+    expect(found.long?.costs).toEqual([
+      { costUsd: 5, harness: 'claude-code', t: first, unpriced: 0 },
+    ]);
+    expect(found.long?.sessions).toBe(1);
+    expect(found.processes.map(({ pid }) => pid)).toEqual([10]);
+    expect(bucket).toMatchObject({ costUsd: 5, rebootedAt: boot, sessions: 1, t: first });
+    expect(bucket?.processes.map(({ pid }) => pid)).toEqual([10]);
+  });
+
+  test('shows the eight busiest Harness processes over the range by name, and folds the rest into one series', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const start = offset(NOW - 2 * DAY);
+    for (let pid = 1; pid <= 10; pid += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- ten fixture processes.
+      await addProcess(h.db.sql, {
+        cpuCores: pid / 10,
+        end: start + 3 * 3600 - 15,
+        pid,
+        readings: 'rollups',
+        start,
+        system: 'server-1',
+      });
+    }
+
+    const { processes } = await detail(h, '30d');
+    const bucket = await readBucket(h.db.sql, {
+      at: NOW - 2 * DAY,
+      name: 'server-1',
+      now: NOW,
+      range: '30d',
+    });
+
+    expect(processes.map(({ pid }) => pid)).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 0]);
+    const other = processes.at(-1);
+    expect(other).toMatchObject({ harness: 'other', processId: 0, project: '2 other processes' });
+    expect(other?.points[0]?.cores).toBeCloseTo(0.3, 2);
+    // The inspector still names every process in the bucket.
+    expect(bucket?.processes).toHaveLength(10);
+  });
+});
+
+describe('reboots', () => {
+  test('any drop in uptime from the rollup before is a reboot, however long the Collector took to start', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const boot = NOW - 40 * DAY;
+    await storeRollups(h, [
+      flat(boot - BUCKET, 500_000),
+      flat(boot, 900),
+      flat(boot + BUCKET, 1200),
+    ]);
+
+    const { long } = await detail(h, '1y');
+
+    expect(long?.reboots).toEqual([boot]);
+  });
+
+  test("a laptop's sleep, where uptime keeps counting, is no reboot", async () => {
+    await using h = await startHub();
+    await hear(h);
+    const sleep = NOW - 40 * DAY;
+    await storeRollups(h, [flat(sleep, 10_000), flat(sleep + 8 * HOUR, 10_000 + 8 * 3600)]);
+
+    const { long } = await detail(h, '1y');
+
+    expect(long?.reboots).toEqual([]);
+  });
+
+  test("the System's first rollup is a reboot only when its uptime is under 5 minutes", async () => {
+    await using h = await startHub();
+    await hear(h);
+    await storeRollups(h, [flat(NOW - 40 * DAY, 120)]);
+    await using fresh = await startHub();
+    await hear(fresh);
+    await storeRollups(fresh, [flat(NOW - 40 * DAY, 5000)]);
+
+    expect((await detail(h, '1y')).long?.reboots).toEqual([NOW - 40 * DAY]);
+    expect((await detail(fresh, '1y')).long?.reboots).toEqual([]);
   });
 });
 
@@ -348,6 +705,44 @@ describe('readBucket', () => {
     expect(found?.processes[0]?.cpuHours).toBeCloseTo(2, 2);
   });
 
+  test('leaves out the Conditions the open Conditions leave to Maintenance and Services, as the lane does', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const daySeconds = offset(TODAY - 20 * DAY);
+    await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: daySeconds + 3600,
+      subject: 'apt',
+      system: 'server-1',
+    });
+    await addCondition(h.db.sql, {
+      kind: 'service_restarted',
+      level: 'warning',
+      raisedAt: daySeconds + 3600,
+      subject: 'web',
+      system: 'server-1',
+    });
+    // Once it rose to warning, it is history the lane keeps.
+    await addCondition(h.db.sql, {
+      clearedAt: daySeconds + 4 * 3600,
+      kind: 'reboot_required',
+      level: 'note',
+      raisedAt: daySeconds + 3600,
+      system: 'server-1',
+      transitions: [{ at: daySeconds + 2 * 3600, level: 'warning' }],
+    });
+
+    const found = await readBucket(h.db.sql, {
+      at: TODAY - 20 * DAY,
+      name: 'server-1',
+      now: NOW,
+      range: '1y',
+    });
+
+    expect(found?.conditions.map(({ kind }) => kind)).toEqual(['reboot_required']);
+  });
+
   test('inspects a 3-hour bucket at 30 d, and knows a recent one still has its samples', async () => {
     await using h = await startHub();
     await hear(h);
@@ -402,16 +797,18 @@ describe('readBucket', () => {
 });
 
 describe('parseBucketInput', () => {
-  test('takes the System, a long range, and the time asked for', () => {
-    expect(parseBucketInput({ at: NOW, name: 'server-1', range: '30d' })).toEqual({
-      at: NOW,
-      name: 'server-1',
-      range: '30d',
-    });
+  test("takes the System, a long range, the time asked for, and the viewer's zone", () => {
+    expect(
+      parseBucketInput({ at: NOW, name: 'server-1', range: '30d', timeZone: 'Europe/Berlin' }),
+    ).toEqual({ at: NOW, name: 'server-1', range: '30d', timeZone: 'Europe/Berlin' });
+    expect(
+      parseBucketInput({ name: 'server-1', range: '30d', timeZone: 'Not/A_Zone' }).timeZone,
+    ).toBeUndefined();
     expect(parseBucketInput({ name: 'server-1', range: '1y' })).toEqual({
       at: undefined,
       name: 'server-1',
       range: '1y',
+      timeZone: undefined,
     });
   });
 

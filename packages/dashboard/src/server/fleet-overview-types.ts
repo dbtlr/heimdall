@@ -35,8 +35,9 @@ export const RANGE_MS: Record<Range, number> = {
 
 // The width of a chart bucket at each range: the Hub's 5-minute rollups up to
 // 7 d, then 3 hours over 30 d and a day over a year, so a chart holds at most
-// a few hundred buckets. Each width divides a day, so a bucket holds whole
-// 5-minute rollups.
+// a few hundred buckets. The long ranges' widths are the usual ones: their
+// buckets follow the viewer's local days (see LongEdges), so a day the clocks
+// change is 23 or 25 hours. Every bucket holds whole 5-minute rollups.
 export const RANGE_BUCKET_MS: Record<Range, number> = {
   '12h': 5 * 60_000,
   '1y': DAY_MS,

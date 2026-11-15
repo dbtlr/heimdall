@@ -25,6 +25,7 @@ const detail: SystemDetail = {
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 5 * MINUTE }],
   cpuCores: undefined,
   diskTrends: [],
+  edges: undefined,
   from: FROM,
   gaps: [],
   harnesses: [],

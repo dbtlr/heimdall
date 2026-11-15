@@ -34,23 +34,39 @@ export const bucketStart = (t: number) => Math.floor(t / BUCKET_MS) * BUCKET_MS;
 // The runs of buckets with no Vitals, from the bucket holding `from` up to,
 // not including, the one holding `now`: that one is still filling, so it is
 // not missing. Buckets are 5 minutes unless `widthMs`, a width that divides a
-// day, says otherwise. `present` holds the start of each bucket the Hub has.
+// day, says otherwise, or run between consecutive `edges`, whose last bucket
+// holds `now`. `present` holds the start of each bucket the Hub has.
 export const findGaps = (
   present: readonly number[],
-  { from, now, widthMs = BUCKET_MS }: { from: number; now: number; widthMs?: number },
+  {
+    edges,
+    from,
+    now,
+    widthMs = BUCKET_MS,
+  }: { edges?: readonly number[] | undefined; from: number; now: number; widthMs?: number },
 ): Gap[] => {
   const have = new Set(present);
   const startOf = (t: number) => Math.floor(t / widthMs) * widthMs;
+  const buckets: Gap[] = [];
+  if (edges === undefined) {
+    for (let t = startOf(from); t < startOf(now); t += widthMs) {
+      buckets.push({ from: t, to: t + widthMs });
+    }
+  } else {
+    for (let index = 0; index < edges.length - 2; index += 1) {
+      buckets.push({ from: edges[index] ?? 0, to: edges[index + 1] ?? 0 });
+    }
+  }
   const gaps: Gap[] = [];
   let open: Gap | undefined;
-  for (let t = startOf(from); t < startOf(now); t += widthMs) {
-    if (have.has(t)) {
+  for (const bucket of buckets) {
+    if (have.has(bucket.from)) {
       open = undefined;
     } else if (open === undefined) {
-      open = { from: t, to: t + widthMs };
+      open = { ...bucket };
       gaps.push(open);
     } else {
-      open.to = t + widthMs;
+      open.to = bucket.to;
     }
   }
   return gaps;

@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { LEVEL_FILL } from '../lib/conditions.ts';
 import { formatGiB } from '../lib/detail.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
-import { formatClock, formatCost, formatDate, formatDateYear, formatWeekday } from '../lib/time.ts';
+import { formatBucket, formatClock, formatCost } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { BucketInspection, BucketProcess } from '../server/system-detail-types.ts';
 import { InZone } from './date-time.tsx';
@@ -48,23 +48,6 @@ function Heading({ children }: { children: ReactNode }) {
   );
 }
 
-// The day a bucket starts on in `timeZone`, as "Wed 12 Aug 2026", or for a
-// bucket shorter than a day, which is within the last 30, its day and clock
-// span, as "Tue 3 Nov 15:00–18:00".
-const bucketDay = (t: number, bucketMs: number, timeZone: string): string => {
-  const weekday = formatWeekday(t, timeZone);
-  return bucketMs < DAY_MS
-    ? `${weekday} ${formatDate(t, timeZone)} ${formatClock(t, timeZone)}–${formatClock(t + bucketMs, timeZone)}`
-    : `${weekday} ${formatDateYear(t, timeZone)}`;
-};
-
-// Where a day bucket starts, " from 01:00", when the viewer's zone does not
-// start its days where the Hub's UTC days start.
-const dayStart = (t: number, bucketMs: number, timeZone: string): string => {
-  const start = formatClock(t, timeZone);
-  return bucketMs < DAY_MS || start === '00:00' ? '' : ` from ${start}`;
-};
-
 // The panel that inspects one bucket of a long range: its CPU, memory, and
 // load averages with their lows and highs from the 5-minute rollups in it, a
 // reboot in it, its agent cost and Sessions, the Harness processes that ran
@@ -97,15 +80,15 @@ export function BucketInspector({
         <>
           <p className="flex items-baseline gap-2">
             <b className="text-[17px] font-semibold tabular-nums">
-              <InZone>{(timeZone) => bucketDay(bucket.t, bucket.bucketMs, timeZone)}</InZone>
+              {/* The day, "Wed 12 Aug 2026", or for a 3-hour bucket its day and span. */}
+              <InZone>{(timeZone) => formatBucket(bucket.t, bucket.end, timeZone, true)}</InZone>
             </b>
             <span className="text-[12.5px] text-muted-foreground">
               pinned {bucket.bucketMs >= DAY_MS ? 'day' : 'bucket'}
             </span>
           </p>
           <p className="mb-2 text-[11.5px] text-dim">
-            One {widthWords(bucket.bucketMs)} bucket
-            <InZone>{(timeZone) => dayStart(bucket.t, bucket.bucketMs, timeZone)}</InZone>:{' '}
+            One {widthWords(bucket.bucketMs)} bucket:{' '}
             {bucket.rollups === 0 ? 'no Vitals' : `${String(bucket.rollups)} five-minute rollups`}
           </p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13.5px]">
@@ -165,7 +148,11 @@ export function BucketInspector({
                 {bucket.unpricedRequests > 0 && 'at least '}
                 {formatCost(bucket.costUsd)}
               </b>
+              {/* The cost bar under a 3-hour bucket is its whole day. */}
+              {bucket.day !== undefined && ' in this bucket'}
               <span className="block text-xs text-muted-foreground">
+                {bucket.day !== undefined &&
+                  `${bucket.day.unpricedRequests > 0 ? 'at least ' : ''}${formatCost(bucket.day.costUsd)} that day, as its cost bar shows · `}
                 {plural(bucket.sessions, 'Session')} working {place}
               </span>
             </dd>

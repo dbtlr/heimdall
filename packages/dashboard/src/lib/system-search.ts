@@ -1,5 +1,6 @@
 import { RANGE_MS, RANGES } from '../server/fleet-overview-types.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
+import { validZone } from './agents-search.ts';
 import { atFromSearch, rangeFromSearch } from './range.ts';
 
 export const SYSTEM_TABS = ['now', 'vitals', 'sessions', 'records', 'activity'] as const;
@@ -7,6 +8,8 @@ export type SystemTab = (typeof SYSTEM_TABS)[number];
 
 // Existing sample links predate tabs and should still show the selected sample.
 // The Activity tab was once called Timeline, and links to it still open it.
+// `zone` is the viewer's time zone, which the page adds once the browser tells
+// it, as Home and the Agents page do; the 30 d and 1 y buckets follow its days.
 export const systemSearch = (search: Record<string, unknown>) => {
   const at = atFromSearch(search);
   const named = search.tab === 'timeline' ? 'activity' : search.tab;
@@ -14,6 +17,7 @@ export const systemSearch = (search: Record<string, unknown>) => {
     at,
     range: rangeFromSearch(search, '12h'),
     tab: SYSTEM_TABS.find((tab) => tab === named) ?? (at === undefined ? 'now' : 'vitals'),
+    zone: validZone(search.zone),
   };
 };
 

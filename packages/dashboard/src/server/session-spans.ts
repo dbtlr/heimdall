@@ -11,18 +11,23 @@ import { sessionProjectSql } from './project-sql.ts';
 // the earliest start of its own stretches, read by key. Given `project`, only
 // that project's Sessions remain: each Session the stretches pick is looked up
 // by key and kept when its project name (project-sql.ts) matches, so the
-// filter too costs per picked Session, not per Session in the archive. The
-// cost follows the stretches ending since `from` and those Sessions'
-// stretches, not the whole archive.
+// filter too costs per picked Session, not per Session in the archive. With
+// `system`, only that System's Sessions. The cost follows the stretches ending
+// since `from` and those Sessions' stretches, not the whole archive.
 export const sessionSpans = (
   sql: SQL,
-  { from, to, project }: { from: Date; to: Date; project?: string | undefined },
+  {
+    from,
+    project,
+    system,
+    to,
+  }: { from: Date; project?: string | undefined; system?: string | undefined; to: Date },
 ) => sql`
   SELECT k.harness, k.system, k.source, k.session_id, f.first_request_at, k.last_request_at
   FROM (
     SELECT harness, system, source, session_id, max(ended_at) AS last_request_at
     FROM insight.session_stretches
-    WHERE ended_at >= ${from}
+    WHERE ended_at >= ${from} ${system === undefined ? sql`` : sql`AND system = ${system}`}
     GROUP BY harness, system, source, session_id
   ) k
   CROSS JOIN LATERAL (

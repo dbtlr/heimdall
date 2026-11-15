@@ -21,6 +21,7 @@ import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
 import { desktopTab, systemSearch } from '../lib/system-search.ts';
+import { useTimeZone } from '../lib/use-time-zone.ts';
 import { isLongRange } from '../server/fleet-overview-types.ts';
 import type { Range } from '../server/fleet-overview-types.ts';
 import { getBucket, getSample, getSystemDetail } from '../server/system-detail-fn.ts';
@@ -32,13 +33,19 @@ type Inspected = { bucket: BucketInspection | null; sample: SampleInspection | n
 
 const NOTHING: Inspected = { bucket: null, sample: null };
 
+// The zone a range is read in: the viewer's over 30 d and 1 y, whose buckets
+// are its local days; none up to 7 d, whose buckets the zone does not move,
+// so the zone arriving in the URL reads nothing again there.
+const zoneOf = (range: Range, zone: string | undefined) => (isLongRange(range) ? zone : undefined);
+
 const readInspected = async (
   name: string,
   at: number | undefined,
   range: Range,
+  timeZone: string | undefined,
 ): Promise<Inspected> =>
   isLongRange(range)
-    ? { bucket: await getBucket({ data: { at, name, range } }), sample: null }
+    ? { bucket: await getBucket({ data: { at, name, range, timeZone } }), sample: null }
     : { bucket: null, sample: await getSample({ data: { at, name } }) };
 
 export const Route = createFileRoute('/systems/$name')({
@@ -49,18 +56,18 @@ export const Route = createFileRoute('/systems/$name')({
     location,
     params,
   }: {
-    deps: { range: Range };
+    deps: { range: Range; zone: string | undefined };
     location: { search: Record<string, unknown> };
     params: { name: string };
   }) => {
     const at = atFromSearch(location.search);
     const [page, inspected] = await Promise.all([
-      getSystemDetail({ data: { name: params.name, range: deps.range } }),
-      readInspected(params.name, at, deps.range),
+      getSystemDetail({ data: { name: params.name, range: deps.range, timeZone: deps.zone } }),
+      readInspected(params.name, at, deps.range, deps.zone),
     ]);
     return { ...page, at, inspected };
   },
-  loaderDeps: ({ search }) => ({ range: search.range }),
+  loaderDeps: ({ search }) => ({ range: search.range, zone: zoneOf(search.range, search.zone) }),
   notFoundComponent: () => (
     <>
       <main className={`${contentFrame('wide', true)} py-6`}>
@@ -77,6 +84,7 @@ export const Route = createFileRoute('/systems/$name')({
 const useInspected = (
   name: string,
   range: Range,
+  zone: string | undefined,
   at: number | undefined,
   loadedAt: number | undefined,
   loaded: Inspected,
@@ -92,7 +100,7 @@ const useInspected = (
     let current = true;
     const read = async () => {
       try {
-        const inspected = await readInspected(name, at, range);
+        const inspected = await readInspected(name, at, range, zone);
         if (current) {
           setShown({ at, failed: false, inspected, name });
         }
@@ -106,7 +114,7 @@ const useInspected = (
     return () => {
       current = false;
     };
-  }, [at, name, range, shown.at, shown.name]);
+  }, [at, name, range, shown.at, shown.name, zone]);
   const loading = at !== shown.at || name !== shown.name;
   return {
     failed: !loading && shown.failed,
@@ -127,9 +135,20 @@ function SystemPage() {
   } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const timeZone = useTimeZone();
+  useEffect(() => {
+    if (timeZone !== undefined && search.zone !== timeZone) {
+      void navigate({
+        replace: true,
+        resetScroll: false,
+        search: (previous) => ({ ...previous, zone: timeZone }),
+      });
+    }
+  }, [navigate, search.zone, timeZone]);
   const { failed, inspected, loading } = useInspected(
     detail.name,
     detail.range,
+    zoneOf(detail.range, search.zone),
     search.at,
     at,
     loadedInspected,

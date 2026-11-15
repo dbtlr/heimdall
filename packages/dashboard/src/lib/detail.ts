@@ -9,6 +9,7 @@ import type {
   SystemDetail,
   UnlinkedSession,
 } from '../server/system-detail-types.ts';
+import { edgeSpans } from './bucket-edges.ts';
 import { harnessName } from './lane.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
@@ -147,50 +148,69 @@ export const bucketGrid = ({ from, to }: Window, bucketMs = BUCKET_MS): number[]
   return starts;
 };
 
+// Every bucket the window touches with its start and middle: `bucketMs` wide
+// from the epoch, 5 minutes unless it says otherwise, or over a long range
+// each bucket of `edges` (see LongEdges), local days or 3 hours of the local
+// clock, so a 23- or 25-hour day is one bucket.
+export const bucketSpans = (
+  window: Window,
+  bucketMs = BUCKET_MS,
+  edges?: readonly number[],
+): { middle: number; start: number }[] =>
+  edges === undefined
+    ? bucketGrid(window, bucketMs).map((start) => ({ middle: start + bucketMs / 2, start }))
+    : edgeSpans(edges)
+        .filter(({ end, start }) => end > window.from && start < window.to)
+        .map(({ end, start }) => ({ middle: (start + end) / 2, start }));
+
 // The memory plot's points: GiB used per bucket at its middle, with the
 // bucket's low to high, null where the Hub has no bucket, so the line breaks
-// there. Buckets are 5 minutes unless `bucketMs` says otherwise.
+// there. Buckets are as bucketSpans lays them.
 export const memoryRows = (
   buckets: readonly MemoryBucket[],
   window: Window,
   bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): { band: [number, number] | null; t: number; used: number | null }[] => {
   const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
-  return bucketGrid(window, bucketMs).map((t) => {
-    const bucket = byStart.get(t);
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) => {
+    const bucket = byStart.get(start);
     return {
       band: bucket === undefined ? null : [bucket.lowBytes / GIB, bucket.highBytes / GIB],
-      t: t + bucketMs / 2,
+      t: middle,
       used: bucket === undefined ? null : bucket.usedBytes / GIB,
     };
   });
 };
 
 // The load plot's points: the 1-minute load per bucket at its middle, with
-// the bucket's low to high, null where the Hub has no bucket. Buckets are 5
-// minutes unless `bucketMs` says otherwise.
+// the bucket's low to high, null where the Hub has no bucket. Buckets are as
+// bucketSpans lays them.
 export const loadRows = (
   buckets: readonly LoadBucket[],
   window: Window,
   bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): { band: [number, number] | null; t: number; value: number | null }[] => {
   const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
-  return bucketGrid(window, bucketMs).map((t) => {
-    const bucket = byStart.get(t);
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) => {
+    const bucket = byStart.get(start);
     return {
       band: bucket === undefined ? null : [bucket.low, bucket.high],
-      t: t + bucketMs / 2,
+      t: middle,
       value: bucket?.value ?? null,
     };
   });
 };
 
 // The process plot's points: each process's cores per bucket at its middle
-// under the key `p<processId>`, null where it has none.
+// under the key `p<processId>`, null where it has none. Buckets are as
+// bucketSpans lays them.
 export const processRows = (
   processes: readonly ProcessSeries[],
   window: Window,
   bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): Record<string, number | null>[] => {
   const cores = processes.map(
     (process) =>
@@ -199,10 +219,10 @@ export const processRows = (
         new Map(process.points.map((point) => [point.t, point.cores])),
       ] as const,
   );
-  return bucketGrid(window, bucketMs).map((t) =>
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) =>
     Object.fromEntries([
-      ['t', t + bucketMs / 2],
-      ...cores.map(([key, byBucket]) => [key, byBucket.get(t) ?? null] as const),
+      ['t', middle],
+      ...cores.map(([key, byBucket]) => [key, byBucket.get(start) ?? null] as const),
     ]),
   );
 };

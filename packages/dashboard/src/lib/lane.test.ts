@@ -88,3 +88,19 @@ test('a Condition mark spans from raised to cleared, or to now while open', () =
   );
   expect(text(markSpan({ ...mark, clearedAt: undefined }, NOW))).toBe('03:04 to now');
 });
+
+test('over a long range, buckets join across a 25-hour day and span the edges they lie between', () => {
+  const HOUR = 60 * MINUTE;
+  const day = Date.UTC(2026, 10, 1, 7);
+  const edges = [day, day + 25 * HOUR, day + 49 * HOUR];
+  expect(cpuSeries([bucket(day), bucket(day + 25 * HOUR)], 24 * HOUR, edges)).toEqual([
+    { average: 10, band: [5, 15], t: day + 12.5 * HOUR },
+    { average: 10, band: [5, 15], t: day + 37 * HOUR },
+    { average: null, band: null, t: day + 49 * HOUR },
+  ]);
+  expect(cpuSeries([bucket(day)], 24 * HOUR, edges)).toEqual([
+    { average: 10, band: [5, 15], t: day },
+    { average: 10, band: [5, 15], t: day + 25 * HOUR },
+    { average: null, band: null, t: day + 25 * HOUR },
+  ]);
+});

@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
 import { LEVEL_FILL } from '../lib/conditions.ts';
-import { changeCounts, kindRows } from '../lib/long-history.ts';
+import { binMarkPercent, changeCounts, kindRows } from '../lib/long-history.ts';
 import { levelSegments, systemEvents } from '../lib/system-events.ts';
 import { spanBox, xPercent } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
@@ -48,34 +48,35 @@ function Row({
 
 // The Conditions and changes lane over a long range, folded so a year stays
 // legible: a diamond for each day's or week's Service changes with their count,
-// a ring at each reboot, then one row per Condition kind, the kind raised most
-// often first, with its count and its spans colored by level. The latest few
-// events follow as a line, with a link to the rest on Activity.
+// in the middle of the part of its bin on the chart, a ring at each reboot,
+// then one row per Condition kind, the kind raised most often first, with its
+// count and its spans colored by level. The latest few events follow as a
+// line, with a link to the rest on Activity. The bins and the reboots start
+// with the first bucket, which may begin before the window; a mark there
+// stands at the window's start.
 export function FoldedChangesLane({
-  binMs,
   detail,
   labelsInside = false,
   window,
 }: {
-  binMs: number;
   detail: Pick<SystemDetail, 'changes' | 'conditions' | 'long' | 'name' | 'now' | 'paired'>;
   labelsInside?: boolean;
   window: Window;
 }) {
   const rows = kindRows(detail.conditions, { paired: detail.paired, window });
-  const counts = changeCounts(detail, window, binMs);
-  const reboots = (detail.long?.reboots ?? []).filter((t) => t >= window.from && t <= window.to);
+  const counts = changeCounts(detail, window, detail.long?.changeEdges ?? []);
+  const reboots = (detail.long?.reboots ?? []).filter((t) => t <= window.to);
   const events = systemEvents(detail, window);
   return (
     <>
       <DetailTrack>
         <div className="grid gap-px">
           <Row inside={labelsInside} label="Changes">
-            {counts.map(({ count, t }) => (
+            {counts.map(({ count, end, t }) => (
               <span
                 className="absolute top-0 flex -translate-x-1/2 items-center gap-0.5 text-[10px] leading-[13px] text-muted-foreground"
                 key={t}
-                style={{ left: `${String(xPercent(t + binMs / 2, window))}%` }}
+                style={{ left: `${String(binMarkPercent({ end, t }, window))}%` }}
                 title={`${String(count)} ${count === 1 ? 'change' : 'changes'}`}
               >
                 <i className="inline-block size-2 rotate-45 bg-foreground/70" />
@@ -88,7 +89,7 @@ export function FoldedChangesLane({
               <i
                 className="absolute top-0.5 size-2 -translate-x-1/2 rounded-full border border-link"
                 key={t}
-                style={{ left: `${String(xPercent(t, window))}%` }}
+                style={{ left: `${String(xPercent(Math.max(t, window.from), window))}%` }}
                 title="Rebooted"
               />
             ))}

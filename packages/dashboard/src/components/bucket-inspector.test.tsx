@@ -14,6 +14,8 @@ const day: BucketInspection = {
   conditions: [{ kind: 'low_disk', level: 'note', subject: '/data' }],
   costUsd: 27.4,
   cpu: { average: 21.2, high: 94, low: 2 },
+  day: undefined,
+  end: T + DAY,
   load1: { average: 1.7, high: 7.9, low: 0.2 },
   memory: { average: 17.1 * GIB, high: 19.6 * GIB, low: 12 * GIB, totalBytes: 32 * GIB },
   processes: [
@@ -84,6 +86,21 @@ test('names a 3-hour bucket, and a bucket with no Vitals', () => {
   expect(html).toContain('One 3-hour bucket: no Vitals');
   expect(html).not.toContain('Rebooted');
   expect(html).toContain('No Harness process');
+});
+
+test("names the cost of a 3-hour bucket and, beside it, its day's, which the cost bar shows", () => {
+  const html = render({
+    ...day,
+    bucketMs: 3 * 3_600_000,
+    costUsd: 4,
+    day: { costUsd: 27.4, end: T + DAY, start: T, unpricedRequests: 0 },
+    end: T + 3 * 3_600_000,
+    sessions: 2,
+  });
+  expect(html).toContain('$4.00</b> in this bucket');
+  expect(html).toContain('$27.40 that day, as its cost bar shows');
+  expect(html).toContain('2 Sessions working then');
+  expect(render(day)).not.toContain('in this bucket');
 });
 
 test('reports reading instead of claiming there is no bucket', () => {

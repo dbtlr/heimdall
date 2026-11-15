@@ -1,6 +1,5 @@
 import { axisTicks } from '../lib/axis.ts';
 import { formatGiB, idleProcessesLabel, splitIdleProcesses } from '../lib/detail.ts';
-import { CHANGE_BIN_MS } from '../lib/long-history.ts';
 import { formatClock, formatDate, pinnedX } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
@@ -29,13 +28,16 @@ import { TimeAxis } from './time-axis.tsx';
 
 const DAY_MS = 24 * 3_600_000;
 
+// A long range's bucket width as the phone's CPU note says it.
+const BUCKET_WORDS: Record<LongRange, string> = { '1y': '1 d', '30d': '3 h' };
+
 type Rows = { detail: SystemDetail; window: Window };
 
 // The agent cost per day over a long range.
 function CostRow({ long, window }: { long: LongHistory; window: Window }) {
   return (
     <DetailRow label="Sessions" note="cost per day">
-      <CostBars bucketMs={long.costBucketMs} costs={long.costs} height={48} window={window} />
+      <CostBars costs={long.costs} edges={long.dayEdges} height={48} window={window} />
     </DetailRow>
   );
 }
@@ -78,14 +80,15 @@ function Vitals({ detail, window }: Rows) {
 // with their bands, the agent cost per day, and the Conditions folded to one
 // row per kind.
 function LongVitals({ detail, range, window }: Rows & { range: LongRange }) {
-  const { bucketMs, latest, long } = detail;
+  const { bucketMs, edges, latest, long } = detail;
   return (
     <>
-      <DetailRow label="CPU busy" note="avg, low–high">
+      <DetailRow label="CPU busy" note={`avg, low–high · ${BUCKET_WORDS[range]}`}>
         <GapShades gaps={detail.gaps} labelHeight={96} sleeps={detail.sleeps} window={window} />
         <CpuPlot
           bucketMs={bucketMs}
           buckets={detail.cpu}
+          edges={edges}
           height={96}
           label="CPU busy"
           window={window}
@@ -96,18 +99,27 @@ function LongVitals({ detail, range, window }: Rows & { range: LongRange }) {
         label="Memory"
         note={latest === undefined ? undefined : `of ${formatGiB(latest.memoryTotalBytes)} GiB`}
       >
-        <MemoryPlot band bucketMs={bucketMs} buckets={detail.memory} window={window} />
-      </DetailRow>
-      <DetailRow label="Load (1 min)">
-        <LoadPlot band bucketMs={bucketMs} buckets={detail.load} height={56} window={window} />
-      </DetailRow>
-      <DetailRow label="Conditions">
-        <FoldedChangesLane
-          labelsInside
-          binMs={CHANGE_BIN_MS[range]}
-          detail={detail}
+        <MemoryPlot
+          band
+          bucketMs={bucketMs}
+          buckets={detail.memory}
+          edges={edges}
           window={window}
         />
+      </DetailRow>
+      <DetailRow label="Load (1 min)">
+        <LoadPlot
+          band
+          bucketMs={bucketMs}
+          buckets={detail.load}
+          cores={detail.cpuCores}
+          edges={edges}
+          height={56}
+          window={window}
+        />
+      </DetailRow>
+      <DetailRow label="Conditions">
+        <FoldedChangesLane labelsInside detail={detail} window={window} />
       </DetailRow>
     </>
   );
@@ -150,12 +162,22 @@ function SessionsTab({ detail, window }: Rows) {
   return (
     <>
       <DetailRow label="Harness processes" note="CPU cores per process tree">
-        <ProcessPlot bucketMs={detail.bucketMs} processes={active} window={window} />
+        <ProcessPlot
+          bucketMs={detail.bucketMs}
+          edges={detail.edges}
+          processes={active}
+          window={window}
+        />
       </DetailRow>
       {idle.length > 0 && (
         <MoreItems label={idleProcessesLabel(idle.length)}>
           <DetailRow label="Idle Harness processes">
-            <ProcessPlot bucketMs={detail.bucketMs} processes={idle} window={window} />
+            <ProcessPlot
+              bucketMs={detail.bucketMs}
+              edges={detail.edges}
+              processes={idle}
+              window={window}
+            />
           </DetailRow>
         </MoreItems>
       )}
@@ -197,7 +219,7 @@ export function SystemCharts({
 }) {
   const timeZone = useTimeZone();
   const window = { from: detail.from, to: detail.to };
-  const selected = bucket === null ? sample?.t : bucket.t + bucket.bucketMs / 2;
+  const selected = bucket === null ? sample?.t : (bucket.t + bucket.end) / 2;
   const sampleX = selected === undefined ? undefined : pinnedX(selected, window);
   return (
     <DetailAxis bucketMs={detail.bucketMs} onSelect={onSelect} selected={selected} window={window}>
