@@ -35,8 +35,8 @@ type HeldRow = {
 // System, which a failed or stale check leaves in place, and the security
 // updates among them: a package the latest check calls one, or one the Hub has
 // held as one since an earlier check. By the rule Maintenance lists packages
-// by, a Service updated from its own package is left out of `held`, and its
-// update in `updates` is a security update when its package is one.
+// by, the package a Service is updated from is left out of `held`, and the
+// Service's update in `updates` is a security update when that package is one.
 export const readHeldPackages = async (
   sql: SQL,
   available: readonly AvailableUpdate[],

@@ -78,6 +78,15 @@ describe('pendingPackages', () => {
     expect(counts).toEqual([{ conditionId: 'brew', packages: 1, security: 0, system: 'laptop-1' }]);
   });
 
+  test('a source held with a count of none is passed over like one not held', () => {
+    const counts = pendingPackages(
+      [condition('pending_update', 'server-1')],
+      [held('server-1', 'apt', 'system', 0, 0)],
+    );
+
+    expect(counts).toEqual([]);
+  });
+
   test('an unpaired System, and a System whose Condition is not open, are not counted', () => {
     const apt = held('server-1', 'apt', 'system', 1, 1);
 
