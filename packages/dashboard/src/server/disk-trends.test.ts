@@ -313,6 +313,22 @@ test('a quiet System dates its Condition rate and countdown to the newest readin
   );
 });
 
+test('a healthy System read deep inside a disk bucket keeps its Condition rate current', async () => {
+  await using h = await startHub();
+  // Samples every 4m50s; the newest disk bucket starts at NOW, the newest sample is later.
+  await push(h.hub, report('server-1', [NOW, NOW + 290_000]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 3 * DAY)}, ${100 * GIB}, ${80 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${100 * GIB}, ${83 * GIB})`;
+  const id = await lowDiskId(h, '/');
+  const now = NOW + 300_000;
+  const detail = await readConditionDetail(h.db.sql, { id, name: 'server-1', now });
+  expect(conditionDetailView(detail as NonNullable<typeof detail>, now).rate?.text).toBe(
+    '+1.0 GiB a day over the last 3 days. At that rate it is full in about 17 days.',
+  );
+});
+
 test('one reading since a size change days ago says only that readings are short', async () => {
   await using h = await startHub();
   await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });

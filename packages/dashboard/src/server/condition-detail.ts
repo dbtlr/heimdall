@@ -198,6 +198,18 @@ const readOpenAttention = async (
   return items.find((item) => item.conditionId === id);
 };
 
+// The time of System `system`'s newest sample at or before `now`, or undefined
+// when it has none. Read-only.
+const readNewestSampleAt = async (
+  sql: SQL,
+  { now, system }: { now: number; system: string },
+): Promise<number | undefined> => {
+  const [row]: { t: Date | null }[] = await sql`
+    SELECT max(t) AS t FROM vitals_samples WHERE system = ${system} AND t <= ${new Date(now)}
+  `;
+  return row?.t?.getTime() ?? undefined;
+};
+
 // One Condition occurrence of a System, with its history of transitions, the
 // evidence and next steps while it is open, the limits the Hub judges by now,
 // the readings around it, and for high memory the processes holding the most. Undefined when the System has no such occurrence.
@@ -218,24 +230,36 @@ export const readConditionDetail = async (
   const clearedAt = row.cleared_at?.getTime();
   const window = windowOf(kind, clearedAt ?? now, clearedAt !== undefined);
   const readSeries = SERIES_READERS[kind];
-  const [transitions, limits, series, attention, packages, platform, memoryHolders, diskTrends] =
-    await Promise.all([
-      readConditionTransitions(sql, [row]),
-      readConditionLimits(sql, name),
-      readSeries?.(sql, { subject: row.subject, system: name, window }),
-      clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
-      clearedAt === undefined && kind === 'pending_update'
-        ? readPackages(sql, { subject: row.subject, system: name })
-        : undefined,
-      readPlatform(sql, name),
-      // The chart's newest sample: the System's newest while open.
-      kind === 'high_memory'
-        ? readMemoryHoldersAsOf(sql, { at: clearedAt, system: name })
-        : undefined,
-      kind === 'low_disk' && clearedAt === undefined
-        ? readDiskTrends(sql, { mount: row.subject, now, system: name })
-        : undefined,
-    ]);
+  const [
+    transitions,
+    limits,
+    series,
+    attention,
+    packages,
+    platform,
+    memoryHolders,
+    diskTrends,
+    newestSampleAt,
+  ] = await Promise.all([
+    readConditionTransitions(sql, [row]),
+    readConditionLimits(sql, name),
+    readSeries?.(sql, { subject: row.subject, system: name, window }),
+    clearedAt === undefined ? readOpenAttention(sql, { id: row.id, name, now }) : undefined,
+    clearedAt === undefined && kind === 'pending_update'
+      ? readPackages(sql, { subject: row.subject, system: name })
+      : undefined,
+    readPlatform(sql, name),
+    // The chart's newest sample: the System's newest while open.
+    kind === 'high_memory'
+      ? readMemoryHoldersAsOf(sql, { at: clearedAt, system: name })
+      : undefined,
+    kind === 'low_disk' && clearedAt === undefined
+      ? readDiskTrends(sql, { mount: row.subject, now, system: name })
+      : undefined,
+    kind === 'low_disk' && clearedAt === undefined
+      ? readNewestSampleAt(sql, { now, system: name })
+      : undefined,
+  ]);
   const vitals =
     readSeries === undefined
       ? await readVitalsWindow(sql, {
@@ -256,8 +280,10 @@ export const readConditionDetail = async (
             ? Math.max(0, totalBytes - latestUsedBytes) / growth.bytesPerDay
             : undefined,
         growth,
-        lastAt,
         mount,
+        // The System page dates its disks from the newest sample, not the start
+        // of the newest 5-minute disk bucket, so the two pages judge quiet alike.
+        newestSampleAt: newestSampleAt ?? lastAt,
         sizeChanged,
         spanMs,
       }),

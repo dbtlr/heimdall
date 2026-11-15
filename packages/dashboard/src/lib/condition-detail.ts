@@ -323,7 +323,7 @@ const rateOf = (detail: ConditionDetail, now: number): ConditionDetailView['rate
     return undefined;
   }
   const daysUntilFull = trend.daysUntilFull;
-  const quiet = isQuietReading(trend.lastAt, now);
+  const quiet = isQuietReading(trend.newestSampleAt, now);
   return {
     estimate: true,
     text: `${growthWords(growth.bytesPerDay)}${spanWindowWords(trend.spanMs, quiet)}. At that rate it is full ${countdownWords(daysUntilFull, quiet)}.`,

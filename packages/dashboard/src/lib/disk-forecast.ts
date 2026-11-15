@@ -60,9 +60,14 @@ export const spanWindowWords = (spanMs: number, fromNewestReading: boolean): str
     ? ` over the ${spanWords(spanMs)} to the newest reading`
     : ` over the last ${spanWords(spanMs)}`;
 
-// When a growing mount is reached, counted from the newest reading once quiet.
-export const countdownWords = (days: number, fromNewestReading: boolean): string =>
-  `${reachWords(days)}${fromNewestReading && days > 0 ? ' from the newest reading' : ''}`;
+// When a growing mount is reached, counted from the newest reading once quiet;
+// a quiet mount already full was full at its newest reading.
+export const countdownWords = (days: number, fromNewestReading: boolean): string => {
+  if (!fromNewestReading) {
+    return reachWords(days);
+  }
+  return days <= 0 ? 'at the newest reading' : `${reachWords(days)} from the newest reading`;
+};
 
 // A forecast as the Disks card says it, in the Condition page's words for
 // growth and time, with the actual fitted span when one is available.
@@ -85,8 +90,5 @@ export const forecastWords = (
     return `Not growing${window}, so no forecast.`;
   }
   const target = forecast.percent >= 100 ? 'full' : `${String(forecast.percent)}%`;
-  if (fromNewestReading && forecast.days <= 0) {
-    return `${growthWords(forecast.bytesPerDay)}${window} · ${target} at the newest reading`;
-  }
   return `${growthWords(forecast.bytesPerDay)}${window} · ${target} ${countdownWords(forecast.days, fromNewestReading)}`;
 };

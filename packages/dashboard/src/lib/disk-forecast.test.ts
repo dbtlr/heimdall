@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { diskForecast, forecastWords } from './disk-forecast.ts';
+import { countdownWords, diskForecast, forecastWords } from './disk-forecast.ts';
 
 const GIB = 1024 ** 3;
 const BANDS = { alert: 90, note: 70, warning: 80 };
@@ -114,4 +114,9 @@ test('recent size changes and flat fits explain the actual fitted interval', () 
   expect(forecastWords(flat, true, 3 * 86_400_000)).toBe(
     'Not growing over the 3 days to the newest reading, so no forecast.',
   );
+});
+
+test('a quiet countdown of a full mount says it was full at the newest reading, on either page', () => {
+  expect(countdownWords(0, true)).toBe('at the newest reading');
+  expect(countdownWords(0, false)).toBe('now');
 });
