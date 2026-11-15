@@ -4,6 +4,7 @@ import {
   clockAt,
   clockSpan,
   joinPhrases,
+  listNames,
   phraseText,
   phraseTitle,
   whenAt,
@@ -47,4 +48,11 @@ test('a title has no text until a zone is known', () => {
 test('joined phrases skip the empty ones and keep their times', () => {
   const joined = joinPhrases([['Exited.'], [''], [], ['recovery at ', clockAt(0)]], ' · ');
   expect(phraseText(joined, 'UTC')).toBe('Exited. · recovery at 00:00');
+});
+
+test('names list as a, a and b, or a, b, and c', () => {
+  expect(listNames([])).toBe('');
+  expect(listNames(['laptop-1'])).toBe('laptop-1');
+  expect(listNames(['laptop-1', 'server-1'])).toBe('laptop-1 and server-1');
+  expect(listNames(['devbox-1', 'laptop-1', 'server-1'])).toBe('devbox-1, laptop-1, and server-1');
 });

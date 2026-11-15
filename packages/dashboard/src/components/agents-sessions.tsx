@@ -35,24 +35,26 @@ const PHONE_SORTS: { dir: SortDirection; label: string; sort: SessionSort }[] = 
   { dir: 'desc', label: 'Duration', sort: 'duration' },
 ];
 
-const sessionKey = (session: AgentsSession) =>
+export const sessionKey = (session: AgentsSession) =>
   JSON.stringify([session.system, session.harness, session.source, session.sessionId]);
 
 const titleOf = (session: AgentsSession) =>
   session.project ?? `${harnessName(session.harness)} Session ${session.sessionId.slice(0, 8)}`;
 
-const sessionParams = (session: AgentsSession) => ({
+export const sessionParams = (
+  session: Pick<AgentsSession, 'harness' | 'sessionId' | 'source' | 'system'>,
+) => ({
   harness: session.harness,
   name: session.system,
   sessionId: session.sessionId,
   source: session.source,
 });
 
-const SESSION_ROUTE = '/systems/$name/sessions/$harness/$source/$sessionId' as const;
+export const SESSION_ROUTE = '/systems/$name/sessions/$harness/$source/$sessionId' as const;
 
 // What a row or card needs: its Session, the time the page was read, and the
 // viewer's zone, which the page knows before it shows the table.
-type RowProps = { now: number; session: AgentsSession; timeZone: string };
+export type RowProps = { now: number; session: AgentsSession; timeZone: string };
 
 function ProjectBranch({ session }: { session: AgentsSession }) {
   return (
@@ -67,7 +69,7 @@ function ProjectBranch({ session }: { session: AgentsSession }) {
 
 // When the Session's first request was, dated once it is older than
 // yesterday, since a Session in a 30-day range can be weeks old.
-function Started({ now, session, timeZone }: RowProps) {
+export function Started({ now, session, timeZone }: RowProps) {
   return (
     <time className="tabular-nums" dateTime={new Date(session.firstRequestAt).toISOString()}>
       {formatPast(session.firstRequestAt, now, timeZone)}
@@ -75,7 +77,7 @@ function Started({ now, session, timeZone }: RowProps) {
   );
 }
 
-function RunningTag({ className }: { className?: string }) {
+export function RunningTag({ className }: { className?: string }) {
   return (
     <span className={cn('text-status-good', className)} title={RUNNING_TITLE}>
       Running
@@ -83,7 +85,7 @@ function RunningTag({ className }: { className?: string }) {
   );
 }
 
-function CostText({ session }: { session: AgentsSession }) {
+export function CostText({ session }: { session: AgentsSession }) {
   return (
     <>
       {session.unpricedRequests > 0 && (

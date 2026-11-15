@@ -93,8 +93,8 @@ test('each kind opens its own page', () => {
     to: '/systems/$name/services/$service',
   });
   expect(jumpTarget({ kind: 'project', name: 'norn' })).toEqual({
-    search: { by: 'project', pick: 'norn', range: '30d' },
-    to: '/agents',
+    params: { name: 'norn' },
+    to: '/projects/$name',
   });
   expect(jumpTarget({ kind: 'session', ...session('5e7a0c') })).toEqual({
     params: {
@@ -155,4 +155,16 @@ test('a keyboard that shrinks the viewport shrinks the list to the room left, do
   expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 400 })).toBe(292);
   expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 200 })).toBe(92);
   expect(jumpListMaxHeight({ barTop: 590, inputBottom: 100, viewportBottom: 90 })).toBe(0);
+});
+
+test('a project named . or .. or nothing is never offered, since its path would lead elsewhere', () => {
+  const odd: JumpIndex = {
+    projects: ['.', '..', '', 'dots.app'],
+    services: [],
+    sessions: [],
+    systems: [],
+  };
+  expect(jumpMatches(odd, '.').map((item) => item.kind === 'project' && item.name)).toEqual([
+    'dots.app',
+  ]);
 });

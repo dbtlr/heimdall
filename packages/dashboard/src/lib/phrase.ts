@@ -47,3 +47,11 @@ export const zoneFreeText = (phrase: Phrase): string | undefined =>
 // browser's zone is known.
 export const phraseTitle = (phrase: Phrase, timeZone: string | undefined): string | undefined =>
   timeZone === undefined ? undefined : phraseText(phrase, timeZone);
+
+// Names as running text: "a", "a and b", or "a, b, and c".
+export const listNames = (names: readonly string[]): string => {
+  if (names.length < 3) {
+    return names.join(' and ');
+  }
+  return `${names.slice(0, -1).join(', ')}, and ${names.at(-1) ?? ''}`;
+};

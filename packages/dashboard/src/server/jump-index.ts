@@ -33,7 +33,7 @@ const projectsOf = (rows: PlaceRow[]) =>
 // by name; each paired System's Services by name; the Sessions whose
 // transcript ran in the last 30 days, newest first; and the projects of the
 // Sessions with a request in those 30 days, found as the Agents page finds its
-// Sessions, so each project opens there with a row to pick. Names only.
+// Sessions. Each project opens its own page. Names only.
 export const readJumpIndex = async (sql: SQL, { now }: { now: number }): Promise<JumpIndex> => {
   const since = new Date(now - JUMP_SESSION_DAYS * 86_400_000);
   const to = new Date(now);

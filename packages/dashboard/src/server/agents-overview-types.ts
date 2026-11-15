@@ -95,7 +95,8 @@ export type CostChart = {
 
 // The period's Sessions reach the browser only as these sums and the page of
 // the table asked for, so the payload stays the same size however many there are.
-export type AgentsOverview = {
+// A project's page reads this much; the Agents page adds Today's total.
+export type PeriodOverview = {
   // Each breakdown's keys, unsorted.
   breakdown: Record<AgentsBreakdown, KeyTotals[]>;
   chart: CostChart;
@@ -110,9 +111,12 @@ export type AgentsOverview = {
   // The page of the Sessions table the search asked for.
   table: SessionsPage;
   timeZone: string;
-  // What requests since local midnight cost.
-  today: PeriodTotals;
   totals: PeriodTotals;
   // What is usually spent by now; undefined when too few days show it.
   usualByNow: number | undefined;
+};
+
+export type AgentsOverview = PeriodOverview & {
+  // What requests since local midnight cost.
+  today: PeriodTotals;
 };

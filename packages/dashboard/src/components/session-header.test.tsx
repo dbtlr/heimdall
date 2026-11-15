@@ -14,3 +14,12 @@ test('a Session page starts its breadcrumb with Agents, then the System', async 
   expect(html).toContain('href="/systems/server-1"');
   expect(html).not.toContain('Fleet');
 });
+
+test('the Session project opens its dossier with an encoded folder name', async () => {
+  const html = await renderRouted(
+    <SessionTitle
+      view={{ branch: 'main', harness: 'codex', project: 'notes app', system: 'server-1' }}
+    />,
+  );
+  expect(html).toContain('href="/projects/notes%20app"');
+});

@@ -68,6 +68,7 @@ async function run() {
   const paths = [
     '/',
     '/agents',
+    '/projects/$name',
     '/systems/$name',
     '/systems/$name/services/$service',
     '/systems/$name/sessions/$harness/$source/$sessionId',
@@ -148,7 +149,7 @@ async function run() {
     await opens('server-2', '/systems/server-2');
     assert(box.value === '' && document.activeElement !== box, 'Opening a result closes the box');
     await opens('server-web', '/systems/edge-1/services/server-web');
-    await opens('tools', '/agents?by=project&pick=server-tools&range=30d');
+    await opens('tools', '/projects/server-tools');
     await opens('5e7', '/systems/server-1/sessions/codex/codex/5e7a0c');
 
     // As the top bar hides the box below its breakpoint.

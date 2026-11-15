@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { breakdownRows, LEGEND_SHOWN } from '../lib/agents-breakdown.ts';
 import { barStacks, costDomain, hourNames, OTHERS_KEY } from '../lib/agents-chart.ts';
 import type { BarStack } from '../lib/agents-chart.ts';
@@ -5,7 +7,7 @@ import { scaleTicks, yPercent } from '../lib/chart-scale.ts';
 import type { Domain } from '../lib/chart-scale.ts';
 import { formatClock, formatCost, formatDate } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
-import type { AgentsBreakdown, AgentsOverview } from '../server/agents-overview-types.ts';
+import type { AgentsBreakdown, PeriodOverview } from '../server/agents-overview-types.ts';
 import { AgentsBreakdownSwitch, AgentsLegend, SWITCH_LABELS } from './agents-breakdown.tsx';
 import { ScaledPlot } from './plot-scale.tsx';
 
@@ -14,7 +16,7 @@ const dollars = (value: number): string => `$${String(Number(value.toFixed(2)))}
 // Roughly how many labels the time axis carries.
 const AXIS_LABELS = 6;
 
-const axisLabel = (overview: AgentsOverview, index: number): string | undefined => {
+const axisLabel = (overview: PeriodOverview, index: number): string | undefined => {
   const { buckets, unit } = overview.chart;
   const bucket = buckets[index];
   if (bucket === undefined) {
@@ -35,13 +37,13 @@ const axisLabel = (overview: AgentsOverview, index: number): string | undefined 
 
 // The time the first day bar counts from when it starts before the period, as
 // a trailing 7- or 30-day period's first bar does; else undefined.
-const firstBarFrom = ({ chart, from }: AgentsOverview): number | undefined => {
+const firstBarFrom = ({ chart, from }: PeriodOverview): number | undefined => {
   const first = chart.buckets[0];
   return chart.unit === 'day' && first !== undefined && first.start < from ? from : undefined;
 };
 
 // A bar's name for a hover and the chart's text alternative.
-const barName = (overview: AgentsOverview, index: number): string => {
+const barName = (overview: PeriodOverview, index: number): string => {
   const { buckets, unit } = overview.chart;
   const start = buckets[index]?.start ?? 0;
   if (unit === 'hour') {
@@ -57,7 +59,7 @@ const barName = (overview: AgentsOverview, index: number): string => {
 };
 
 // Which bars count only part of their hour or day, for the chart's heading.
-const partialNote = (overview: AgentsOverview): string => {
+const partialNote = (overview: PeriodOverview): string => {
   if (overview.chart.unit === 'hour') {
     return 'the current hour is partial';
   }
@@ -116,9 +118,13 @@ export function AgentsChart({
   by,
   overview,
   pick,
+  dossier = false,
+  belowPlot,
 }: {
+  belowPlot?: ReactNode;
+  dossier?: boolean;
   by: AgentsBreakdown;
-  overview: AgentsOverview;
+  overview: PeriodOverview;
   pick: string | undefined;
 }) {
   const { buckets, cells, unit } = overview.chart;
@@ -157,16 +163,32 @@ export function AgentsChart({
           {usual === undefined ? '' : ' · dashed: usual by now'}
         </span>
       </h2>
-      {/* On a narrow screen the legend's chips wrap onto several rows, so it
-          follows the chart there instead of pushing the chart off the screen. */}
-      <div className="mt-3 flex flex-col gap-3 max-lg:contents lg:flex-row lg:items-start">
-        <div className="shrink-0 max-lg:mt-3">
-          <AgentsBreakdownSwitch current={by} />
+      {dossier ? (
+        // A dossier's split is fixed, so its key is a plain list beside the bars.
+        <ul aria-label="Keys of the chart" className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {rows.map((row) => (
+            <li className="flex items-center gap-1.5" key={row.key}>
+              <span
+                aria-hidden="true"
+                className="size-2.5 shrink-0 rounded-[3px]"
+                style={{ background: row.color }}
+              />
+              {row.name}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        // On a narrow screen the legend's chips wrap onto several rows, so it
+        // follows the chart there instead of pushing the chart off the screen.
+        <div className="mt-3 flex flex-col gap-3 max-lg:contents lg:flex-row lg:items-start">
+          <div className="shrink-0 max-lg:mt-3">
+            <AgentsBreakdownSwitch current={by} />
+          </div>
+          <div className="min-w-0 max-lg:order-last max-lg:mt-4">
+            <AgentsLegend by={by} key={by} pick={pick} rows={rows} />
+          </div>
         </div>
-        <div className="min-w-0 max-lg:order-last max-lg:mt-4">
-          <AgentsLegend key={by} pick={pick} rows={rows} />
-        </div>
-      </div>
+      )}
       <div className="mt-4">
         <ScaledPlot domain={domain} format={dollars} gutter height={190}>
           <div aria-hidden="true" className="absolute inset-0">
@@ -214,6 +236,7 @@ export function AgentsChart({
           ))}
         </div>
       </div>
+      {belowPlot !== undefined && <div className="mt-3 pl-8">{belowPlot}</div>}
     </section>
   );
 }

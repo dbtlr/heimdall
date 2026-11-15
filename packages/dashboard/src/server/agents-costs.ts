@@ -28,7 +28,7 @@ type CellRow = {
 // the period's Sessions and not the archive. Call it inside a snapshot.
 const readCells = async (
   sql: SQL,
-  { from, to }: Period,
+  { from, project, to }: Period,
   buckets: CostChart['buckets'],
 ): Promise<CellRow[]> => {
   const windows = JSON.stringify(
@@ -45,7 +45,7 @@ const readCells = async (
     ),
     spans AS MATERIALIZED (
       SELECT k.*, s.repository, coalesce(s.last_cwd, s.first_cwd) AS cwd
-      FROM (${sessionSpans(sql, { from, to })}) k
+      FROM (${sessionSpans(sql, { from, project, to })}) k
       CROSS JOIN LATERAL (
         SELECT x.repository, x.first_cwd, x.last_cwd
         FROM insight.sessions x

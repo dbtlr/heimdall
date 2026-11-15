@@ -1,15 +1,23 @@
 import type { SQL } from 'bun';
 
+import { sessionProjectSql } from './project-sql.ts';
+
 // The Sessions whose latest request is at or after `from` and whose first is
 // at or before `to`, each with those two times over all its stored stretches
 // (ADR-0016), as a fragment to nest in a statement. A Session's latest request
 // is at or after `from` exactly when one of its stretches ends then, so the
 // index on the stretches' end finds both the Sessions and their latest
 // request. Each Session's first request, though it began before `from`, is
-// the earliest start of its own stretches, read by key. The cost follows the
-// stretches ending since `from` and those Sessions' stretches, not the whole
-// archive.
-export const sessionSpans = (sql: SQL, { from, to }: { from: Date; to: Date }) => sql`
+// the earliest start of its own stretches, read by key. Given `project`, only
+// that project's Sessions remain: each Session the stretches pick is looked up
+// by key and kept when its project name (project-sql.ts) matches, so the
+// filter too costs per picked Session, not per Session in the archive. The
+// cost follows the stretches ending since `from` and those Sessions'
+// stretches, not the whole archive.
+export const sessionSpans = (
+  sql: SQL,
+  { from, to, project }: { from: Date; to: Date; project?: string | undefined },
+) => sql`
   SELECT k.harness, k.system, k.source, k.session_id, f.first_request_at, k.last_request_at
   FROM (
     SELECT harness, system, source, session_id, max(ended_at) AS last_request_at
@@ -24,4 +32,13 @@ export const sessionSpans = (sql: SQL, { from, to }: { from: Date; to: Date }) =
         = (k.harness, k.system, k.source, k.session_id)
   ) f
   WHERE f.first_request_at <= ${to}
+    ${
+      project === undefined
+        ? sql``
+        : sql`AND EXISTS (
+      SELECT 1 FROM insight.sessions s
+      WHERE (s.harness, s.system, s.source, s.session_id) = (k.harness, k.system, k.source, k.session_id)
+        AND ${sessionProjectSql(sql)} = ${project}
+    )`
+    }
 `;

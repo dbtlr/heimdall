@@ -1,4 +1,5 @@
 import type { JumpIndex, JumpSession } from '../server/jump-index-types.ts';
+import { linkableProject } from './project-activity.ts';
 
 // One thing the jump box can open.
 export type JumpItem =
@@ -17,10 +18,11 @@ const KIND_ORDER: Record<JumpItem['kind'], number> = {
   system: 0,
 };
 
+// A project whose name cannot lead to its page is left out.
 const itemsOf = (index: JumpIndex): JumpItem[] => [
   ...index.systems.map((name) => ({ kind: 'system' as const, name })),
   ...index.services.map((service) => ({ kind: 'service' as const, ...service })),
-  ...index.projects.map((name) => ({ kind: 'project' as const, name })),
+  ...index.projects.filter(linkableProject).map((name) => ({ kind: 'project' as const, name })),
   ...index.sessions.map((session) => ({ kind: 'session' as const, ...session })),
 ];
 
@@ -53,8 +55,7 @@ export const jumpMatches = (index: JumpIndex, query: string, limit = JUMP_LIMIT)
 };
 
 // Where an item leads, as router navigation options; the last case is a
-// Session. A project opens Agents over 30 days, broken down by project and
-// picked to it.
+// Session. A project opens its dossier.
 export const jumpTarget = (item: JumpItem) => {
   switch (item.kind) {
     case 'system': {
@@ -68,8 +69,8 @@ export const jumpTarget = (item: JumpItem) => {
     }
     case 'project': {
       return {
-        search: { by: 'project', pick: item.name, range: '30d' },
-        to: '/agents',
+        params: { name: item.name },
+        to: '/projects/$name',
       } as const;
     }
     default: {
