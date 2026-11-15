@@ -45,7 +45,7 @@ const renderAt = async (path: string) => {
     component: Outlet,
     loader: async (): Promise<RootData> => {
       await Promise.resolve();
-      return { count: 0, fleet: undefined };
+      return { count: 0, fleet: undefined, hubVersion: undefined };
     },
   });
   const { component, loader, loaderDeps, notFoundComponent, validateSearch } = Route.options;
