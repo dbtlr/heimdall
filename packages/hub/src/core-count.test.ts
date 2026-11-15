@@ -1,5 +1,7 @@
 import { beforeAll, expect, test } from 'bun:test';
 
+import { FUTURE_SAMPLE_TOLERANCE_MS } from '@heimdall/schema';
+
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import { startTestServer } from './testing/postgres.ts';
 
@@ -114,4 +116,33 @@ test('a current count replaces a stored count dated ahead of the Hub', async () 
   `;
   expect((await push(h.hub, withCores([NOW], 4), { token: 'server-token' })).status).toBe(200);
   expect(await storedCores(h)).toEqual({ cpu_cores: 4, cpu_cores_at: new Date(NOW) });
+});
+
+test('a sample at the future-sample tolerance sets the core count, and one a millisecond later does not', async () => {
+  await using h = await startHub();
+  const edge = NOW + FUTURE_SAMPLE_TOLERANCE_MS;
+  expect((await push(h.hub, withCores([edge + 1], 8), { token: 'server-token' })).status).toBe(200);
+  expect(await storedCores(h)).toEqual({ cpu_cores: null, cpu_cores_at: null });
+  await using fresh = await startHub();
+  expect((await push(fresh.hub, withCores([edge], 8), { token: 'server-token' })).status).toBe(200);
+  expect(await storedCores(fresh)).toEqual({ cpu_cores: 8, cpu_cores_at: new Date(edge) });
+});
+
+test('a stored count dated at the tolerance holds, and one a millisecond beyond gives way', async () => {
+  for (const [storedAt, expected] of [
+    [NOW + FUTURE_SAMPLE_TOLERANCE_MS, 8],
+    [NOW + FUTURE_SAMPLE_TOLERANCE_MS + 1, 4],
+  ] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- Each case needs its own Hub.
+    await using h = await startHub();
+    // oxlint-disable-next-line no-await-in-loop -- The stored row comes before the Report.
+    await h.db.sql`
+      INSERT INTO systems (name, last_seen_at, cpu_cores, cpu_cores_at)
+      VALUES ('server-1', ${new Date(NOW)}, 8, ${new Date(storedAt)})
+    `;
+    // oxlint-disable-next-line no-await-in-loop -- The Report must commit before the check.
+    expect((await push(h.hub, withCores([NOW], 4), { token: 'server-token' })).status).toBe(200);
+    // oxlint-disable-next-line no-await-in-loop -- Check the state after the Report commits.
+    expect((await storedCores(h))?.cpu_cores).toBe(expected);
+  }
 });
