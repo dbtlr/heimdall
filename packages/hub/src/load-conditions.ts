@@ -6,7 +6,7 @@ import { clear, evaluateEach, raise } from './conditions.ts';
 import { recordHistoricalLoad } from './load-history.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
-import { holdersAt } from './memory-holders.ts';
+import { CARRIER_MAX_AGE_MS, holdersAt } from './memory-holders.ts';
 import { trackEpisodeSample } from './sampled-history.ts';
 import { pairedSystems, whenPaired } from './tokens.ts';
 
@@ -158,7 +158,11 @@ const judgeSystem = (sql: SQL, system: string, clock: () => number, limits: Cond
       return;
     }
     const rules = rulesFor(selected);
-    const largestWindow = Math.max(...rules.map((rule) => rule.window.minutes)) * 60_000;
+    // A High memory reason also looks back for the holders list.
+    const largestWindow = Math.max(
+      CARRIER_MAX_AGE_MS,
+      ...rules.map((rule) => rule.window.minutes * 60_000),
+    );
     const after =
       cursor === undefined || cursor.dirty_from !== null
         ? null
