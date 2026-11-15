@@ -177,6 +177,7 @@ The sample inspector inspects the selected sample. The Condition page inspects t
 They read the newest sample carrying `topByMemory` that is at or before the inspected sample, at most two minutes older than it, and within its uptime, so from the same boot.
 Two minutes covers the Collector's one-minute cadence and one sample missed by a failed process read.
 With no such sample, or an empty list, they show nothing, not even the heading.
+When the Hub raises or re-raises a High memory Condition, live or while recording an episode from delayed Reports, it finds the list for the sample it judged by the same rule and ends the reason with `; largest: ` and each holder's name and resident memory, largest first, in GiB with one decimal or in MiB under 1 GiB, such as `largest: postgres 3.1 GiB, node 1.2 GiB, bun 800 MiB`. A name is cut at 30 characters. With no such list, the reason is unchanged. The newest sample in that range decides, so an empty list means no holders, as on the dashboard. An uncertain-load reason and High CPU never carry holders. A recovery repeats the Condition's last raise reason, so its Activity line can still name the holders from that raise.
 
 Raising and escalation require enough measured busy time.
 A new current Condition also requires a latest sample no older than two hours.

@@ -3,6 +3,7 @@ import type { SQL } from 'bun';
 import type { ConditionLimits } from './condition-limits.ts';
 import { feedRules, reasonFor, rulesFor, selectedRule } from './load-windows.ts';
 import type { Kind, Level, Reading } from './load-windows.ts';
+import { holdersAt } from './memory-holders.ts';
 import { recordSampledEpisodes } from './sampled-history.ts';
 
 type Step = { level: Level; reason: string };
@@ -26,7 +27,7 @@ const replayEpisodes = (
   const open = new Map<Kind, Episode>();
   const recovered: Recovered[] = [];
   let previous: Reading | undefined;
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     if (row.t > through) {
       break;
     }
@@ -41,10 +42,16 @@ const replayEpisodes = (
           open.delete(kind);
         }
       } else if (held === undefined) {
-        const step = { level: selected.level, reason: reasonFor(selected, row) };
+        const step = {
+          level: selected.level,
+          reason: reasonFor(selected, row, holdersAt(rows, index)),
+        };
         open.set(kind, { from: row.t, level: selected.level, steps: [step] });
       } else if (selected.level !== held.level) {
-        held.steps.push({ level: selected.level, reason: reasonFor(selected, row) });
+        held.steps.push({
+          level: selected.level,
+          reason: reasonFor(selected, row, holdersAt(rows, index)),
+        });
         held.level = selected.level;
       }
     }

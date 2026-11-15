@@ -10,6 +10,7 @@ import { parseConditionLimits } from './condition-limits.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
 import { evaluateLoadConditions, judgeLoadConditions } from './load-conditions.ts';
 import type { LoadConditionFacts } from './load-conditions.ts';
+import { holdersAt, holdersText } from './memory-holders.ts';
 import { unpair } from './pairing.ts';
 import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { NOW, push, report, startHub, storeToken } from './testing/hub.ts';
@@ -688,4 +689,200 @@ test('sleep and reboot leave intervals unknown instead of inventing measured bus
     coverage: { cpuKnown: false, memoryKnown: false },
     transitions: [],
   });
+});
+
+const GIB = 2 ** 30;
+const holder = (name: string, rssBytes: number) => ({ name, pid: 1, rssBytes, start: 'a' });
+
+// Linux memory at 95% for an hour, or macOS pressure; `carrying` picks which
+// samples carry a holders list.
+const memoryFacts = (
+  platform: 'darwin' | 'linux',
+  carrying: (t: number, minute: number) => ReturnType<typeof holder>[] | null,
+) => {
+  const facts = loadFacts(readings(NOW, 60, () => 5));
+  for (const [i, row] of facts.rows.entries()) {
+    Object.assign(row, {
+      collector_platform: platform,
+      memory_pressure: platform === 'darwin' ? 'critical' : null,
+      memory_total_bytes: String(16 * GIB),
+      memory_used_bytes: String(15.2 * GIB),
+      top_by_memory: carrying(row.t.getTime(), i / 4),
+    });
+  }
+  return facts;
+};
+
+const memoryReason = (facts: LoadConditionFacts) => {
+  const verdict = judgedLoad(facts).transitions.findLast(
+    (transition) => transition.kind === 'high_memory',
+  )?.verdict;
+  return typeof verdict === 'object' ? verdict.raise : undefined;
+};
+
+const THREE = [
+  holder('postgres', 3.1 * GIB),
+  holder('node', 1.2 * GIB),
+  holder('bun', 800 * 2 ** 20),
+];
+const PLAIN = /^Memory above 90% for [\d.]+ minutes in the 60 minutes ending \S+Z\.$/;
+
+test('a raised High memory reason names the largest processes, largest first', () => {
+  const reason = memoryReason(memoryFacts('linux', (_, m) => (m % 1 === 0 ? THREE : null)));
+  expect(reason).toMatch(
+    /^Memory above 90% for [\d.]+ minutes in the 60 minutes ending \S+Z; largest: postgres 3\.1 GiB, node 1\.2 GiB, bun 800 MiB\.$/,
+  );
+  expect(reason?.match(/\.$/g)).toHaveLength(1);
+});
+
+test('macOS pressure wording keeps its prefix and names the holders', () => {
+  const reason = memoryReason(memoryFacts('darwin', () => THREE));
+  expect(reason).toMatch(
+    /^Memory pressure for [\d.]+ minutes in the .* ending \S+Z; largest: postgres 3\.1 GiB/,
+  );
+});
+
+test('without a qualifying list the High memory reason is the plain sentence', () => {
+  expect(memoryReason(memoryFacts('linux', () => null))).toMatch(PLAIN);
+  expect(memoryReason(memoryFacts('linux', () => []))).toMatch(PLAIN);
+  // A list only from the first minutes is far older than two minutes at the raise.
+  expect(memoryReason(memoryFacts('linux', (_, m) => (m === 0 ? THREE : null)))).toMatch(PLAIN);
+});
+
+test('holders from before the boot or too long ago are not used', () => {
+  const facts = memoryFacts('linux', (_, m) => (m === 0 ? THREE : null));
+  expect(holdersAt(facts.rows, 8)).toHaveLength(3);
+  expect(holdersAt(facts.rows, 9)).toEqual([]);
+  // Rebooted 20 seconds before row 4: the carrier at row 0 is from the old boot.
+  const rebooted = memoryFacts('linux', (_, m) => (m === 0 ? THREE : null)).rows;
+  Object.assign(rebooted[4] ?? {}, { uptime_seconds: 20 });
+  expect(holdersAt(rebooted, 4)).toEqual([]);
+});
+
+test('High CPU reasons never name memory holders', () => {
+  const facts = loadFacts(readings(NOW, 60, () => 95));
+  for (const row of facts.rows) {
+    Object.assign(row, { top_by_memory: THREE });
+  }
+  const verdicts = judgedLoad(facts).transitions.filter((t) => t.kind === 'high_cpu');
+  expect(verdicts.length).toBeGreaterThan(0);
+  for (const { verdict } of verdicts) {
+    expect(typeof verdict === 'object' ? verdict.raise : '').not.toContain('largest');
+  }
+});
+
+test("long process names are cut, keeping Activity's line readable", () => {
+  const long = Array.from({ length: 5 }, (_, i) =>
+    holder(`${'x'.repeat(80)}${String(i)}`, 2 * GIB),
+  );
+  const reason = memoryReason(memoryFacts('linux', () => long)) ?? '';
+  expect(reason).toContain('largest:');
+  expect(reason).not.toContain('x'.repeat(31));
+});
+
+test('a name is cut by code point, never inside a surrogate pair', () => {
+  const name = `${'a'.repeat(28)}😀zz`;
+  const text = holdersText([holder(name, 2 * GIB)]);
+  expect(text).toBe(`${'a'.repeat(28)}😀… 2.0 GiB`);
+  expect(text.isWellFormed()).toBe(true);
+  expect(holdersText([holder(`${'a'.repeat(29)}😀zz`, 2 * GIB)]).isWellFormed()).toBe(true);
+});
+
+test('the newest carrier decides: an empty list means no holders, not older ones', () => {
+  const facts = memoryFacts('linux', (_, m) => {
+    if (m === 59) {
+      return THREE;
+    }
+    return m === 60 ? [] : null;
+  });
+  expect(holdersAt(facts.rows, facts.rows.length - 1)).toEqual([]);
+  expect(memoryReason(facts)).toMatch(PLAIN);
+});
+
+test('windows shorter than two minutes still find a list from 1:30 earlier', async () => {
+  await using h = await startHub();
+  // Every window is under two minutes, so only the carrier floor reaches the list.
+  const limits = parseConditionLimits({
+    cpu: {
+      noteMinutes: 0.25,
+      noteWindowMinutes: 0.25,
+      warningMinutes: 0.5,
+      warningWindowMinutes: 0.5,
+    },
+    memory: { percent: 90, warningMinutes: 0.25, warningWindowMinutes: 0.5 },
+  });
+  const quiet = readings(NOW, 10, () => 10).map((row, i) =>
+    Object.assign(row, {
+      memory: { totalBytes: 1000, usedBytes: 100 },
+      ...(i === 35 ? { processes: holderObservation() } : {}),
+    }),
+  );
+  await send(h, quiet);
+  await evaluate(h, limits);
+  // The raise lands 1:30 after the only carrier, before the next read's start.
+  await send(
+    h,
+    readings(NOW + 10 * MINUTE + STEP, 1, () => 10).map((row) =>
+      Object.assign(row, { memory: { totalBytes: 1000, usedBytes: 950 } }),
+    ),
+  );
+  await evaluate(h, limits);
+  const [row]: { reason: string }[] = await h.db.sql`
+    SELECT raised_reason AS reason FROM conditions WHERE kind = 'high_memory' AND system = 'laptop-1'
+  `;
+  expect(row?.reason).toContain('; largest: postgres 3.1 GiB');
+});
+
+test('a backfilled High memory episode names the holders its samples carried', async () => {
+  await using h = await startHub();
+  const limits = parseConditionLimits({
+    memory: { percent: 90, warningMinutes: 5, warningWindowMinutes: 10 },
+  });
+  await send(
+    h,
+    readings(NOW + 120 * MINUTE, 0, () => 10),
+  );
+  await evaluate(h, limits);
+  const delayed = readings(NOW, 60, () => 10).map((row, i) =>
+    Object.assign(row, {
+      memory: { totalBytes: 1000, usedBytes: i <= 4 * 20 ? 950 : 100 },
+      processes: holderObservation(),
+    }),
+  );
+  await send(h, delayed);
+  await evaluate(h, limits);
+  const found: { reason: string; cleared: boolean }[] = await h.db.sql`
+    SELECT raised_reason AS reason, cleared_at IS NOT NULL AS cleared
+    FROM conditions WHERE kind = 'high_memory' AND system = 'laptop-1'
+  `;
+  expect(found).toHaveLength(1);
+  expect(found[0]?.cleared).toBe(true);
+  expect(found[0]?.reason).toContain('; largest: postgres 3.1 GiB');
+});
+
+const holderObservation = () => ({
+  bootId: 'boot-1',
+  census: { kind: 'partial' as const },
+  intervalMs: 15_000,
+  top: [],
+  topByMemory: [
+    { name: 'postgres', pid: 7, rssBytes: Math.round(3.1 * GIB), start: '1' },
+    { name: 'node', pid: 8, rssBytes: Math.round(1.2 * GIB), start: '2' },
+  ],
+});
+
+test('the stored High memory reason names the holders read from the database', async () => {
+  await using h = await startHub();
+  const samples = readings(NOW, 30, () => 10).map((row, i) =>
+    Object.assign(row, {
+      memory: { totalBytes: 1000, usedBytes: 950 },
+      ...(i % 4 === 0 ? { processes: holderObservation() } : {}),
+    }),
+  );
+  await send(h, samples);
+  await evaluate(h);
+  const [row]: { reason: string }[] = await h.db.sql`
+    SELECT latest_reason AS reason FROM conditions WHERE kind = 'high_memory' AND system = 'laptop-1'
+  `;
+  expect(row?.reason).toMatch(/; largest: postgres 3\.1 GiB, node 1\.2 GiB\.$/);
 });

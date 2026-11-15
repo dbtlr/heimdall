@@ -2,6 +2,8 @@ import { SAMPLE_INTERVAL_MS } from '@heimdall/schema';
 import type { VitalsSample } from '@heimdall/schema';
 
 import type { ConditionLimits } from './condition-limits.ts';
+import { holdersText } from './memory-holders.ts';
+import type { MemoryHolder } from './memory-holders.ts';
 
 export type Kind = 'high_cpu' | 'high_memory';
 export type Level = 'note' | 'warning';
@@ -13,6 +15,8 @@ export type Reading = {
   memory_pressure: VitalsSample['memory']['pressure'] | null;
   collector_platform: string | null;
   uptime_seconds: number;
+  // The five largest processes by memory, when this sample carries them.
+  top_by_memory?: readonly MemoryHolder[] | null;
 };
 type Interval = { from: number; to: number; busy: boolean };
 
@@ -165,7 +169,13 @@ export const chooseWindowRule = <Rule extends { level: Level; duration: number; 
   });
 };
 
-export const reasonFor = (rule: ReturnType<typeof rulesFor>[number], row: Reading) => {
+// `holders` are named after a High memory reason that is raised or re-raised;
+// every other reason ignores them.
+export const reasonFor = (
+  rule: ReturnType<typeof rulesFor>[number],
+  row: Reading,
+  holders: readonly MemoryHolder[] = [],
+) => {
   const name = rule.kind === 'high_cpu' ? 'CPU' : 'Memory';
   const busy =
     rule.kind === 'high_memory' && row.collector_platform === 'darwin'
@@ -175,5 +185,7 @@ export const reasonFor = (rule: ReturnType<typeof rulesFor>[number], row: Readin
     const unknownMinutes = Math.max(0, rule.window.minutes - rule.window.known / 60_000);
     return `${name} load remains uncertain: ${String(Math.round(unknownMinutes * 10) / 10)} minutes are unknown in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}; the ${rule.level} limit could still be met.`;
   }
-  return `${busy} for ${String(Math.round((rule.window.busy / 60_000) * 10) / 10)} minutes in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}.`;
+  const sentence = `${busy} for ${String(Math.round((rule.window.busy / 60_000) * 10) / 10)} minutes in the ${String(rule.window.minutes)} minutes ending ${row.t.toISOString()}`;
+  const largest = rule.kind === 'high_memory' ? holdersText(holders) : '';
+  return largest === '' ? `${sentence}.` : `${sentence}; largest: ${largest}.`;
 };
