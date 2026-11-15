@@ -166,7 +166,12 @@ export const readProjectView = (
         CROSS JOIN LATERAL (
           SELECT count(*)::int AS n FROM insight.subagents x
           WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
-            AND x.ended_at >= ${from} AND x.started_at <= ${to}
+            -- Like its Session, a subagent counts only with a request in the period.
+            AND EXISTS (
+              SELECT 1 FROM insight.requests q
+              WHERE (q.harness, q.system, q.source, q.session_id) = (x.harness, x.system, x.source, x.session_id)
+                AND q.agent_id = x.agent_id AND q.at >= ${from} AND q.at <= ${to}
+            )
         ) a
         WHERE a.n > 0
       ` as Promise<(Key & { n: number })[]>,

@@ -412,8 +412,66 @@ test('a Session with no request in the range adds no branch, tool, subagent, lan
   expect(view?.overview.sessionCount).toBe(0);
   expect(view?.branches).toEqual([]);
   expect(view?.tools).toEqual([]);
+  expect(view?.subagents).toBe(0);
   expect(view?.lanes).toEqual([]);
   expect(view?.activeMs).toBe(0);
+});
+
+test('a subagent counts only with a request in the range, even in a Session that has one', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'live',
+    requests: [-600],
+    subagents: [
+      { agentId: 'skewed', requests: [-864_000, 60] },
+      { agentId: 'working', requests: [-590] },
+    ],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.overview.sessionCount).toBe(1);
+  expect(view?.subagents).toBe(1);
+});
+
+test("process CPU is each process's own span over the buckets that overlap the range, summed", async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // The range starts 4 minutes into a 5-minute rollup bucket.
+  const now = NOW + 240_000;
+  const from = (agentsPeriod({ now, range: '7d', timeZone: 'UTC' }).from.getTime() - NOW) / 1000;
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'live', requests: [-600] });
+  // One core from 20 minutes before the range to 10 minutes into it: its buckets
+  // that overlap the range start 4 minutes before it, so 14 minutes count.
+  await addProcess(h.db.sql, {
+    cpuCores: 1,
+    cwd: '/repos/notes-app',
+    end: from + 600,
+    pid: 1,
+    readings: 'rollups',
+    start: from - 1200,
+  });
+  // Two cores for 9 minutes inside the range.
+  await addProcess(h.db.sql, {
+    cpuCores: 2,
+    cwd: '/repos/notes-app',
+    end: from + 600,
+    pid: 2,
+    readings: 'rollups',
+    start: from + 60,
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.cpuSeconds).toBe(840 + 1080);
 });
 
 test('a request just before the range adds no lane or active time, while one inside does', async () => {
