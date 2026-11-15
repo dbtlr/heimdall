@@ -88,14 +88,18 @@ export const readProjectView = (
       return undefined;
     }
     const { from, to } = agentsPeriod(input);
-    // The project's Sessions with a request in the period.
+    // The project's Sessions with a request in the period. Each Session probes
+    // for its first such request through the view's session index, and LIMIT
+    // keeps the probe per Session: as a plain EXISTS, the planner joins the
+    // whole view and prices every request in the archive first.
     const spans = tx`
       SELECT k.* FROM (${sessionSpans(tx, { from, project: name, to })}) k
-      WHERE EXISTS (
+      CROSS JOIN LATERAL (
         SELECT 1 FROM insight.requests q
         WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
           AND q.at >= ${from} AND q.at <= ${to}
-      )
+        LIMIT 1
+      ) e
     `;
     const [overview, windows, branches, tools, subagents, processes] = await Promise.all([
       readPeriodOverview(tx, { ...input, project: name }),
@@ -165,13 +169,15 @@ export const readProjectView = (
         FROM spans k
         CROSS JOIN LATERAL (
           SELECT count(*)::int AS n FROM insight.subagents x
+          -- Like its Session, a subagent counts only with a request in the
+          -- period, probed per subagent as the spans probe per Session.
+          CROSS JOIN LATERAL (
+            SELECT 1 FROM insight.requests q
+            WHERE (q.harness, q.system, q.source, q.session_id) = (x.harness, x.system, x.source, x.session_id)
+              AND q.agent_id = x.agent_id AND q.at >= ${from} AND q.at <= ${to}
+            LIMIT 1
+          ) e
           WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
-            -- Like its Session, a subagent counts only with a request in the period.
-            AND EXISTS (
-              SELECT 1 FROM insight.requests q
-              WHERE (q.harness, q.system, q.source, q.session_id) = (x.harness, x.system, x.source, x.session_id)
-                AND q.agent_id = x.agent_id AND q.at >= ${from} AND q.at <= ${to}
-            )
         ) a
         WHERE a.n > 0
       ` as Promise<(Key & { n: number })[]>,
