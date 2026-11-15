@@ -775,11 +775,13 @@ describe("a Report's transcripts section", () => {
     await using h = await startHub();
     const later = { ...report('laptop-1', [NOW + 15_000]), sentAt: NOW + 15_000 };
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
     });
 
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 15_000,
       report: { ...later, transcripts: section('absent', 0) },
     });
@@ -798,11 +800,13 @@ describe("a Report's transcripts section", () => {
     await using h = await startHub();
     const later = { ...report('laptop-1', [NOW + 15_000]), sentAt: NOW + 15_000 };
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 15_000,
       report: { ...later, transcripts: section('absent', 0) },
     });
 
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 20_000,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
     });
@@ -816,6 +820,7 @@ describe("a Report's transcripts section", () => {
     await using h = await startHub();
     const farFuture = NOW + 10 * 365 * 24 * 60 * 60 * 1000;
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW,
       report: {
         ...report('laptop-1', [NOW]),
@@ -825,6 +830,7 @@ describe("a Report's transcripts section", () => {
     });
 
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 15_000,
       report: {
         ...report('laptop-1', [NOW + 15_000]),
@@ -841,11 +847,13 @@ describe("a Report's transcripts section", () => {
   test('from a Report sent at the same moment replaces it', async () => {
     await using h = await startHub();
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
     });
 
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 15_000,
       report: { ...report('laptop-1', [NOW + 1]), transcripts: section('absent', 0) },
     });
@@ -858,11 +866,13 @@ describe("a Report's transcripts section", () => {
   test('left out keeps the set stored', async () => {
     await using h = await startHub();
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW,
       report: { ...report('laptop-1', [NOW]), transcripts: section('capturing', 4096) },
     });
 
     await storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: NOW + 15_000,
       report: { ...report('laptop-1', [NOW + 15_000]), sentAt: NOW + 15_000 },
     });

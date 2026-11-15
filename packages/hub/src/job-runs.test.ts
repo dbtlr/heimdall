@@ -31,6 +31,7 @@ const send = (
   }: { receivedAt?: number; sentAt?: number; system?: string } = {},
 ) =>
   storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt,
     report: { ...report(system, []), jobRuns: { runs }, sentAt },
   });
@@ -47,6 +48,7 @@ test('a Report stores its job runs with the output and the sent and received tim
   await using h = await startHub();
   const started = NOW - 3600_000;
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 1000,
     report: {
       ...report('laptop-1', []),
@@ -300,4 +302,45 @@ test('each dropped run logs one warning naming the System, the job and start whe
   expect(h.warnings[0]).toContain('exitStatus');
   expect(h.warnings[1]).toContain('laptop-1');
   expect(h.warnings[2]).toContain('repeats');
+});
+
+// A Report the Hub fails to store answers a server error, and the Collector
+// sends it again, so its drops are told only once a store commits. The store
+// fails at its last step, clearing the Reports-rejected Condition an invalid
+// Report raised, after the runs were taken.
+test('a Report the Hub fails to store logs no drop warning, and once stored logs each drop once', async () => {
+  await using h = await startHub();
+  const started = NOW - 3600_000;
+  expect((await sendBody(h, 'runs')).status).toBe(422);
+  await h.db.sql`
+    CREATE FUNCTION refuse_clear() RETURNS trigger LANGUAGE plpgsql
+    AS $$ BEGIN RAISE EXCEPTION 'clear refused'; END $$
+  `;
+  await h.db.sql`
+    CREATE TRIGGER refuse BEFORE UPDATE ON conditions FOR EACH ROW EXECUTE FUNCTION refuse_clear()
+  `;
+  const runs = { runs: [jobRun(started, { exitStatus: 256 }), jobRun(started + 1000)] };
+
+  const failed = await sendBody(h, runs);
+
+  expect(failed.status).toBe(503);
+  expect(await stored(h)).toEqual([]);
+  expect(h.warnings).toEqual([]);
+
+  await h.db.sql`DROP TRIGGER refuse ON conditions`;
+  const response = await sendBody(h, runs);
+
+  expect(response.status).toBe(200);
+  expect(h.warnings).toHaveLength(1);
+  expect(h.warnings[0]).toContain('exitStatus');
+});
+
+test('a dropped run with a 2 MB job name logs a warning of bounded length', async () => {
+  await using h = await startHub();
+
+  await sendBody(h, { runs: [jobRun(NOW - 3600_000, { job: 'b'.repeat(2 * 1024 * 1024) })] });
+
+  expect(h.warnings).toHaveLength(1);
+  expect(h.warnings[0]).toContain('laptop-1');
+  expect(h.warnings[0]?.length).toBeLessThan(1000);
 });

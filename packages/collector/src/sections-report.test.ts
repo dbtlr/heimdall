@@ -151,11 +151,11 @@ const minutesAgo = (minutes: number, exitStatus = 0): RunRecord => {
   return { exitStatus, finished: isoSecond(started + 5000), started: isoSecond(started) };
 };
 
-// Applies `change` through a connection of its own, as `record` and `forget` do.
 // The job runs a Report carries, which the Collector built with the strict schema.
 const sentRuns = (sent: Report | undefined): SentJobRun[] =>
   sent?.jobRuns === undefined ? [] : JobRunsSectionSchema.parse(sent.jobRuns).runs;
 
+// Applies `change` through a connection of its own, as `record` and `forget` do.
 const elsewhere = async (
   stateDir: string,
   change: (store: Awaited<ReturnType<typeof openRecords>>) => void,
@@ -1459,7 +1459,7 @@ test('pairing that lands while the daemon reads its identity keeps the runs held
   expect(kept).toHaveLength(1);
 });
 
-// A held row the Hub could not take is left out, settled, and warned about once,
+// A held row the section cannot carry is left out, settled, and warned about once,
 // while the valid run behind it is sent (ADR-0023).
 test('held runs the section cannot carry are settled and warned about, and the valid run still goes', async () => {
   await using dir = await tempStateDir();

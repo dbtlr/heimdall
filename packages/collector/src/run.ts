@@ -91,6 +91,24 @@ const pairedIdentity = async ({
   }
 };
 
+// The store the daemon's sections reporter reads the job runs from, through a
+// connection of its own, and its check that `identity`, the one the daemon
+// started with, is still the one stored in `stateDir`. `pair` may store another
+// identity while the daemon runs; the job runs it then holds are for the Hub of
+// that identity, not this one (ADR-0023).
+export const reporterStore = ({
+  hub,
+  identity,
+  stateDir,
+}: {
+  hub: URL;
+  identity: SystemIdentity;
+  stateDir: string;
+}) => ({
+  open: () => openRecords({ stateDir }),
+  paired: daemonStillPaired({ hub, stateDir, token: identity.token }),
+});
+
 // The startup line about transcript capture.
 const captureLine = (sources: readonly Source[]) =>
   sources.length === 0
@@ -170,7 +188,8 @@ export const runAction: ActionHandler<typeof run> = async ({
     if (shared !== undefined) {
       log.fatal(clean(`collector.toml is not valid: ${shared}`));
     }
-    const { system, token } = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
+    const pairing = await pairedIdentity({ clean, hub: options.hub, log, stateDir });
+    const { system, token } = pairing;
     const queue = await openQueue({ capacity: QUEUE_CAPACITY, stateDir });
     const spool = await openSpool({ stateDir });
     const runtime = {
@@ -252,10 +271,7 @@ export const runAction: ActionHandler<typeof run> = async ({
       harnesses: harnessScan,
       log: runtime,
       now: Date.now,
-      open: () => openRecords({ stateDir }),
-      // `pair` may store another identity while this daemon runs; the job runs
-      // it then holds are for the Hub of that identity, not this one (ADR-0023).
-      paired: daemonStillPaired({ hub: options.hub, stateDir, token }),
+      ...reporterStore({ hub: options.hub, identity: pairing, stateDir }),
       ...(stops === undefined ? {} : { stops }),
       updates,
     });

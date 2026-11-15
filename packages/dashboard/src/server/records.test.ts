@@ -790,7 +790,11 @@ describe('reading the records', () => {
     await send(h, { system: 'server-1' });
     await Promise.all(
       ['a-c', 'ab', 'a-b', 'B', 'a_b'].map(async (system) => {
-        await storeReport(h.db.sql, { receivedAt: NOW, report: report(system, [NOW]) });
+        await storeReport(h.db.sql, {
+          onWarn: (message) => h.warnings.push(message),
+          receivedAt: NOW,
+          report: report(system, [NOW]),
+        });
         await storeToken(h.db.sql, { pairedAt: NOW, system, token: `${system}-token` });
       }),
     );

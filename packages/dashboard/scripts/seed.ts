@@ -208,6 +208,7 @@ const sendVitals = async (
     }
     // oxlint-disable-next-line no-await-in-loop -- a week of Reports, in order.
     await storeReport(sql, {
+      onWarn: (message) => console.warn(message),
       receivedAt: body.sentAt,
       report: {
         ...body,
@@ -1382,6 +1383,7 @@ const seedServiceStops = async (sql: SQL, now: number) => {
   }
   const send = (sentAt: number, delayMs: number, stops: Omit<SentServiceStop, 'service'>[]) =>
     storeReport(sql, {
+      onWarn: (message) => console.warn(message),
       receivedAt: sentAt + delayMs,
       report: {
         ...base,

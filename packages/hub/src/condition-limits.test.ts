@@ -198,7 +198,7 @@ test('serve judges disk using fleet defaults and partial System overrides from h
       usedBytes: 820,
     });
     // oxlint-disable-next-line no-await-in-loop -- seed each System before serving.
-    await storeReport(db.sql, { receivedAt: now, report: body });
+    await storeReport(db.sql, { onWarn: () => undefined, receivedAt: now, report: body });
   }
   await using config = await configFile([
     'port = 0',

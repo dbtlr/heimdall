@@ -19,6 +19,7 @@ const STOP: SentServiceStop = {
 test('a Report stores its Service stops with the sent and received times', async () => {
   await using h = await startHub();
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 1000,
     report: { ...report('laptop-1', []), serviceStops: { stops: [STOP] } },
   });
@@ -45,6 +46,7 @@ test('an ended stop replaces its ongoing view, including null results and an unk
   await using h = await startHub();
   const send = (stop: SentServiceStop, sentAt: number) =>
     storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
       receivedAt: sentAt,
       report: { ...report('laptop-1', []), sentAt, serviceStops: { stops: [stop] } },
     });
@@ -63,10 +65,12 @@ test('an ended stop replaces its ongoing view, including null results and an unk
 test('an older Report cannot replace a newer view of the same stop', async () => {
   await using h = await startHub();
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 1000,
     report: { ...report('laptop-1', []), sentAt: NOW + 1000, serviceStops: { stops: [STOP] } },
   });
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 2000,
     report: {
       ...report('laptop-1', []),
@@ -93,6 +97,7 @@ test('an older Report cannot replace a newer view of the same stop', async () =>
 test('a corrected clock replaces a future-dated view, and a full batch stores every stop', async () => {
   await using h = await startHub();
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW,
     report: {
       ...report('laptop-1', []),
@@ -101,6 +106,7 @@ test('a corrected clock replaces a future-dated view, and a full batch stores ev
     },
   });
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW + 1000,
     report: {
       ...report('laptop-1', []),
@@ -132,6 +138,7 @@ test('Service stop times preserve milliseconds across the wire timestamp range',
   const early = Date.UTC(10_000, 0, 1) + 1;
   const late = 8_640_000_000_000_000;
   await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
     receivedAt: NOW,
     report: {
       ...report('laptop-1', []),

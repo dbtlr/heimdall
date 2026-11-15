@@ -23,7 +23,11 @@ const at = (ms: number) => new Date(ms);
 
 // A System that has reported, in UTC.
 const addSystem = async (h: Hub, system: string) => {
-  await storeReport(h.db.sql, { receivedAt: NOW, report: report(system, [NOW]) });
+  await storeReport(h.db.sql, {
+    onWarn: (message) => h.warnings.push(message),
+    receivedAt: NOW,
+    report: report(system, [NOW]),
+  });
   await h.db.sql`UPDATE systems SET time_zone = 'UTC' WHERE name = ${system}`;
 };
 
