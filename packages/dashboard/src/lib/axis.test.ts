@@ -306,3 +306,20 @@ describe('on a narrow screen', () => {
     }
   });
 });
+
+// A zone 12 or more hours ahead of UTC is already on the next local day at
+// noon UTC, so the first of a month is found by its local date, not a UTC noon.
+test.each([
+  ['Pacific/Auckland', [Date.UTC(2025, 10, 30, 11), Date.UTC(2025, 11, 31, 11)]],
+  ['Pacific/Kiritimati', [Date.UTC(2025, 10, 30, 10), Date.UTC(2025, 11, 31, 10)]],
+])(
+  '1y ticks the first of each month at its own local midnight in %s',
+  (zone, [december, january]) => {
+    const DAY = 24 * HOUR;
+    const ticks = axisTicks('1y', { from: TO - 365 * DAY, to: TO }, zone);
+    const at = (label: string) => ticks.find((tick) => tick.label === label)?.at;
+
+    expect(at('Dec')).toBe(december);
+    expect(at('Jan 2026')).toBe(january);
+  },
+);

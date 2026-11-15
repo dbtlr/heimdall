@@ -273,9 +273,9 @@ describe('chart rows', () => {
     const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR];
     const span = { from: day - 12 * HOUR, to: day + 40 * HOUR };
     expect(loadRows([{ high: 4, low: 1, t: day, value: 2.5 }], span, DAY, edges)).toEqual([
-      { band: null, t: day - 12 * HOUR, value: null },
+      { band: null, t: day - 6 * HOUR, value: null },
       { band: [1, 4], t: day + 12.5 * HOUR, value: 2.5 },
-      { band: null, t: day + 37 * HOUR, value: null },
+      { band: null, t: day + 32.5 * HOUR, value: null },
     ]);
     expect(
       memoryRows(
@@ -284,7 +284,7 @@ describe('chart rows', () => {
         DAY,
         edges,
       ).map(({ t }) => t),
-    ).toEqual([day - 12 * HOUR, day + 12.5 * HOUR, day + 37 * HOUR]);
+    ).toEqual([day - 6 * HOUR, day + 12.5 * HOUR, day + 32.5 * HOUR]);
     expect(
       processRows(
         [
@@ -301,6 +301,16 @@ describe('chart rows', () => {
         edges,
       )[1],
     ).toEqual({ p7: 1, t: day + 12.5 * HOUR });
+  });
+
+  test("keep the newest bucket's point inside the window, at the middle of its part in it", () => {
+    const day = Date.UTC(2026, 10, 1, 7);
+    const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR];
+    const shown = { from: day - 12 * HOUR, to: day + 40 * HOUR };
+    const points = loadRows([], shown, DAY, edges).map(({ t }) => t);
+
+    expect(points.every((t) => t >= shown.from && t <= shown.to)).toBe(true);
+    expect(points.at(-1)).toBe(day + 32.5 * HOUR);
   });
 
   test('give each process its cores under its own key', () => {
@@ -392,6 +402,23 @@ test('over a long range a key moves the pinned time a bucket, and 12 with Shift'
   const step = (key: string, shiftKey = false) =>
     steppedSample({ ...NO_MODIFIERS, key, shiftKey }, at, window, DAY);
   expect([step('ArrowRight'), step('ArrowLeft', true)]).toEqual([at + DAY, at - 12 * DAY]);
+});
+
+test('over a long range with edges a key moves to the adjacent bucket, even on a 25-hour day', () => {
+  const day = Date.UTC(2026, 10, 1, 7);
+  const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR, day + 73 * HOUR];
+  const window = { from: day - 12 * HOUR, to: day + 60 * HOUR };
+  const step = (key: string, selected: number, shiftKey = false) =>
+    steppedSample({ ...NO_MODIFIERS, key, shiftKey }, selected, window, DAY, edges);
+
+  // Half an hour into the 25-hour day, a nominal day's step would stay in it.
+  expect(step('ArrowRight', day + 30 * MINUTE)).toBe(day + 37 * HOUR);
+  expect(step('ArrowLeft', day + 30 * MINUTE)).toBe(day - 6 * HOUR);
+  expect(step('ArrowLeft', day + 12.5 * HOUR)).toBe(day - 6 * HOUR);
+  expect(step('ArrowRight', day + 37 * HOUR)).toBe(day + 54.5 * HOUR);
+  expect(step('ArrowRight', day + 54.5 * HOUR)).toBe(day + 54.5 * HOUR);
+  expect(step('ArrowLeft', day - 6 * HOUR, true)).toBe(day - 6 * HOUR);
+  expect(step('PageUp', day - 6 * HOUR)).toBe(day + 54.5 * HOUR);
 });
 
 test('a key held with Alt, Ctrl, or Meta moves no pinned sample, so the browser keeps its shortcut', () => {

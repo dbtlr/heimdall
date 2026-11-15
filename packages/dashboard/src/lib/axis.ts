@@ -49,6 +49,15 @@ const HOUR_STEPS: Record<Exclude<Range, '7d' | '30d' | '1y'>, { major: number; s
   '6h': { major: 2, step: 1 },
 };
 
+// The local midnight that starts the first of `month` (1 to 12) of `year`. Noon
+// UTC reads as the 1st, or in a zone 12 or more hours ahead the 2nd, so it is
+// moved by the days it is off before taking the midnight.
+const startOfMonth = (year: number, month: number, timeZone: string): number => {
+  const noon = Date.UTC(year, month - 1, 1, 12);
+  const off = Math.floor(noon / DAY_MS) - localDayNumber(noon, timeZone);
+  return localMidnight(noon + off * DAY_MS, timeZone);
+};
+
 // Ticks at the first local midnight of each month in a window, labeled by
 // month, January with its year; every other month is minor.
 const monthTicks = (window: Window, timeZone: string): Tick[] => {
@@ -60,8 +69,7 @@ const monthTicks = (window: Window, timeZone: string): Tick[] => {
       month = 1;
       year += 1;
     }
-    // Noon UTC on the 1st is the 1st in every zone a fleet keeps time in.
-    const first = localMidnight(Date.UTC(year, month - 1, 1, 12), timeZone);
+    const first = startOfMonth(year, month, timeZone);
     if (first >= window.to) {
       return ticks;
     }

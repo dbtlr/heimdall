@@ -197,6 +197,7 @@ export function SystemOverview({
             <DetailAxis
               at={at}
               bucketMs={bucketMs}
+              edges={edges}
               onSelect={onSelect}
               selected={selected}
               window={window}

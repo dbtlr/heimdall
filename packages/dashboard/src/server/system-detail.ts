@@ -6,7 +6,7 @@ import { validZone } from '../lib/agents-search.ts';
 import { edgeSpans, longEdges, spanHolding } from '../lib/bucket-edges.ts';
 import type { LongEdges } from '../lib/bucket-edges.ts';
 import { foldQuietProcesses } from '../lib/long-history.ts';
-import { laneConditions } from '../lib/system-events.ts';
+import { laneConditions, levelHeldIn } from '../lib/system-events.ts';
 import { SYSTEM_ACTIVITY_RANGE } from './activity-types.ts';
 import { readActivitySnapshot } from './activity.ts';
 import { readCells } from './agents-costs.ts';
@@ -128,9 +128,10 @@ const parseSpan = (value: unknown): BucketSpan | undefined => {
   return { end, start };
 };
 
-// The widest bucket a range draws: a local day of 25 hours over 1 y, and a
-// 3-hour bucket a clock change stretches to 4 over 30 d.
-const WIDEST_BUCKET_MS = { '1y': 25 * 3_600_000, '30d': 4 * 3_600_000 };
+// The widest bucket a range draws: a local day over 1 y and a 3-hour bucket
+// over 30 d, each stretched by the longest clock change, which is Antarctica/
+// Troll's two hours: a 26-hour day and a 5-hour bucket.
+const WIDEST_BUCKET_MS = { '1y': 26 * 3_600_000, '30d': 5 * 3_600_000 };
 
 // `span` when it can be a bucket of `range` at `now`, else an error.
 const checkedSpan = (span: BucketSpan, range: LongRange, now: number): BucketSpan => {
@@ -1031,7 +1032,11 @@ export const readBucket = (
     );
     return {
       bucketMs: RANGE_BUCKET_MS[range],
-      conditions: conditions.map(({ kind, level, subject }) => ({ kind, level, subject })),
+      conditions: conditions.map((mark) => ({
+        kind: mark.kind,
+        level: levelHeldIn(mark, { from: t, to: end }),
+        subject: mark.subject,
+      })),
       ...costOf(0),
       cpu: row === undefined ? undefined : spread(row.cpu_average, row.cpu_low, row.cpu_high),
       day: day === undefined ? undefined : { ...day, ...costOf(1) },

@@ -21,6 +21,7 @@ import { spanHolding } from '../lib/bucket-edges.ts';
 import { headerLine } from '../lib/detail.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { atFromSearch } from '../lib/range.ts';
+import { loadSystem } from '../lib/system-load.ts';
 import { desktopTab, systemSearch } from '../lib/system-search.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
 import { isLongRange } from '../server/fleet-overview-types.ts';
@@ -79,10 +80,12 @@ export const Route = createFileRoute('/systems/$name')({
     params: { name: string };
   }) => {
     const at = atFromSearch(location.search);
-    const [page, inspected] = await Promise.all([
-      getSystemDetail({ data: { name: params.name, range: deps.range, timeZone: deps.zone } }),
-      readInspected(params.name, at, deps.range, deps.zone),
-    ]);
+    const { inspected, page } = await loadSystem({
+      inspect: (edges) => readInspected(params.name, at, deps.range, deps.zone, edges),
+      page: () =>
+        getSystemDetail({ data: { name: params.name, range: deps.range, timeZone: deps.zone } }),
+      range: deps.range,
+    });
     return { ...page, at, inspected };
   },
   loaderDeps: ({ search }) => ({ range: search.range, zone: zoneOf(search.range, search.zone) }),

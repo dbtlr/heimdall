@@ -2,14 +2,29 @@ import { spanHolding } from '../lib/bucket-edges.ts';
 import { niceDomain } from '../lib/chart-scale.ts';
 import { harnessColor, harnessName } from '../lib/lane.ts';
 import { costBars } from '../lib/long-history.ts';
-import { spanBox } from '../lib/time.ts';
+import type { CostBar } from '../lib/long-history.ts';
+import { formatCost, spanBox } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import type { CostBucket } from '../server/system-detail-types.ts';
 import { DetailTrack } from './detail-track.tsx';
 import { ScaledPlot } from './plot-scale.tsx';
 
-// A whole-dollar figure for the scale.
-const dollars = (value: number): string => `$${String(Math.round(value))}`;
+// A figure for the scale: whole dollars, or cents when the tick is a fraction
+// of one, so each label states its value.
+export const dollars = (value: number): string =>
+  Number.isInteger(value) ? `$${String(value)}` : `$${value.toFixed(2)}`;
+
+// What a bar's tooltip says: its Harness parts, led by "No list price" when no
+// request in the day was priced and "At least" when some were not.
+export const barWords = (bar: CostBar): string => {
+  const parts = bar.parts
+    .map(({ costUsd, harness }) => `${harnessName(harness)} $${costUsd.toFixed(2)}`)
+    .join(', ');
+  if (bar.unpriced === 0) {
+    return parts;
+  }
+  return bar.totalUsd === 0 ? 'No list price' : `At least ${formatCost(bar.totalUsd)}: ${parts}`;
+};
 
 // The list-price cost of the System's requests per local day over a long
 // range, one bar per day of `edges` stacked by Harness in its color, on a scale
@@ -51,9 +66,7 @@ export function CostBars({
                 className="absolute inset-y-0 flex flex-col-reverse"
                 key={bar.t}
                 style={{ left: `${String(left)}%`, width: `${String(width)}%` }}
-                title={bar.parts
-                  .map(({ costUsd, harness }) => `${harnessName(harness)} $${costUsd.toFixed(2)}`)
-                  .join(', ')}
+                title={barWords(bar)}
               >
                 {bar.parts.map(({ costUsd, harness }) => (
                   <i

@@ -11,6 +11,7 @@ import type {
 } from '../server/system-detail-types.ts';
 import { edgeSpans } from './bucket-edges.ts';
 import { harnessName } from './lane.ts';
+import { binMiddle } from './long-history.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan, spanBox } from './time.ts';
@@ -151,7 +152,9 @@ export const bucketGrid = ({ from, to }: Window, bucketMs = BUCKET_MS): number[]
 // Every bucket the window touches with its start and middle: `bucketMs` wide
 // from the epoch, 5 minutes unless it says otherwise, or over a long range
 // each bucket of `edges` (see LongEdges), local days or 3 hours of the local
-// clock, so a 23- or 25-hour day is one bucket.
+// clock, so a 23- or 25-hour day is one bucket. A bucket the window cuts, the
+// newest, has its middle at the middle of its part inside the window, so its
+// point stays on the chart.
 export const bucketSpans = (
   window: Window,
   bucketMs = BUCKET_MS,
@@ -161,7 +164,7 @@ export const bucketSpans = (
     ? bucketGrid(window, bucketMs).map((start) => ({ middle: start + bucketMs / 2, start }))
     : edgeSpans(edges)
         .filter(({ end, start }) => end > window.from && start < window.to)
-        .map(({ end, start }) => ({ middle: (start + end) / 2, start }));
+        .map(({ end, start }) => ({ middle: binMiddle({ end, t: start }, window), start }));
 
 // The memory plot's points: GiB used per bucket at its middle, with the
 // bucket's low to high, null where the Hub has no bucket, so the line breaks
@@ -246,12 +249,31 @@ export const idleProcessesLabel = (count: number): string =>
 // The pinned time's big step on the time axis, in buckets: an hour of 5-minute ones.
 const LARGE_STEP_BUCKETS = 12;
 
+// The middle of the bucket `count` buckets of `edges` from the one holding
+// `at`, among those the window touches, never past the first or last; undefined
+// when no bucket holds `at`.
+const bucketsAway = (
+  edges: readonly number[],
+  window: Window,
+  at: number,
+  count: number,
+): number | undefined => {
+  const spans = edgeSpans(edges).filter(({ end, start }) => end > window.from && start < window.to);
+  const index = spans.findIndex(({ end, start }) => start <= at && at < end);
+  const target = spans[Math.min(spans.length - 1, Math.max(0, index + count))];
+  return index === -1 || target === undefined
+    ? undefined
+    : binMiddle({ end: target.end, t: target.start }, window);
+};
+
 // Where a key on the time axis moves the pinned time from `selected`, the
 // newest time when none is pinned: a bucket, 5 minutes unless `bucketMs` says
 // otherwise, for an arrow, 12 buckets (an hour of 5-minute ones) with Shift or
 // for Page Up and Page Down, the window's ends for Home and End, and never past
-// either end. Undefined for a key that moves nothing, and for any key held with
-// Alt, Ctrl, or Meta, so the browser's own shortcuts still work.
+// either end. Over a long range `edges` give the buckets, so a step lands on
+// the adjacent bucket even when a clock change made the day 23 or 25 hours.
+// Undefined for a key that moves nothing, and for any key held with Alt, Ctrl,
+// or Meta, so the browser's own shortcuts still work.
 export const steppedSample = (
   {
     altKey,
@@ -263,6 +285,7 @@ export const steppedSample = (
   selected: number | undefined,
   { from, to }: Window,
   bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): number | undefined => {
   if (altKey || ctrlKey || metaKey) {
     return undefined;
@@ -270,21 +293,24 @@ export const steppedSample = (
   const at = selected ?? to;
   const large = LARGE_STEP_BUCKETS * bucketMs;
   const step = shiftKey ? large : bucketMs;
-  const moved = (by: number) => Math.min(to, Math.max(from, at + by));
+  const buckets = shiftKey ? LARGE_STEP_BUCKETS : 1;
+  const moved = (by: number, count: number) =>
+    (edges === undefined ? undefined : bucketsAway(edges, { from, to }, at, count)) ??
+    Math.min(to, Math.max(from, at + by));
   switch (key) {
     case 'ArrowRight':
     case 'ArrowUp': {
-      return moved(step);
+      return moved(step, buckets);
     }
     case 'ArrowLeft':
     case 'ArrowDown': {
-      return moved(-step);
+      return moved(-step, -buckets);
     }
     case 'PageUp': {
-      return moved(large);
+      return moved(large, LARGE_STEP_BUCKETS);
     }
     case 'PageDown': {
-      return moved(-large);
+      return moved(-large, -LARGE_STEP_BUCKETS);
     }
     case 'Home': {
       return from;

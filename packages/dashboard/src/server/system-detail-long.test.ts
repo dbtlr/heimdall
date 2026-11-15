@@ -30,6 +30,16 @@ const { addCondition, addProcess, addSession } = timeline(NOW);
 // NOW is noon UTC, so a day bucket starts 12 hours before it.
 const TODAY = NOW - 12 * HOUR;
 
+// The message `read` rejects with, or undefined when it resolves.
+const failure = async (read: Promise<unknown>): Promise<string | undefined> => {
+  try {
+    await read;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return undefined;
+};
+
 const hear = async (h: Hub, system = 'server-1') => {
   h.clock.now = NOW;
   const response = await push(h.hub, report(system, [NOW]), {
@@ -877,12 +887,78 @@ describe('readBucket', () => {
       });
     const t = TODAY - 10 * DAY;
 
-    expect(() => ask('1y', t, t)).toThrow('span');
-    expect(() => ask('1y', t, t + 26 * HOUR)).toThrow('span');
-    expect(() => ask('30d', t, t + 5 * HOUR)).toThrow('span');
-    expect(() => ask('1y', NOW + HOUR, NOW + 2 * HOUR)).toThrow('span');
+    expect(await failure(ask('1y', t, t))).toContain('span');
+    expect(await failure(ask('1y', t, t + 27 * HOUR))).toContain('span');
+    expect(await failure(ask('30d', t, t + 6 * HOUR))).toContain('span');
+    expect(await failure(ask('1y', NOW + HOUR, NOW + 2 * HOUR))).toContain('span');
     expect(await ask('1y', t, t + 25 * HOUR)).toMatchObject({ t });
     expect(await ask('30d', t, t + 3 * HOUR)).toMatchObject({ t });
+  });
+
+  // Antarctica/Troll moves its clock two hours, so its days run to 26 hours
+  // and its 3-hour buckets to 5.
+  test('accepts the 26-hour day and 5-hour bucket of a two-hour clock change', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const t = TODAY - 10 * DAY;
+    const ask = (range: '1y' | '30d', end: number) =>
+      readBucket(h.db.sql, {
+        at: undefined,
+        name: 'server-1',
+        now: NOW,
+        range,
+        span: { end, start: t },
+        timeZone: 'Antarctica/Troll',
+      });
+
+    expect(await ask('1y', t + 26 * HOUR)).toMatchObject({ t });
+    expect(await ask('30d', t + 5 * HOUR)).toMatchObject({ t });
+    expect(await failure(ask('1y', t + 27 * HOUR))).toContain('span');
+    expect(await failure(ask('30d', t + 6 * HOUR))).toContain('span');
+  });
+
+  test('names the level a Condition held in the bucket, as the lane draws it', async () => {
+    await using h = await startHub();
+    await hear(h);
+    const day = TODAY - 10 * DAY;
+    const daySeconds = (day - NOW) / 1000;
+    const dayAfter = daySeconds + DAY / 1000;
+    // Warning all day, alert only after it.
+    await addCondition(h.db.sql, {
+      kind: 'high_cpu',
+      level: 'warning',
+      raisedAt: daySeconds + 3600,
+      system: 'server-1',
+      transitions: [{ at: dayAfter + 3600, level: 'alert' }],
+    });
+    // Warning, then alert within the day: the highest it held.
+    await addCondition(h.db.sql, {
+      kind: 'high_memory',
+      level: 'warning',
+      raisedAt: daySeconds + 3600,
+      system: 'server-1',
+      transitions: [{ at: daySeconds + 7200, level: 'alert' }],
+    });
+    // Alert before the day, eased to warning for it.
+    await addCondition(h.db.sql, {
+      kind: 'low_disk',
+      level: 'alert',
+      raisedAt: daySeconds - 7200,
+      subject: '/data',
+      system: 'server-1',
+      transitions: [{ at: daySeconds - 3600, level: 'warning' }],
+    });
+
+    const found = await readBucket(h.db.sql, {
+      at: day + 15 * HOUR,
+      name: 'server-1',
+      now: NOW,
+      range: '1y',
+    });
+
+    expect(
+      Object.fromEntries(found?.conditions.map(({ kind, level }) => [kind, level]) ?? []),
+    ).toEqual({ high_cpu: 'warning', high_memory: 'alert', low_disk: 'warning' });
   });
 
   test('answers nothing for a name that is no System', async () => {

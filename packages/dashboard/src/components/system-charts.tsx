@@ -223,7 +223,13 @@ export function SystemCharts({
   const selected = bucket === null ? sample?.t : binMiddle(bucket, window);
   const sampleX = selected === undefined ? undefined : pinnedX(selected, window);
   return (
-    <DetailAxis bucketMs={detail.bucketMs} onSelect={onSelect} selected={selected} window={window}>
+    <DetailAxis
+      bucketMs={detail.bucketMs}
+      edges={detail.edges}
+      onSelect={onSelect}
+      selected={selected}
+      window={window}
+    >
       <TabRows detail={detail} view={view} window={window} />
       <TimeAxis
         ticks={timeZone === undefined ? [] : axisTicks(detail.range, window, timeZone)}
