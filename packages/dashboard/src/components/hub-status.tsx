@@ -14,13 +14,14 @@ const listText = (items: string[]) =>
 
 const UPGRADE = 'Upgrade the Hub to record its version, delivery configuration, and timer passes.';
 
-// The page's verdict and the sentence under it. A Hub that is not running says
-// so once, instead of every part it leaves behind warning on its own. A Hub
+// The page's verdict and the sentence under it. A Hub that has recorded
+// nothing for too long says so once, instead of every part it leaves behind
+// warning on its own. A Hub
 // older than its status table is asked to upgrade whatever else the page says.
 export const hubVerdict = (status: HubStatus): { verdict: string; summary: Phrase } => {
   const upgrade = status.runtime === 'missing' ? [` ${UPGRADE}`] : [];
   if (status.down !== undefined) {
-    return { summary: [...status.down, ...upgrade], verdict: 'Hub not running' };
+    return { summary: [...status.down, ...upgrade], verdict: 'Hub silent' };
   }
   const warnings = status.checks.filter((c) => c.state === 'warning').map((c) => c.part);
   const unknown = status.checks.some((c) => c.state === 'unknown');

@@ -6,6 +6,7 @@ import {
   hubStatusRecorder,
   NOW,
   push,
+  recordListening,
   report,
   startHub,
 } from '@heimdall/hub/testing';
@@ -265,48 +266,167 @@ test('a delivery pass that fails before it sends waits for the same 10 minutes',
   });
 });
 
+const partsWarning = (status: HubStatus) =>
+  status.checks.filter((c) => c.state === 'warning').map((c) => c.part);
+
 test('a Hub that has just stopped reads current until listening is overdue, then says so once', async () => {
   await using h = await startHub();
   await runningHub(h);
   const warnings = async (after: number) => {
     const status = await readHubStatus(h.db.sql, NOW + after);
-    return {
-      down: status.down !== undefined,
-      warnings: status.checks.filter((c) => c.state === 'warning').map((c) => c.part),
-    };
+    return { down: status.down !== undefined, warnings: partsWarning(status) };
   };
   expect(await warnings(65_000)).toEqual({ down: false, warnings: [] });
   expect(await warnings(80_000)).toEqual({ down: false, warnings: [] });
-  expect(await warnings(100_000)).toEqual({ down: true, warnings: ['Listening'] });
+  expect(await warnings(90_000)).toEqual({ down: false, warnings: [] });
+  expect(await warnings(91_000)).toEqual({ down: true, warnings: ['Listening'] });
   expect(await warnings(121_000)).toEqual({ down: true, warnings: ['Listening'] });
 });
 
-test('a listening run that hangs warns on the Listening row', async () => {
-  await using h = await startHub();
-  await runningHub(h, { runs: { listening: { finished_at: NOW - 30_000, started_at: NOW } } });
-  const status = await readHubStatus(h.db.sql, NOW + 91_000);
-  expect(status.down).toBeUndefined();
-  expect(row(status, 'Listening')).toMatchObject({
-    state: 'warning',
-    text: 'Listening pass running for 1 min, longer than its usual most',
-  });
-});
-
-test('a Hub that stopped says so once, and no pass it left behind warns on its own', async () => {
+test('a Hub that stopped says once what is known, and no pass it left behind warns on its own', async () => {
   await using h = await startHub();
   await runningHub(h);
   const later = NOW + 3 * 3_600_000;
   const status = await readHubStatus(h.db.sql, later);
-  expect(text(status.down)).toBe('The Hub is not running: last heard 12:00, 3 h ago.');
-  expect(hubVerdict(status).verdict).toBe('Hub not running');
+  expect(text(status.down)).toBe(
+    'The Hub has recorded nothing for 3 h: it may be stopped or stuck.',
+  );
+  expect(hubVerdict(status).verdict).toBe('Hub silent');
   expect(row(status, 'Listening')).toMatchObject({
     state: 'warning',
-    text: 'Not running: last heard 12:00',
+    text: 'Nothing recorded since 12:00',
   });
-  expect(status.checks.filter((c) => c.state === 'warning').map((c) => c.part)).toEqual([
-    'Listening',
-  ]);
+  expect(partsWarning(status)).toEqual(['Listening']);
   expect(row(status, 'Conditions').text).toBe('Condition evaluation last ran 3 h ago');
+});
+
+test('an older Hub without the status table is silent after the outage limit, and still asks for the upgrade', async () => {
+  await using h = await startHub();
+  await recordListening(h.db.sql, NOW);
+  await h.db.sql`DROP TABLE hub_status`;
+  expect((await readHubStatus(h.db.sql, NOW + 120_000)).down).toBeUndefined();
+  const { summary, verdict } = hubVerdict(await readHubStatus(h.db.sql, NOW + 121_000));
+  expect(verdict).toBe('Hub silent');
+  expect(text(summary)).toBe(
+    'The Hub has recorded nothing for 2 min: it may be stopped or stuck. Upgrade the Hub to record its version, delivery configuration, and timer passes.',
+  );
+});
+
+type PassName = keyof typeof SCHEDULES;
+const PASSES = Object.keys(SCHEDULES) as PassName[];
+
+// A Hub run as serve runs it, on a clock the test sets: the real status
+// recorder, started with serve's schedules, and the real listening heartbeat
+// as the listening pass's task. Its status writes give up on a held lock
+// after a short wait, and each logged warning is kept.
+const liveHub = async (h: Hub) => {
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await push(h.hub, report('laptop-1', [NOW]), { token: 'laptop-token' });
+  const clock = { t: NOW };
+  const warnings: string[] = [];
+  const status = hubStatusRecorder({
+    lockTimeoutMs: 50,
+    now: () => clock.t,
+    sql: h.db.sql,
+    warn: (message) => warnings.push(message),
+  });
+  await status.start({
+    deliveryConfigured: true,
+    passes: Object.fromEntries(
+      PASSES.map((name) => [
+        name,
+        { budgetMs: SCHEDULES[name].budget_ms, intervalMs: SCHEDULES[name].interval_ms },
+      ]),
+    ),
+    version: '1.2.3',
+  });
+  const task = (name: PassName) =>
+    name === 'listening' ? () => recordListening(h.db.sql, clock.t) : async () => undefined;
+  return {
+    // Runs each named pass to completion at `at`.
+    at: async (at: number, names: PassName[] = PASSES) => {
+      clock.t = at;
+      for (const name of names) {
+        // oxlint-disable-next-line no-await-in-loop -- serve's passes write one row.
+        await status.pass(name, task(name));
+      }
+    },
+    // Starts each named pass at `at`, records its start, and leaves it hung.
+    hangs: async (at: number, names: PassName[]) => {
+      clock.t = at;
+      for (const name of names) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        void status.pass(name, async () => {
+          resolve();
+          // A promise nothing settles, as a hung run awaits.
+          await Promise.withResolvers<void>().promise;
+        });
+        // oxlint-disable-next-line no-await-in-loop -- one start row write after another.
+        await promise;
+      }
+    },
+    // Holds the status row from a second session while `during` runs.
+    held: async (during: () => Promise<void>) => {
+      const holder = await h.db.sql.reserve();
+      try {
+        await holder`BEGIN`;
+        await holder`SELECT * FROM hub_status FOR UPDATE`;
+        await during();
+      } finally {
+        await holder`ROLLBACK`;
+        await holder.release();
+      }
+    },
+    warnings,
+  };
+};
+
+test('listening status writes a held row timed out leave no outage while the heartbeat and other passes are fresh', async () => {
+  await using h = await startHub();
+  const hub = await liveHub(h);
+  await hub.at(NOW);
+  await hub.held(async () => {
+    for (const after of [30_000, 60_000, 90_000, 120_000]) {
+      // oxlint-disable-next-line no-await-in-loop -- one listening round after another.
+      await hub.at(NOW + after, ['listening']);
+    }
+  });
+  expect(hub.warnings.length).toBe(8);
+  expect(hub.warnings[0]).toContain('lock timeout');
+  await hub.at(NOW + 120_000, ['conditions', 'delivery', 'parse', 'refresh']);
+  const status = await readHubStatus(h.db.sql, NOW + 120_000);
+  expect(status.down).toBeUndefined();
+  expect(partsWarning(status)).toEqual([]);
+  expect(row(status, 'Listening')).toMatchObject({ state: 'ok' });
+  expect(row(status, 'Listening').text).toEndWith('last recorded 0 s ago');
+  expect(hubVerdict(status).verdict).toBe('All well');
+});
+
+test('a hung listening pass does not hide other hung passes: silence is a verdict, and continued writes name each', async () => {
+  await using h = await startHub();
+  const hub = await liveHub(h);
+  await hub.at(NOW);
+  await hub.hangs(NOW + 1_000, ['listening', 'parse', 'conditions']);
+  const hourLater = NOW + 3_600_000;
+  const silent = await readHubStatus(h.db.sql, hourLater);
+  expect(text(silent.down)).toBe(
+    'The Hub has recorded nothing for 59 min: it may be stopped or stuck.',
+  );
+  expect(hubVerdict(silent).verdict).toBe('Hub silent');
+
+  await hub.at(hourLater, ['delivery', 'refresh', 'upstreams']);
+  const writing = await readHubStatus(h.db.sql, hourLater);
+  expect(writing.down).toBeUndefined();
+  expect(partsWarning(writing)).toEqual(['Listening', 'Session insight', 'Conditions']);
+  expect(row(writing, 'Listening').text).toBe(
+    'Listening pass running for 59 min, longer than its usual most',
+  );
+  expect(row(writing, 'Session insight').detail).toContain(
+    'Parse pass running for 59 min, longer than its usual most',
+  );
+  expect(row(writing, 'Conditions').text).toBe(
+    'Condition evaluation running for 59 min, longer than its usual most',
+  );
 });
 
 test('a pass that keeps failing reads as failing, and one still running says for how long', async () => {

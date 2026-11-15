@@ -41,7 +41,7 @@ test('the checklist comes first, the tables fold on a phone, and the rest folds 
   expect(html).toContain('Pairing code issued for tablet-1');
 });
 
-test('the verdict agrees in number and names a stopped Hub once', () => {
+test('the verdict agrees in number and names a silent Hub once', () => {
   const two = {
     ...STATUS,
     checks: STATUS.checks.map((c) => ({ ...c, state: 'warning' as const })),
@@ -50,9 +50,9 @@ test('the verdict agrees in number and names a stopped Hub once', () => {
     summary: ['Session insight and Database need attention. Everything else is current.'],
     verdict: '2 need a look',
   });
-  expect(hubVerdict({ ...two, down: ['The Hub is not running.'] })).toEqual({
-    summary: ['The Hub is not running.'],
-    verdict: 'Hub not running',
+  expect(hubVerdict({ ...two, down: ['The Hub has recorded nothing for 3 min.'] })).toEqual({
+    summary: ['The Hub has recorded nothing for 3 min.'],
+    verdict: 'Hub silent',
   });
   expect(hubVerdict({ ...STATUS, checks: [] }).verdict).toBe('All well');
 });

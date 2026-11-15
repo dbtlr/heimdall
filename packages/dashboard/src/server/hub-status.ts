@@ -1,7 +1,7 @@
 import type { SQL } from 'bun';
 
 import { deliveryFailingShown, isAsleep } from '../lib/fleet.ts';
-import { agoText, isOverdue, judgePass } from '../lib/hub-passes.ts';
+import { agoText, isRunning, judgePass, usualMost } from '../lib/hub-passes.ts';
 import type { PassRecord } from '../lib/hub-passes.ts';
 import { harnessName } from '../lib/lane.ts';
 import { joinPhrases, whenAt } from '../lib/phrase.ts';
@@ -112,6 +112,37 @@ type Runtime = {
   last_runs: Record<string, PassRecord>;
 };
 
+// When the Hub last showed it was running, in epoch milliseconds: the newest
+// of its listening heartbeat, its start, and every time a pass recorded, since
+// each was written by the running Hub. Undefined when none is recorded.
+const lastSignOfLife = (heard: number | undefined, row: Runtime | undefined) => {
+  const times = [
+    heard,
+    row?.started_at.getTime(),
+    ...Object.values(row?.last_runs ?? {}).flatMap((run) => [
+      run.started_at,
+      run.finished_at,
+      run.succeeded_at,
+    ]),
+  ].filter((at) => at !== undefined);
+  return times.length === 0 ? undefined : Math.max(...times);
+};
+
+// The listening pass's record with its heartbeat folded in. The pass's only
+// work is the heartbeat, so a heartbeat no older than the run's recorded start
+// shows a run started and finished then, even when a held row kept that run's
+// status writes out. A run in progress keeps its own start.
+const withHeartbeat = (run: PassRecord, heard: number | undefined): PassRecord => {
+  if (heard === undefined || (run.started_at !== undefined && heard < run.started_at)) {
+    return run;
+  }
+  return {
+    ...run,
+    finished_at: Math.max(run.finished_at ?? heard, heard),
+    started_at: isRunning(run) ? (run.started_at ?? heard) : heard,
+  };
+};
+
 // A missing table is expected while a Hub older than its status table runs.
 // Read it outside the snapshot: a missing-relation error would otherwise abort
 // the whole transaction.
@@ -149,48 +180,44 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
     const heard = listening?.heard_at ?? null;
     const hubStartedAt = runtime.row?.started_at.getTime();
     const listeningRun = runtime.row?.last_runs.listening;
-    const listeningInterval = listeningRun?.interval_ms;
-    // The Hub is down once its listening pass is overdue. Until then every pass
-    // is judged as of one listening interval after the Hub was last heard, so
-    // none goes overdue merely because the Hub stopped.
-    let isDown = heard !== null && now - heard.getTime() > LISTENING_GAP_MS;
+    const lastHeard = lastSignOfLife(heard?.getTime(), runtime.row);
+    // Until the Hub has recorded nothing for the listening pass's usual most,
+    // every pass is judged as of one listening interval after it was last
+    // heard, so none goes overdue merely because the Hub stopped. Past that,
+    // the page gives one verdict. A Hub older than its status table is judged
+    // by its outage limit.
+    let isDown = lastHeard !== undefined && now - lastHeard > LISTENING_GAP_MS;
     let asOf = now;
-    if (
-      listeningRun !== undefined &&
-      listeningInterval !== undefined &&
-      hubStartedAt !== undefined
-    ) {
-      isDown = isOverdue(listeningRun, now, hubStartedAt);
-      const lastHeard = Math.max(
-        heard?.getTime() ?? hubStartedAt,
-        listeningRun.started_at ?? hubStartedAt,
-        listeningRun.finished_at ?? hubStartedAt,
-      );
-      asOf = Math.min(now, lastHeard + listeningInterval);
+    if (listeningRun?.interval_ms !== undefined && lastHeard !== undefined) {
+      isDown = now - lastHeard > usualMost(listeningRun.interval_ms, listeningRun.budget_ms);
+      asOf = Math.min(now, lastHeard + listeningRun.interval_ms);
     }
-    const down: Phrase | undefined = isDown
-      ? ['The Hub is not running: last heard ', ...when(heard, now), `, ${ago(heard, now)}.`]
-      : undefined;
+    const down: Phrase | undefined =
+      isDown && lastHeard !== undefined
+        ? [
+            `The Hub has recorded nothing for ${formatSpanShort(now - lastHeard)}: it may be stopped or stuck.`,
+          ]
+        : undefined;
     const pass = (name: string, label: string, run = runtime.row?.last_runs[name]) =>
       judgePass({ asOf, down: isDown, hubStartedAt, label, now, run });
-    // Judged as of now: a listening run that hangs or keeps failing holds the
-    // other passes' clock, so it warns here.
+    // Judged as of now: a listening run that hangs or keeps failing warns
+    // here, even while other passes' writes keep the Hub heard.
     const listeningPass = judgePass({
       down: false,
       hubStartedAt,
       label: 'Listening pass',
       now,
-      run: listeningRun,
+      run: listeningRun === undefined ? undefined : withHeartbeat(listeningRun, heard?.getTime()),
     });
 
     const hubLine: Phrase =
       runtime.row === undefined
         ? ['Hub version unknown']
         : [`Hub v${runtime.row.version}, started `, ...when(runtime.row.started_at, now)];
-    if (heard === null) {
+    if (isDown && lastHeard !== undefined) {
+      add('Listening', 'warning', ['Nothing recorded since ', whenAt(lastHeard, now)], hubLine);
+    } else if (heard === null) {
       add('Listening', 'unknown', ['No listening recorded yet'], hubLine);
-    } else if (isDown) {
-      add('Listening', 'warning', ['Not running: last heard ', ...when(heard, now)], hubLine);
     } else if (listeningPass.stuck) {
       add('Listening', 'warning', listeningPass.phrase, hubLine);
     } else {

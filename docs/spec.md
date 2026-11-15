@@ -525,11 +525,19 @@ started. With the intervals above, that is 150 seconds for Conditions, 90
 seconds for listening and delivery, 60 seconds for parse, 70 seconds for
 refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
 prune. A pass whose runs keep failing shows as failing since its first failure,
-even while a new run is in progress. Every pass is judged as of one listening
-interval after the Hub was last heard, or now if sooner, so no pass shows as
-overdue merely because the Hub stopped. Once the listening pass is overdue, the
-page says once that the Hub is not running; a Hub without the status table is
-judged by the two-minute outage limit instead. Intake counts open Stale System
+even while a new run is in progress. The Hub was last heard at the newest of
+`hub_listening.heard_at`, the row's `started_at`, and every pass's
+`started_at`, `finished_at`, and `succeeded_at`, since the running Hub wrote
+each. Every pass is judged as of one listening interval after the Hub was last
+heard, or now if sooner, so no pass shows as overdue merely because the Hub
+stopped; ages still count from now. The listening pass is judged as of now, with
+a heartbeat no older than its recorded start counting as a run then, so the
+Listening row warns on its own when that pass hangs, keeps failing, or falls
+behind while other passes still record. Once the Hub has recorded nothing for
+longer than the listening pass's usual most, 90 seconds, the page says once that
+the Hub has recorded nothing for that long and may be stopped or stuck; a Hub
+without the status table is judged by its heartbeat and the two-minute outage
+limit instead. Intake counts open Stale System
 Conditions, and upstream checks count only upstreams some System records and
 the Hub asks for releases, which leaves out APT and Homebrew upstreams. Alert
 delivery shows as failing after the 10 minutes Home waits, whether the failure

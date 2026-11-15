@@ -30,8 +30,9 @@ export type HubStatus = {
   runtime: HubRuntime;
   // The Hub version the status row records, when it does.
   version: string | undefined;
-  // Set when the Hub has not recorded that it listens for longer than the
-  // outage limit: one plain verdict that replaces every stale row's own.
+  // Set when the Hub has recorded nothing, neither its heartbeat nor any
+  // pass, for longer than the listening pass's usual most: one plain verdict
+  // that replaces every stale row's own.
   down: Phrase | undefined;
   checks: HubCheck[];
   tables: HubTable[];

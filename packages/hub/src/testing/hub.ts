@@ -31,9 +31,11 @@ export { storeToken } from '../tokens.ts';
 export { listSystems } from './systems.ts';
 
 // What the dashboard's Hub status page is checked against: the Hub's own
-// status recorder and delivery pass, and which upstreams the Hub checks.
+// status recorder, listening heartbeat, and delivery pass, and which
+// upstreams the Hub checks.
 export { deliverAlerts } from '../delivery.ts';
 export { hubStatusRecorder } from '../hub-status.ts';
+export { recordListening } from '../listening.ts';
 export { checkedUpstream } from '../upstream-releases.ts';
 
 // gzip, as the Collector packs a chunk.

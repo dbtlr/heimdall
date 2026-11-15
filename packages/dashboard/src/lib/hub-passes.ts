@@ -26,13 +26,13 @@ export type PassJudgment = {
 // "12 s ago", in the largest unit.
 export const agoText = (at: number, now: number) => `${formatSpanShort(Math.max(0, now - at))} ago`;
 
-const isRunning = (run: PassRecord) =>
+export const isRunning = (run: PassRecord) =>
   run.started_at !== undefined &&
   (run.finished_at === undefined || run.started_at > run.finished_at);
 
 // The longest a pass usually goes between starts, and so the longest one run
 // should take: twice its interval plus its budget.
-const usualMost = (interval: number, budget = 0) => 2 * interval + budget;
+export const usualMost = (interval: number, budget = 0) => 2 * interval + budget;
 
 // The Hub starts the next run one interval after the last finished, so a
 // pass is late only when it is not running, no run has started within its
@@ -62,7 +62,7 @@ const isHung = (run: PassRecord, now: number) =>
 // pass the row does not hold is unknown. Limits are judged as of `asOf`,
 // which defaults to `now`, and ages are told from `now`, so a page can stop
 // the clock where the Hub was last heard. While the Hub is `down`, nothing is
-// judged late: the page says once that the Hub is not running, and each pass
+// judged late: the page says once that the Hub has gone silent, and each pass
 // only says when it last ran. A failing pass reads as failing even while it
 // runs again.
 export const judgePass = ({
