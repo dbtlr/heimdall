@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from 'bun:test';
 
 import { NOW, startHub, timeline } from '@heimdall/hub/testing';
 
+import { agentsPeriod } from './agents-overview.ts';
 import { readProjectView } from './project-view.ts';
 
 beforeAll(async () => {
@@ -88,7 +89,8 @@ test('a project scopes cost, models, Systems, branches and Sessions to its repos
   // 5 minutes after -300 s, cut at now, and 5 after -86,460 s.
   expect(view?.activeMs).toBe(600_000);
   expect(view?.lanes).toHaveLength(2);
-  expect(view?.cpuSeconds).toBe(525);
+  // The process ran 540 s at one core; no CPU between two rollup buckets is lost.
+  expect(view?.cpuSeconds).toBe(540);
   expect(view?.peakRssBytes).toBe(1073741824);
   expect(view?.overview.chart.cells).toEqual(
     expect.arrayContaining([
@@ -375,4 +377,133 @@ test('tools with as many calls order by name in code unit order, whatever the da
     'apply',
     'explore',
   ]);
+});
+
+// Seconds from NOW, for fixtures placed relative to the start of a range.
+const secondsBeforeRange = (range: '7d' | 'today', seconds: number) =>
+  (agentsPeriod({ now: NOW, range, timeZone: 'UTC' }).from.getTime() - NOW) / 1000 - seconds;
+
+test('a Session with no request in the range adds no branch, tool, subagent, lane, or active time', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Requests 10 days ago and a minute after the range's end, as a skewed clock
+  // would write them, with a tool call inside the range between.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'skewed',
+    id: 'skewed',
+    requests: [-864_000, 60],
+    toolCalls: [{ at: -3000, name: 'Edit' }],
+  });
+  // Its last request ended 2 minutes before the range began.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'before',
+    id: 'before',
+    requests: [secondsBeforeRange('7d', 120)],
+    toolCalls: [{ at: -3000, name: 'Bash' }],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.overview.sessionCount).toBe(0);
+  expect(view?.branches).toEqual([]);
+  expect(view?.tools).toEqual([]);
+  expect(view?.lanes).toEqual([]);
+  expect(view?.activeMs).toBe(0);
+});
+
+test('a request just before the range adds no lane or active time, while one inside does', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'edge',
+    requests: [secondsBeforeRange('7d', 120), secondsBeforeRange('7d', -60)],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  const from = agentsPeriod({ now: NOW, range: '7d', timeZone: 'UTC' }).from.getTime();
+  // Only the request inside the range draws its own 5 minutes.
+  expect(view?.lanes.map(({ start, end }) => [start - from, end - from])).toEqual([
+    [MINUTE, 6 * MINUTE],
+  ]);
+  expect(view?.activeMs).toBe(5 * MINUTE);
+});
+
+test('peak memory includes the rollup bucket that began before the range and reaches into it', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const id = await addProcess(h.db.sql, {
+    cwd: '/repos/notes-app',
+    end: -60,
+    pid: 1,
+    readings: 'rollups',
+    rssBytes: 1024 ** 3,
+    start: -600,
+  });
+  const from = agentsPeriod({ now: NOW, range: '7d', timeZone: 'UTC' }).from.getTime();
+  await h.db.sql`
+    INSERT INTO harness_process_rollups (process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max)
+    VALUES (${id}, ${new Date(from - MINUTE)}, 1, 0, 0, 0, 0, ${4 * 1024 ** 3})
+  `;
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'one', requests: [-300] });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.peakRssBytes).toBe(4 * 1024 ** 3);
+});
+
+const read = (h: { db: { sql: Parameters<typeof readProjectView>[0] } }) =>
+  readProjectView(h.db.sql, { name: 'notes-app', now: NOW, range: 'today', timeZone: 'UTC' });
+
+test('the repository flag reads true only when a Session or a process in the project recorded one', async () => {
+  await using folder = await startHub();
+  await folder.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(folder.db.sql, { firstCwd: '/repos/notes-app', id: 'one', requests: [-60] });
+  expect((await read(folder))?.repository).toBe(false);
+
+  // A process outside the range gave the Session its repository.
+  await using sessionOnly = await startHub();
+  await sessionOnly.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addProcess(sessionOnly.db.sql, {
+    cwd: '/work/linked',
+    end: -258_000,
+    pid: 1,
+    repository: '/repos/notes-app',
+    start: -259_200,
+  });
+  await addSession(sessionOnly.db.sql, {
+    firstCwd: '/work/linked',
+    id: 'linked',
+    requests: [-259_000],
+  });
+  expect((await read(sessionOnly))?.repository).toBe(true);
+
+  // A process in the range, in another folder, names the project; no Session has a repository.
+  await using processOnly = await startHub();
+  await processOnly.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addProcess(processOnly.db.sql, {
+    cwd: '/work/elsewhere',
+    end: -60,
+    pid: 1,
+    repository: '/repos/notes-app',
+    start: -600,
+  });
+  await addSession(processOnly.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'one',
+    requests: [-30],
+  });
+  expect((await read(processOnly))?.repository).toBe(true);
 });

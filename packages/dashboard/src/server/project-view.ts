@@ -40,16 +40,18 @@ const rowKey = (row: Key) => JSON.stringify([row.system, row.harness, row.source
 // A dossier reads one snapshot. Only the header's history (the first Session,
 // the last request, the Systems, and whether a repository was resolved) reads
 // the project's Sessions over the whole archive, once. Every other read starts
-// from the project's Sessions active in the period, found as Agents finds its
-// Sessions (session-spans.ts) and materialized once per statement, so the
-// plan reaches tool calls, requests, and subagents by Session key and never
-// re-runs the project filter per row.
+// from the project's Sessions with a request in the period, found as Agents
+// finds its Sessions (session-spans.ts), kept to those with such a request,
+// and materialized once per statement, so the plan reaches tool calls,
+// requests, and subagents by Session key and never re-runs the project filter
+// per row. One rule holds for the whole page: only requests in the period
+// count, and a Session with none adds nothing.
 //
 // Active time is the union, over the project's Sessions, of the 5 minutes
-// after each request (the window in which a Session counts as running),
-// clipped to the period, so overlapping Sessions count once and a period never
-// holds more active time than its length. The lanes draw the same windows,
-// one Session's at a time.
+// after each request in the period (the window in which a Session counts as
+// running), cut at the period's end, so overlapping Sessions count once and a
+// period never holds more active time than its length. The lanes draw the
+// same windows, one Session's at a time.
 export const readProjectView = (
   sql: SQL,
   input: {
@@ -86,14 +88,21 @@ export const readProjectView = (
       return undefined;
     }
     const { from, to } = agentsPeriod(input);
-    const spans = (since: Date) => sessionSpans(tx, { from: since, project: name, to });
-    const windowFrom = new Date(from.getTime() - RUNNING_MS);
+    // The project's Sessions with a request in the period.
+    const spans = tx`
+      SELECT k.* FROM (${sessionSpans(tx, { from, project: name, to })}) k
+      WHERE EXISTS (
+        SELECT 1 FROM insight.requests q
+        WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
+          AND q.at >= ${from} AND q.at <= ${to}
+      )
+    `;
     const [overview, windows, branches, tools, subagents, processes] = await Promise.all([
       readPeriodOverview(tx, { ...input, project: name }),
-      // Each Session's requests from 5 minutes before the period, merged into
-      // runs whose requests are at most 5 minutes apart.
+      // Each Session's requests in the period, merged into runs whose requests
+      // are at most 5 minutes apart.
       tx`
-        WITH spans AS MATERIALIZED (${spans(windowFrom)}),
+        WITH spans AS MATERIALIZED (${spans}),
         requests AS (
           SELECT k.system, k.harness, k.source, k.session_id, r.at,
                  CASE WHEN r.at - lag(r.at) OVER w <= ${`${String(RUNNING_MS)} milliseconds`}::interval
@@ -102,7 +111,7 @@ export const readProjectView = (
           CROSS JOIN LATERAL (
             SELECT x.at FROM insight.requests x
             WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
-              AND x.at >= ${windowFrom} AND x.at <= ${to}
+              AND x.at >= ${from} AND x.at <= ${to}
             OFFSET 0
           ) r
           WINDOW w AS (PARTITION BY k.system, k.harness, k.source, k.session_id ORDER BY r.at)
@@ -114,16 +123,15 @@ export const readProjectView = (
           FROM requests
         )
         SELECT system, harness, source, session_id,
-               greatest(min(at), ${from}) AS start,
+               min(at) AS start,
                least(max(at) + ${`${String(RUNNING_MS)} milliseconds`}::interval, ${to}) AS end
         FROM runs
         GROUP BY system, harness, source, session_id, run
-        HAVING max(at) + ${`${String(RUNNING_MS)} milliseconds`}::interval > ${from}
         ORDER BY start, system, harness, source, session_id
       ` as Promise<(Key & { start: Date; end: Date })[]>,
-      // Each branch's Sessions active in the period: the spans are its period filter.
+      // Each branch's Sessions with a request in the period.
       tx`
-        WITH spans AS MATERIALIZED (${spans(from)})
+        WITH spans AS MATERIALIZED (${spans})
         SELECT s.branch AS name, count(*)::int AS sessions
         FROM spans k
         CROSS JOIN LATERAL (
@@ -136,7 +144,7 @@ export const readProjectView = (
       ` as Promise<Count[]>,
       // Names compare in code unit order, so the order holds in any locale.
       tx`
-        WITH spans AS MATERIALIZED (${spans(from)})
+        WITH spans AS MATERIALIZED (${spans})
         SELECT t.name, t.kind, t.mcp_server AS "mcpServer", t.skill, count(*)::int AS calls,
                (count(*) OVER ())::int AS listed
         FROM spans k
@@ -152,7 +160,7 @@ export const readProjectView = (
         LIMIT ${TOOLS_LISTED}
       ` as Promise<(ToolCount & { listed: number })[]>,
       tx`
-        WITH spans AS MATERIALIZED (${spans(from)})
+        WITH spans AS MATERIALIZED (${spans})
         SELECT k.system, k.harness, k.source, k.session_id, a.n
         FROM spans k
         CROSS JOIN LATERAL (
@@ -163,7 +171,9 @@ export const readProjectView = (
         WHERE a.n > 0
       ` as Promise<(Key & { n: number })[]>,
       // A process counts under its own working directory's project. Its CPU
-      // and its peak are its rollups' within the period.
+      // and its peak are those of its 5-minute rollups that overlap the period:
+      // the CPU between its first and last reading in them, so none is lost
+      // between two buckets.
       tx`
         WITH processes AS MATERIALIZED (
           SELECT p.id, p.repository FROM harness_processes p
@@ -171,11 +181,13 @@ export const readProjectView = (
             AND p.started_at <= ${to} AND coalesce(p.ended_at, p.last_seen_at) >= ${from}
         )
         SELECT coalesce((
-                 SELECT sum(greatest(0, r.cpu_micros_max - r.cpu_micros_min)) / 1e6
-                 FROM harness_process_rollups r JOIN processes p ON p.id = r.process
-                 WHERE r.bucket >= ${from} AND r.bucket <= ${to}), 0)::float8 AS seconds,
+                 SELECT sum(greatest(0, t.cpu_micros)) / 1e6 FROM (
+                   SELECT max(r.cpu_micros_max) - min(r.cpu_micros_min) AS cpu_micros
+                   FROM harness_process_rollups r JOIN processes p ON p.id = r.process
+                   WHERE r.bucket + interval '5 minutes' > ${from} AND r.bucket <= ${to}
+                   GROUP BY r.process) t), 0)::float8 AS seconds,
                (SELECT max(r.rss_max)::float8 FROM harness_process_rollups r JOIN processes p ON p.id = r.process
-                WHERE r.bucket >= ${from} AND r.bucket <= ${to}) AS peak,
+                WHERE r.bucket + interval '5 minutes' > ${from} AND r.bucket <= ${to}) AS peak,
                coalesce((SELECT bool_or(repository IS NOT NULL) FROM processes), false) AS repository
       ` as Promise<{ peak: number | null; repository: boolean; seconds: number }[]>,
     ]);
