@@ -10,6 +10,20 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.12.1 - 2026-11-15
+
+### Fixes
+
+- **Home and a System's page word a stop as Activity does** (HMD-264, HMD-258). A finished stop reads "stopped for 4 min", and several read "stopped 3 times", instead of "restarted". On Activity, an alert merged into a line says when its recovery went out, next to that alert.
+
+- **A job that was removed and recorded again no longer shows missed runs for the time it was gone** (HMD-259). The Jobs page counts its missed runs from when it was recorded again, once the Hub has seen it removed.
+
+- **Maintenance and Home count packages correctly** (HMD-253, HMD-260, HMD-263). A package pending in two Homebrew installations now lists once for each, naming its installation. A System with no installed-package census no longer hides a foreign architecture's suffix. Home no longer counts a Service's own package as a package as well as a Service update: its Service updates row marks such an update as security when its package is one, and a System left with no other package drops out of the package count. A Service's package is now matched only from its own package manager, so an `apt:` Service never claims a Homebrew formula.
+
+- **Chart fixes** (HMD-254, HMD-255, HMD-261, HMD-262). A Condition's Vitals shading now takes the Condition's level color. A Service's availability strip shows the days before the Hub had any evidence of the Service (its record, a version, a stop, or a Service down) as not seen yet, and its percentage and counts cover only the time since, up to 90 days. Limit-line labels clear the scale numbers exactly. Before the time zone is known, the Activity page holds the room of its lanes, divider, time axis, and the legend's first line, so it shifts only when the legend wraps; its change marks get 24 px tap targets.
+
+- **One bad job run no longer costs the whole Report** (HMD-257, HMD-256). The Hub drops a job run with a broken field, or one that repeats the job and start time of an earlier run in the same Report, logs a warning, and stores the rest of the Report. Before, the Hub refused the whole Report, so that Report's records, latest runs, and checks were lost until the next hourly resend, and the same held job runs were refused again each hour. The Hub also now drops a job run that starts more than 5 minutes ahead of its clock, so a System whose clock runs that far ahead loses those runs from its run history. A dropped run shows only as a warning in the Hub's log.
+
 ## v0.12.0 - 2026-11-14
 
 ### Features
