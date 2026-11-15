@@ -10,6 +10,25 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.13.0 - 2026-11-15
+
+### Features
+
+- **The load chart shows the System's current core count** (HMD-236). Collectors report the operating system's logical CPU count, and the System overview's 1-minute load chart names it in its note and draws a labelled dashed line at it; Systems without a count keep their existing chart. Upgrade the Hub before the dashboard, since a dashboard upgraded first fails every System page until migration 45 adds the column it selects; Collectors can be upgraded in any order.
+
+- **A High memory Condition names the processes holding the memory** (HMD-223). When the Hub raises or re-raises a High memory Condition, including one recorded from delayed Reports, its reason, shown on Activity and wherever the Condition's reason appears, now ends with the largest processes, such as `largest: postgres 3.1 GiB, node 1.2 GiB`, when a recent sample carried them.
+
+- **Each project has a page** (HMD-271). Open a project from the Agents breakdown, a Session's title, or the jump box to see its cost per day, active time, Sessions and subagents, Systems, models, tools and skills, branches, Harness process CPU and peak memory, and its newest Sessions, with a link to all of them on Agents. Active time counts the 5 minutes after each request, once however many Sessions overlap, so it never exceeds the range. Projects use repository folder names (ADR-0019), so two repositories with the same folder name share a page.
+
+- **The System page reaches back 30 days and a year** (HMD-270). The range picker adds 30 d and 1 y, read from the Hub's 5-minute rollups re-binned in SQL into local days or 3 hours of the local clock in the viewer's time zone, so a year-long page draws a few hundred points per chart and its days are the days Home and the Agents page count. CPU, memory, and load draw each bucket's average inside its low–high band; load is the 1-minute load alone, since the rollups keep no 5- or 15-minute load. Agent Sessions show as list-price cost per day, priced by the Agents chart's own read, Harness process CPU reads the process rollups with the 8 busiest drawn by name, and Conditions and changes fold to one row per kind, with changes counted per day or week and a ring at each reboot. A pin inspects its bucket instead of the nearest raw sample, a 3-hour bucket naming its day's cost too, and a bucket older than 14 days says its top processes and memory holders are not kept that long. Service stops are pruned after 90 days, so restarts older than that are absent from the change marks.
+- **An Activity pin older than 7 days opens a System page that shows it** (HMD-267). The pinned card's link to the System page now opens 30 d or 1 y for an older moment, where it used to open 7 d, which left it out.
+
+- **Hub health behind the version number** (HMD-272). The desktop footer, which now shows the dashboard and Hub versions, and the phone's More page link to a Hub checklist: listening, database, intake, Session insight, stored Session totals, Conditions, alert delivery, upstream checks, prices, and retention, then Systems and Collectors, Session insight, and storage. The Hub records when each timer pass last started, finished, and succeeded, so the page tells a pass that is running, running too long, failing, or late from one that is current, and, once the Hub has recorded nothing for 90 seconds (no listening heartbeat and no pass record), says once that it may be stopped or stuck. Upgrade the Hub before the dashboard to populate the new status table; a newer dashboard with an older Hub shows unknown runtime fields and keeps the rest of the page available.
+
+### Fixes
+
+- **Disk forecasts follow the current volume** (HMD-274). The System page and the Low disk Condition page now share one growth fit, which starts afresh only when a mount's total size changes by more than 1%, so a replaced volume no longer reads as sudden growth. Both pages name the span the fit covers, say why there is no forecast after a recent size change or for a zero-size mount, and date a quiet System's rate and countdown from its newest reading. A write of more than 1% elsewhere on a ZFS pool changes a dataset's reported size, so that dataset's forecast is blank for a day afterwards.
+
 ## v0.12.1 - 2026-11-15
 
 ### Fixes
