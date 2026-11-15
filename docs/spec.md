@@ -494,6 +494,27 @@ Every 30 seconds, the Hub compares the Conditions it stores with its record of d
 
 When two Hubs share a database, as during an upgrade, one delivery pass runs at a time across them, so a message is never sent twice. Delivery covers paired Systems only. An unpaired System's open Conditions send nothing, and unpairing a System closes its open deliveries without a recovered message. Each delivery records when it closed and, apart, when its recovered message went out, so a delivery closed without one is told apart whether its System is paired again or not. The Hub publishes with one JSON request to the server's address and treats a redirect as a failed send.
 
+## Hub runtime status
+
+The Hub records its own health in the single-row `hub_status` table. Startup
+stores `version`, `started_at`, and `delivery_configured`, a boolean that never
+includes a destination, topic, or credential. `last_runs` maps each timer pass
+(`listening`, `prune`, `conditions`, `delivery`, `parse`, `refresh`, and
+`upstreams`) to the epoch milliseconds when its latest attempt finished,
+including failed attempts. Startup clears the previous process's pass times.
+A failed status write logs a warning and does not fail startup or the pass.
+
+The dashboard's version links to `/hub`, a checklist of Hub health with Systems
+and Collectors, Session insight, storage, and applied migrations. Missing runtime
+fields, including when an older Hub has not created the table, show as unknown.
+A pass is overdue after twice its scheduling interval: prune after two hours,
+Conditions after two minutes, delivery after one minute, parse and refresh after
+30 seconds, and upstream checks after ten minutes. Listening keeps its existing
+two-minute outage limit. These times describe completed attempts, not successful
+work; delivery and parser failures have their own stored evidence. Parser failure
+reasons never reach the dashboard. Rebuild start time and rejected Report counts
+are not recorded.
+
 ## Reading the records back
 
 The Collector sends its whole record set in a Report's `records` section when it starts, when a `record` or `forget` changes the set, and an hour after the Hub last answered a Report carrying the set. The section carries each record as the provisioner recorded it and the kind and name of each record the Collector could not read from its own state. A row whose kind or name the section cannot carry, which only a damaged state file holds, is left out, and the Collector logs a warning. A job's runs are not part of the set.

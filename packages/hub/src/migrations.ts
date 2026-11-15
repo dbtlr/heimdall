@@ -2394,6 +2394,19 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: `ALTER TABLE systems ADD COLUMN cpu_cores integer, ADD COLUMN cpu_cores_at timestamptz;`,
     version: 45,
   },
+  {
+    // Hub runtime facts only; delivery destinations and credentials stay in configuration.
+    sql: `
+      CREATE TABLE hub_status (
+        only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
+        version text NOT NULL,
+        started_at timestamptz NOT NULL,
+        delivery_configured boolean NOT NULL,
+        last_runs jsonb NOT NULL DEFAULT '{}'::jsonb
+      );
+    `,
+    version: 46,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

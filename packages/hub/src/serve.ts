@@ -14,6 +14,7 @@ import type { DeliveryChannel } from './delivery-config.ts';
 import { clearFailingRun, deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
+import { hubStatusRecorder } from './hub-status.ts';
 import { createHub } from './hub.ts';
 import { keepInsightReaderGranted } from './insight-reader.ts';
 import { recordListening } from './listening.ts';
@@ -29,6 +30,7 @@ import { SYSTEM_CONDITION_THRESHOLDS } from './system-conditions.ts';
 import { pairedSystemCount } from './tokens.ts';
 import { checkUpstreams } from './upstream-checks.ts';
 import { listReleases } from './upstream-releases.ts';
+import { HUB_VERSION } from './version.ts';
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 const CONDITIONS_INTERVAL_MS = 60_000;
@@ -179,6 +181,14 @@ const serveUntilStopped = async ({
     if (reader !== undefined) {
       stopGranting = await keepInsightReaderGranted({ clean, log, reader, sql });
     }
+    const status = hubStatusRecorder({
+      now: Date.now,
+      sql,
+      warn: (message) => {
+        void log.warn(clean(message));
+      },
+    });
+    await status.start({ deliveryConfigured: delivery !== undefined, version: HUB_VERSION });
     const hub = createHub({
       now: Date.now,
       onError: (error) => {
@@ -217,7 +227,7 @@ const serveUntilStopped = async ({
             clean(`Could not record that the Hub is listening: ${describeError(error)}`),
           );
         },
-        task: () => recordListening(sql, Date.now()),
+        task: () => status.pass('listening', () => recordListening(sql, Date.now())),
       });
       stopPruning = every({
         intervalMs: PRUNE_INTERVAL_MS,
@@ -228,12 +238,13 @@ const serveUntilStopped = async ({
             ),
           );
         },
-        task: async () => {
-          const now = Date.now();
-          await pruneVitals(sql, now);
-          await pruneServiceStops(sql, now);
-          await pruneJobRuns(sql, now);
-        },
+        task: () =>
+          status.pass('prune', async () => {
+            const now = Date.now();
+            await pruneVitals(sql, now);
+            await pruneServiceStops(sql, now);
+            await pruneJobRuns(sql, now);
+          }),
       });
       stopJudging = every({
         intervalMs: CONDITIONS_INTERVAL_MS,
@@ -242,10 +253,11 @@ const serveUntilStopped = async ({
         },
         // Recording first means no judgment runs unless the Hub could record
         // that it listens, so none misses an outage the record would reveal.
-        task: async () => {
-          await recordListening(sql, Date.now());
-          await evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits });
-        },
+        task: () =>
+          status.pass('conditions', async () => {
+            await recordListening(sql, Date.now());
+            await evaluateConditions(sql, Date.now, { ...SYSTEM_CONDITION_THRESHOLDS, ...limits });
+          }),
       });
       if (delivery !== undefined) {
         // The server's host is no secret; the topic and token never reach the log.
@@ -256,7 +268,10 @@ const serveUntilStopped = async ({
           onError: (error) => {
             void log.warn(clean(`Could not deliver alerts: ${describeError(error)}`));
           },
-          task: () => deliverAlerts(sql, { dashboard: delivery.dashboard, now: Date.now(), send }),
+          task: () =>
+            status.pass('delivery', () =>
+              deliverAlerts(sql, { dashboard: delivery.dashboard, now: Date.now(), send }),
+            ),
         });
       }
       stopProjecting = every({
@@ -264,20 +279,21 @@ const serveUntilStopped = async ({
         onError: (error) => {
           void log.warn(clean(`Could not derive Session insight: ${describeError(error)}`));
         },
-        task: async () => {
-          const projected = await projectTranscripts(sql);
-          for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
-            // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
-            await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
-          }
-        },
+        task: () =>
+          status.pass('parse', async () => {
+            const projected = await projectTranscripts(sql);
+            for (const { level, text } of projectionNotes(projected, outdatedLogged)) {
+              // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+              await (level === 'info' ? log.info(clean(text)) : log.warn(clean(text)));
+            }
+          }),
       });
       stopRefreshing = every({
         intervalMs: PROJECT_INTERVAL_MS,
         onError: (error) => {
           void log.warn(clean(`Could not store Session insight: ${describeError(error)}`));
         },
-        task: () => refreshSessionInsight(sql),
+        task: () => status.pass('refresh', () => refreshSessionInsight(sql)),
       });
       stopChecking = every({
         intervalMs: UPSTREAM_PASS_INTERVAL_MS,
@@ -285,11 +301,13 @@ const serveUntilStopped = async ({
           void log.warn(clean(`Could not check upstreams: ${describeError(error)}`));
         },
         task: () =>
-          checkUpstreams(sql, {
-            list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
-            now: Date.now,
-            signal,
-          }),
+          status.pass('upstreams', () =>
+            checkUpstreams(sql, {
+              list: (upstream) => listReleases(upstream, { fetch, now: Date.now, signal }),
+              now: Date.now,
+              signal,
+            }),
+          ),
       });
       if (!signal.aborted) {
         await once(signal, 'abort');

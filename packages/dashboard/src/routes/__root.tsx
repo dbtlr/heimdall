@@ -1,13 +1,15 @@
-import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
+import { createRootRoute, HeadContent, Link, Outlet, Scripts } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
 import { TopBar } from '../components/top-bar.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
+import { contentFrame } from '../lib/layout.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
 import { getJumpIndex } from '../server/jump-index-fn.ts';
 import { getServiceAttentionCount } from '../server/services-fn.ts';
+import { DASHBOARD_VERSION } from '../version.ts';
 
 import appCss from '../styles.css?url';
 
@@ -69,6 +71,13 @@ function Root() {
       <AutoRefresh />
       <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
       <Outlet />
+      <footer
+        className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
+      >
+        <Link className="hover:text-foreground" to="/hub">
+          Heimdall dashboard v{DASHBOARD_VERSION} · Hub status ›
+        </Link>
+      </footer>
       <div className="sm:hidden">
         <AppNavigation />
       </div>
