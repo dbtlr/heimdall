@@ -5,8 +5,10 @@ import {
   ago,
   checkSentence,
   isUpToDate,
+  managersWithSeveralInstallations,
   maintenanceSummary,
   nothingPending,
+  packageKey,
   pendingCheckNote,
   splitPackages,
   upstreamName,
@@ -24,14 +26,26 @@ const CHIP = 'flex-none rounded-full bg-status-warning/15 px-2 py-0.5 text-xs wh
 
 const HEADING = 'text-[11px] font-semibold tracking-[0.08em] text-dim uppercase';
 
-// A package: its name, the versions it would move between, and for a security
-// update a chip and how long the Hub has held it as one.
-function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
+// A package: its name, its installation when the System's packages of its
+// manager are pending in more than one, the versions it would move between,
+// and for a security update a chip and how long the Hub has held it as one.
+function PackageRow({
+  now,
+  pkg,
+  showInstallation,
+}: {
+  now: number;
+  pkg: MaintenancePackage;
+  showInstallation: boolean;
+}) {
   return (
     <li className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t py-1.5 first:border-t-0">
       <span className="min-w-0 break-all" title={pkg.name}>
         {pkg.label}
         {pkg.cask && <span className="ml-1.5 text-xs text-muted-foreground">cask</span>}
+        {showInstallation && (
+          <span className="ml-1.5 text-xs text-muted-foreground">{pkg.installation}</span>
+        )}
       </span>
       <span className="min-w-0 text-xs text-muted-foreground tabular-nums">
         {`${pkg.installed ?? '?'} → ${pkg.available ?? '?'}`}
@@ -53,6 +67,7 @@ function PackageRow({ now, pkg }: { now: number; pkg: MaintenancePackage }) {
 function Packages({ now, packages }: { now: number; packages: readonly MaintenancePackage[] }) {
   const { more, shown } = splitPackages(packages);
   const security = packages.filter(isSecurityUpdate).length;
+  const several = managersWithSeveralInstallations(packages);
   return (
     <div className="mt-3">
       <h3 className={HEADING}>
@@ -60,7 +75,12 @@ function Packages({ now, packages }: { now: number; packages: readonly Maintenan
       </h3>
       <ul className="mt-1 text-[13.5px]">
         {shown.map((pkg) => (
-          <PackageRow key={`${pkg.manager}/${pkg.name}`} now={now} pkg={pkg} />
+          <PackageRow
+            key={packageKey(pkg)}
+            now={now}
+            pkg={pkg}
+            showInstallation={several.has(pkg.manager)}
+          />
         ))}
       </ul>
       {more.length > 0 && (
@@ -70,7 +90,12 @@ function Packages({ now, packages }: { now: number; packages: readonly Maintenan
           </summary>
           <ul className="text-[13.5px]">
             {more.map((pkg) => (
-              <PackageRow key={`${pkg.manager}/${pkg.name}`} now={now} pkg={pkg} />
+              <PackageRow
+                key={packageKey(pkg)}
+                now={now}
+                pkg={pkg}
+                showInstallation={several.has(pkg.manager)}
+              />
             ))}
           </ul>
         </details>

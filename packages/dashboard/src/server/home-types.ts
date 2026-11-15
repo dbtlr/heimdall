@@ -83,6 +83,10 @@ export type AvailableUpdate = {
   version: string;
 };
 
+// A Service's update as Home's Maintenance card counts it: a security update
+// when the Service is updated from its own package and that package is one.
+export type HomeServiceUpdate = AvailableUpdate & { security: boolean };
+
 // The packages pending on one System, the security updates among them, and
 // the Pending update Condition the System's row links to.
 export type PendingPackages = {
@@ -106,7 +110,7 @@ export type HeldPackages = {
 // What Home's Maintenance card reads besides the open Conditions: the packages
 // pending on each paired System with an open Pending update, and each Service
 // on a paired System with an available update.
-export type HomeMaintenance = { packages: PendingPackages[]; updates: AvailableUpdate[] };
+export type HomeMaintenance = { packages: PendingPackages[]; updates: HomeServiceUpdate[] };
 
 // One change Home's What changed card reads, on a paired System: a Service's
 // installed version changing, a Service stopping, `ongoing` while it has not

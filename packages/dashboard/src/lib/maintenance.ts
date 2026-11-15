@@ -2,7 +2,11 @@
 // of each, what a card says of its package checks, and the summary above them.
 // All of it can wait; nothing here is tinted as a problem.
 
-import { packageMatchesUpstream } from '@heimdall/schema';
+import {
+  packageMatchesUpstream,
+  updateManagerName,
+  upstreamPackageManager,
+} from '@heimdall/schema';
 
 import type {
   MaintenanceCheck,
@@ -65,6 +69,25 @@ export const splitPackages = (
   const ordered = packages.toSorted(securityFirst);
   const cut = Math.max(PACKAGES_SHOWN, ordered.filter(isSecurityUpdate).length);
   return { more: ordered.slice(cut), shown: ordered.slice(0, cut) };
+};
+
+// The key of a package row: one formula pending in two Homebrew prefixes is
+// two rows. Installations and names can hold a slash, so the parts are quoted.
+export const packageKey = ({ installation, manager, name }: MaintenancePackage): string =>
+  JSON.stringify([manager, installation, name]);
+
+// The package managers with more than one installation holding a pending
+// package among `packages`, where a row says which installation it is in.
+export const managersWithSeveralInstallations = (
+  packages: readonly MaintenancePackage[],
+): Set<string> => {
+  const installations = new Map<string, Set<string>>();
+  for (const { installation, manager } of packages) {
+    installations.set(manager, (installations.get(manager) ?? new Set()).add(installation));
+  }
+  return new Set(
+    [...installations].filter(([, found]) => found.size > 1).map(([manager]) => manager),
+  );
 };
 
 // How long before `now`, in its largest unit: "4 d".
@@ -157,15 +180,34 @@ const UPSTREAM_NAMES: Record<string, string> = {
 export const upstreamName = (upstream: string | null): string | undefined =>
   upstream === null ? undefined : UPSTREAM_NAMES[upstream.split(':')[0] ?? ''];
 
+// What the rule below needs of a package and of a Service update, so Home and
+// Maintenance apply it to the rows each reads.
+type OwnablePackage = Pick<MaintenancePackage, 'manager' | 'name' | 'security' | 'securitySince'>;
+type OwningUpdate = Pick<MaintenanceServiceUpdate, 'security' | 'upstream'>;
+
+// Whether `pkg` is the package `upstream` names, from the manager it names:
+// apt: an APT package, brew: a Homebrew one. Home's rows carry the stored
+// manager and Maintenance's its display name, so both compare as displayed.
+const isPackageOf = (upstream: string, pkg: OwnablePackage): boolean => {
+  const manager = upstreamPackageManager(upstream);
+  return (
+    manager !== undefined &&
+    updateManagerName(manager) === updateManagerName(pkg.manager) &&
+    packageMatchesUpstream(upstream, pkg.name)
+  );
+};
+
 // The System with the packages of its Services left out: a Service whose
 // upstream is an apt: or brew: package shows its update once, as a Service
 // update marked security when its package is a security update, and its
 // package is neither counted nor listed.
-export const withoutServicePackages = (system: MaintenanceSystem): MaintenanceSystem => {
-  const packagesOf = ({ upstream }: MaintenanceServiceUpdate) =>
-    upstream === null
-      ? []
-      : system.packages.filter(({ name }) => packageMatchesUpstream(upstream, name));
+export const withoutServicePackages = <
+  S extends { packages: OwnablePackage[]; updates: OwningUpdate[] },
+>(
+  system: S,
+): S => {
+  const packagesOf = ({ upstream }: OwningUpdate) =>
+    upstream === null ? [] : system.packages.filter((pkg) => isPackageOf(upstream, pkg));
   const owned = new Set(system.updates.flatMap(packagesOf));
   return {
     ...system,

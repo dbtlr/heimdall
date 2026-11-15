@@ -71,6 +71,20 @@ function SystemLinks({
   );
 }
 
+// How many of a row's updates are security updates, shown only when any are.
+function SecurityChip({ count }: { count: number }) {
+  return count > 0 ? (
+    <span
+      className={cn(
+        'flex-none rounded-full bg-status-warning/15 px-2 py-0.5 text-xs whitespace-nowrap',
+        MARK_COLOR.note,
+      )}
+    >
+      {count} security
+    </span>
+  ) : undefined;
+}
+
 // Home's Maintenance card: packages pending, Systems that need a reboot, and
 // Services with an update, each row omitted when it has nothing. All of it
 // can wait, so nothing here is tinted as a problem.
@@ -95,16 +109,7 @@ export function MaintenanceCardView({ card }: { card: MaintenanceCard }) {
             <li className={cn(ROW, 'py-1.5')}>
               <div className={ROW_LINE}>
                 <span>{packages.text}</span>
-                {packages.security > 0 && (
-                  <span
-                    className={cn(
-                      'flex-none rounded-full bg-status-warning/15 px-2 py-0.5 text-xs whitespace-nowrap',
-                      MARK_COLOR.note,
-                    )}
-                  >
-                    {packages.security} security
-                  </span>
-                )}
+                <SecurityChip count={packages.security} />
               </div>
               <SystemLinks
                 systems={packages.systems.map(({ conditionId, packages: count, system }) => ({
@@ -131,6 +136,7 @@ export function MaintenanceCardView({ card }: { card: MaintenanceCard }) {
                 to="/maintenance"
               >
                 <span>{updates.text}</span>
+                <SecurityChip count={updates.security} />
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
                   {updates.longest}
                 </span>

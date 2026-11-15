@@ -11,6 +11,7 @@ const NOW = 1_800_000_000_000;
 const pkg = (name: string, security = false): MaintenancePackage => ({
   available: '3.0.15-1',
   cask: false,
+  installation: 'system',
   installed: '3.0.13-1',
   label: name,
   manager: 'APT',
@@ -168,5 +169,24 @@ describe('the Maintenance cards', () => {
 
     expect(html).toContain('2 package updates on 2 Systems, 1 of them security.');
     expect(html.indexOf('b-1')).toBeLessThan(html.indexOf('a-1'));
+  });
+
+  test('one formula pending in two Homebrew prefixes lists twice, each with its prefix; a manager with one installation shows none', async () => {
+    const brew = (installation: string): MaintenancePackage => ({
+      ...pkg('formula:git'),
+      installation,
+      label: 'git',
+      manager: 'Homebrew',
+    });
+    const html = await render([
+      system('laptop-1', {
+        packages: [brew('/opt/homebrew'), brew('/usr/local'), pkg('curl')],
+      }),
+    ]);
+
+    expect(html.match(/>git</gu)).toHaveLength(2);
+    expect(html).toContain('/opt/homebrew');
+    expect(html).toContain('/usr/local');
+    expect(html).not.toContain('>system<');
   });
 });

@@ -29,12 +29,14 @@ const hear = async (
   system: string,
   pending: Pending[],
   {
+    arch = 'x64',
     installed,
     reboot = false,
     result,
     services = [],
     sources = [],
   }: {
+    arch?: string;
     installed?: string[];
     reboot?: boolean;
     result?: UpdateManager['result'];
@@ -47,6 +49,7 @@ const hear = async (
     h.hub,
     {
       ...report(system, [NOW]),
+      collector: { arch, platform: 'linux', version: '0.1.0' },
       records: {
         records: services.map((name) => ({
           kind: 'service',
@@ -325,6 +328,63 @@ test("the census alone decides the System's own architecture, however many forei
     'libgcc-s1:i386',
     'zlib1g:i386',
   ]);
+});
+
+test("without a census the Collector's architecture is the System's own, so a foreign package keeps its suffix", async () => {
+  await using h = await startHub();
+  await hear(h, 'server-1', [{ name: 'libc6:i386', security: null }], { arch: 'x64' });
+  await hear(h, 'laptop-1', [{ name: 'bash:arm64', security: null }], { arch: 'arm64' });
+
+  const { systems } = await readMaintenance(h.db.sql, NOW);
+
+  const labels = (name: string) =>
+    systems.find(({ system }) => system === name)?.packages.map(({ label }) => label);
+  expect(labels('server-1')).toEqual(['libc6:i386']);
+  expect(labels('laptop-1')).toEqual(['bash']);
+});
+
+test('without a census or a known architecture no suffix is hidden', async () => {
+  await using h = await startHub();
+  await hear(
+    h,
+    'server-1',
+    [
+      { name: 'openssl:amd64', security: null },
+      { name: 'bash:amd64', security: null },
+    ],
+    { arch: 'mips' },
+  );
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+
+  expect(system?.packages.map(({ label }) => label).toSorted()).toEqual([
+    'bash:amd64',
+    'openssl:amd64',
+  ]);
+});
+
+// A Homebrew source in `installation` with `git` pending.
+const brewWithGit = (installation: string): UpdateManager =>
+  source('homebrew', installation, {
+    kind: 'available',
+    metadataAt: NOW - 2 * HOUR,
+    updates: [{ available: '2', installed: '1', name: 'formula:git', security: null }],
+  });
+
+test('a package keeps the installation it is pending in, so one formula pending in two Homebrew prefixes is two packages', async () => {
+  await using h = await startHub();
+  await hear(h, 'laptop-1', [], {
+    sources: [brewWithGit('/opt/homebrew'), brewWithGit('/usr/local')],
+  });
+
+  const [system] = (await readMaintenance(h.db.sql, NOW)).systems;
+
+  expect(system?.packages.map(({ installation, name }) => [installation, name]).toSorted()).toEqual(
+    [
+      ['/opt/homebrew', 'formula:git'],
+      ['/usr/local', 'formula:git'],
+    ],
+  );
 });
 
 test('a malformed held package stays listed with its versions unknown, and every other System still shows', async () => {

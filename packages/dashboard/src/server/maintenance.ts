@@ -12,7 +12,7 @@ import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { orderMaintenance, withoutServicePackages } from '../lib/maintenance.ts';
-import { ownArchitecture, packageLabel } from '../lib/package-names.ts';
+import { dpkgArchitecture, ownArchitecture, packageLabel } from '../lib/package-names.ts';
 import { inSnapshot } from './fleet-overview.ts';
 import { bySystem } from './hub-rows.ts';
 import type {
@@ -24,7 +24,7 @@ import type {
 import { readServiceGlance } from './services.ts';
 import { pendingPackageOf } from './update-observations.ts';
 
-type SystemRow = { first_required_at: Date | null; system: string };
+type SystemRow = { collector_arch: string | null; first_required_at: Date | null; system: string };
 
 type SourceRow = { installation: string; manager: string; observation: unknown; system: string };
 
@@ -33,6 +33,7 @@ type SourceRow = { installation: string; manager: string; observation: unknown; 
 type Source = { observation: UpdateManager | undefined; row: SourceRow };
 
 type PackageRow = {
+  installation: string;
   manager: string;
   name: string;
   pending_update: unknown;
@@ -40,10 +41,12 @@ type PackageRow = {
   system: string;
 };
 
-// Every paired System, and when a reboot was first required, if one is.
+// Every paired System with the architecture its Collector reports, and when a
+// reboot was first required, if one is.
 const readSystems = (sql: SQL): Promise<SystemRow[]> => sql`
-  SELECT p.system, r.first_required_at
+  SELECT p.system, s.collector_arch, r.first_required_at
   FROM paired_systems p
+  LEFT JOIN systems s ON s.name = p.system
   LEFT JOIN reboot_observations r
     ON r.system = p.system AND NOT r.withdrawn AND r.first_required_at IS NOT NULL
 `;
@@ -59,7 +62,7 @@ const readSources = (sql: SQL): Promise<SourceRow[]> => sql`
 // The packages the Hub holds as pending on each paired System, which a failed
 // or stale check leaves in place.
 const readPackages = (sql: SQL): Promise<PackageRow[]> => sql`
-  SELECT u.system, u.manager, u.name, u.pending_update, u.security_since
+  SELECT u.system, u.manager, u.installation, u.name, u.pending_update, u.security_since
   FROM update_subjects u
   JOIN paired_systems p ON p.system = u.system
 `;
@@ -67,6 +70,7 @@ const readPackages = (sql: SQL): Promise<PackageRow[]> => sql`
 const toPackage = (row: PackageRow, own: string | undefined): MaintenancePackage => ({
   ...pendingPackageOf(row),
   ...packageLabel(row.name, row.manager, own),
+  installation: row.installation,
   manager: updateManagerName(row.manager),
 });
 
@@ -140,17 +144,13 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
       systems.map((row): MaintenanceSystem => {
         const checked = (sourcesOf.get(row.system) ?? []).map(sourceOf);
         const heldRows = packagesOf.get(row.system) ?? [];
-        // The installed census decides when there is one; pending names are
-        // the fallback, since a System can have more foreign updates pending
-        // than native ones.
+        // The installed census decides when there is one; without it, the
+        // architecture the Collector reports. With neither, no suffix is hidden.
         const census = checked.flatMap(({ observation }) =>
           observation?.manager === 'apt' ? (observation.installed?.names ?? []) : [],
         );
-        const own = ownArchitecture(
-          census.length > 0
-            ? census
-            : heldRows.filter(({ manager }) => manager === 'apt').map(({ name }) => name),
-        );
+        const own =
+          census.length > 0 ? ownArchitecture(census) : dpkgArchitecture(row.collector_arch);
         const held = heldRows.map((pkg) => toPackage(pkg, own));
         return withoutServicePackages({
           check: systemCheck(checked, now),

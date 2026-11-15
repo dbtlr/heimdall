@@ -129,7 +129,9 @@ export const availableUpdate = (
   return { kind: own !== undefined && compareVersions(own, parsed) === 0 ? 'current' : 'unknown' };
 };
 
-const packageManager = (upstream: string) => {
+// The package manager an apt: or brew: upstream is a package of, undefined for
+// an upstream of any other source.
+export const upstreamPackageManager = (upstream: string): 'apt' | 'homebrew' | undefined => {
   if (upstream.startsWith('apt:')) {
     return 'apt';
   }
@@ -138,7 +140,7 @@ const packageManager = (upstream: string) => {
 
 // Matches an APT architecture or either Homebrew package kind to its upstream.
 export const packageMatchesUpstream = (upstream: string, packageName: string): boolean => {
-  const manager = packageManager(upstream);
+  const manager = upstreamPackageManager(upstream);
   if (manager === 'apt') {
     const prefix = `${upstream.slice(4)}:`;
     return packageName.startsWith(prefix) && packageName.length > prefix.length;
@@ -156,7 +158,7 @@ export const packageAvailableVersion = (
   observations: readonly UpdateManager[],
   now: number,
 ): string | null | undefined => {
-  const manager = packageManager(upstream);
+  const manager = upstreamPackageManager(upstream);
   if (manager === undefined) {
     return undefined;
   }

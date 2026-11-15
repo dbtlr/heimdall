@@ -27,6 +27,25 @@ export const ownArchitecture = (aptNames: readonly string[]): string | undefined
   return [...counts].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
 };
 
+// What dpkg calls each architecture a Collector reports (Node's `process.arch`).
+const DPKG_ARCHITECTURES: Readonly<Record<string, string>> = {
+  arm: 'armhf',
+  arm64: 'arm64',
+  ia32: 'i386',
+  loong64: 'loong64',
+  ppc64: 'ppc64el',
+  riscv64: 'riscv64',
+  s390x: 's390x',
+  x64: 'amd64',
+};
+
+// The dpkg architecture of a System whose Collector reports `collectorArch`,
+// undefined when none is known or dpkg has no name for it.
+export const dpkgArchitecture = (collectorArch: string | null | undefined): string | undefined =>
+  collectorArch === null || collectorArch === undefined
+    ? undefined
+    : DPKG_ARCHITECTURES[collectorArch];
+
 // The short name of a package from `manager`, and whether it is a Homebrew
 // cask. Homebrew drops its kind prefix; APT drops the architecture when it is
 // the System's own or `all`; any other manager's name reads as it is. The

@@ -64,6 +64,29 @@ describe('pendingPackages', () => {
     ]);
   });
 
+  test('a source left with no package is not counted and takes no link, and a System left with none is left out', () => {
+    const brew = condition('pending_update', 'laptop-1', {
+      conditionId: 'brew',
+      subject: JSON.stringify(['homebrew', '/opt/homebrew']),
+    });
+    const counts = pendingPackages(
+      [condition('pending_update', 'server-1'), condition('pending_update', 'laptop-1'), brew],
+      // server-1 holds nothing, and laptop-1's APT source nothing.
+      [held('laptop-1', 'homebrew', '/opt/homebrew', 1, 0)],
+    );
+
+    expect(counts).toEqual([{ conditionId: 'brew', packages: 1, security: 0, system: 'laptop-1' }]);
+  });
+
+  test('a source held with a count of none is passed over like one not held', () => {
+    const counts = pendingPackages(
+      [condition('pending_update', 'server-1')],
+      [held('server-1', 'apt', 'system', 0, 0)],
+    );
+
+    expect(counts).toEqual([]);
+  });
+
   test('an unpaired System, and a System whose Condition is not open, are not counted', () => {
     const apt = held('server-1', 'apt', 'system', 1, 1);
 
@@ -74,9 +97,10 @@ describe('pendingPackages', () => {
   });
 });
 
-const update = (name: string, since: number | undefined) => ({
+const update = (name: string, since: number | undefined, security = false) => ({
   installed: '1.0',
   name,
+  security,
   since,
   system: 'server-1',
   upstream: null,
@@ -96,7 +120,11 @@ describe('maintenanceCard', () => {
           { conditionId: 'a', packages: 30, security: 10, system: 'server-1' },
           { conditionId: 'b', packages: 8, security: 4, system: 'db-1' },
         ],
-        updates: [update('web', NOW - DAY), update('ntfy', NOW - 5 * DAY), update('db', undefined)],
+        updates: [
+          update('web', NOW - DAY, true),
+          update('ntfy', NOW - 5 * DAY),
+          update('db', undefined),
+        ],
       },
       NOW,
     );
@@ -117,7 +145,11 @@ describe('maintenanceCard', () => {
       ],
       text: '2 Systems need a reboot',
     });
-    expect(card.updates).toEqual({ longest: 'ntfy 5 d', text: '3 Services have an update' });
+    expect(card.updates).toEqual({
+      longest: 'ntfy 5 d',
+      security: 1,
+      text: '3 Services have an update',
+    });
   });
 
   test('one of each reads in the singular, and an update no release dates names only its Service', () => {
@@ -132,7 +164,7 @@ describe('maintenanceCard', () => {
 
     expect(card.packages?.text).toBe('1 package on 1 System');
     expect(card.reboots).toMatchObject({ oldest: 'open 3 d', text: '1 System needs a reboot' });
-    expect(card.updates).toEqual({ longest: 'db', text: '1 Service has an update' });
+    expect(card.updates).toEqual({ longest: 'db', security: 0, text: '1 Service has an update' });
   });
 
   test('a row with nothing is omitted', () => {

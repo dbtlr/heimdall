@@ -5,7 +5,10 @@ import type { Hub } from '@heimdall/hub/testing';
 import type { SQL } from 'bun';
 
 import { changeWords } from '../lib/home-changes.ts';
+import { maintenanceCard } from '../lib/home-maintenance.ts';
+import { maintenanceSummary } from '../lib/maintenance.ts';
 import { readHome } from './home.ts';
+import { readMaintenance } from './maintenance.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -116,6 +119,60 @@ const holdPackages = async (h: Hub, system: string, security: (boolean | null)[]
         ${at(NOW - DAY)}, ${flag === true ? at(NOW - DAY) : null}, ${at(NOW)}, ${update}::text::jsonb)
     `;
   }
+};
+
+// One package the Hub holds as pending in `system`'s APT source, by its full
+// name, held as a security update since a day ago when `security` is.
+const holdPackage = async (h: Hub, system: string, name: string, security: boolean) => {
+  const update = JSON.stringify({ available: '2', installed: '1', name, security });
+  await h.db.sql`
+    INSERT INTO update_subjects (system, subject, manager, installation, name, first_seen_at,
+      security_since, observed_at, pending_update)
+    VALUES (${system}, ${JSON.stringify(['apt', 'system', name])}, 'apt', 'system', ${name},
+      ${at(NOW - DAY)}, ${security ? at(NOW - DAY) : null}, ${at(NOW)}, ${update}::text::jsonb)
+  `;
+};
+
+// An open Pending update Condition on `system`'s APT source, raised a day ago.
+const openPendingUpdate = (h: Hub, system: string) =>
+  addCondition(h.db.sql, {
+    kind: 'pending_update',
+    level: 'note',
+    raisedAt: -86_400,
+    subject: JSON.stringify(['apt', 'system']),
+    system,
+  });
+
+// The latest APT check on `system`, listing `updates` as pending, which is what
+// makes the update of a Service on an apt: upstream known.
+const listPending = async (
+  h: Hub,
+  system: string,
+  updates: { name: string; security: boolean }[],
+) => {
+  const observed = JSON.stringify({
+    installation: 'system',
+    manager: 'apt',
+    observedAt: NOW,
+    result: {
+      kind: 'available',
+      metadataAt: NOW,
+      updates: updates.map((update) => ({ available: '2', installed: '1', ...update })),
+    },
+  });
+  await h.db.sql`
+    INSERT INTO update_managers (system, manager, installation, observed_at, observation)
+    VALUES (${system}, 'apt', 'system', ${at(NOW)}, ${observed}::text::jsonb)
+  `;
+};
+
+// Service `service` on `system` installed at version 1 from the APT package of
+// its own name.
+const serveFromPackage = async (h: Hub, system: string, service: string) => {
+  await h.db.sql`
+    INSERT INTO service_versions (system, service, version, upstream, first_seen_at)
+    VALUES (${system}, ${service}, '1', ${`apt:${service}`}, ${at(NOW - 10 * DAY)})
+  `;
 };
 
 // A job `name` recorded on `system` daily at 03:00, with its latest run when
@@ -342,12 +399,79 @@ describe('readHome', () => {
       {
         installed: '1.0',
         name: 'web',
+        security: false,
         since: NOW - 5 * DAY,
         system: 'server-1',
         upstream: 'github:owner/web',
         version: '2.0',
       },
     ]);
+  });
+
+  test('counts a Service updated from its own package once, as a Service update marked security, as Maintenance does', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web'] });
+    await holdPackages(h, 'server-1', [null, false]);
+    // `web:amd64`, a security update, is the package of Service `web`.
+    await holdPackage(h, 'server-1', 'web:amd64', true);
+    const condition = await openPendingUpdate(h, 'server-1');
+    await listPending(h, 'server-1', [{ name: 'web:amd64', security: true }]);
+    await h.db.sql`DELETE FROM service_versions`;
+    await serveFromPackage(h, 'server-1', 'web');
+
+    const { maintenance } = await home(h);
+
+    expect(maintenance.packages).toEqual([
+      { conditionId: condition, packages: 2, security: 0, system: 'server-1' },
+    ]);
+    expect(maintenance.updates.map(({ name, security }) => [name, security])).toEqual([
+      ['web', true],
+    ]);
+  });
+
+  test("a System whose only pending package is its Service's own shows no package, only the Service update marked security, as Maintenance does", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1', { up: ['web'] });
+    await holdPackage(h, 'server-1', 'web:amd64', true);
+    await openPendingUpdate(h, 'server-1');
+    await listPending(h, 'server-1', [{ name: 'web:amd64', security: true }]);
+    await h.db.sql`DELETE FROM service_versions`;
+    await serveFromPackage(h, 'server-1', 'web');
+
+    const card = maintenanceCard({ attention: [], ...(await home(h)).maintenance }, NOW);
+    const { systems } = await readMaintenance(h.db.sql, NOW);
+
+    expect(card.packages).toBeUndefined();
+    expect(card.updates).toMatchObject({ security: 1, text: '1 Service has an update' });
+    // Maintenance names no package update before it.
+    expect(maintenanceSummary(systems)).toStartWith(
+      '1 Service update available, 1 of them security.',
+    );
+  });
+
+  test('a package is left out only on the System whose Service owns it, so Home counts what Maintenance does', async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    await hear(h, 'laptop-1', { up: ['web'] });
+    await holdPackage(h, 'server-1', 'web:amd64', false);
+    await holdPackage(h, 'laptop-1', 'web:arm64', false);
+    const server = await openPendingUpdate(h, 'server-1');
+    await openPendingUpdate(h, 'laptop-1');
+    await listPending(h, 'laptop-1', [{ name: 'web:arm64', security: false }]);
+    await h.db.sql`DELETE FROM service_versions`;
+    await serveFromPackage(h, 'laptop-1', 'web');
+
+    const { maintenance } = await home(h);
+    const card = maintenanceCard({ attention: [], ...maintenance }, NOW);
+    const { systems } = await readMaintenance(h.db.sql, NOW);
+
+    expect(maintenance.packages).toEqual([
+      { conditionId: server, packages: 1, security: 0, system: 'server-1' },
+    ]);
+    expect(card.packages?.text).toBe('1 package on 1 System');
+    expect(maintenanceSummary(systems)).toStartWith(
+      '1 package update on 1 System. 1 Service update available.',
+    );
   });
 
   test('reads the changes of the last day grouped: a version change with its restarts across Systems, a lone stop, and a warning raised and cleared', async () => {

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { ownArchitecture, packageLabel } from './package-names.ts';
+import { dpkgArchitecture, ownArchitecture, packageLabel } from './package-names.ts';
 
 test('Homebrew drops the formula prefix and marks a cask', () => {
   expect(packageLabel('formula:git', 'homebrew', undefined)).toEqual({ cask: false, label: 'git' });
@@ -49,4 +49,18 @@ test('the Homebrew rules apply only to Homebrew, and the APT rules only to APT',
     cask: false,
     label: 'macOS Tahoe 26.1',
   });
+});
+
+test("a Collector's architecture maps to dpkg's name for it, and an unknown one to none", () => {
+  expect(dpkgArchitecture('x64')).toBe('amd64');
+  expect(dpkgArchitecture('arm64')).toBe('arm64');
+  expect(dpkgArchitecture('ia32')).toBe('i386');
+  expect(dpkgArchitecture('arm')).toBe('armhf');
+  expect(dpkgArchitecture('riscv64')).toBe('riscv64');
+  expect(dpkgArchitecture('ppc64')).toBe('ppc64el');
+  expect(dpkgArchitecture('s390x')).toBe('s390x');
+  expect(dpkgArchitecture('loong64')).toBe('loong64');
+  expect(dpkgArchitecture('mips')).toBeUndefined();
+  expect(dpkgArchitecture(null)).toBeUndefined();
+  expect(dpkgArchitecture(undefined)).toBeUndefined();
 });
