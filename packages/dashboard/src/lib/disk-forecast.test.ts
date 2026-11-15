@@ -101,7 +101,7 @@ test('recent size changes and flat fits explain the actual fitted interval', () 
     forecastWords(
       diskForecast({ bands: BANDS, disk: disk(50), growth: undefined, sizeChanged: true }),
     ),
-  ).toBe('Size changed under a day ago, so no forecast.');
+  ).toBe('Under a day of readings since the size changed, so no forecast.');
   const flat = diskForecast({
     bands: BANDS,
     disk: disk(50),

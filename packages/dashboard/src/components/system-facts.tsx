@@ -2,13 +2,12 @@ import type { ConditionLevel } from '@heimdall/schema';
 import type { ReactNode } from 'react';
 
 import { LEVEL_FILL } from '../lib/conditions.ts';
-import { diskForecast, forecastWords } from '../lib/disk-forecast.ts';
+import { diskForecast, forecastWords, isQuietReading } from '../lib/disk-forecast.ts';
 import type { DiskBands } from '../lib/disk-forecast.ts';
 import { diskUsage, formatLoad } from '../lib/facts.ts';
 import { harnessName } from '../lib/lane.ts';
 import { whenAt } from '../lib/phrase.ts';
 import { cn } from '../lib/utils.ts';
-import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk, HarnessInstall, SystemDetail } from '../server/system-detail-types.ts';
 import { MARK_COLOR } from './attention-status.tsx';
 import { PhraseText } from './date-time.tsx';
@@ -46,7 +45,7 @@ function Fact({
 // The rest of a heading that dates facts from a sample taken at `at`: ", as of
 // <when>" once the sample is no longer current, else nothing.
 function SampleAsOf({ at, now }: { at: number; now: number }) {
-  return now - at > QUIET_AFTER_MS ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
+  return isQuietReading(at, now) ? <PhraseText phrase={[', as of ', whenAt(at, now)]} /> : null;
 }
 
 type DiskDetail = Pick<SystemDetail, 'conditions' | 'diskTrends' | 'limitPercent'>;
@@ -123,41 +122,38 @@ function DiskRows({
   now: number;
 }) {
   const bands = detail.limitPercent?.disk;
-  const quiet = now - at > QUIET_AFTER_MS;
+  const quiet = isQuietReading(at, now);
   return (
-    <div>
-      <ul>
-        {disks.map((disk, index) => (
-          // A mount can be listed twice.
-          // oxlint-disable-next-line react/no-array-index-key
-          <DiskRow
-            bands={bands}
-            disk={disk}
-            forecast={forecastWords(
-              diskForecast({
-                bands,
-                disk,
-                growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
-                sizeChanged:
-                  detail.diskTrends.find((trend) => trend.mount === disk.mount)?.sizeChanged ??
-                  false,
-              }),
-              quiet,
-              detail.diskTrends.find((trend) => trend.mount === disk.mount)?.spanMs,
-            )}
-            key={`${disk.mount}-${String(index)}`}
-            level={
-              detail.conditions.find(
-                (condition) =>
-                  condition.kind === 'low_disk' &&
-                  condition.subject === disk.mount &&
-                  condition.clearedAt === undefined,
-              )?.level
-            }
-          />
-        ))}
-      </ul>
-    </div>
+    <ul>
+      {disks.map((disk, index) => (
+        // A mount can be listed twice.
+        // oxlint-disable-next-line react/no-array-index-key
+        <DiskRow
+          bands={bands}
+          disk={disk}
+          forecast={forecastWords(
+            diskForecast({
+              bands,
+              disk,
+              growth: detail.diskTrends.find((trend) => trend.mount === disk.mount)?.growth,
+              sizeChanged:
+                detail.diskTrends.find((trend) => trend.mount === disk.mount)?.sizeChanged ?? false,
+            }),
+            quiet,
+            detail.diskTrends.find((trend) => trend.mount === disk.mount)?.spanMs,
+          )}
+          key={`${disk.mount}-${String(index)}`}
+          level={
+            detail.conditions.find(
+              (condition) =>
+                condition.kind === 'low_disk' &&
+                condition.subject === disk.mount &&
+                condition.clearedAt === undefined,
+            )?.level
+          }
+        />
+      ))}
+    </ul>
   );
 }
 

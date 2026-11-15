@@ -174,7 +174,7 @@ test('both cards show the actual fitted span and distinguish a recently changed 
       diskTrends: [{ growth: undefined, mount: '/', sizeChanged: true, spanMs: 3_600_000 }],
     };
     expect(renderToStaticMarkup(<Card detail={short} />)).toContain(
-      'Size changed under a day ago, so no forecast.',
+      'Under a day of readings since the size changed, so no forecast.',
     );
   }
 });

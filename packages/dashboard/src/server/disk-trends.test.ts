@@ -3,6 +3,7 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline } from '@heimdall/hub/testing';
 
 import { conditionDetailView } from '../lib/condition-detail.ts';
+import { diskForecast, forecastWords } from '../lib/disk-forecast.ts';
 import { readConditionDetail } from './condition-detail.ts';
 import { readDiskTrends } from './disk-trends.ts';
 import { readSystemPage } from './system-detail.ts';
@@ -209,7 +210,7 @@ test('System and Low disk pages share a replacement fit and ship only rendered t
     throw new Error('Expected quiet disk detail.');
   }
   expect(conditionDetailView(quiet, NOW + 10 * DAY).rate?.text).toStartWith(
-    '+1.0 GiB a day over the last 2 days.',
+    '+1.0 GiB a day over the 2 days to the newest reading.',
   );
   expect(conditionDetailView(condition, NOW).rate?.text).toStartWith(
     '+1.0 GiB a day over the last 2 days.',
@@ -224,4 +225,118 @@ test('System trend payload omits SQL diagnostic fields', async () => {
   for (const trend of page?.detail.diskTrends ?? []) {
     expect(Object.keys(trend).toSorted()).toEqual(['growth', 'mount', 'sizeChanged', 'spanMs']);
   }
+});
+
+// A 1000 GiB mount whose total changes by `change` bytes one day before the
+// newest reading; used grows 1 GiB a day throughout.
+const sizeChangeTrend = async (change: number) => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  const total = 1000 * GIB;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 3 * DAY)}, ${total}, ${10 * GIB}),
+           ('server-1', '/', ${new Date(NOW - 2 * DAY)}, ${total}, ${11 * GIB}),
+           ('server-1', '/', ${new Date(NOW - DAY)}, ${total + change}, ${12 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${total + change}, ${13 * GIB})`;
+  const [trend] = await readDiskTrends(h.db.sql, { now: NOW, system: 'server-1' });
+  return trend;
+};
+
+test('a size change of 0.9% keeps the fit', async () => {
+  const trend = await sizeChangeTrend(9 * GIB);
+  expect(trend?.sizeChanged).toBe(false);
+  expect(trend?.count).toBe(4);
+});
+
+test('a size change of exactly 1% keeps the fit', async () => {
+  const trend = await sizeChangeTrend(10 * GIB);
+  expect(trend?.sizeChanged).toBe(false);
+  expect(trend?.count).toBe(4);
+});
+
+test('a size change of 1.1% starts a new fit', async () => {
+  const trend = await sizeChangeTrend(11 * GIB);
+  expect(trend?.sizeChanged).toBe(true);
+  expect(trend?.count).toBe(1);
+});
+
+async function lowDiskId(h: Awaited<ReturnType<typeof startHub>>, mount: string) {
+  await timeline(NOW).addCondition(h.db.sql, {
+    kind: 'low_disk',
+    level: 'note',
+    raisedAt: -60,
+    subject: mount,
+    system: 'server-1',
+  });
+  const [row]: { id: string }[] = await h.db
+    .sql`SELECT id FROM conditions WHERE kind = 'low_disk' AND subject = ${mount}`;
+  if (row === undefined) {
+    throw new Error('Expected the disk Condition.');
+  }
+  return row.id;
+}
+
+test('a Condition page for a mount shows that mount, not the first one', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 2 * DAY)}, ${100 * GIB}, ${10 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${100 * GIB}, ${12 * GIB}),
+           ('server-1', '/data', ${new Date(NOW - 2 * DAY)}, ${100 * GIB}, ${10 * GIB}),
+           ('server-1', '/data', ${new Date(NOW)}, ${100 * GIB}, ${16 * GIB})`;
+  const id = await lowDiskId(h, '/data');
+  const detail = await readConditionDetail(h.db.sql, { id, name: 'server-1', now: NOW });
+  expect(detail?.diskTrend?.mount).toBe('/data');
+  expect(conditionDetailView(detail as NonNullable<typeof detail>, NOW).rate?.text).toStartWith(
+    '+3.0 GiB a day over the last 2 days.',
+  );
+});
+
+test('a quiet System dates its Condition rate and countdown to the newest reading', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 3 * DAY)}, ${100 * GIB}, ${80 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${100 * GIB}, ${83 * GIB})`;
+  const id = await lowDiskId(h, '/');
+  const later = NOW + 10 * DAY;
+  const detail = await readConditionDetail(h.db.sql, { id, name: 'server-1', now: later });
+  expect(conditionDetailView(detail as NonNullable<typeof detail>, later).rate?.text).toBe(
+    '+1.0 GiB a day over the 3 days to the newest reading. At that rate it is full in about 17 days from the newest reading.',
+  );
+  const current = await readConditionDetail(h.db.sql, { id, name: 'server-1', now: NOW });
+  expect(conditionDetailView(current as NonNullable<typeof current>, NOW).rate?.text).toBe(
+    '+1.0 GiB a day over the last 3 days. At that rate it is full in about 17 days.',
+  );
+});
+
+test('one reading since a size change days ago says only that readings are short', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 7 * DAY)}, ${100 * GIB}, ${50 * GIB}),
+           ('server-1', '/', ${new Date(NOW - 6 * DAY)}, ${200 * GIB}, ${50 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${200 * GIB}, ${51 * GIB})`;
+  const page = await readSystemPage(h.db.sql, {
+    name: 'server-1',
+    now: NOW + 10 * DAY,
+    range: '12h',
+  });
+  const trend = page?.detail.diskTrends[0];
+  expect(trend?.sizeChanged).toBe(true);
+  expect(trend?.growth).toBeUndefined();
+  expect(
+    forecastWords(
+      diskForecast({
+        bands: undefined,
+        disk: { mount: '/', totalBytes: 200 * GIB, usedBytes: 51 * GIB },
+        growth: trend?.growth,
+        sizeChanged: trend?.sizeChanged ?? false,
+      }),
+    ),
+  ).toBe('Under a day of readings since the size changed, so no forecast.');
 });

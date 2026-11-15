@@ -77,6 +77,7 @@ const diskDetail = (overrides: Partial<ConditionDetail> = {}): ConditionDetail =
   diskTrend: {
     daysUntilFull: 38 / 2.1,
     growth: { bytesPerDay: 2.1 * GIB },
+    lastAt: NOW,
     mount: '/',
     sizeChanged: false,
     spanMs: 7 * DAY,
@@ -135,6 +136,7 @@ test('the rate names the span the readings cover, not the window', () => {
       diskTrend: {
         daysUntilFull: 38 / 2.1,
         growth: { bytesPerDay: 2.1 * GIB },
+        lastAt: NOW,
         mount: '/',
         sizeChanged: true,
         spanMs: 3 * DAY,
@@ -148,6 +150,7 @@ test('the rate names the span the readings cover, not the window', () => {
       diskTrend: {
         daysUntilFull: 38 / 2.1,
         growth: { bytesPerDay: 2.1 * GIB },
+        lastAt: NOW,
         mount: '/',
         sizeChanged: true,
         spanMs: 26 * 3_600_000,
@@ -166,6 +169,7 @@ test('a low disk growing under 1 MiB a day shows no rate', () => {
         diskTrend: {
           daysUntilFull: 38 / 2.1,
           growth: { bytesPerDay: crawl * GIB },
+          lastAt: NOW,
           mount: '/',
           sizeChanged: false,
           spanMs: 7 * DAY,
@@ -183,6 +187,7 @@ test('a low disk that is not growing, or has under a day of readings, shows no r
         diskTrend: {
           daysUntilFull: 38 / 2.1,
           growth: { bytesPerDay: 0 },
+          lastAt: NOW,
           mount: '/',
           sizeChanged: false,
           spanMs: 7 * DAY,
@@ -197,6 +202,7 @@ test('a low disk that is not growing, or has under a day of readings, shows no r
         diskTrend: {
           daysUntilFull: 38 / 2.1,
           growth: { bytesPerDay: -GIB },
+          lastAt: NOW,
           mount: '/',
           sizeChanged: false,
           spanMs: 7 * DAY,
@@ -211,6 +217,7 @@ test('a low disk that is not growing, or has under a day of readings, shows no r
         diskTrend: {
           daysUntilFull: undefined,
           growth: undefined,
+          lastAt: NOW,
           mount: '/',
           sizeChanged: true,
           spanMs: DAY / 2,

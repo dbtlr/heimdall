@@ -250,12 +250,13 @@ export const readConditionDetail = async (
     attention,
     clearedAt,
     diskTrend: diskTrends?.map(
-      ({ mount, growth, spanMs, sizeChanged, latestUsedBytes, totalBytes }) => ({
+      ({ mount, growth, spanMs, sizeChanged, latestUsedBytes, totalBytes, lastAt }) => ({
         daysUntilFull:
           growth !== undefined && growth.bytesPerDay > 0 && totalBytes > 0
             ? Math.max(0, totalBytes - latestUsedBytes) / growth.bytesPerDay
             : undefined,
         growth,
+        lastAt,
         mount,
         sizeChanged,
         spanMs,

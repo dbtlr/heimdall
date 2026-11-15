@@ -1,3 +1,4 @@
+import { QUIET_AFTER_MS } from '../server/fleet-overview-types.ts';
 import type { Disk } from '../server/system-detail-types.ts';
 import { growthWords, isGrowing, reachWords, spanWords } from './disk-growth.ts';
 import type { DiskGrowth } from './disk-growth.ts';
@@ -48,6 +49,21 @@ export const diskForecast = ({
   };
 };
 
+// Whether the System's newest disk reading, taken at `at`, is no longer
+// current at `now`; its facts are then dated to that reading, not to now.
+export const isQuietReading = (at: number, now: number): boolean => now - at > QUIET_AFTER_MS;
+
+// The fitted span as both pages word it: "over the last 3 days", or, once the
+// System is quiet, "over the 3 days to the newest reading".
+export const spanWindowWords = (spanMs: number, fromNewestReading: boolean): string =>
+  fromNewestReading
+    ? ` over the ${spanWords(spanMs)} to the newest reading`
+    : ` over the last ${spanWords(spanMs)}`;
+
+// When a growing mount is reached, counted from the newest reading once quiet.
+export const countdownWords = (days: number, fromNewestReading: boolean): string =>
+  `${reachWords(days)}${fromNewestReading && days > 0 ? ' from the newest reading' : ''}`;
+
 // A forecast as the Disks card says it, in the Condition page's words for
 // growth and time, with the actual fitted span when one is available.
 export const forecastWords = (
@@ -55,15 +71,10 @@ export const forecastWords = (
   fromNewestReading = false,
   spanMs?: number,
 ): string => {
-  let window = '';
-  if (spanMs !== undefined) {
-    window = fromNewestReading
-      ? ` over the ${spanWords(spanMs)} to the newest reading`
-      : ` over the last ${spanWords(spanMs)}`;
-  }
+  const window = spanMs === undefined ? '' : spanWindowWords(spanMs, fromNewestReading);
   if (forecast.kind === 'none') {
     if (forecast.reason === 'size-changed') {
-      return 'Size changed under a day ago, so no forecast.';
+      return 'Under a day of readings since the size changed, so no forecast.';
     }
     if (forecast.reason === 'unknown-size') {
       return 'Disk size is unknown or zero, so no forecast.';
@@ -77,5 +88,5 @@ export const forecastWords = (
   if (fromNewestReading && forecast.days <= 0) {
     return `${growthWords(forecast.bytesPerDay)}${window} · ${target} at the newest reading`;
   }
-  return `${growthWords(forecast.bytesPerDay)}${window} · ${target} ${reachWords(forecast.days)}${fromNewestReading ? ' from the newest reading' : ''}`;
+  return `${growthWords(forecast.bytesPerDay)}${window} · ${target} ${countdownWords(forecast.days, fromNewestReading)}`;
 };

@@ -16,7 +16,8 @@ import type { NextStep } from './attention.ts';
 import { transitionLabel } from './conditions.ts';
 import { memoryHoldersView } from './detail.ts';
 import type { MemoryHoldersView } from './detail.ts';
-import { gibWords, growthWords, isGrowing, reachWords, spanWords } from './disk-growth.ts';
+import { countdownWords, isQuietReading, spanWindowWords } from './disk-forecast.ts';
+import { gibWords, growthWords, isGrowing, spanWords } from './disk-growth.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan } from './time.ts';
 import type { Window } from './time.ts';
@@ -310,7 +311,7 @@ const diskHeroText = (
   `${cleared ? 'used when it cleared' : 'used'}. ${gibWords(totalBytes - usedBytes)} free of ${gibWords(totalBytes)} on ${mount}.`,
 ];
 
-const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
+const rateOf = (detail: ConditionDetail, now: number): ConditionDetailView['rate'] => {
   const trend = detail.diskTrend;
   const growth = detail.clearedAt === undefined ? trend?.growth : undefined;
   if (
@@ -322,9 +323,10 @@ const rateOf = (detail: ConditionDetail): ConditionDetailView['rate'] => {
     return undefined;
   }
   const daysUntilFull = trend.daysUntilFull;
+  const quiet = isQuietReading(trend.lastAt, now);
   return {
     estimate: true,
-    text: `${growthWords(growth.bytesPerDay)} over the last ${spanWords(trend.spanMs)}. At that rate it is full ${reachWords(daysUntilFull)}.`,
+    text: `${growthWords(growth.bytesPerDay)}${spanWindowWords(trend.spanMs, quiet)}. At that rate it is full ${countdownWords(daysUntilFull, quiet)}.`,
   };
 };
 
@@ -473,7 +475,7 @@ export const conditionDetailView = (detail: ConditionDetail, now: number): Condi
     provenance: [leading.provenance, updatedAgo(attention?.checkedAt, now)]
       .filter((part) => part !== '')
       .join(' '),
-    rate: rateOf(detail),
+    rate: rateOf(detail, now),
     system: detail.system,
     title: subject === '' ? kindName : `${kindName} ${subject}`,
     vitals:

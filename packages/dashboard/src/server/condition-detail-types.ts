@@ -39,7 +39,7 @@ export type ConditionDetail = {
   attention: Attention | undefined;
   clearedAt: number | undefined;
   // The shared SQL fit; chart buckets are only for drawing and current use.
-  diskTrend?: (DiskTrend & { daysUntilFull: number | undefined }) | undefined;
+  diskTrend?: (DiskTrend & { daysUntilFull: number | undefined; lastAt: number }) | undefined;
   // The chart's window: the 7 days (disk) or 24 hours (other series) ending
   // at the clearing time, or at the read time while open.
   from: number;
