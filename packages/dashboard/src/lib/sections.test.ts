@@ -27,6 +27,7 @@ test('every route marks the section it belongs to, and the phone tab that holds 
     ['/jobs', 'services', 'services'],
     ['/maintenance', 'maintenance', 'more'],
     ['/agents', 'agents', 'agents'],
+    ['/projects/notes-app', 'agents', 'agents'],
     ['/activity', 'activity', 'activity'],
     ['/more', undefined, 'more'],
     ['/nowhere', undefined, undefined],

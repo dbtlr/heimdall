@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 
 import { harnessName } from '../lib/lane.ts';
 import { clockAt, whenAt } from '../lib/phrase.ts';
+import { linkableProject } from '../lib/project-activity.ts';
 import { formatTokens, modelName } from '../lib/session-format.ts';
 import { costBy, toolCounts } from '../lib/session.ts';
 import type { AgentLane } from '../lib/session.ts';
@@ -114,13 +115,13 @@ export function SessionTitle({
       <Link className="text-muted-foreground" params={{ name: view.system }} to="/systems/$name">
         {view.system}
       </Link>{' '}
-      /{' '}
-      {view.project === undefined ? (
-        `${harnessName(view.harness)} Session`
-      ) : (
+      / {/* A project whose name a path cannot carry is named without a link. */}
+      {linkableProject(view.project) ? (
         <Link params={{ name: view.project }} to="/projects/$name">
           {view.project}
         </Link>
+      ) : (
+        (view.project ?? `${harnessName(view.harness)} Session`)
       )}
       {view.branch !== undefined && (
         <span className="font-medium text-muted-foreground"> on {view.branch}</span>

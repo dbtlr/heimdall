@@ -2,27 +2,22 @@ import { createFileRoute } from '@tanstack/react-router';
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { AgentsRangePicker } from '../components/agents-range-picker.tsx';
-import { ProjectDossier } from '../components/project-dossier.tsx';
-import { agentsSearch, sessionsQueryOf } from '../lib/agents-search.ts';
+import { ProjectDossier, ProjectHeader } from '../components/project-dossier.tsx';
+import { agentsSearch } from '../lib/agents-search.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { useTimeZone } from '../lib/use-time-zone.ts';
-import type { AgentsRange, SessionsQuery } from '../server/agents-overview-types.ts';
+import type { AgentsRange } from '../server/agents-overview-types.ts';
 import { getProjectView } from '../server/project-view-fn.ts';
 
-type ProjectDeps = { query: SessionsQuery; range: AgentsRange; zone: string | undefined };
+type ProjectDeps = { range: AgentsRange; zone: string | undefined };
 
 export const Route = createFileRoute('/projects/$name')({
   component: ProjectPage,
   loader: ({ params, deps }: { params: { name: string }; deps: ProjectDeps }) =>
     getProjectView({
-      data: { ...deps.query, name: params.name, range: deps.range, timeZone: deps.zone ?? 'UTC' },
+      data: { name: params.name, range: deps.range, timeZone: deps.zone ?? 'UTC' },
     }),
-  loaderDeps: ({ search }) => ({
-    query: sessionsQueryOf(search),
-    range: search.range,
-    zone: search.zone,
-  }),
+  loaderDeps: ({ search }) => ({ range: search.range, zone: search.zone }),
   notFoundComponent: () => (
     <main className={`${contentFrame('wide')} py-6`}>
       <p>The Hub holds no such project.</p>
@@ -46,18 +41,16 @@ function ProjectPage() {
       });
     }
   }, [navigate, search.zone, zone]);
+  const ready = zone !== undefined && view.overview.timeZone === zone;
   return (
-    <main className={`${contentFrame('wide')} space-y-5 py-5 sm:py-6`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">{view.name}</h1>
-        <AgentsRangePicker current={search.range} />
-      </div>
-      {zone === undefined || view.overview.timeZone !== zone ? (
+    <main className={`${contentFrame('wide')} space-y-5 py-4 sm:py-6`}>
+      <ProjectHeader range={search.range} timeZone={ready ? zone : undefined} view={view} />
+      {ready ? (
+        <ProjectDossier view={view} />
+      ) : (
         <p className="py-5 text-muted-foreground" role="status">
           Loading requests in your time zone…
         </p>
-      ) : (
-        <ProjectDossier view={view} query={sessionsQueryOf(search)} />
       )}
     </main>
   );

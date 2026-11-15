@@ -85,7 +85,8 @@ test('a project scopes cost, models, Systems, branches and Sessions to its repos
     { name: 'main', sessions: 1 },
     { name: 'topic', sessions: 1 },
   ]);
-  expect(view?.activeMs).toBe(240_000);
+  // 5 minutes after -300 s, cut at now, and 5 after -86,460 s.
+  expect(view?.activeMs).toBe(600_000);
   expect(view?.lanes).toHaveLength(2);
   expect(view?.cpuSeconds).toBe(525);
   expect(view?.peakRssBytes).toBe(1073741824);
@@ -158,4 +159,220 @@ test('a known project outside the period stays a page, while no working director
   expect(
     await readProjectView(h.db.sql, { name: '/', now: NOW, range: 'today', timeZone: 'UTC' }),
   ).toBeUndefined();
+});
+
+const MINUTE = 60_000;
+
+test('active time is the union of the 5 minutes after each request, clipped to the range', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // No linked process, so one stretch runs from 10 days ago to 50 minutes ago.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'sparse',
+    requests: [-864_000, -3000],
+  });
+  const week = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(week?.activeMs).toBe(5 * MINUTE);
+  const month = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '30d',
+    timeZone: 'UTC',
+  });
+  expect(month?.activeMs).toBe(10 * MINUTE);
+  // The lanes draw the same windows.
+  expect(month?.lanes.map(({ start, end }) => [start - NOW, end - NOW])).toEqual([
+    [-864_000_000, -864_000_000 + 5 * MINUTE],
+    [-3_000_000, -3_000_000 + 5 * MINUTE],
+  ]);
+});
+
+test('overlapping Sessions count their union, and a range never holds more active time than its length', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1'), ('server-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'a',
+    requests: [-3600, -3480, -3360],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'b',
+    requests: [-3420, -3300],
+    system: 'server-1',
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+  // a runs -60 to -51 min, b -57 to -50 min: together -60 to -50.
+  expect(view?.activeMs).toBe(10 * MINUTE);
+
+  await using g = await startHub();
+  await g.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  for (const id of ['x', 'y', 'z']) {
+    // oxlint-disable-next-line no-await-in-loop -- a few fixture Sessions.
+    await addSession(g.db.sql, { firstCwd: '/repos/notes-app', id, requests: [-8 * 86_400, -60] });
+  }
+  for (const range of ['today', '7d', '30d'] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- one read per range.
+    const ranged = await readProjectView(g.db.sql, {
+      name: 'notes-app',
+      now: NOW,
+      range,
+      timeZone: 'UTC',
+    });
+    expect(ranged?.activeMs).toBeLessThanOrEqual(NOW - (ranged?.overview.from ?? NOW));
+  }
+  const week = await readProjectView(g.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  // The last request's window is cut at now.
+  expect(week?.activeMs).toBe(MINUTE);
+});
+
+test('running counts only the project, and a branch with no request in the range is not listed', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'live',
+    id: 'mine',
+    requests: [-60],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/other',
+    gitBranch: 'theirs',
+    id: 'theirs',
+    requests: [-30],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'stale',
+    id: 'old',
+    requests: [-864_000],
+  });
+  for (const range of ['today', '7d'] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- one read per range.
+    const view = await readProjectView(h.db.sql, {
+      name: 'notes-app',
+      now: NOW,
+      range,
+      timeZone: 'UTC',
+    });
+    expect(view?.overview.running.map((session) => session.sessionId)).toEqual(['mine']);
+    expect(view?.branches).toEqual([{ name: 'live', sessions: 1 }]);
+  }
+});
+
+test('peak memory is the highest reading in the range, not a process lifetime peak', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const id = await addProcess(h.db.sql, {
+    cpuCores: 1,
+    cwd: '/repos/notes-app',
+    end: -60,
+    pid: 1,
+    readings: 'rollups',
+    rssBytes: 1024 ** 3,
+    start: -600,
+  });
+  await h.db
+    .sql`UPDATE harness_processes SET peak_rss_bytes = ${8 * 1024 ** 3}, started_at = ${new Date(NOW - 10 * 86_400_000)} WHERE id = ${id}`;
+  // A reading from before the range holds more.
+  await h.db.sql`
+    INSERT INTO harness_process_rollups (process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max)
+    VALUES (${id}, ${new Date(NOW - 9 * 86_400_000)}, 1, 0, 0, 0, 0, ${4 * 1024 ** 3})
+  `;
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'one', requests: [-300] });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.peakRssBytes).toBe(1024 ** 3);
+  const month = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '30d',
+    timeZone: 'UTC',
+  });
+  expect(month?.peakRssBytes).toBe(4 * 1024 ** 3);
+});
+
+test('tool counts cover only the project Sessions active in the range, however many others the archive holds', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1'), ('server-1')`;
+  for (const [index, days] of [0, 3, 12, 40].entries()) {
+    // oxlint-disable-next-line no-await-in-loop -- a few fixture Sessions.
+    await addSession(h.db.sql, {
+      firstCwd: '/repos/notes-app',
+      id: `mine-${String(index)}`,
+      requests: [-days * 86_400 - 120, -days * 86_400 - 60],
+      system: index % 2 === 0 ? 'laptop-1' : 'server-1',
+      toolCalls: [
+        { at: -days * 86_400 - 120, name: 'Edit' },
+        { at: -days * 86_400 - 60, name: 'Bash' },
+      ],
+    });
+    // oxlint-disable-next-line no-await-in-loop -- a few fixture Sessions.
+    await addSession(h.db.sql, {
+      firstCwd: '/repos/other',
+      id: `other-${String(index)}`,
+      requests: [-days * 86_400 - 60],
+      toolCalls: [{ at: -days * 86_400 - 60, name: 'Edit' }],
+    });
+  }
+  const counts = async (range: 'today' | '7d' | '30d') =>
+    (
+      await readProjectView(h.db.sql, { name: 'notes-app', now: NOW, range, timeZone: 'UTC' })
+    )?.tools.map(({ calls, name }) => [name, calls]);
+  expect(await counts('today')).toEqual([
+    ['Bash', 1],
+    ['Edit', 1],
+  ]);
+  expect(await counts('7d')).toEqual([
+    ['Bash', 2],
+    ['Edit', 2],
+  ]);
+  expect(await counts('30d')).toEqual([
+    ['Bash', 3],
+    ['Edit', 3],
+  ]);
+});
+
+test('tools with as many calls order by name in code unit order, whatever the database locale', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'one',
+    requests: [-60],
+    toolCalls: ['explore', 'Read', '_hidden', 'Bash', 'apply'].map((name) => ({ at: -60, name })),
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+  expect(view?.tools.map(({ name }) => name)).toEqual([
+    'Bash',
+    'Read',
+    '_hidden',
+    'apply',
+    'explore',
+  ]);
 });

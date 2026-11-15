@@ -1,9 +1,8 @@
-import { notFound } from '@tanstack/react-router';
 import { createServerFn } from '@tanstack/react-start';
 
 import { parseAgentsInput } from '../lib/agents-search.ts';
 import { database } from './database.ts';
-import { readProjectView } from './project-view.ts';
+import { readProjectPage } from './project-view.ts';
 
 export const getProjectView = createServerFn({ method: 'GET' })
   .validator((input: unknown) => {
@@ -16,13 +15,7 @@ export const getProjectView = createServerFn({ method: 'GET' })
     ) {
       throw new Error('Invalid project');
     }
-    const { range, timeZone, ...table } = period;
-    return { name: input.name, range, table, timeZone };
+    const { range, timeZone } = period;
+    return { name: input.name, range, timeZone };
   })
-  .handler(async ({ data }) => {
-    const view = await readProjectView(await database(), { ...data, now: Date.now() });
-    if (view === undefined) {
-      throw notFound();
-    }
-    return view;
-  });
+  .handler(async ({ data }) => readProjectPage(await database(), { ...data, now: Date.now() }));

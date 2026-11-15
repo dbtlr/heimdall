@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { formatPercent, LEGEND_SHOWN } from '../lib/agents-breakdown.ts';
 import type { BreakdownRow } from '../lib/agents-breakdown.ts';
+import { linkableProject } from '../lib/project-activity.ts';
 import { formatCost } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import { AGENTS_BREAKDOWNS } from '../server/agents-overview-types.ts';
@@ -128,7 +129,7 @@ export function AgentsLegend({
             </li>
           )}
         </ul>
-        {by === 'project' && pick !== undefined && pick !== '' && (
+        {by === 'project' && linkableProject(pick) && (
           <Link className="text-sm text-primary" params={{ name: pick }} to="/projects/$name">
             Open {pick} ›
           </Link>

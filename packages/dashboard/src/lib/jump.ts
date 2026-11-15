@@ -1,4 +1,5 @@
 import type { JumpIndex, JumpSession } from '../server/jump-index-types.ts';
+import { linkableProject } from './project-activity.ts';
 
 // One thing the jump box can open.
 export type JumpItem =
@@ -17,10 +18,11 @@ const KIND_ORDER: Record<JumpItem['kind'], number> = {
   system: 0,
 };
 
+// A project whose name cannot lead to its page is left out.
 const itemsOf = (index: JumpIndex): JumpItem[] => [
   ...index.systems.map((name) => ({ kind: 'system' as const, name })),
   ...index.services.map((service) => ({ kind: 'service' as const, ...service })),
-  ...index.projects.map((name) => ({ kind: 'project' as const, name })),
+  ...index.projects.filter(linkableProject).map((name) => ({ kind: 'project' as const, name })),
   ...index.sessions.map((session) => ({ kind: 'session' as const, ...session })),
 ];
 

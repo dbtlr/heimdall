@@ -8,9 +8,12 @@ import { sessionProjectSql } from './project-sql.ts';
 // is at or after `from` exactly when one of its stretches ends then, so the
 // index on the stretches' end finds both the Sessions and their latest
 // request. Each Session's first request, though it began before `from`, is
-// the earliest start of its own stretches, read by key. The cost follows the
-// stretches ending since `from` and those Sessions' stretches, not the whole
-// archive.
+// the earliest start of its own stretches, read by key. Given `project`, only
+// that project's Sessions remain: each Session the stretches pick is looked up
+// by key and kept when its project name (project-sql.ts) matches, so the
+// filter too costs per picked Session, not per Session in the archive. The
+// cost follows the stretches ending since `from` and those Sessions'
+// stretches, not the whole archive.
 export const sessionSpans = (
   sql: SQL,
   { from, to, project }: { from: Date; to: Date; project?: string | undefined },
