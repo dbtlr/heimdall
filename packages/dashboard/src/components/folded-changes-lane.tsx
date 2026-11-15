@@ -51,19 +51,27 @@ function Row({
 // in the middle of the part of its bin on the chart, a ring at each reboot,
 // then one row per Condition kind, the kind raised most often first, with its
 // count and its spans colored by level. The latest few events follow as a
-// line, with a link to the rest on Activity. The bins and the reboots start
-// with the first bucket, which may begin before the window; a mark there
-// stands at the window's start.
+// line, with a link to the rest on Activity. The bins, the reboots, and the
+// Conditions start with the first bucket, which may begin before the window,
+// so the lane shows what that bucket's inspector lists; a mark there stands at
+// the window's start.
 export function FoldedChangesLane({
   detail,
   labelsInside = false,
   window,
 }: {
-  detail: Pick<SystemDetail, 'changes' | 'conditions' | 'long' | 'name' | 'now' | 'paired'>;
+  detail: Pick<
+    SystemDetail,
+    'changes' | 'conditions' | 'edges' | 'long' | 'name' | 'now' | 'paired'
+  >;
   labelsInside?: boolean;
   window: Window;
 }) {
-  const rows = kindRows(detail.conditions, { paired: detail.paired, window });
+  const firstBucket = {
+    from: Math.min(window.from, detail.edges?.[0] ?? window.from),
+    to: window.to,
+  };
+  const rows = kindRows(detail.conditions, { paired: detail.paired, window: firstBucket });
   const counts = changeCounts(detail, window, detail.long?.changeEdges ?? []);
   const reboots = (detail.long?.reboots ?? []).filter((t) => t <= window.to);
   const events = systemEvents(detail, window);

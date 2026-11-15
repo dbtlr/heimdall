@@ -320,6 +320,31 @@ test('over 30 days, the change diamonds of the first and the current day stay on
   expect(html).toMatch(/left:0%"[^>]*title="Rebooted"/u);
 });
 
+test('over 30 days, a Condition raised and cleared in the first bucket before the range is on the lane', async () => {
+  const from = NOW - 30 * DAY;
+  // The first bucket starts two hours before the range does.
+  const edges = [from - 2 * 3_600_000, ...dayEdges(from).filter((edge) => edge > from)];
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    conditions: [
+      {
+        clearedAt: from - 3_600_000,
+        id: '1',
+        kind: 'high_cpu' as const,
+        level: 'warning' as const,
+        raisedAt: from - 90 * 60_000,
+        subject: '',
+        transitions: [],
+      },
+    ],
+    edges,
+    from,
+    long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+    range: '30d',
+  });
+  expect(html).toContain('High CPU 1×');
+});
+
 test('over a year: day buckets with bands, cost bars, Conditions folded by kind, and the bucket inspector', async () => {
   const year = NOW - 365 * DAY;
   const html = await render(
