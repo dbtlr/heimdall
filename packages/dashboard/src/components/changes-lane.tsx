@@ -22,8 +22,9 @@ const LEVELS = [
   ['alert', 'alert'],
 ] as const;
 
-// The lane's key: the level colors and the change mark.
-export function ChangesLegend() {
+// The lane's key: the level colors and the change mark, and the reboot ring
+// on the long ranges, which draw reboots.
+export function ChangesLegend({ reboots = false }: { reboots?: boolean }) {
   return (
     <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
       {LEVELS.map(([level, name]) => (
@@ -36,6 +37,12 @@ export function ChangesLegend() {
         <i className="inline-block size-2 rotate-45 bg-foreground/70" />
         change
       </span>
+      {reboots && (
+        <span className="flex items-center gap-1.5">
+          <i className="inline-block size-2 rounded-full border border-link" />
+          reboot
+        </span>
+      )}
     </p>
   );
 }
@@ -128,7 +135,7 @@ export function ChangesLane({
 }
 
 // The events as one wrapping line, in the order given.
-function EventLine({ events, now }: { events: readonly SystemEvent[]; now: number }) {
+export function EventLine({ events, now }: { events: readonly SystemEvent[]; now: number }) {
   return (
     <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px]">
       {events.map((event) => (

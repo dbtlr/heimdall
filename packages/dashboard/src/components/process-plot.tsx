@@ -20,18 +20,20 @@ const coresLabel =
   };
 
 // The CPU cores each Harness process tree kept busy per bucket, 5 minutes
-// unless `bucketMs` says otherwise, one line per process in its Harness's
-// color over a gradient fill, on a scale from 0 to the busiest, widened to a
+// unless `bucketMs` says otherwise or `edges` lays a long range's, one line
+// per process in its Harness's color over a gradient fill, on a scale from 0 to the busiest, widened to a
 // tenth of a core so every label states its position. With no reading, the
 // scale goes unlabelled. `scaleBeside` draws the scale in the gutter left of it.
 export function ProcessPlot({
   bucketMs,
   processes,
+  edges,
   scaleBeside = false,
   window,
 }: {
   bucketMs?: number;
   processes: readonly ProcessSeries[];
+  edges?: readonly number[] | undefined;
   scaleBeside?: boolean;
   window: Window;
 }) {
@@ -63,7 +65,7 @@ export function ProcessPlot({
         role="img"
         style={{ height: HEIGHT }}
       >
-        <ComposedChart data={processRows(processes, window, bucketMs)} margin={NO_MARGIN}>
+        <ComposedChart data={processRows(processes, window, bucketMs, edges)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"

@@ -25,6 +25,20 @@ export const peakLevel = (mark: ConditionMark): ConditionLevel =>
     mark.level,
   );
 
+// The highest level a Condition held between `from` and `to`, by the stretches
+// the lane draws; its current level when no stretch overlaps.
+export const levelHeldIn = (
+  mark: ConditionMark,
+  { from, to }: { from: number; to: number },
+): ConditionLevel =>
+  levelSegments(mark, mark.clearedAt ?? Number.POSITIVE_INFINITY)
+    .filter((segment) => segment.start < to && segment.end > from)
+    .reduce<ConditionLevel | undefined>(
+      (held, { level }) =>
+        held === undefined || LEVEL_RANK[level] > LEVEL_RANK[held] ? level : held,
+      undefined,
+    ) ?? mark.level;
+
 // The Conditions of `marks` that belong on the lane, each open at some time in
 // the window. A paired System's Conditions that its open Conditions leave to
 // another place stay off the lane too: a Pending update or Reboot required

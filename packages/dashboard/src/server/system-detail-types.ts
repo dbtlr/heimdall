@@ -3,7 +3,7 @@
 // inspector shows; and what its provisioner recorded. Times are epoch
 // milliseconds.
 
-import type { ConditionKind } from '@heimdall/schema';
+import type { ConditionKind, ConditionLevel } from '@heimdall/schema';
 
 import type { DiskBands } from '../lib/disk-forecast.ts';
 import type { DiskGrowth } from '../lib/disk-growth.ts';
@@ -17,16 +17,46 @@ import type {
 } from './fleet-overview-types.ts';
 import type { ServiceChange } from './home-types.ts';
 
-// One 5-minute Vitals rollup bucket, starting at `t`: memory used on average,
-// and the memory the System had.
-export type MemoryBucket = { t: number; totalBytes: number; usedBytes: number };
+// One Vitals bucket, starting at `t`: memory used on average, at its lowest
+// and highest, and the memory the System had.
+export type MemoryBucket = {
+  highBytes: number;
+  lowBytes: number;
+  t: number;
+  totalBytes: number;
+  usedBytes: number;
+};
 
-// One 5-minute Vitals rollup bucket, starting at `t`: the 1-minute load average
-// over its samples.
-export type LoadBucket = { t: number; value: number };
+// One Vitals bucket, starting at `t`: the 1-minute load average over its
+// samples, and its lowest and highest.
+export type LoadBucket = { high: number; low: number; t: number; value: number };
+
+// The list-price cost of one Harness's requests on the System in one bucket,
+// starting at `t`; `unpriced` counts its requests with no list price.
+export type CostBucket = { costUsd: number; harness: string; t: number; unpriced: number };
+
+// What the 30 d and 1 y ranges draw in place of Session lanes and
+// per-Condition spans, which a year holds too many of to read.
+export type LongHistory = {
+  // The edges of the change counts' bins: the local days over 30 d, and the
+  // weeks from Monday over 1 y (see LongEdges).
+  changeEdges: number[];
+  // Request cost per local day and Harness, each starting at an edge of
+  // `dayEdges`.
+  costs: CostBucket[];
+  dayEdges: number[];
+  // When the System rebooted, by the 5-minute rollups: each one whose smallest
+  // uptime is below the one before it, or, for the System's first rollup,
+  // under 5 minutes.
+  reboots: number[];
+  // How many Sessions had a request in the range.
+  sessions: number;
+};
 
 // One Harness process over the window: the CPU cores its process tree kept
-// busy in each 5-minute bucket, null where the bucket before is missing.
+// busy in each bucket, null where the bucket before is missing. Over the long
+// ranges, past the busiest few, the rest are summed into one series with the
+// harness `other` and process id 0.
 export type ProcessSeries = {
   harness: string;
   pid: number;
@@ -65,6 +95,9 @@ export type DiskTrend = {
 export type HarnessInstall = { harness: string; location: string; version: string };
 
 export type SystemDetail = {
+  // The width of each Vitals and process bucket: 5 minutes up to 7 d, wider
+  // over the long ranges, where it is the usual width and `edges` the real one.
+  bucketMs: number;
   // The System's Service changes over the range: versions and stops.
   changes: ServiceChange[];
   // The Collector's version, undefined until a Report from it is stored.
@@ -76,6 +109,10 @@ export type SystemDetail = {
   // Each mount's growth over the 7 days up to its newest reading, for the
   // mounts with readings.
   diskTrends: DiskTrend[];
+  // Over 30 d and 1 y, the edges of the Vitals and process buckets in the
+  // viewer's zone, local days or 3 hours of the local clock (see LongEdges);
+  // undefined up to 7 d, whose buckets are `bucketMs` wide from the epoch.
+  edges: number[] | undefined;
   from: number;
   gaps: Gap[];
   // Each installed Harness, as the Collector last found them: empty for a
@@ -99,8 +136,10 @@ export type SystemDetail = {
   // System by, its own limits else the fleet's; undefined while the Hub has
   // stored none.
   limitPercent: { cpu: number; disk: DiskBands; memory: number } | undefined;
-  // The 1-minute load average per 5-minute bucket.
+  // The 1-minute load average per bucket.
   load: LoadBucket[];
+  // What the long ranges add; undefined up to 7 d.
+  long: LongHistory | undefined;
   memory: MemoryBucket[];
   name: string;
   now: number;
@@ -111,6 +150,8 @@ export type SystemDetail = {
   platform: { arch: string; os: string } | undefined;
   processes: ProcessSeries[];
   range: Range;
+  // Each Session's stretches; empty over the long ranges, which count cost
+  // per bucket instead.
   sessions: SessionRow[];
   // When the Hub's silence on this System's alerts ends, epoch ms; undefined
   // when none holds. It changes no status, count, or Condition (ADR-0020).
@@ -169,6 +210,54 @@ export type SampleInspection = {
   processes: SampleProcess[];
   t: number;
   unlinked: UnlinkedSession[];
+};
+
+// A Harness process that ran in an inspected bucket: the CPU time its tree
+// used there and its largest resident memory there, from the 5-minute
+// rollups (undefined with fewer than two readings or none), and how many
+// Sessions the Hub linked to it in the bucket.
+export type BucketProcess = {
+  cpuHours: number | undefined;
+  harness: string;
+  peakRssBytes: number | undefined;
+  pid: number;
+  processId: number;
+  project: string | undefined;
+  sessions: number;
+};
+
+// An average with the lowest and highest value it was taken over.
+export type Spread = { average: number; high: number; low: number };
+
+// One bucket of a long range, as the inspector shows it: its Vitals from the
+// 5-minute rollups it holds, any reboot in it, the agent cost of its requests
+// and the Sessions working in it, its Harness processes, and the Conditions
+// open in it.
+export type BucketInspection = {
+  // The usual width of the range's buckets; `t` to `end` is this one's.
+  bucketMs: number;
+  conditions: { kind: ConditionKind; level: ConditionLevel; subject: string }[];
+  costUsd: number;
+  cpu: Spread | undefined;
+  // Over 30 d, the local day holding the bucket, whose cost its cost bar
+  // shows; undefined over 1 y, where the bucket is that day.
+  day: { costUsd: number; end: number; start: number; unpricedRequests: number } | undefined;
+  end: number;
+  load1: Spread | undefined;
+  memory: (Spread & { totalBytes: number }) | undefined;
+  processes: BucketProcess[];
+  // The start of the first 5-minute rollup in it whose uptime says the System
+  // had just booted.
+  rebootedAt: number | undefined;
+  // How many 5-minute rollups it holds.
+  rollups: number;
+  // Whether the bucket ends before the raw samples kept, so the top CPU
+  // processes and the memory holders of its samples are gone.
+  samplesPruned: boolean;
+  // Sessions with a stretch in it.
+  sessions: number;
+  t: number;
+  unpricedRequests: number;
 };
 
 export type ServiceCheck = {

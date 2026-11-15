@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import type { Recorded, SystemDetail } from '../server/system-detail-types.ts';
+import type { BucketInspection, Recorded, SystemDetail } from '../server/system-detail-types.ts';
 import { DetailAxis, SampleSlider } from './detail-track.tsx';
 import { renderRouted } from './render-routed.tsx';
 import { SystemOverview } from './system-overview.tsx';
@@ -14,12 +14,14 @@ const detail = (
   limitPercent: SystemDetail['limitPercent'],
   overrides: Partial<SystemDetail> = {},
 ): SystemDetail => ({
+  bucketMs: 300_000,
   changes: [],
   collectorVersion: '1.0.0',
   conditions: [],
   cpu: [{ average: 20, high: 30, low: 10, t: NOW - 300_000 }],
   cpuCores: undefined,
   diskTrends: [],
+  edges: undefined,
   from: FROM,
   gaps: [],
   harnesses: [],
@@ -34,8 +36,17 @@ const detail = (
     uptimeSeconds: 3_600,
   },
   limitPercent,
-  load: [{ t: NOW - 300_000, value: 1 }],
-  memory: [{ t: NOW - 300_000, totalBytes: 10 * GIB, usedBytes: 4 * GIB }],
+  load: [{ high: 1, low: 1, t: NOW - 300_000, value: 1 }],
+  long: undefined,
+  memory: [
+    {
+      highBytes: 4 * GIB,
+      lowBytes: 4 * GIB,
+      t: NOW - 300_000,
+      totalBytes: 10 * GIB,
+      usedBytes: 4 * GIB,
+    },
+  ],
   name: 'server-1',
   now: NOW,
   paired: true,
@@ -54,11 +65,13 @@ const render = (
   limitPercent: SystemDetail['limitPercent'],
   overrides: Partial<SystemDetail> = {},
   services: Recorded['services'] = [],
+  bucket: BucketInspection | null = null,
 ) =>
   renderRouted(
     <SystemOverview
       at={undefined}
       attention={[]}
+      bucket={bucket}
       detail={detail(limitPercent, overrides)}
       failed={false}
       loading={false}
@@ -95,7 +108,17 @@ test("draws the memory limit at its share of the System's own memory when that i
   const MIB = 1024 ** 2;
   const html = await render(
     { cpu: 60, disk: BANDS, memory: 80 },
-    { memory: [{ t: NOW - 300_000, totalBytes: 512 * MIB, usedBytes: 256 * MIB }] },
+    {
+      memory: [
+        {
+          highBytes: 256 * MIB,
+          lowBytes: 256 * MIB,
+          t: NOW - 300_000,
+          totalBytes: 512 * MIB,
+          usedBytes: 256 * MIB,
+        },
+      ],
+    },
   );
 
   // 80% of 512 MiB is 0.4 GiB, not 80% of the 1 GiB scale.
@@ -143,7 +166,9 @@ const harnessDisclosure = async (processes: SystemDetail['processes']) => {
 test('the Harness process plots keep the gutter of the charts above and draw their scale in it', async () => {
   const disclosure = await harnessDisclosure([harnessProcess(1, 0.5)]);
 
-  expect(tagWith(disclosure, 'aria-label="Harness processes"')).toContain('pl-14');
+  expect(tagWith(disclosure, 'aria-label="Harness processes"')).toContain(
+    'pl-[var(--chart-gutter,3.5rem)]',
+  );
   expect(tagWith(disclosure, 'data-scale-tick="0"')).toContain('right-full');
 });
 
@@ -230,4 +255,228 @@ test('names one current core in the load note and reference line', async () => {
   const html = await render(undefined, { cpuCores: 1 });
   expect(html.match(/1 core now/gu)).toHaveLength(2);
   expect(html).toContain('aria-label="Load (1 min)"');
+});
+
+const DAY = 24 * 3_600_000;
+
+// UTC days from the one holding `from` through the one after now.
+const dayEdges = (from: number) => {
+  const edges: number[] = [];
+  for (let t = Math.floor(from / DAY) * DAY; t <= NOW + DAY; t += DAY) {
+    edges.push(t);
+  }
+  return edges;
+};
+
+// Where each change diamond sits along the lane, in percent.
+const diamonds = (html: string) =>
+  [...html.matchAll(/left:([0-9.]+)%"[^>]*title="[0-9]+ changes?"/gu)].map(([, left]) =>
+    Number(left),
+  );
+
+test('over 30 days, the change diamonds of the first and the current day stay on the chart', async () => {
+  const from = NOW - 30 * DAY;
+  const days = dayEdges(from);
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    changes: [
+      {
+        at: from + 3_600_000,
+        from: '1',
+        kind: 'version',
+        service: 'web',
+        system: 'server-1',
+        to: '2',
+      },
+      {
+        at: NOW - 3_600_000,
+        from: '2',
+        kind: 'version',
+        service: 'web',
+        system: 'server-1',
+        to: '3',
+      },
+    ],
+    edges: days,
+    from,
+    long: {
+      changeEdges: days,
+      costs: [],
+      dayEdges: days,
+      reboots: [from - 3_600_000],
+      sessions: 0,
+    },
+    range: '30d',
+  });
+
+  const today = days.findLast((edge) => edge <= NOW) ?? NOW;
+  const first = days[1] ?? NOW;
+  const percent = (t: number) => ((t - from) / (NOW - from)) * 100;
+  const [early, late] = diamonds(html);
+  expect(early).toBeCloseTo(percent((from + first) / 2), 6);
+  expect(late).toBeCloseTo(percent((today + NOW) / 2), 6);
+  expect(late).toBeLessThan(100);
+  // A reboot in the first bucket, before the range starts, stands at its start.
+  expect(html).toMatch(/left:0%"[^>]*title="Rebooted"/u);
+});
+
+test('over 30 days, a Condition raised and cleared in the first bucket before the range is on the lane', async () => {
+  const from = NOW - 30 * DAY;
+  // The first bucket starts two hours before the range does.
+  const edges = [from - 2 * 3_600_000, ...dayEdges(from).filter((edge) => edge > from)];
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    conditions: [
+      {
+        clearedAt: from - 3_600_000,
+        id: '1',
+        kind: 'high_cpu' as const,
+        level: 'warning' as const,
+        raisedAt: from - 90 * 60_000,
+        subject: '',
+        transitions: [],
+      },
+    ],
+    edges,
+    from,
+    long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+    range: '30d',
+  });
+  expect(html).toContain('High CPU 1×');
+});
+
+test("over 30 days, a pin on today's bucket, which runs past now, keeps its marker", async () => {
+  const from = NOW - 30 * DAY;
+  const edges = dayEdges(from);
+  const html = await render(
+    undefined,
+    {
+      bucketMs: 3 * 3_600_000,
+      edges,
+      from,
+      long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+      range: '30d',
+    },
+    [],
+    {
+      bucketMs: 3 * 3_600_000,
+      conditions: [],
+      costUsd: 0,
+      cpu: { average: 20, high: 30, low: 10 },
+      day: undefined,
+      end: NOW + 2 * 3_600_000,
+      load1: { average: 1, high: 2, low: 0 },
+      memory: { average: 4 * GIB, high: 5 * GIB, low: 3 * GIB, totalBytes: 10 * GIB },
+      processes: [],
+      rebootedAt: undefined,
+      rollups: 12,
+      samplesPruned: false,
+      sessions: 0,
+      t: NOW - 3_600_000,
+      unpricedRequests: 0,
+    },
+  );
+  expect(html).toContain('rounded bg-select px-2');
+});
+
+test('over 30 days, a folded row draws its higher levels over lower ones that overlap them', async () => {
+  const from = NOW - 30 * DAY;
+  const edges = dayEdges(from);
+  const html = await render(undefined, {
+    bucketMs: 3 * 3_600_000,
+    // Two disks: the earlier at warning, the later, overlapping it, at note.
+    conditions: [
+      {
+        clearedAt: NOW - 2 * DAY,
+        id: '1',
+        kind: 'low_disk' as const,
+        level: 'warning' as const,
+        raisedAt: NOW - 5 * DAY,
+        subject: '/',
+        transitions: [],
+      },
+      {
+        clearedAt: NOW - DAY,
+        id: '2',
+        kind: 'low_disk' as const,
+        level: 'note' as const,
+        raisedAt: NOW - 4 * DAY,
+        subject: '/data',
+        transitions: [],
+      },
+    ],
+    edges,
+    from,
+    long: { changeEdges: edges, costs: [], dayEdges: edges, reboots: [], sessions: 0 },
+    range: '30d',
+  });
+  const row = html.slice(html.indexOf('Low disk 2×'));
+  // A warning fills bg-status-serious, a note bg-status-warning.
+  expect(row.indexOf('bg-status-serious')).toBeGreaterThan(row.indexOf('bg-status-warning'));
+  expect(row.indexOf('bg-status-warning')).toBeGreaterThan(-1);
+});
+
+test('over a year: day buckets with bands, cost bars, Conditions folded by kind, and the bucket inspector', async () => {
+  const year = NOW - 365 * DAY;
+  const html = await render(
+    { cpu: 90, disk: BANDS, memory: 80 },
+    {
+      bucketMs: DAY,
+      conditions: [1, 2].map((n) => ({
+        clearedAt: NOW - n * 10 * DAY + 3_600_000,
+        id: String(n),
+        kind: 'high_cpu' as const,
+        level: 'warning' as const,
+        raisedAt: NOW - n * 10 * DAY,
+        subject: '',
+        transitions: [],
+      })),
+      cpuCores: 8,
+      edges: dayEdges(year),
+      from: year,
+      long: {
+        changeEdges: [],
+        costs: [{ costUsd: 12, harness: 'claude-code', t: NOW - 3 * DAY, unpriced: 0 }],
+        dayEdges: dayEdges(year),
+        reboots: [NOW - 40 * DAY],
+        sessions: 1214,
+      },
+      range: '1y',
+    },
+    [],
+    {
+      bucketMs: DAY,
+      conditions: [],
+      costUsd: 12,
+      cpu: { average: 20, high: 90, low: 2 },
+      day: undefined,
+      end: NOW - 19 * DAY,
+      load1: { average: 1, high: 2, low: 0 },
+      memory: { average: 4 * GIB, high: 5 * GIB, low: 3 * GIB, totalBytes: 10 * GIB },
+      processes: [],
+      rebootedAt: undefined,
+      rollups: 288,
+      samplesPruned: true,
+      sessions: 3,
+      t: NOW - 20 * DAY,
+      unpricedRequests: 0,
+    },
+  );
+
+  for (const text of [
+    'average, low–high band · 1-day buckets · limit 90%',
+    'list-price cost per day · 1,214 Sessions in the year',
+    'aria-label="Agent cost per bucket"',
+    'one row per kind · changes per week',
+    'High CPU 2×',
+    'Reboots',
+    'One 1-day bucket: 288 five-minute rollups',
+    'not kept past 14 d',
+    '--chart-gutter:7rem',
+  ]) {
+    expect(html).toContain(text);
+  }
+  // Load is the 1-minute load, banded like the others, with the core count.
+  expect(html).toContain('8 cores now · average, low–high band');
+  expect(limitLines(html)).toContain(8);
 });

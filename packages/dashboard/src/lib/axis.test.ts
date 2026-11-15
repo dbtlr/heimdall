@@ -71,6 +71,34 @@ test.each([
   );
 });
 
+test('30d ticks each Monday by date, between the first date and now', () => {
+  const DAY = 24 * HOUR;
+  const ticks = axisTicks('30d', { from: TO - 30 * DAY, to: TO }, 'UTC');
+  // 13 Oct 2026 is a Tuesday.
+  expect(labels(ticks)).toEqual(['13 Sept', '21 Sept', '28 Sept', '5 Oct', 'now']);
+  expect(ticks.slice(1, -1).every((tick) => new Date(tick.at).getUTCDay() === 1)).toBe(true);
+});
+
+test('1y ticks the first of each month by its name, with the year in January', () => {
+  const DAY = 24 * HOUR;
+  const ticks = axisTicks('1y', { from: TO - 365 * DAY, to: TO }, 'UTC');
+  expect(labels(ticks)).toEqual([
+    '13 Oct 2025',
+    'Dec',
+    'Jan 2026',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sept',
+    'now',
+  ]);
+  expect(ticks.filter((tick) => tick.edge === 'middle' && tick.minor)).toHaveLength(5);
+});
+
 test('ticks fall on round times in the zone, not in UTC', () => {
   // 30-minute zone: round local hours are at :30 UTC.
   const ticks = axisTicks('6h', { from: TO - 6 * HOUR, to: TO }, 'Asia/Kolkata');
@@ -278,3 +306,20 @@ describe('on a narrow screen', () => {
     }
   });
 });
+
+// A zone 12 or more hours ahead of UTC is already on the next local day at
+// noon UTC, so the first of a month is found by its local date, not a UTC noon.
+test.each([
+  ['Pacific/Auckland', [Date.UTC(2025, 10, 30, 11), Date.UTC(2025, 11, 31, 11)]],
+  ['Pacific/Kiritimati', [Date.UTC(2025, 10, 30, 10), Date.UTC(2025, 11, 31, 10)]],
+])(
+  '1y ticks the first of each month at its own local midnight in %s',
+  (zone, [december, january]) => {
+    const DAY = 24 * HOUR;
+    const ticks = axisTicks('1y', { from: TO - 365 * DAY, to: TO }, zone);
+    const at = (label: string) => ticks.find((tick) => tick.label === label)?.at;
+
+    expect(at('Dec')).toBe(december);
+    expect(at('Jan 2026')).toBe(january);
+  },
+);

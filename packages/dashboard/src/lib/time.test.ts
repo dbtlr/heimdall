@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import {
+  formatBucket,
   formatClock,
   formatAhead,
   formatClockSeconds,
@@ -163,4 +164,16 @@ test('a local midnight holds on a day the zone changes its offset', () => {
   expect(localMidnight(Date.UTC(2026, 9, 13, 20, 0, 30), 'Asia/Kolkata')).toBe(
     Date.UTC(2026, 9, 13, 18, 30),
   );
+});
+
+test('names a long range bucket by its local day, with the clock span of a shorter one', () => {
+  // 12 Aug 2026 in Berlin starts at 22:00 UTC on the 11th.
+  const day = Date.UTC(2026, 7, 11, 22);
+  expect(formatBucket(day, day + 24 * HOUR, 'Europe/Berlin')).toBe('Wed 12 Aug');
+  expect(formatBucket(day, day + 24 * HOUR, 'Europe/Berlin', true)).toBe('Wed 12 Aug 2026');
+  expect(formatBucket(day + 15 * HOUR, day + 18 * HOUR, 'Europe/Berlin')).toBe(
+    'Wed 12 Aug 15:00–18:00',
+  );
+  // A 23-hour day is a day too.
+  expect(formatBucket(day, day + 23 * HOUR, 'Europe/Berlin')).toBe('Wed 12 Aug');
 });

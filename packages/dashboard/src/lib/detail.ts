@@ -9,7 +9,9 @@ import type {
   SystemDetail,
   UnlinkedSession,
 } from '../server/system-detail-types.ts';
+import { edgeSpans } from './bucket-edges.ts';
 import { harnessName } from './lane.ts';
+import { binMiddle } from './long-history.ts';
 import { whenAt } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { formatSpan, spanBox } from './time.ts';
@@ -147,32 +149,71 @@ export const bucketGrid = ({ from, to }: Window, bucketMs = BUCKET_MS): number[]
   return starts;
 };
 
-// The memory plot's points: GiB used per bucket at its middle, null where the
-// Hub has no bucket, so the line breaks there.
+// Every bucket the window touches with its start and middle: `bucketMs` wide
+// from the epoch, 5 minutes unless it says otherwise, or over a long range
+// each bucket of `edges` (see LongEdges), local days or 3 hours of the local
+// clock, so a 23- or 25-hour day is one bucket. A bucket the window cuts, the
+// newest, has its middle at the middle of its part inside the window, so its
+// point stays on the chart.
+export const bucketSpans = (
+  window: Window,
+  bucketMs = BUCKET_MS,
+  edges?: readonly number[],
+): { middle: number; start: number }[] =>
+  edges === undefined
+    ? bucketGrid(window, bucketMs).map((start) => ({ middle: start + bucketMs / 2, start }))
+    : edgeSpans(edges)
+        .filter(({ end, start }) => end > window.from && start < window.to)
+        .map(({ end, start }) => ({ middle: binMiddle({ end, t: start }, window), start }));
+
+// The memory plot's points: GiB used per bucket at its middle, with the
+// bucket's low to high, null where the Hub has no bucket, so the line breaks
+// there. Buckets are as bucketSpans lays them.
 export const memoryRows = (
   buckets: readonly MemoryBucket[],
   window: Window,
-): { t: number; used: number | null }[] => {
-  const used = new Map(buckets.map((bucket) => [bucket.t, bucket.usedBytes / GIB]));
-  return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, used: used.get(t) ?? null }));
+  bucketMs = BUCKET_MS,
+  edges?: readonly number[],
+): { band: [number, number] | null; t: number; used: number | null }[] => {
+  const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) => {
+    const bucket = byStart.get(start);
+    return {
+      band: bucket === undefined ? null : [bucket.lowBytes / GIB, bucket.highBytes / GIB],
+      t: middle,
+      used: bucket === undefined ? null : bucket.usedBytes / GIB,
+    };
+  });
 };
 
-// The load plot's points: the 1-minute load per bucket at its middle, null
-// where the Hub has no bucket.
+// The load plot's points: the 1-minute load per bucket at its middle, with
+// the bucket's low to high, null where the Hub has no bucket. Buckets are as
+// bucketSpans lays them.
 export const loadRows = (
   buckets: readonly LoadBucket[],
   window: Window,
-): { t: number; value: number | null }[] => {
-  const load = new Map(buckets.map((bucket) => [bucket.t, bucket.value]));
-  return bucketGrid(window).map((t) => ({ t: t + BUCKET_MS / 2, value: load.get(t) ?? null }));
+  bucketMs = BUCKET_MS,
+  edges?: readonly number[],
+): { band: [number, number] | null; t: number; value: number | null }[] => {
+  const byStart = new Map(buckets.map((bucket) => [bucket.t, bucket]));
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) => {
+    const bucket = byStart.get(start);
+    return {
+      band: bucket === undefined ? null : [bucket.low, bucket.high],
+      t: middle,
+      value: bucket?.value ?? null,
+    };
+  });
 };
 
 // The process plot's points: each process's cores per bucket at its middle
-// under the key `p<processId>`, null where it has none.
+// under the key `p<processId>`, null where it has none. Buckets are as
+// bucketSpans lays them.
 export const processRows = (
   processes: readonly ProcessSeries[],
   window: Window,
   bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): Record<string, number | null>[] => {
   const cores = processes.map(
     (process) =>
@@ -181,10 +222,10 @@ export const processRows = (
         new Map(process.points.map((point) => [point.t, point.cores])),
       ] as const,
   );
-  return bucketGrid(window, bucketMs).map((t) =>
+  return bucketSpans(window, bucketMs, edges).map(({ middle, start }) =>
     Object.fromEntries([
-      ['t', t + bucketMs / 2],
-      ...cores.map(([key, byBucket]) => [key, byBucket.get(t) ?? null] as const),
+      ['t', middle],
+      ...cores.map(([key, byBucket]) => [key, byBucket.get(start) ?? null] as const),
     ]),
   );
 };
@@ -205,14 +246,34 @@ export const splitIdleProcesses = (
 export const idleProcessesLabel = (count: number): string =>
   `${String(count)} idle ${count === 1 ? 'process' : 'processes'} in this range`;
 
-// The pinned sample's big step on the time axis: an hour of buckets.
-const LARGE_STEP_MS = 12 * BUCKET_MS;
+// The pinned time's big step on the time axis, in buckets: an hour of 5-minute ones.
+const LARGE_STEP_BUCKETS = 12;
+
+// The middle of the bucket `count` buckets of `edges` from the one holding
+// `at`, among those the window touches, never past the first or last; undefined
+// when no bucket holds `at`.
+const bucketsAway = (
+  edges: readonly number[],
+  window: Window,
+  at: number,
+  count: number,
+): number | undefined => {
+  const spans = edgeSpans(edges).filter(({ end, start }) => end > window.from && start < window.to);
+  const index = spans.findIndex(({ end, start }) => start <= at && at < end);
+  const target = spans[Math.min(spans.length - 1, Math.max(0, index + count))];
+  return index === -1 || target === undefined
+    ? undefined
+    : binMiddle({ end: target.end, t: target.start }, window);
+};
 
 // Where a key on the time axis moves the pinned time from `selected`, the
-// newest time when none is pinned: a bucket for an arrow, an hour with Shift or
+// newest time when none is pinned: a bucket, 5 minutes unless `bucketMs` says
+// otherwise, for an arrow, 12 buckets (an hour of 5-minute ones) with Shift or
 // for Page Up and Page Down, the window's ends for Home and End, and never past
-// either end. Undefined for a key that moves nothing, and for any key held with
-// Alt, Ctrl, or Meta, so the browser's own shortcuts still work.
+// either end. Over a long range `edges` give the buckets, so a step lands on
+// the adjacent bucket even when a clock change made the day 23 or 25 hours.
+// Undefined for a key that moves nothing, and for any key held with Alt, Ctrl,
+// or Meta, so the browser's own shortcuts still work.
 export const steppedSample = (
   {
     altKey,
@@ -223,27 +284,33 @@ export const steppedSample = (
   }: { altKey: boolean; ctrlKey: boolean; key: string; metaKey: boolean; shiftKey: boolean },
   selected: number | undefined,
   { from, to }: Window,
+  bucketMs = BUCKET_MS,
+  edges?: readonly number[],
 ): number | undefined => {
   if (altKey || ctrlKey || metaKey) {
     return undefined;
   }
   const at = selected ?? to;
-  const step = shiftKey ? LARGE_STEP_MS : BUCKET_MS;
-  const moved = (by: number) => Math.min(to, Math.max(from, at + by));
+  const large = LARGE_STEP_BUCKETS * bucketMs;
+  const step = shiftKey ? large : bucketMs;
+  const buckets = shiftKey ? LARGE_STEP_BUCKETS : 1;
+  const moved = (by: number, count: number) =>
+    (edges === undefined ? undefined : bucketsAway(edges, { from, to }, at, count)) ??
+    Math.min(to, Math.max(from, at + by));
   switch (key) {
     case 'ArrowRight':
     case 'ArrowUp': {
-      return moved(step);
+      return moved(step, buckets);
     }
     case 'ArrowLeft':
     case 'ArrowDown': {
-      return moved(-step);
+      return moved(-step, -buckets);
     }
     case 'PageUp': {
-      return moved(LARGE_STEP_MS);
+      return moved(large, LARGE_STEP_BUCKETS);
     }
     case 'PageDown': {
-      return moved(-LARGE_STEP_MS);
+      return moved(-large, -LARGE_STEP_BUCKETS);
     }
     case 'Home': {
       return from;

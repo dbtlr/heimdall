@@ -7,11 +7,12 @@ test('a link to the tab by its old name, Timeline, opens Activity', () => {
 });
 
 test('a System opens on Now, while an existing sample link opens Vitals', () => {
-  expect(systemSearch({})).toEqual({ at: undefined, range: '12h', tab: 'now' });
+  expect(systemSearch({})).toEqual({ at: undefined, range: '12h', tab: 'now', zone: undefined });
   expect(systemSearch({ at: 1234, range: '24h' })).toEqual({
     at: 1234,
     range: '24h',
     tab: 'vitals',
+    zone: undefined,
   });
 });
 
@@ -20,12 +21,19 @@ test('System tabs validate shared links without dropping their range or sample',
     at: 1234,
     range: '7d',
     tab: 'sessions',
+    zone: undefined,
   });
   expect(systemSearch({ at: 'bad', range: 'bad', tab: 'bad' })).toEqual({
     at: undefined,
     range: '12h',
     tab: 'now',
+    zone: undefined,
   });
+});
+
+test("keeps the viewer's time zone the page adds, and drops one no runtime knows", () => {
+  expect(systemSearch({ range: '1y', zone: 'Europe/Berlin' }).zone).toBe('Europe/Berlin');
+  expect(systemSearch({ zone: 'Not/A_Zone' }).zone).toBeUndefined();
 });
 
 test('on a wide screen Now, Vitals, and Sessions are one Overview, and Records and Activity keep their tabs', () => {
@@ -45,5 +53,14 @@ test('a link to a sample opens the shortest range that still holds it', () => {
   expect(rangeHolding(NOW - 7 * HOUR, NOW)).toBe('12h');
   expect(rangeHolding(NOW - 13 * HOUR, NOW)).toBe('24h');
   expect(rangeHolding(NOW - 3 * 24 * HOUR, NOW)).toBe('7d');
-  expect(rangeHolding(NOW - 20 * 24 * HOUR, NOW)).toBe('7d');
+});
+
+// HMD-267: an Activity pin older than 7 days opened a 7 d page that did not show it.
+test('a link to a sample older than 7 days opens 30 d, and one older than 30 days 1 y', () => {
+  const DAY = 24 * 60 * 60_000;
+  const NOW = Date.UTC(2026, 10, 14, 12);
+  expect(rangeHolding(NOW - 8 * DAY, NOW)).toBe('30d');
+  expect(rangeHolding(NOW - 30 * DAY, NOW)).toBe('30d');
+  expect(rangeHolding(NOW - 31 * DAY, NOW)).toBe('1y');
+  expect(rangeHolding(NOW - 400 * DAY, NOW)).toBe('1y');
 });

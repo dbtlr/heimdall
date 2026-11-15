@@ -25,11 +25,13 @@ type CellRow = {
 // only a Session crossing a bucket's edge or the period's is priced request by
 // request, and only its requests in that bucket, read through its key and
 // time. The Sessions are the spans' (see sessionSpans), so the cost follows
-// the period's Sessions and not the archive. Call it inside a snapshot.
-const readCells = async (
+// the period's Sessions and not the archive; with `system`, that System's
+// alone, as its System page counts them. Call it inside a snapshot.
+export const readCells = async (
   sql: SQL,
   { from, project, to }: Period,
   buckets: CostChart['buckets'],
+  system?: string,
 ): Promise<CellRow[]> => {
   const windows = JSON.stringify(
     buckets.map(({ end, start }, index) => ({
@@ -45,7 +47,7 @@ const readCells = async (
     ),
     spans AS MATERIALIZED (
       SELECT k.*, s.repository, coalesce(s.last_cwd, s.first_cwd) AS cwd
-      FROM (${sessionSpans(sql, { from, project, to })}) k
+      FROM (${sessionSpans(sql, { from, project, system, to })}) k
       CROSS JOIN LATERAL (
         SELECT x.repository, x.first_cwd, x.last_cwd
         FROM insight.sessions x

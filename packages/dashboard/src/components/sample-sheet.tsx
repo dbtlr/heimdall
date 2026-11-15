@@ -1,21 +1,18 @@
 import { useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 
-import type { SampleInspection } from '../server/system-detail-types.ts';
-import { SampleInspector } from './sample-inspector.tsx';
-
-// Native modal focus handling also gives the phone sheet keyboard dismissal.
+// The phone's sheet over the page holding the inspector, `children`, under
+// `title`. Native modal focus handling also gives it keyboard dismissal.
 export function SampleSheet({
-  failed,
-  loading,
+  children,
   onClose,
   open,
-  sample,
+  title,
 }: {
-  failed: boolean;
-  loading: boolean;
+  children: ReactNode;
   onClose: () => void;
   open: boolean;
-  sample: SampleInspection | null;
+  title: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -62,15 +59,13 @@ export function SampleSheet({
     >
       <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-4 py-2">
         <h2 className="text-lg font-semibold" id="sample-sheet-title">
-          Vitals sample
+          {title}
         </h2>
         <button className="min-h-11 px-3 text-base text-primary" onClick={onClose} type="button">
           Close
         </button>
       </div>
-      <div className="p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-        <SampleInspector failed={failed} loading={loading} sample={sample} />
-      </div>
+      <div className="p-3 pb-[max(12px,env(safe-area-inset-bottom))]">{children}</div>
     </dialog>
   );
 }

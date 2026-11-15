@@ -1,0 +1,251 @@
+import { CONDITION_KIND_NAMES, conditionSubject } from '@heimdall/schema';
+import type { ReactNode } from 'react';
+
+import { LEVEL_FILL } from '../lib/conditions.ts';
+import { formatGiB } from '../lib/detail.ts';
+import { harnessColor, harnessName } from '../lib/lane.ts';
+import { formatBucket, formatClock, formatCost } from '../lib/time.ts';
+import { cn } from '../lib/utils.ts';
+import type { BucketInspection, BucketProcess } from '../server/system-detail-types.ts';
+import { InZone } from './date-time.tsx';
+import { MoreItems } from './more-items.tsx';
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+const MIB = 1024 ** 2;
+const GIB = 1024 ** 3;
+
+const percent = (value: number) => `${String(Math.round(value))}%`;
+
+// A bucket's width in words: "1-day" or "3-hour".
+const widthWords = (bucketMs: number): string =>
+  bucketMs >= DAY_MS
+    ? `${String(bucketMs / DAY_MS)}-day`
+    : `${String(Math.round(bucketMs / HOUR_MS))}-hour`;
+
+// What the bucket is called in a sentence: "that day" or "in the bucket".
+const bucketPlace = (bucketMs: number): string => (bucketMs >= DAY_MS ? 'that day' : 'then');
+
+const resident = (bytes: number): string =>
+  bytes >= GIB ? `${formatGiB(bytes)} GiB` : `${String(Math.round(bytes / MIB))} MiB`;
+
+const plural = (count: number, one: string) => `${String(count)} ${one}${count === 1 ? '' : 's'}`;
+
+// A Harness process's line: its CPU time and peak in the bucket, and its
+// Sessions.
+const processDetail = (process: BucketProcess): string => {
+  const usage = [
+    ...(process.cpuHours === undefined ? [] : [`${process.cpuHours.toFixed(1)} CPU-hours`]),
+    ...(process.peakRssBytes === undefined ? [] : [`peak ${resident(process.peakRssBytes)}`]),
+  ].join(', ');
+  return [usage, plural(process.sessions, 'Session')].filter((part) => part !== '').join(' · ');
+};
+
+// How many of a bucket's Harness processes are listed before the rest fold.
+const LISTED_PROCESSES = 8;
+
+const ProcessItem = ({ process }: { process: BucketProcess }) => (
+  <li className="flex items-start gap-2 py-[5px] text-[13.5px]">
+    <i
+      className="mt-[5px] inline-block h-2 w-3.5 flex-none rounded-[2px] bg-current"
+      style={{ color: harnessColor(process.harness) }}
+    />
+    <span>
+      <b className="font-semibold">{process.project ?? harnessName(process.harness)}</b> · pid{' '}
+      {process.pid}
+      <br />
+      <span className="text-xs text-muted-foreground">{processDetail(process)}</span>
+    </span>
+  </li>
+);
+
+// The busiest processes by CPU, which the read orders first, and the rest
+// folded into a disclosure, so a day of 173 processes stays a short panel.
+function ProcessList({ processes }: { processes: readonly BucketProcess[] }) {
+  const rest = processes.slice(LISTED_PROCESSES);
+  return (
+    <>
+      <ul>
+        {processes.slice(0, LISTED_PROCESSES).map((process) => (
+          <ProcessItem key={process.processId} process={process} />
+        ))}
+      </ul>
+      {rest.length > 0 && (
+        <MoreItems label={`${String(rest.length)} more processes`} scrolls={false}>
+          <ul>
+            {rest.map((process) => (
+              <ProcessItem key={process.processId} process={process} />
+            ))}
+          </ul>
+        </MoreItems>
+      )}
+    </>
+  );
+}
+
+function Heading({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-3.5 mb-2 text-[11px] font-semibold tracking-[0.08em] text-dim uppercase">
+      {children}
+    </p>
+  );
+}
+
+// The panel that inspects one bucket of a long range: its CPU, memory, and
+// load averages with their lows and highs from the 5-minute rollups in it, a
+// reboot in it, its agent cost and Sessions, the Harness processes that ran
+// then, and the Conditions open then. Past the 14 days raw samples are kept,
+// it says the top processes and memory holders are gone with them.
+export function BucketInspector({
+  bucket,
+  failed,
+  loading = false,
+}: {
+  bucket: BucketInspection | null;
+  failed: boolean;
+  loading?: boolean;
+}) {
+  const place = bucket === null ? '' : bucketPlace(bucket.bucketMs);
+  return (
+    <aside
+      aria-busy={loading}
+      className="max-h-[70dvh] self-start overflow-y-auto card-surface rounded-xl border-l-[3px] border-l-select px-4 py-3.5"
+    >
+      {loading && <p role="status">Reading bucket…</p>}
+      {bucket === null && !loading && (
+        <p className="text-muted-foreground">
+          {failed
+            ? 'The bucket could not be read. Select a time to try again.'
+            : 'No bucket to inspect.'}
+        </p>
+      )}
+      {bucket !== null && (
+        <>
+          <p className="flex items-baseline gap-2">
+            <b className="text-[17px] font-semibold tabular-nums">
+              {/* The day, "Wed 12 Aug 2026", or for a 3-hour bucket its day and span. */}
+              <InZone>{(timeZone) => formatBucket(bucket.t, bucket.end, timeZone, true)}</InZone>
+            </b>
+            <span className="text-[12.5px] text-muted-foreground">
+              pinned {bucket.bucketMs >= DAY_MS ? 'day' : 'bucket'}
+            </span>
+          </p>
+          <p className="mb-2 text-[11.5px] text-dim">
+            One {widthWords(bucket.bucketMs)} bucket:{' '}
+            {bucket.rollups === 0 ? 'no Vitals' : `${String(bucket.rollups)} five-minute rollups`}
+          </p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13.5px]">
+            {bucket.cpu !== undefined && (
+              <>
+                <dt className="text-muted-foreground">CPU busy</dt>
+                <dd>
+                  <b className="font-semibold">avg {percent(bucket.cpu.average)}</b>
+                  <span className="block text-xs text-muted-foreground">
+                    low {Math.round(bucket.cpu.low)}, high {Math.round(bucket.cpu.high)}
+                  </span>
+                </dd>
+              </>
+            )}
+            {bucket.memory !== undefined && (
+              <>
+                <dt className="text-muted-foreground">Memory</dt>
+                <dd>
+                  <b className="font-semibold">
+                    avg {formatGiB(bucket.memory.average)} / {formatGiB(bucket.memory.totalBytes)}{' '}
+                    GiB
+                  </b>
+                  <span className="block text-xs text-muted-foreground">
+                    high {formatGiB(bucket.memory.high)} GiB
+                  </span>
+                </dd>
+              </>
+            )}
+            {bucket.load1 !== undefined && (
+              <>
+                <dt className="text-muted-foreground">Load (1 min)</dt>
+                <dd>
+                  <b className="font-semibold">avg {bucket.load1.average.toFixed(1)}</b>
+                  <span className="block text-xs text-muted-foreground">
+                    high {bucket.load1.high.toFixed(1)}
+                  </span>
+                </dd>
+              </>
+            )}
+            {bucket.rebootedAt !== undefined && (
+              <>
+                <dt className="text-muted-foreground">Uptime</dt>
+                <dd>
+                  <b className="font-semibold">
+                    Rebooted{' '}
+                    <InZone>{(timeZone) => formatClock(bucket.rebootedAt ?? 0, timeZone)}</InZone>
+                  </b>
+                  <span className="block text-xs text-muted-foreground">
+                    smallest uptime in a 5-minute rollup
+                  </span>
+                </dd>
+              </>
+            )}
+            <dt className="text-muted-foreground">Agent cost</dt>
+            <dd>
+              <b className="font-semibold">
+                {bucket.unpricedRequests > 0 && 'at least '}
+                {formatCost(bucket.costUsd)}
+              </b>
+              {/* The cost bar under a 3-hour bucket is its whole day. */}
+              {bucket.day !== undefined && ' in this bucket'}
+              <span className="block text-xs text-muted-foreground">
+                {bucket.day !== undefined &&
+                  `${bucket.day.unpricedRequests > 0 ? 'at least ' : ''}${formatCost(bucket.day.costUsd)} that day, as its cost bar shows · `}
+                {plural(bucket.sessions, 'Session')} working {place}
+              </span>
+            </dd>
+          </dl>
+          <Heading>Harness processes {place}</Heading>
+          {bucket.processes.length === 0 ? (
+            <p className="text-[13.5px] text-muted-foreground">No Harness process.</p>
+          ) : (
+            <ProcessList processes={bucket.processes} />
+          )}
+          {bucket.conditions.length > 0 && (
+            <>
+              <Heading>Conditions open {place}</Heading>
+              <ul className="text-[13.5px]">
+                {bucket.conditions.map((condition, index) => (
+                  <li
+                    className="flex items-baseline gap-2 py-0.5"
+                    // Two Conditions may share a kind and subject over a bucket.
+                    // oxlint-disable-next-line react/no-array-index-key
+                    key={`${condition.kind}-${condition.subject}-${String(index)}`}
+                  >
+                    <i
+                      className={cn(
+                        'inline-block size-2 flex-none rounded-[2px]',
+                        LEVEL_FILL[condition.level],
+                      )}
+                    />
+                    <span>
+                      {CONDITION_KIND_NAMES[condition.kind]}
+                      {condition.subject !== '' && ` · ${conditionSubject(condition)}`}{' '}
+                      <span className="text-muted-foreground">{condition.level}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {bucket.samplesPruned && (
+            <p className="mt-3.5 text-xs text-muted-foreground">
+              Top CPU processes and memory holders{' '}
+              <span className="inline-block rounded-sm border border-dashed border-status-serious px-1 whitespace-nowrap text-status-serious">
+                not kept past 14 d
+              </span>
+            </p>
+          )}
+        </>
+      )}
+      <p className="mt-3 text-xs text-muted-foreground">
+        Select any point on the axis to inspect its bucket.
+      </p>
+    </aside>
+  );
+}

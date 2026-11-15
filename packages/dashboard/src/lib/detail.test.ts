@@ -223,19 +223,94 @@ describe('chart rows', () => {
 
   test('give memory used in GiB, and null where a bucket has none, so the line breaks', () => {
     expect(
-      memoryRows([{ t: NOW - 15 * MINUTE, totalBytes: 4 * GIB, usedBytes: 2 * GIB }], window),
+      memoryRows(
+        [
+          {
+            highBytes: 2 * GIB,
+            lowBytes: 2 * GIB,
+            t: NOW - 15 * MINUTE,
+            totalBytes: 4 * GIB,
+            usedBytes: 2 * GIB,
+          },
+        ],
+        window,
+      ),
     ).toEqual([
-      { t: NOW - 20 * MINUTE + BUCKET / 2, used: null },
-      { t: NOW - 15 * MINUTE + BUCKET / 2, used: 2 },
-      { t: NOW - 10 * MINUTE + BUCKET / 2, used: null },
-      { t: NOW - 5 * MINUTE + BUCKET / 2, used: null },
+      { band: null, t: NOW - 20 * MINUTE + BUCKET / 2, used: null },
+      { band: [2, 2], t: NOW - 15 * MINUTE + BUCKET / 2, used: 2 },
+      { band: null, t: NOW - 10 * MINUTE + BUCKET / 2, used: null },
+      { band: null, t: NOW - 5 * MINUTE + BUCKET / 2, used: null },
     ]);
   });
 
   test('give the 1-minute load per bucket, and null where a bucket has none, so the line breaks', () => {
     expect(
-      loadRows([{ t: NOW - 15 * MINUTE, value: 2.5 }], window).map(({ value }) => value),
+      loadRows([{ high: 4, low: 1, t: NOW - 15 * MINUTE, value: 2.5 }], window).map(
+        ({ value }) => value,
+      ),
     ).toEqual([null, 2.5, null, null]);
+  });
+
+  test('lay wider buckets with their low–high band, as a long range reads them', () => {
+    const days = { from: NOW - 3 * DAY, to: NOW };
+    const start = Math.floor(NOW / DAY) * DAY - DAY;
+    expect(
+      memoryRows(
+        [{ highBytes: 3 * GIB, lowBytes: GIB, t: start, totalBytes: 4 * GIB, usedBytes: 2 * GIB }],
+        days,
+        DAY,
+      ).find(({ used }) => used !== null),
+    ).toEqual({ band: [1, 3], t: start + DAY / 2, used: 2 });
+    expect(
+      loadRows([{ high: 4, low: 1, t: start, value: 2.5 }], days, DAY).find(
+        ({ value }) => value !== null,
+      ),
+    ).toEqual({ band: [1, 4], t: start + DAY / 2, value: 2.5 });
+  });
+
+  test("lay a long range's rows at the middle of each bucket the edges give, a 25-hour day as one", () => {
+    const day = Date.UTC(2026, 10, 1, 7);
+    const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR];
+    const span = { from: day - 12 * HOUR, to: day + 40 * HOUR };
+    expect(loadRows([{ high: 4, low: 1, t: day, value: 2.5 }], span, DAY, edges)).toEqual([
+      { band: null, t: day - 6 * HOUR, value: null },
+      { band: [1, 4], t: day + 12.5 * HOUR, value: 2.5 },
+      { band: null, t: day + 32.5 * HOUR, value: null },
+    ]);
+    expect(
+      memoryRows(
+        [{ highBytes: 3 * GIB, lowBytes: GIB, t: day, totalBytes: 4 * GIB, usedBytes: 2 * GIB }],
+        span,
+        DAY,
+        edges,
+      ).map(({ t }) => t),
+    ).toEqual([day - 6 * HOUR, day + 12.5 * HOUR, day + 32.5 * HOUR]);
+    expect(
+      processRows(
+        [
+          {
+            harness: 'codex',
+            pid: 1,
+            points: [{ cores: 1, t: day }],
+            processId: 7,
+            project: undefined,
+          },
+        ],
+        span,
+        DAY,
+        edges,
+      )[1],
+    ).toEqual({ p7: 1, t: day + 12.5 * HOUR });
+  });
+
+  test("keep the newest bucket's point inside the window, at the middle of its part in it", () => {
+    const day = Date.UTC(2026, 10, 1, 7);
+    const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR];
+    const shown = { from: day - 12 * HOUR, to: day + 40 * HOUR };
+    const points = loadRows([], shown, DAY, edges).map(({ t }) => t);
+
+    expect(points.every((t) => t >= shown.from && t <= shown.to)).toBe(true);
+    expect(points.at(-1)).toBe(day + 32.5 * HOUR);
   });
 
   test('give each process its cores under its own key', () => {
@@ -319,6 +394,31 @@ test('a key on the time axis moves the pinned sample a bucket, an hour with Shif
   expect(step('ArrowRight', false, window.to - MINUTE)).toBe(window.to);
   expect(step('PageDown', false, window.from + MINUTE)).toBe(window.from);
   expect(step('Enter')).toBeUndefined();
+});
+
+test('over a long range a key moves the pinned time a bucket, and 12 with Shift', () => {
+  const window = { from: 0, to: 365 * DAY };
+  const at = 100 * DAY;
+  const step = (key: string, shiftKey = false) =>
+    steppedSample({ ...NO_MODIFIERS, key, shiftKey }, at, window, DAY);
+  expect([step('ArrowRight'), step('ArrowLeft', true)]).toEqual([at + DAY, at - 12 * DAY]);
+});
+
+test('over a long range with edges a key moves to the adjacent bucket, even on a 25-hour day', () => {
+  const day = Date.UTC(2026, 10, 1, 7);
+  const edges = [day - DAY, day, day + 25 * HOUR, day + 49 * HOUR, day + 73 * HOUR];
+  const window = { from: day - 12 * HOUR, to: day + 60 * HOUR };
+  const step = (key: string, selected: number, shiftKey = false) =>
+    steppedSample({ ...NO_MODIFIERS, key, shiftKey }, selected, window, DAY, edges);
+
+  // Half an hour into the 25-hour day, a nominal day's step would stay in it.
+  expect(step('ArrowRight', day + 30 * MINUTE)).toBe(day + 37 * HOUR);
+  expect(step('ArrowLeft', day + 30 * MINUTE)).toBe(day - 6 * HOUR);
+  expect(step('ArrowLeft', day + 12.5 * HOUR)).toBe(day - 6 * HOUR);
+  expect(step('ArrowRight', day + 37 * HOUR)).toBe(day + 54.5 * HOUR);
+  expect(step('ArrowRight', day + 54.5 * HOUR)).toBe(day + 54.5 * HOUR);
+  expect(step('ArrowLeft', day - 6 * HOUR, true)).toBe(day - 6 * HOUR);
+  expect(step('PageUp', day - 6 * HOUR)).toBe(day + 54.5 * HOUR);
 });
 
 test('a key held with Alt, Ctrl, or Meta moves no pinned sample, so the browser keeps its shortcut', () => {

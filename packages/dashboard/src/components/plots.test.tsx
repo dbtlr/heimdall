@@ -8,6 +8,7 @@ import { Area } from 'recharts';
 import type { ChartView } from '../lib/condition-detail.ts';
 import { ConditionChart } from './condition-chart.tsx';
 import { CpuPlot } from './cpu-plot.tsx';
+import { loadDomain } from './load-plot.tsx';
 import { MemoryPlot } from './memory-plot.tsx';
 import { PlotGradient } from './plot-scale.tsx';
 import { ProcessPlot } from './process-plot.tsx';
@@ -92,8 +93,14 @@ describe('CpuPlot', () => {
 
 describe('MemoryPlot', () => {
   const buckets = [
-    { t: 0, totalBytes: 31.3 * GIB, usedBytes: 12 * GIB },
-    { t: 300_000, totalBytes: 31.3 * GIB, usedBytes: 14 * GIB },
+    { highBytes: 12 * GIB, lowBytes: 12 * GIB, t: 0, totalBytes: 31.3 * GIB, usedBytes: 12 * GIB },
+    {
+      highBytes: 14 * GIB,
+      lowBytes: 14 * GIB,
+      t: 300_000,
+      totalBytes: 31.3 * GIB,
+      usedBytes: 14 * GIB,
+    },
   ];
 
   test('fills the area under memory used with its gradient', () => {
@@ -121,6 +128,16 @@ const harnessProcess = (processId: number, cores: (number | null)[]) => ({
   points: cores.map((value, index) => ({ cores: value, t: index * 300_000 })),
   processId,
   project: undefined,
+});
+
+describe('loadDomain', () => {
+  const bucket = { high: 9, low: 1, t: 0, value: 3 };
+
+  test('reaches the core count and, with a band, the highest high', () => {
+    expect(loadDomain([bucket], 8)).toEqual([0, 8]);
+    expect(loadDomain([bucket], 4, true)).toEqual([0, 10]);
+    expect(loadDomain([bucket], 4)).toEqual([0, 4]);
+  });
 });
 
 describe('ProcessPlot', () => {

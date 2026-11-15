@@ -10,6 +10,8 @@ import { cn } from '../lib/utils.ts';
 
 type Axis = {
   at: number | undefined;
+  bucketMs: number | undefined;
+  edges: readonly number[] | undefined;
   hovered: number | undefined;
   hover: (t: number | undefined) => void;
   select: (t: number) => void;
@@ -30,23 +32,30 @@ const useAxis = (): Axis => {
 // The shared time axis of the System detail stack: every track under it shows
 // the time the pointer is over, and selecting a time on any of them selects
 // it for the inspector. `selected` is the sample read for the pinned time `at`,
-// the stored one nearest it.
+// the stored one nearest it, or the middle of the bucket holding it. The
+// keyboard steps a bucket of `bucketMs`, 5 minutes unless it says otherwise.
 export function DetailAxis({
   at,
+  bucketMs,
   children,
+  edges,
   onSelect,
   selected,
   window,
 }: {
   at?: number | undefined;
+  bucketMs?: number | undefined;
   children: ReactNode;
+  edges?: readonly number[] | undefined;
   onSelect: (t: number) => void;
   selected: number | undefined;
   window: Window;
 }) {
   const [hovered, hover] = useState<number | undefined>();
   return (
-    <AxisContext.Provider value={{ at, hover, hovered, select: onSelect, selected, window }}>
+    <AxisContext.Provider
+      value={{ at, bucketMs, edges, hover, hovered, select: onSelect, selected, window }}
+    >
       {children}
     </AxisContext.Provider>
   );
@@ -108,7 +117,7 @@ export function DetailTrack({
 // time, not the sample nearest it, so presses carry on across a gap in the
 // samples, and it never stands outside the window.
 export function SampleSlider({ children }: { children: ReactNode }) {
-  const { at: pinned, select, selected, window } = useAxis();
+  const { at: pinned, bucketMs, edges, select, selected, window } = useAxis();
   const timeZone = useTimeZone();
   const at = Math.min(window.to, Math.max(window.from, pinned ?? selected ?? window.to));
   return (
@@ -120,7 +129,7 @@ export function SampleSlider({ children }: { children: ReactNode }) {
       aria-valuetext={timeZone === undefined ? undefined : formatDated(at, window.to, timeZone)}
       className="rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       onKeyDown={(event) => {
-        const next = steppedSample(event, at, window);
+        const next = steppedSample(event, at, window, bucketMs, edges);
         if (next !== undefined) {
           event.preventDefault();
           select(next);

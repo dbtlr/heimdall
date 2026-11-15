@@ -3,7 +3,9 @@ import type { Range } from '../server/fleet-overview-types.ts';
 
 export const RANGE_LABELS: Record<Range, string> = {
   '12h': '12 h',
+  '1y': '1 y',
   '24h': '24 h',
+  '30d': '30 d',
   '6h': '6 h',
   '7d': '7 d',
 };

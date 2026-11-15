@@ -15,30 +15,43 @@ export const coreCountNote = (cores: number): string =>
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
 const CONFIG = { value: { color: PLOT_COLOR, label: 'Load' } } satisfies ChartConfig;
 
-// The scale's top: the highest load or known core count, widened so its top,
-// middle, and bottom are whole numbers, and never under 2.
-export const loadDomain = (buckets: readonly LoadBucket[], cores?: number) => {
-  const high = Math.max(2, cores ?? 0, ...buckets.map(({ value }) => value));
+// The scale's top: the highest load over the window, or the highest band
+// with `band`, or the known core count, widened so its top, middle, and
+// bottom are whole numbers, and never under 2.
+export const loadDomain = (buckets: readonly LoadBucket[], cores?: number, band = false) => {
+  const high = Math.max(
+    2,
+    cores ?? 0,
+    ...buckets.map((bucket) => (band ? bucket.high : bucket.value)),
+  );
   return niceDomain([0, high], high > 10 ? 5 : 1);
 };
 
-// The 1-minute load average per 5-minute bucket, as a line over a gradient
-// fill on a scale from 0. A gap in the Vitals is a break in the line.
+// The 1-minute load average per bucket, 5 minutes unless `bucketMs` says
+// otherwise or `edges` lays a long range's, as a line over a gradient fill on a scale from 0, with each
+// bucket's low to high as a band when `band` asks for it. A gap in the Vitals
+// is a break in the line.
 export function LoadPlot({
+  band = false,
+  bucketMs,
   buckets,
+  edges,
   cores,
   height,
   scaleBeside = false,
   window,
 }: {
+  band?: boolean;
+  bucketMs?: number;
   buckets: readonly LoadBucket[];
+  edges?: readonly number[] | undefined;
   cores?: number | undefined;
   height: number;
   scaleBeside?: boolean;
   window: Window;
 }) {
   const fill = usePlotGradientId();
-  const domain = loadDomain(buckets, cores);
+  const domain = loadDomain(buckets, cores, band);
   return (
     <ScaledPlot
       beside={scaleBeside}
@@ -67,7 +80,7 @@ export function LoadPlot({
         role="img"
         style={{ height }}
       >
-        <ComposedChart data={loadRows(buckets, window)} margin={NO_MARGIN}>
+        <ComposedChart data={loadRows(buckets, window, bucketMs, edges)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"
@@ -83,6 +96,16 @@ export function LoadPlot({
             isAnimationActive={false}
             stroke="none"
           />
+          {band && (
+            <Area
+              activeDot={false}
+              dataKey="band"
+              fill={PLOT_COLOR}
+              fillOpacity={0.16}
+              isAnimationActive={false}
+              stroke="none"
+            />
+          )}
           <Line
             activeDot={false}
             dataKey="value"

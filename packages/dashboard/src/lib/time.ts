@@ -53,6 +53,38 @@ export const localDayNumber = (t: number, timeZone: string): number => {
 export const formatDate = (t: number, timeZone: string): string =>
   formatter(timeZone, { day: 'numeric', month: 'short' }).format(t);
 
+// The date with its year, as "19 Oct 2025".
+export const formatDateYear = (t: number, timeZone: string): string =>
+  formatter(timeZone, { day: 'numeric', month: 'short', year: 'numeric' }).format(t);
+
+// The month as "Oct", or "Jan 2026" with its year.
+export const formatMonth = (t: number, timeZone: string, withYear = false): string =>
+  formatter(timeZone, withYear ? { month: 'short', year: 'numeric' } : { month: 'short' }).format(
+    t,
+  );
+
+// The local calendar year and month (1 to 12) of `t`.
+export const localMonth = (t: number, timeZone: string): { month: number; year: number } => {
+  const { month, year } = localDay(t, timeZone);
+  return { month, year };
+};
+
+// A long range's bucket from `start` to `end` as the charts and the inspector
+// name it: its local day, "Wed 12 Aug", with the year when `withYear` asks,
+// for a day of 23 hours or more, else the day and its clock span, "Wed 12 Aug
+// 15:00–18:00".
+export const formatBucket = (
+  start: number,
+  end: number,
+  timeZone: string,
+  withYear = false,
+): string => {
+  const day = `${formatWeekday(start, timeZone)} ${(withYear ? formatDateYear : formatDate)(start, timeZone)}`;
+  return end - start >= 23 * 3_600_000
+    ? day
+    : `${day} ${formatClock(start, timeZone)}–${formatClock(end, timeZone)}`;
+};
+
 // The weekday and date as "Sunday 19 Oct".
 export const formatDayHeading = (t: number, timeZone: string): string =>
   `${formatter(timeZone, { weekday: 'long' }).format(t)} ${formatDate(t, timeZone)}`;

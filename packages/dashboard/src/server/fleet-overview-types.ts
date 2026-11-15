@@ -8,18 +8,48 @@ import type { ConditionKind, ConditionLevel, ConditionTransition } from '@heimda
 import type { Attention } from './attention-types.ts';
 import type { Disk } from './system-detail-types.ts';
 
-export const RANGES = ['6h', '12h', '24h', '7d'] as const;
+// The System page's ranges. Up to 7 d its charts draw the Hub's 5-minute
+// rollups as they are; the long ranges re-bin them into wider buckets, since
+// the raw samples behind the inspector are kept only 14 days (ADR-0008).
+export const RANGES = ['6h', '12h', '24h', '7d', '30d', '1y'] as const;
 export type Range = (typeof RANGES)[number];
+
+export const LONG_RANGES = ['30d', '1y'] as const;
+export type LongRange = (typeof LONG_RANGES)[number];
 
 export const isRange = (value: unknown): value is Range => RANGES.some((range) => range === value);
 
-const DAY_MS = 24 * 60 * 60_000;
+export const isLongRange = (range: Range): range is LongRange =>
+  LONG_RANGES.some((long) => long === range);
+
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 export const RANGE_MS: Record<Range, number> = {
   '12h': DAY_MS / 2,
+  '1y': 365 * DAY_MS,
   '24h': DAY_MS,
+  '30d': 30 * DAY_MS,
   '6h': DAY_MS / 4,
   '7d': 7 * DAY_MS,
 };
+
+// The width of a chart bucket at each range: the Hub's 5-minute rollups up to
+// 7 d, then 3 hours over 30 d and a day over a year, so a chart holds at most
+// a few hundred buckets. The long ranges' widths are the usual ones: their
+// buckets follow the viewer's local days (see LongEdges), so a day the clocks
+// change is 23 or 25 hours. Every bucket holds whole 5-minute rollups.
+export const RANGE_BUCKET_MS: Record<Range, number> = {
+  '12h': 5 * 60_000,
+  '1y': DAY_MS,
+  '24h': 5 * 60_000,
+  '30d': 3 * HOUR_MS,
+  '6h': 5 * 60_000,
+  '7d': 5 * 60_000,
+};
+
+// How long the Hub keeps raw Vitals samples, with the processes and memory
+// holders they carry, and raw Harness process readings (ADR-0008).
+export const RAW_KEPT_MS = 14 * DAY_MS;
 
 // A System not heard from for longer than this is quiet: asleep, if it sleeps,
 // and its newest Vitals are no longer shown as current.

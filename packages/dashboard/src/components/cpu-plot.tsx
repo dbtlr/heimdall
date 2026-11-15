@@ -1,10 +1,12 @@
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 
+import { spanHolding } from '../lib/bucket-edges.ts';
 import { cpuSeries } from '../lib/lane.ts';
 import { clockSpan } from '../lib/phrase.ts';
+import { formatBucket } from '../lib/time.ts';
 import type { Window } from '../lib/time.ts';
 import type { CpuBucket } from '../server/fleet-overview-types.ts';
-import { PhraseText } from './date-time.tsx';
+import { InZone, PhraseText } from './date-time.tsx';
 import {
   PERCENT_DOMAIN,
   PLOT_COLOR,
@@ -22,29 +24,39 @@ const CONFIG = { average: { color: PLOT_COLOR, label: 'CPU busy' } } satisfies C
 
 const percent = (value: number) => `${String(Math.round(value))}%`;
 
-// The tooltip for the hovered bucket.
+// The tooltip for the hovered bucket, named by its clock span, or over a long
+// range, whose buckets are the `edges`, by its date as well.
 function BucketTooltip({
   active,
   bucketMs,
   buckets,
+  edges,
   label,
 }: {
   active?: boolean | undefined;
   bucketMs: number;
   buckets: readonly CpuBucket[];
+  edges: readonly number[] | undefined;
   label?: number | string | undefined;
 }) {
+  const endOf = (t: number) =>
+    (edges === undefined ? undefined : spanHolding(edges, t)?.end) ?? t + bucketMs;
   const bucket =
     typeof label === 'number'
-      ? buckets.find((found) => found.t <= label && label <= found.t + bucketMs)
+      ? buckets.find((found) => found.t <= label && label <= endOf(found.t))
       : undefined;
   if (active !== true || bucket === undefined) {
     return null;
   }
+  const end = endOf(bucket.t);
   return (
     <div className="rounded-md border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md">
       <p className="text-muted-foreground">
-        <PhraseText phrase={clockSpan(bucket.t, bucket.t + bucketMs)} />
+        {edges === undefined ? (
+          <PhraseText phrase={clockSpan(bucket.t, end)} />
+        ) : (
+          <InZone>{(timeZone) => formatBucket(bucket.t, end, timeZone)}</InZone>
+        )}
       </p>
       <p>
         CPU {percent(bucket.average)}, low {percent(bucket.low)}, high {percent(bucket.high)}
@@ -56,10 +68,11 @@ function BucketTooltip({
 // A System's CPU busy over the window on a 0 to 100% scale: each bucket's low
 // to high as a band, the average as a line over a gradient fill. The x axis is
 // the window, so every lane lines up, and a gap in the Vitals is a break in
-// the line.
+// the line. Over a long range the buckets run between the `edges`.
 export function CpuPlot({
   bucketMs = BUCKET_MS,
   buckets,
+  edges,
   height = 46,
   limits = [],
   label,
@@ -68,6 +81,7 @@ export function CpuPlot({
 }: {
   bucketMs?: number;
   buckets: readonly CpuBucket[];
+  edges?: readonly number[] | undefined;
   height?: number;
   limits?: readonly PlotLimit[];
   label: string;
@@ -86,7 +100,7 @@ export function CpuPlot({
         role="img"
         style={{ height }}
       >
-        <ComposedChart data={cpuSeries(buckets, bucketMs)} margin={NO_MARGIN}>
+        <ComposedChart data={cpuSeries(buckets, bucketMs, edges)} margin={NO_MARGIN}>
           <XAxis
             allowDataOverflow
             dataKey="t"
@@ -97,7 +111,13 @@ export function CpuPlot({
           <YAxis allowDataOverflow domain={PERCENT_DOMAIN} hide />
           <ChartTooltip
             content={({ active, label: at }) => (
-              <BucketTooltip active={active} bucketMs={bucketMs} buckets={buckets} label={at} />
+              <BucketTooltip
+                active={active}
+                bucketMs={bucketMs}
+                buckets={buckets}
+                edges={edges}
+                label={at}
+              />
             )}
           />
           <Area
