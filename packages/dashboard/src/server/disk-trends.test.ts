@@ -168,6 +168,40 @@ test('exactly one day is enough to fit growth', async () => {
   expect(trend?.growth?.bytesPerDay).toBeCloseTo(GIB, -3);
 });
 
+test('just under a day of readings is not enough to fit growth', async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - DAY + 5 * 60_000)}, ${100 * GIB}, ${10 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${100 * GIB}, ${11 * GIB})`;
+  const [trend] = await readDiskTrends(h.db.sql, { now: NOW, system: 'server-1' });
+  expect(trend?.growth).toBeUndefined();
+});
+
+test("a mount that stopped reporting is fitted over the System's window, filtered or not", async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await h.db.sql`DELETE FROM disk_rollups`;
+  // The System's newest reading is now; /old last reported three days ago. Its
+  // reading from 8.5 days ago is outside the System's 7-day window.
+  await h.db.sql`INSERT INTO disk_rollups (system, mount, bucket, total_max, used_max)
+    VALUES ('server-1', '/', ${new Date(NOW - 2 * DAY)}, ${100 * GIB}, ${10 * GIB}),
+           ('server-1', '/', ${new Date(NOW)}, ${100 * GIB}, ${12 * GIB}),
+           ('server-1', '/old', ${new Date(NOW - 8.5 * DAY)}, ${100 * GIB}, ${GIB}),
+           ('server-1', '/old', ${new Date(NOW - 5 * DAY)}, ${100 * GIB}, ${12 * GIB}),
+           ('server-1', '/old', ${new Date(NOW - 3 * DAY)}, ${100 * GIB}, ${13 * GIB})`;
+  const all = await readDiskTrends(h.db.sql, { now: NOW, system: 'server-1' });
+  const [filtered] = await readDiskTrends(h.db.sql, {
+    mount: '/old',
+    now: NOW,
+    system: 'server-1',
+  });
+  const unfiltered = all.find((trend) => trend.mount === '/old');
+  expect(unfiltered?.growth?.bytesPerDay).toBeCloseTo(GIB / 2, -3);
+  expect(filtered?.growth?.bytesPerDay).toBe(unfiltered?.growth?.bytesPerDay);
+});
+
 test('System and Low disk pages share a replacement fit and ship only rendered trend fields', async () => {
   await using h = await startHub();
   await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });

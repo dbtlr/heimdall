@@ -16,3 +16,8 @@ test('says when a mark is reached, capped at a year', () => {
   expect(reachWords(18)).toBe('in about 18 days');
   expect(reachWords(883_932)).toBe('in over a year');
 });
+
+test('a rate a hair under a GiB a day reads as a GiB, not 1024 MiB', () => {
+  expect(growthWords(1024 ** 3 - 0.01)).toBe('+1.0 GiB a day');
+  expect(growthWords(1023 * 1024 ** 2)).toBe('+1023 MiB a day');
+});

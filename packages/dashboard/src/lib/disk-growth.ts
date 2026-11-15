@@ -1,6 +1,4 @@
-// Shared disk reading types and forecast words.
-
-export type DiskReading = { t: number; totalBytes: number; usedBytes: number };
+// Disk growth's type and the words both disk pages use for growth and time.
 
 export type DiskGrowth = { bytesPerDay: number };
 
@@ -19,9 +17,12 @@ export const gibWords = (bytes: number): string => {
   return `${value >= 10 ? String(Math.round(value)) : value.toFixed(1)} GiB`;
 };
 
-// "+2.1 GiB a day", or "+300 MiB a day" below a GiB.
-export const growthWords = (bytesPerDay: number): string =>
-  `+${bytesPerDay >= GIB ? gibWords(bytesPerDay) : `${String(Math.round(bytesPerDay / MIB))} MiB`} a day`;
+// "+2.1 GiB a day", or "+300 MiB a day" below a GiB. The unit is chosen after
+// rounding, so a rate a hair under a GiB reads "+1.0 GiB", not "+1024 MiB".
+export const growthWords = (bytesPerDay: number): string => {
+  const mib = Math.round(bytesPerDay / MIB);
+  return `+${mib >= 1024 ? gibWords(bytesPerDay) : `${String(mib)} MiB`} a day`;
+};
 
 // When a growing mount reaches a mark it is `days` from: "now" once there,
 // "in under a day", "in about 18 days", or "in over a year".
