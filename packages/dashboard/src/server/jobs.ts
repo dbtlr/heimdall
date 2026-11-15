@@ -1,7 +1,10 @@
 // What the Jobs page reads. Three statements over every paired System, so
 // their count does not grow with Systems or jobs. Each job's runs are its
-// newest STRIP_RUNS only, found by the key of the run table, so the read
-// follows the strip and not the 90 days of runs the Hub keeps.
+// newest STRIP_RUNS only, found by the key of the run table. One lookup, the
+// oldest run received since the job was last first mirrored, reads a job's
+// stored runs, so its cost grows with the runs the Hub keeps for that job,
+// bounded by the 90-day prune (tens of milliseconds for a job with 130,000
+// runs).
 
 import { latestScheduledTime, nextScheduledTime } from '@heimdall/schema';
 import type { SQL } from 'bun';
@@ -24,6 +27,7 @@ const HISTORY_MS = 90 * DAY_MS;
 
 type JobRow = {
   first_mirrored_at: Date | null;
+  oldest_run_since_mirrored: Date | null;
   latest_run: RunRow['latest_run'] | null;
   name: string;
   record: unknown;
@@ -44,7 +48,11 @@ type StoredRunRow = {
 const keyOf = (system: string, job: string) => JSON.stringify([system, job]);
 
 const readJobRows = (sql: SQL): Promise<JobRow[]> => sql`
-  SELECT r.system, r.name, r.record, u.latest_run, s.time_zone, f.first_mirrored_at
+  SELECT r.system, r.name, r.record, u.latest_run, s.time_zone, f.first_mirrored_at,
+    (
+      SELECT min(j.started_at) FROM job_runs j
+      WHERE j.system = r.system AND j.job = r.name AND j.received_at >= f.first_mirrored_at
+    ) AS oldest_run_since_mirrored
   FROM mirrored_records r
   JOIN paired_systems p ON p.system = r.system
   LEFT JOIN mirrored_runs u ON u.system = r.system AND u.job = r.name
@@ -152,12 +160,25 @@ const jobRow = (
     overdueSince,
     system: row.system,
   });
-  // The job existed from when the Hub first mirrored it, or from an earlier
-  // run the Hub holds.
-  const existed = Math.min(
-    row.first_mirrored_at?.getTime() ?? now - HISTORY_MS,
-    ...history.map(({ started }) => started),
-  );
+  // The job existed from when the Hub first mirrored it, or from any run the
+  // Hub received since then, such as the Collector's first backlog, which can
+  // span several Reports. With no first-mirrored row it existed from the
+  // history's reach, HISTORY_MS ago, or from an earlier run the strip holds,
+  // as before this rule. A run the Hub stored before a record was forgotten
+  // and recorded again (a Report left it out, a later one listed it, and
+  // `forget` kept its runs) does not count: the gap is not the job's missed
+  // times. Two limits are known. (a) When a forget and the re-record both
+  // happen before the Hub sees a Report without the record (inside one Report
+  // window, or while the Collector cannot reach the Hub), the Hub never resets
+  // the mirror start, and the gap still counts as missed. (b) Runs the Hub
+  // received before it first mirrored the job's record (for example while the
+  // records section was over budget) do not lower the floor, so a miss among
+  // them is not shown.
+  const earlierRuns =
+    row.first_mirrored_at === null
+      ? history.map(({ started }) => started)
+      : [row.oldest_run_since_mirrored?.getTime() ?? Infinity];
+  const existed = Math.min(row.first_mirrored_at?.getTime() ?? now - HISTORY_MS, ...earlierRuns);
   const runs =
     latestRun === undefined || history.some(({ started }) => started === latestRun.started)
       ? history
