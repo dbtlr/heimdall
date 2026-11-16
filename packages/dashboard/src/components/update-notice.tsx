@@ -51,7 +51,7 @@ const browser: UpdateHost = {
 };
 
 // Session storage can be missing or refuse a write, as in a private window.
-// Without it, a missing chunk reloads the page as it would the first time.
+// Without it, only the server's answer keeps a missing chunk from reloading again.
 const lastChunkReload = (): number | undefined => {
   try {
     const at = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY));
@@ -157,18 +157,25 @@ export function DashboardVersion() {
 // Watches for the server serving a newer dashboard build than this page runs,
 // gives what it learns to the page below, and shows the pill when one is
 // ready. A script chunk that fails to load, as a page on an older build finds
-// once the new build renamed its files, reloads the page.
+// once the new build renamed its files, reloads the page when the server
+// confirms it runs another build.
 export function UpdateWatcher({ children }: { children: ReactNode }) {
   const [state, setState] = useState<UpdateState>({ kind: 'unknown' });
   useEffect(() => watchForUpdates(RUNNING, browser, setState), []);
   useEffect(() => {
-    const onPreloadError = (event: Event) => {
-      const now = Date.now();
-      if (reloadsForMissingChunk(lastChunkReload(), now)) {
-        event.preventDefault();
-        noteChunkReload(now);
-        reloadPage();
-      }
+    // The error still reaches the router, which shows it; the reload, when
+    // the server confirms a newer build, replaces it.
+    const onPreloadError = () => {
+      void (async () => {
+        const server = await readServerBuild().catch(() => undefined);
+        const now = Date.now();
+        if (
+          reloadsForMissingChunk({ lastReloadAt: lastChunkReload(), now, running: RUNNING, server })
+        ) {
+          noteChunkReload(now);
+          reloadPage();
+        }
+      })();
     };
     globalThis.addEventListener('vite:preloadError', onPreloadError);
     return () => {

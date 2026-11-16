@@ -205,18 +205,47 @@ describe('watchForUpdates', () => {
     expect(fake.state.reads).toBe(2);
   });
 
-  test('a page shown while a check is out reloads when that check finds a newer build', async () => {
+  test('a check that fails outright is like no answer, and checking goes on', async () => {
     const fake = fakeHost();
-    const answer = Promise.withResolvers<RunningBuild>();
-    fake.host.readBuild = () => answer.promise;
-    watchForUpdates(RUNNING, fake.host, () => undefined);
+    const { states } = await watching(fake);
+    fake.host.readBuild = () => Promise.reject(new Error('offline'));
 
+    await fake.elapse();
+    fake.host.readBuild = () => Promise.resolve(NEWER);
+    await fake.elapse();
+
+    expect(fake.state.reloads).toBe(0);
+    expect(states.at(-1)).toEqual({ kind: 'ready', ...NEWER });
+  });
+
+  test('checks start again on their period once the page is shown again', async () => {
+    const fake = fakeHost();
+    await watching(fake);
     await fake.show(true);
     await fake.show(false);
-    answer.resolve(NEWER);
-    await settle();
+    const reads = fake.state.reads;
 
-    expect(fake.state.reloads).toBe(1);
+    await fake.elapse();
+
+    expect(fake.state.scheduled.size).toBe(1);
+    expect(fake.state.reads).toBe(reads + 1);
+  });
+
+  test('a visibility event while already visible starts no extra check', async () => {
+    const fake = fakeHost();
+    await watching(fake);
+
+    await fake.show(false);
+
+    expect(fake.state.reads).toBe(1);
+    expect(fake.state.scheduled.size).toBe(1);
+  });
+
+  test('takes its period from everyMs', () => {
+    const fake = fakeHost();
+    watchForUpdates(RUNNING, fake.host, () => undefined, { everyMs: 5000 });
+
+    expect(fake.state.periods).toEqual([5000]);
   });
 
   test('stopping cancels the timer and the listener, and ignores an answer still out', async () => {
@@ -234,14 +263,180 @@ describe('watchForUpdates', () => {
   });
 });
 
-describe('reloadsForMissingChunk', () => {
-  test('reloads for the first missing chunk', () => {
-    expect(reloadsForMissingChunk(undefined, 1_000_000)).toBe(true);
+// A host whose every read waits for the test to answer it by hand, in order,
+// for the interleavings of a check that is out while the page is hidden and
+// shown.
+const manualHost = () => {
+  const state = {
+    hidden: false,
+    listeners: new Set<() => void>(),
+    next: 0,
+    pending: [] as ((answer: RunningBuild | undefined) => void)[],
+    reloads: 0,
+    ticks: new Map<number, () => void>(),
+  };
+  const host: UpdateHost = {
+    isHidden: () => state.hidden,
+    onVisibilityChange: (listener) => {
+      state.listeners.add(listener);
+      return () => state.listeners.delete(listener);
+    },
+    readBuild: () => {
+      const read = Promise.withResolvers<RunningBuild | undefined>();
+      state.pending.push(read.resolve);
+      return read.promise;
+    },
+    reload: () => {
+      state.reloads++;
+    },
+    repeat: (tick) => {
+      const id = state.next++;
+      state.ticks.set(id, tick);
+      return () => state.ticks.delete(id);
+    },
+  };
+  return {
+    answer: async (answer: RunningBuild | undefined) => {
+      state.pending.shift()?.(answer);
+      await settle();
+    },
+    host,
+    show: async (isHidden: boolean) => {
+      state.hidden = isHidden;
+      for (const listener of state.listeners) {
+        listener();
+      }
+      await settle();
+    },
+    state,
+    tick: async () => {
+      for (const tick of state.ticks.values()) {
+        tick();
+      }
+      await settle();
+    },
+  };
+};
+
+describe('watchForUpdates with a check out', () => {
+  test('a page shown while a check from before the deploy is out asks again, and reloads on the newer build', async () => {
+    const manual = manualHost();
+    watchForUpdates(RUNNING, manual.host, () => undefined);
+    await manual.answer(RUNNING);
+    await manual.tick();
+
+    await manual.show(true);
+    await manual.show(false);
+    await manual.answer(RUNNING);
+    expect(manual.state.pending).toHaveLength(1);
+    await manual.answer(NEWER);
+
+    expect(manual.state.reloads).toBe(1);
   });
 
-  test('does not reload again soon after the last such reload, so a chunk that stays missing cannot loop', () => {
+  test('a page shown while a check is out that then fails, as a suspended fetch does, still reloads', async () => {
+    const manual = manualHost();
+    watchForUpdates(RUNNING, manual.host, () => undefined);
+    await manual.answer(RUNNING);
+    await manual.tick();
+
+    await manual.show(true);
+    await manual.show(false);
+    await manual.answer(undefined);
+    await manual.answer(NEWER);
+
+    expect(manual.state.reloads).toBe(1);
+  });
+
+  test('a tick while a check is out does not use up a showing', async () => {
+    const manual = manualHost();
+    watchForUpdates(RUNNING, manual.host, () => undefined);
+    await manual.answer(RUNNING);
+    await manual.tick();
+    await manual.show(true);
+    await manual.show(false);
+
+    await manual.tick();
+    await manual.answer(RUNNING);
+    await manual.answer(NEWER);
+
+    expect(manual.state.reloads).toBe(1);
+  });
+
+  test('after a return to the page, a newer build seen later in use is offered, not loaded', async () => {
+    const manual = manualHost();
+    const states: UpdateState[] = [];
+    watchForUpdates(RUNNING, manual.host, (next) => states.push(next));
+    await manual.answer(RUNNING);
+    await manual.tick();
+    await manual.show(true);
+    await manual.show(false);
+    await manual.answer(RUNNING);
+    await manual.answer(RUNNING);
+
+    await manual.tick();
+    await manual.answer(NEWER);
+
+    expect(manual.state.reloads).toBe(0);
+    expect(states.at(-1)).toEqual({ kind: 'ready', ...NEWER });
+  });
+
+  test('after a rollback and a redeploy of the same build, the newer build is offered again', async () => {
+    const manual = manualHost();
+    const states: UpdateState[] = [];
+    watchForUpdates(RUNNING, manual.host, (next) => states.push(next));
+    await manual.answer(NEWER);
+    await manual.tick();
+    await manual.answer(RUNNING);
+    await manual.tick();
+    await manual.answer(NEWER);
+
+    expect(states.map(({ kind }) => kind)).toEqual(['ready', 'current', 'ready']);
+  });
+});
+
+const CHUNK_AT = 1_000_000;
+
+// Whether a missing chunk reloads `ms` after the last such reload.
+const reloadsAfter = (ms: number) =>
+  reloadsForMissingChunk({
+    lastReloadAt: CHUNK_AT,
+    now: CHUNK_AT + ms,
+    running: RUNNING,
+    server: NEWER,
+  });
+
+describe('reloadsForMissingChunk', () => {
+  const at = CHUNK_AT;
+
+  test('reloads when the server runs another build', () => {
+    expect(
+      reloadsForMissingChunk({ lastReloadAt: undefined, now: at, running: RUNNING, server: NEWER }),
+    ).toBe(true);
+  });
+
+  test('keeps the error when the server runs this build, or did not answer, as offline', () => {
+    expect(
+      reloadsForMissingChunk({
+        lastReloadAt: undefined,
+        now: at,
+        running: RUNNING,
+        server: RUNNING,
+      }),
+    ).toBe(false);
+    expect(
+      reloadsForMissingChunk({
+        lastReloadAt: undefined,
+        now: at,
+        running: RUNNING,
+        server: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  test('does not reload again within a minute of the last such reload, so it cannot loop', () => {
     expect(CHUNK_RELOAD_GAP_MS).toBe(60_000);
-    expect(reloadsForMissingChunk(1_000_000, 1_000_000 + 59_999)).toBe(false);
-    expect(reloadsForMissingChunk(1_000_000, 1_000_000 + 60_000)).toBe(true);
+    expect(reloadsAfter(59_999)).toBe(false);
+    expect(reloadsAfter(60_000)).toBe(true);
   });
 });

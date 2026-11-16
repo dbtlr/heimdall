@@ -39,28 +39,37 @@ export const watchForUpdates = (
 ): (() => void) => {
   let stopped = false;
   let checking = false;
-  // Set when the page is shown while a check is out, so that check's answer
-  // reloads as a check made on showing would.
-  let shownSinceCheck = false;
+  // Set when the page is shown while a check is out. That check's answer may
+  // predate a deploy, or its fetch may have been suspended with the page, so it
+  // is set aside and a fresh check made on showing replaces it.
+  let shownWhileChecking = false;
   let offered: string | undefined;
   let cancel: (() => void) | undefined;
 
   const check = async (shown: boolean) => {
-    shownSinceCheck ||= shown;
     if (checking) {
+      shownWhileChecking ||= shown;
       return;
     }
     checking = true;
     const answer = await host.readBuild().catch(() => undefined);
     checking = false;
-    const reloads = shownSinceCheck;
-    shownSinceCheck = false;
-    if (stopped || answer === undefined) {
+    if (stopped) {
+      return;
+    }
+    if (shownWhileChecking) {
+      shownWhileChecking = false;
+      void check(true);
+      return;
+    }
+    if (answer === undefined) {
       return;
     }
     if (answer.build === running.build) {
+      // A rollback to this page's build; a later deploy is offered afresh.
+      offered = undefined;
       onChange({ kind: 'current' });
-    } else if (reloads) {
+    } else if (shown) {
       host.reload();
     } else if (offered !== answer.build) {
       offered = answer.build;
@@ -94,9 +103,22 @@ export const watchForUpdates = (
   };
 };
 
-// Whether a failed load of a script chunk, which a new build's renamed files
-// cause in a page still running the old one, should reload the page: yes,
-// unless it reloaded for one in the last minute, so a chunk that stays missing
-// cannot reload the page over and over.
-export const reloadsForMissingChunk = (lastReloadAt: number | undefined, now: number): boolean =>
-  lastReloadAt === undefined || now - lastReloadAt >= CHUNK_RELOAD_GAP_MS;
+// Whether a failed load of a script chunk should reload the page: only when
+// the server answered with a build other than the page's, the case of a page on
+// an older build whose files a new build renamed, and not within a minute of
+// the last such reload. A page that is offline, or whose server is restarting,
+// keeps the error the router shows rather than reloading into a browser error.
+export const reloadsForMissingChunk = ({
+  lastReloadAt,
+  now,
+  running,
+  server,
+}: {
+  lastReloadAt: number | undefined;
+  now: number;
+  running: RunningBuild;
+  server: RunningBuild | undefined;
+}): boolean =>
+  server !== undefined &&
+  server.build !== running.build &&
+  (lastReloadAt === undefined || now - lastReloadAt >= CHUNK_RELOAD_GAP_MS);
