@@ -4,6 +4,7 @@ import { claudeCodeParser } from './claude-code-parser.ts';
 import { codexParser } from './codex-parser.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import type { Batch, HarnessParser } from './session-insight.ts';
+import { refreshStatistics } from './statistics.ts';
 import { storable, storableJson } from './storable.ts';
 import { readHeldContent, UnreadableGenerationError } from './transcript-reader.ts';
 
@@ -1058,6 +1059,18 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   // deleteOnce calls this with its transaction after holdProjection took the
   // exclusive lock. Relinking every version, deletion, and progress resets
   // therefore commit or roll back together, with no parse batch overlapping.
+  // The statistics count the generations the delete just marked, so no join
+  // below is planned on a table believed empty (HMD-209).
+  await refreshStatistics(sql, [
+    'transcript_generations',
+    'parse_progress',
+    'projected_holders',
+    'projected_requests',
+    'projected_tool_calls',
+    'projected_subagents',
+    'projected_sessions',
+    'rederiving_sessions',
+  ]);
   await linkCodexSubagents(sql);
   const [row]: { touched: number }[] = await sql`
     WITH deleted AS (

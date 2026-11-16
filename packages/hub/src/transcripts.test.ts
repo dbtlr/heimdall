@@ -491,14 +491,15 @@ const withoutAutovacuum = async (sql: SQL, tables: string[], work: () => Promise
   }
 };
 
-// Runs ANALYZE on `tables` from a connection of its own while `fill` inserts
-// in one transaction, so the statistics count none of what `fill` inserts.
-const analyzeWhileFilling = async (h: Hub, tables: string[], fill: (tx: SQL) => Promise<void>) => {
+// Runs ANALYZE on the whole database from a connection of its own while
+// `fill` inserts in one transaction, so the statistics count none of what
+// `fill` inserts, in any table.
+const analyzeWhileFilling = async (h: Hub, fill: (tx: SQL) => Promise<void>) => {
   const analyzer = new SQL(h.db.url.href, { max: 1 });
   try {
     await h.db.sql.begin(async (tx) => {
       await fill(tx);
-      await analyzer.unsafe(`ANALYZE ${tables.join(', ')}`);
+      await analyzer`ANALYZE`;
     });
   } finally {
     await analyzer.close();
@@ -775,9 +776,7 @@ describe('deleting transcripts', () => {
   test('removes many generations in seconds when statistics count almost none of them', async () => {
     await using h = await startHub();
     await withoutAutovacuum(h.db.sql, ['transcript_generations'], async () => {
-      await analyzeWhileFilling(h, ['transcript_generations'], (tx) =>
-        insertGenerations(tx, 70_000),
-      );
+      await analyzeWhileFilling(h, (tx) => insertGenerations(tx, 70_000));
       expect(await reltuples(h.db.sql, 'transcript_generations')).toBeLessThan(1000);
 
       const removed = await deleteMany(h);
@@ -811,24 +810,36 @@ describe('deleting transcripts', () => {
   }, 30_000);
 
   // Forgetting what the projection derived from deleted generations joins
-  // their progress to the generations. Planned on statistics that count
-  // almost none of either, it once ran past 60 seconds for 70,000.
-  test('forgets the progress of many deleted generations in seconds when statistics count almost none of them', async () => {
+  // their progress to the generations, and resets the progress of each
+  // Session that keeps another generation. Planned on statistics that count
+  // almost none of either table, the first was still running after 60
+  // seconds for 70,000 generations, and with nested loops turned off the
+  // reset paired every kept generation with every touched Session: 225
+  // seconds for 2,000 generations.
+  test('forgets and resets the progress of many generations in seconds when statistics count almost none of them', async () => {
     await using h = await startHub();
-    const many = 70_000;
+    const many = 35_000;
+    const sessions = many / 5;
     const tables = ['transcript_generations', 'parse_progress'];
     await withoutAutovacuum(h.db.sql, tables, async () => {
-      await analyzeWhileFilling(h, tables, async (tx) => {
-        await insertGenerations(tx, many);
-        await insertProgress(tx, { last: many, sessions: many });
+      await analyzeWhileFilling(h, async (tx) => {
+        await insertGenerations(tx, many, { at: NOW - 2 * DAY_MS });
+        await insertGenerations(tx, many, { first: many + 1 });
+        await insertProgress(tx, { last: 2 * many, sessions });
       });
       expect(await reltuples(h.db.sql, 'parse_progress')).toBeLessThan(1000);
 
-      const removed = await deleteMany(h);
+      const removed = await diagnoseIfSlow(
+        h.db.url,
+        deleteTranscripts(h.db.sql, { before: NOW - DAY_MS, now: NOW, system: 'laptop-1' }),
+        { tables },
+      );
 
       expect(removed.generations).toBe(many);
-      const [left] = await h.db.sql`SELECT count(*)::int AS n FROM parse_progress`;
-      expect(left).toEqual({ n: 0 });
+      const [left] = await h.db.sql`
+        SELECT count(*)::int AS n, max(parsed_through)::int AS furthest FROM parse_progress
+      `;
+      expect(left).toEqual({ furthest: 0, n: many });
     });
   }, 30_000);
 
