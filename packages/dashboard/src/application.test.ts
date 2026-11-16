@@ -258,11 +258,13 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
           });
         }
         return new Response('<!doctype html>', {
-          headers: { 'content-type': 'text/html; charset=utf-8' },
+          headers: { 'content-type': 'text/html; charset=utf-8', 'x-probe': 'kept' },
+          status: 203,
         });
       },
     };
     const seen: Record<string, string | null> = {};
+    const answers: Record<string, { body: string; probe: string | null; status: number }> = {};
 
     await invoke(['serve', '--port', '0'], {
       home,
@@ -280,6 +282,11 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
           ].map(async (path) => {
             const response = await fetch(new URL(path, url));
             seen[path] = response.headers.get('cache-control');
+            answers[path] = {
+              body: await response.text(),
+              probe: response.headers.get('x-probe'),
+              status: response.status,
+            };
           }),
         );
       },
@@ -294,6 +301,9 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
       '/more': 'no-cache',
       '/upper': 'no-cache',
     });
+    // A rewritten answer keeps its status, body, and other headers.
+    expect(answers['/more']).toEqual({ body: '<!doctype html>', probe: 'kept', status: 203 });
+    expect(answers['/broken']).toEqual({ body: 'Error', probe: null, status: 500 });
   });
 });
 

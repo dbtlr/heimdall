@@ -87,8 +87,8 @@ export const Route = createRootRoute({
           aria-hidden="true"
           className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-bar sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
         />
-        {/* The update watcher sits in the shell, outside the root route, so an error
-            page that replaces the layout during a deploy cannot stop it. */}
+        {/* The update watcher sits in the shell, outside the root route, so it keeps
+            watching while any route, the root included, shows an error. */}
         <UpdateWatcher>{children}</UpdateWatcher>
         <Scripts />
       </body>
