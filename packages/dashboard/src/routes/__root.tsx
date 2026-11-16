@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
+import { NavigationProgress } from '../components/navigation-progress.tsx';
 import { TopBar } from '../components/top-bar.tsx';
 import { UpdateWatcher } from '../components/update-notice.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
@@ -102,7 +103,9 @@ function Root() {
     <ServiceAttentionCount value={count}>
       <AutoRefresh />
       <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
-      <Outlet />
+      <NavigationProgress>
+        <Outlet />
+      </NavigationProgress>
       <footer
         className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
       >
