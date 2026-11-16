@@ -23,9 +23,16 @@ const isRunningBuild = (value: unknown): value is RunningBuild =>
   'version' in value &&
   typeof value.version === 'string';
 
+// How long a read of the server's build may take. A fetch a suspended phone
+// left hanging would otherwise hold the watcher's check open for good.
+const READ_TIMEOUT_MS = 10_000;
+
 // The server's build, or undefined when it did not answer with one.
 const readServerBuild = async (): Promise<RunningBuild | undefined> => {
-  const response = await fetch('/api/version', { cache: 'no-store' });
+  const response = await fetch('/api/version', {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+  });
   if (!response.ok) {
     return undefined;
   }
