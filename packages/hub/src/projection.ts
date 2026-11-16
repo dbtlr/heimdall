@@ -1088,14 +1088,24 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     forgotten AS (
       DELETE FROM parse_progress WHERE generation IN (SELECT generation FROM deleted)
     ),
+    -- Joined, not tested with IN under an OR: a planner that expects more
+    -- touched Sessions than fit in memory rescans them for every progress row.
+    rederived AS (
+      SELECT p.harness, p.parser_version, p.generation
+      FROM parse_progress p
+      JOIN transcript_generations g ON g.id = p.generation
+      JOIN touched t ON (t.harness, t.system, t.source, t.session_id)
+                      = (p.harness, g.system, g.source, p.session_id)
+      UNION
+      SELECT harness, parser_version, generation FROM holders
+    ),
     reset AS (
       UPDATE parse_progress p SET
         parsed_through = 0, held_seen = 0, skipping_line = false, unreadable_lines = 0,
         failed_attempts = 0, failed_at = NULL, failure = NULL, parser_state = NULL, agent_id = NULL
-      FROM transcript_generations g
-      WHERE g.id = p.generation AND g.deleted_at IS NULL
-        AND ((p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched)
-             OR (p.harness, p.parser_version, p.generation) IN (SELECT * FROM holders))
+      FROM rederived r, transcript_generations g
+      WHERE (p.harness, p.parser_version, p.generation) = (r.harness, r.parser_version, r.generation)
+        AND g.id = p.generation AND g.deleted_at IS NULL
     ),
     unheld AS (
       DELETE FROM projected_holders WHERE generation IN (SELECT generation FROM deleted)

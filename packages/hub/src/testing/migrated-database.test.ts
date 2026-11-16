@@ -67,6 +67,17 @@ test('a migrated database has every trigger migrating made firing, whatever the 
   expect(trigger?.enabled).toBe('O');
 });
 
+test('a migrated database has every table storage option migrating set, whatever the test before it changed', async () => {
+  {
+    await using before = await migratedDatabase();
+    await before.sql`ALTER TABLE transcript_chunks SET (autovacuum_enabled = false)`;
+  }
+  await using db = await migratedDatabase();
+  const [table]: { options: string[] | null }[] = await db.sql`
+    SELECT reloptions AS options FROM pg_class WHERE relname = 'transcript_chunks'`;
+  expect(table?.options).toBeNull();
+});
+
 test('two migrated databases in use at once are separate', async () => {
   await using first = await migratedDatabase();
   await using second = await migratedDatabase();

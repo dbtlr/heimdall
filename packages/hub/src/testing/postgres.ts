@@ -176,13 +176,14 @@ export const startTestServer = async () => {
   await testServer();
 };
 
-// What a test may change in a migrated database's schema: relations and their
-// columns, privileges, constraints, triggers and whether they fire, indexes,
-// functions, view definitions, and database settings, plus the migrations applied.
+// What a test may change in a migrated database's schema: relations, their
+// storage options, and their columns, privileges, constraints, triggers and
+// whether they fire, indexes, functions, view definitions, and database
+// settings, plus the migrations applied.
 const SCHEMA_FINGERPRINT = `
   SELECT md5(string_agg(item, '|' ORDER BY item)) AS fingerprint FROM (
     SELECT 'r' || c.oid::regclass::text || c.relkind::text || coalesce(c.relacl::text, '')
-      || coalesce(md5(pg_get_viewdef(c.oid)), '')
+      || coalesce(c.reloptions::text, '') || coalesce(md5(pg_get_viewdef(c.oid)), '')
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
     UNION ALL

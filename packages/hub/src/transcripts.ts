@@ -217,6 +217,15 @@ const deleteOnce = (
 ): Promise<Removed> =>
   sql.begin(async (tx) => {
     await tx.unsafe(`SET LOCAL statement_timeout = '${DELETE_TIMEOUT}'`);
+    // Statistics that count almost none of a table's rows, as an ANALYZE
+    // during a bulk insert leaves them, make a nested loop look free, so the
+    // planner pairs every marked generation with a full scan of another table:
+    // minutes or more for tens of thousands of generations. Hash and merge
+    // joins stay linear whatever the statistics say (HMD-209). Even a delete
+    // of one generation then scans the tables it joins in full, seconds at
+    // most, which an operator's command can afford for a plan that cannot go
+    // quadratic.
+    await tx.unsafe('SET LOCAL enable_nestloop = off');
     const matching = tx`
       deleted_at IS NULL
       AND (${system ?? null}::text IS NULL OR system = ${system ?? null})
@@ -238,13 +247,13 @@ const deleteOnce = (
     // pass's snapshot, so passes repeat until one finds nothing. Each pass
     // removes its generations' chunks in the same statement, so no list of
     // generations, however long, is sent back as parameters.
-    // The locked ids are gathered once into an array the update and the
-    // chunk delete look up by index. Joined as `IN (SELECT ...)` instead,
-    // `transcript_generations` statistics that count almost none of its rows,
-    // as an ANALYZE during a bulk insert leaves them, let the planner rescan
+    // The locked ids are gathered once into an array the update looks up by
+    // index. Joined as `IN (SELECT ...)` instead, `transcript_generations`
+    // statistics that count almost none of its rows let the planner rescan
     // the locking subquery once per generation: minutes for 70,000 of them,
-    // seconds now (HMD-199). Stale `transcript_chunks` statistics may still
-    // slow the chunk delete; that is tracked separately.
+    // seconds now (HMD-199). The chunk delete joins the marked generations
+    // instead: PostgreSQL compares each row with every element of an array
+    // built at run time, which for 140,000 generations took 40 seconds.
     const marked: Matched[] = [];
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.
@@ -257,7 +266,7 @@ const deleteOnce = (
           RETURNING id, stored_bytes
         ),
         removed AS (
-          DELETE FROM transcript_chunks WHERE generation = ANY (ARRAY(SELECT id FROM marked))
+          DELETE FROM transcript_chunks c USING marked m WHERE c.generation = m.id
         )
         SELECT id, stored_bytes FROM marked
       `;
