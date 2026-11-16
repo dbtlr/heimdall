@@ -97,17 +97,22 @@ describe('AgentsCard', () => {
     expect(text(html)).toContain('server-1 · Claude Code · Opus 5.5 · 2 h 10 min');
   });
 
-  test('lists 5 running Sessions and links the rest as "+N more" to the Agents page', async () => {
+  test('links every running Session, limits those past the fifth to a phone, and hides "+N more" from 1024 px', async () => {
     const running = Array.from({ length: 7 }, (_, index) =>
       session(`s${String(index)}`, { lastRequestAt: NOW - index * 1000 }),
     );
 
     const html = await render(agents({ running }));
+    const rows = [
+      ...html.matchAll(/<li class="(?<classes>[^"]*)"><a[^>]*href="[^"]*\/(?<id>s\d)"/gu),
+    ];
+    const phoneOnly = rows.filter((row) => row.groups?.classes?.includes('max-lg:hidden') === true);
 
-    expect(html.match(/sessions\/claude-code\/claude-code\/s/gu)).toHaveLength(5);
-    expect(html).toContain('/s4"');
-    expect(html).not.toContain('/s5"');
-    expect(text(html)).toContain('+2 more');
+    expect(rows.map((row) => row.groups?.id)).toEqual(['s0', 's1', 's2', 's3', 's4', 's5', 's6']);
+    expect(phoneOnly.map((row) => row.groups?.id)).toEqual(['s5', 's6']);
+    expect(html).toMatch(
+      /<a[^>]*class="(?:[^"]* )?lg:hidden(?: [^"]*)?"[^>]*href="\/agents"[^>]*>\+2 more/u,
+    );
   });
 
   test('with none running, says so and when the latest Session ended', async () => {

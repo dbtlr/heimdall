@@ -6,7 +6,8 @@ import type { SessionKey } from '../server/session-view-types.ts';
 // A Session is running while its latest request is no older than this.
 export const RUNNING_MS = 5 * 60_000;
 
-// How many running Sessions Home's Agents card lists before "+N more".
+// How many running Sessions Home's Agents card lists below 1024 px before
+// "+N more"; from there it lists them all.
 export const RUNNING_SHOWN = 5;
 
 // One local day in epoch milliseconds: from its first instant to the next

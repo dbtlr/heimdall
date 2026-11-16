@@ -44,6 +44,23 @@ const COMMAND =
 
 const ROW = 'flex min-w-0 items-baseline justify-between gap-3 border-t py-1.5 first:border-t-0';
 
+// From 1024 px the open card's parts sit in columns, as many as are present:
+// the lead a little wider than the first step and the other items.
+const COLUMNS: Record<1 | 2 | 3, string> = {
+  1: 'lg:grid-cols-1',
+  2: 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]',
+  3: 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]',
+};
+
+// The lead is always a column; the first step and the other items are each
+// one only when present.
+function columnCount(hasStep: boolean, hasOthers: boolean): 1 | 2 | 3 {
+  if (hasStep && hasOthers) {
+    return 3;
+  }
+  return hasStep || hasOthers ? 2 : 1;
+}
+
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 // A label and its value on one line, the value at the right.
@@ -64,7 +81,7 @@ function FirstStep({ item }: { item: Attention }) {
     return null;
   }
   return (
-    <div className="mt-3 text-[13px]">
+    <div className="mt-3 text-[13px] lg:mt-0">
       <p className="wrap-anywhere">
         <b className="font-semibold">Next step.</b> {step.text}
       </p>
@@ -166,6 +183,8 @@ function LoadEvidence({
 
 // The item that needs the operator most: what it is, its level and how long
 // it has been open, linking to its page, then its evidence and first step.
+// From 1024 px the title with its evidence and the first step are two
+// columns of the card's grid.
 function Lead({
   evidence,
   item,
@@ -184,26 +203,28 @@ function Lead({
     body = <ServiceDownEvidence item={item} now={now} stops={evidence?.stops} />;
   }
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <AttentionLink
-          className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold wrap-anywhere hover:underline"
-          item={item}
-        >
-          <ConditionGlyph kind={level} />
-          {itemTitle(item)}
-        </AttentionLink>
-        <span
-          className={cn(
-            'rounded-full px-2 py-0.5 text-xs whitespace-nowrap',
-            MARK_COLOR[level],
-            CHIP[level],
-          )}
-        >
-          {capitalize(level)} · {open}
-        </span>
+    <div className="lg:contents">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <AttentionLink
+            className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold wrap-anywhere hover:underline"
+            item={item}
+          >
+            <ConditionGlyph kind={level} />
+            {itemTitle(item)}
+          </AttentionLink>
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-xs whitespace-nowrap',
+              MARK_COLOR[level],
+              CHIP[level],
+            )}
+          >
+            {capitalize(level)} · {open}
+          </span>
+        </div>
+        {body}
       </div>
-      {body}
       <FirstStep item={item} />
     </div>
   );
@@ -234,11 +255,20 @@ const otherKey = (item: Attention) => `${item.system}-${item.kind}-${item.subjec
 
 // The other items, a line each: the alerts and warnings after the lead, then
 // the notes. Past OTHERS_SHOWN, a last line counts the rest and opens them in
-// place, so the card itself lists every item it counts.
-function OtherItems({ items, now }: { items: readonly Attention[]; now: number }) {
+// place, so the card itself lists every item it counts. `className` places
+// the list from 1024 px up.
+function OtherItems({
+  className,
+  items,
+  now,
+}: {
+  className: string;
+  items: readonly Attention[];
+  now: number;
+}) {
   const more = items.length - OTHERS_SHOWN;
   return (
-    <ul className="mt-3 border-t pt-1 text-[13px]">
+    <ul className={cn('mt-3 border-t pt-1 text-[13px]', className)}>
       {items.slice(0, OTHERS_SHOWN).map((item) => (
         <OtherItem item={item} key={otherKey(item)} now={now} />
       ))}
@@ -261,7 +291,8 @@ function OtherItems({ items, now }: { items: readonly Attention[]; now: number }
 }
 
 // Nothing needs the operator: says so, that only notes are open when some
-// are, and names the Condition that cleared last, when one ever did.
+// are, and names the Condition that cleared last, when one ever did. From
+// 1024 px its title and sentence are items of the card's one line.
 function NothingOpen({
   cleared,
   notes,
@@ -273,13 +304,13 @@ function NothingOpen({
 }) {
   const subject = cleared === undefined ? '' : conditionSubject(cleared);
   return (
-    <div>
+    <div className="lg:contents">
       <p className="flex items-center gap-1.5 text-[15px] font-semibold">
         <ConditionGlyph kind="cleared" />
         {notes ? 'No alert or warning open' : 'Nothing open'}
       </p>
       {cleared !== undefined && (
-        <p className="mt-1 text-[13px] text-muted-foreground">
+        <p className="mt-1 text-[13px] text-muted-foreground lg:mt-0">
           The last Condition cleared {formatSpan(Math.max(0, now - cleared.clearedAt))} ago:{' '}
           <Link
             className="text-foreground hover:underline"
@@ -300,7 +331,11 @@ function NothingOpen({
 // evidence, tinted for its level; every other alert and warning after it in a
 // line each; or, with none open, the Condition that cleared last. The notes on
 // paired Systems follow as the last lines. They never tint the card (ADR-0017),
-// and maintenance notes and Service restarted notes wait elsewhere.
+// and maintenance notes and Service restarted notes wait elsewhere. From
+// 1024 px a card with nothing open is one line, wrapping when it does not fit:
+// eyebrow, title, sentence, and the Activity link at the far right, with any
+// notes in a row under it; an open card lays the lead, its first step, and the
+// other items in as many columns as are present.
 export function NeedsAttention({
   attention,
   lastCleared,
@@ -316,6 +351,9 @@ export function NeedsAttention({
   const { notes } = fleetAttention(attention);
   const others = [...rest, ...notes];
   const level = lead?.level;
+  const hasStep = lead !== undefined && nextSteps(lead).steps.length > 0;
+  const hasOthers = others.length > 0;
+  const columns = columnCount(hasStep, hasOthers);
   return (
     <section
       aria-labelledby="needs-attention"
@@ -331,15 +369,33 @@ export function NeedsAttention({
           className={cn('pointer-events-none absolute inset-0', TINT[level].wash)}
         />
       )}
-      <div className="relative">
-        <div className="mb-2 flex items-baseline justify-between gap-3">
+      <div
+        className={cn(
+          'relative',
+          lead === undefined
+            ? 'lg:flex lg:flex-wrap lg:items-baseline lg:gap-x-5 lg:gap-y-1'
+            : cn('lg:grid lg:gap-x-7', COLUMNS[columns]),
+        )}
+      >
+        <div
+          className={cn(
+            'mb-2 flex items-baseline justify-between gap-3',
+            lead === undefined ? 'lg:contents' : 'lg:col-span-full',
+          )}
+        >
           <h2
             className="text-[11px] font-semibold tracking-[0.08em] text-dim uppercase"
             id="needs-attention"
           >
             Needs attention
           </h2>
-          <Link className="text-xs text-link hover:underline" to="/activity">
+          <Link
+            className={cn(
+              'text-xs text-link hover:underline',
+              lead === undefined && 'lg:order-1 lg:ml-auto',
+            )}
+            to="/activity"
+          >
             Activity →
           </Link>
         </div>
@@ -352,7 +408,15 @@ export function NeedsAttention({
             now={now}
           />
         )}
-        {others.length > 0 && <OtherItems items={others} now={now} />}
+        {others.length > 0 && (
+          <OtherItems
+            className={
+              lead === undefined ? 'lg:order-2 lg:basis-full' : 'lg:mt-0 lg:border-t-0 lg:pt-0'
+            }
+            items={others}
+            now={now}
+          />
+        )}
       </div>
     </section>
   );

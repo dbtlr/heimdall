@@ -32,10 +32,13 @@ export const Route = createFileRoute('/')({
   }),
 });
 
-// Home, the same on every screen and stacked on a phone: the verdict, what
-// needs attention beside agent work, a tile per paired System, then the
-// maintenance that can wait, what changed, and the jobs, and the ways on to
-// Activity and the unpaired Systems.
+// Home, the same cards on every screen: the verdict, what needs attention,
+// agent work, a tile per paired System, then the maintenance that can wait,
+// what changed, and the jobs, and the ways on to Activity and the unpaired
+// Systems. A phone stacks them in that order. From 1024 px each is a
+// full-width band, in the order verdict, what needs attention, the tiles,
+// agent work, then the three bottom cards in a row of equal height; the DOM
+// keeps the phone's order and `lg:order-*` sets the desktop's.
 function Home() {
   const home = Route.useLoaderData();
   const search = Route.useSearch();
@@ -67,19 +70,21 @@ function Home() {
           figures={homeFigures(home.lanes, now)}
           verdict={homeVerdict(home)}
         />
-        <div className="grid items-start gap-3 sm:gap-3.5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="lg:order-1">
           <NeedsAttention
             attention={home.attention}
             lastCleared={home.lastCleared}
             lead={home.lead}
             now={now}
           />
+        </div>
+        <div className="lg:order-3">
           <AgentsCard agents={agents} now={now} />
         </div>
-        <section aria-label="Systems">
+        <section aria-label="Systems" className="lg:order-2">
           <FleetTiles from={home.from} now={now} running={running} tiles={tiles} />
         </section>
-        <div className="grid items-start gap-3 sm:gap-3.5 lg:grid-cols-3">
+        <div className="grid items-start gap-3 sm:gap-3.5 lg:order-4 lg:grid-cols-3 lg:items-stretch">
           <MaintenanceCardView
             card={maintenanceCard(
               {
