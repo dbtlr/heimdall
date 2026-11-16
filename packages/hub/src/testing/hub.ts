@@ -46,8 +46,8 @@ export const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
 // A Hub on a migrated database, holding nothing a test before it stored, where two Systems are paired, with
 // tokens a test can name. The wall clock reads `clock.now` and the monotonic
 // clock `clock.elapsed`, so a test can move either between requests.
-export const startHub = async () => {
-  const db = await migratedDatabase();
+export const startHub = async (options: { fresh?: boolean } = {}) => {
+  const db = await migratedDatabase(options);
   await storeToken(db.sql, { pairedAt: NOW, system: 'server-1', token: 'server-token' });
   await storeToken(db.sql, { pairedAt: NOW, system: 'laptop-1', token: 'laptop-token' });
   const clock = { elapsed: 0, now: NOW };

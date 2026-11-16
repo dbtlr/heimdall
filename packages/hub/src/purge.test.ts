@@ -373,46 +373,40 @@ test('purge system --transcripts deletes what a purge that kept them left, which
 // planned on that once paired every generation with a full scan of its
 // progress and its chunks: 85 seconds for 30,000 generations (HMD-209).
 test('purge system --transcripts removes many generations in seconds when statistics count almost none of them', async () => {
-  await using db = await migratedDatabase();
+  // Fresh, since the shared database's reset keeps the statistics this sets up.
+  await using db = await migratedDatabase({ fresh: true });
   const many = 30_000;
   const tables = ['transcript_generations', 'transcript_chunks', 'parse_progress'];
   for (const table of tables) {
     // oxlint-disable-next-line no-await-in-loop -- one table at a time.
     await db.sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
   }
+  const analyzer = new SQL(db.url.href, { max: 1 });
   try {
-    const analyzer = new SQL(db.url.href, { max: 1 });
-    try {
-      await db.sql.begin(async (tx) => {
-        await tx`
-          INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
-          SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${AT}, ${AT}, 1
-          FROM generate_series(1, ${many}::int) AS n
-        `;
-        await tx`
-          INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
-          SELECT n, 0, 1, '\\x00'::bytea FROM generate_series(1, ${many}::int) AS n
-        `;
-        await tx`
-          INSERT INTO parse_progress (harness, parser_version, generation, session_id, parsed_through, held_seen)
-          SELECT 'claude-code', 1, n, 'session-' || n, 1, 1 FROM generate_series(1, ${many}::int) AS n
-        `;
-        await analyzer`ANALYZE`;
-      });
-    } finally {
-      await analyzer.close();
-    }
-
-    const purged = await purgeSystem(db.sql, { system: 'laptop-1', transcripts: true });
-
-    expect(purged.kind).toBe('purged');
-    expect(purged.kind === 'purged' && purged.transcripts?.generations).toBe(many);
+    await db.sql.begin(async (tx) => {
+      await tx`
+        INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
+        SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${AT}, ${AT}, 1
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
+        SELECT n, 0, 1, '\\x00'::bytea FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO parse_progress (harness, parser_version, generation, session_id, parsed_through, held_seen)
+        SELECT 'claude-code', 1, n, 'session-' || n, 1, 1 FROM generate_series(1, ${many}::int) AS n
+      `;
+      await analyzer`ANALYZE`;
+    });
   } finally {
-    for (const table of tables) {
-      // oxlint-disable-next-line no-await-in-loop -- one table at a time.
-      await db.sql.unsafe(`ALTER TABLE ${table} RESET (autovacuum_enabled)`);
-    }
+    await analyzer.close();
   }
+
+  const purged = await purgeSystem(db.sql, { system: 'laptop-1', transcripts: true });
+
+  expect(purged.kind).toBe('purged');
+  expect(purged.kind === 'purged' && purged.transcripts?.generations).toBe(many);
 }, 30_000);
 
 test('purge system refuses a paired System, deletes nothing, and exits 1', async () => {

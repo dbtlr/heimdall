@@ -312,8 +312,10 @@ class ReleasedDuringSetupError extends Error {
 // reset between them, since migrating a fresh one costs about a third of a
 // second (HMD-194). A test that changes its schema gets a newly migrated one
 // next time, and one asked for while another is in use is fresh and its own.
-export const migratedDatabase = async () => {
-  if (sharedInUse) {
+// The reset keeps the planner's statistics, which TRUNCATE leaves, so a test
+// that depends on what they say asks for a fresh one: `{ fresh: true }`.
+export const migratedDatabase = async ({ fresh = false }: { fresh?: boolean } = {}) => {
+  if (fresh || sharedInUse) {
     const db = await testDatabase();
     await migrate(db.sql);
     return db;

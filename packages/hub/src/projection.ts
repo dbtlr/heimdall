@@ -1060,7 +1060,8 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   // exclusive lock. Relinking every version, deletion, and progress resets
   // therefore commit or roll back together, with no parse batch overlapping.
   // The statistics count the generations the delete just marked, so no join
-  // below is planned on a table believed empty (HMD-209).
+  // below is planned on a table believed empty (HMD-209). The stored tables
+  // are joined by the trigger that forgets a hidden Session's stored insight.
   await refreshStatistics(sql, [
     'transcript_generations',
     'parse_progress',
@@ -1070,6 +1071,9 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     'projected_subagents',
     'projected_sessions',
     'rederiving_sessions',
+    'stored_session_stretches',
+    'stored_session_totals',
+    'stored_session_model_totals',
   ]);
   await linkCodexSubagents(sql);
   const [row]: { touched: number }[] = await sql`
