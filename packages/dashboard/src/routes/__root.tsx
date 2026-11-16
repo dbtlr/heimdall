@@ -25,6 +25,17 @@ const readFleetSummary = async () => {
   }
 };
 
+// The count of Services down or restarted beside Services. A failed read
+// shows none rather than failing every page: a failed root read would replace
+// the whole layout, its navigation and refresh included, with an error.
+const readServiceAttentionCount = async () => {
+  try {
+    return await getServiceAttentionCount();
+  } catch {
+    return 0;
+  }
+};
+
 // The footer's Hub version. A failed read leaves it unknown rather than
 // failing every page.
 const readHubVersion = async () => {
@@ -58,7 +69,7 @@ export const Route = createRootRoute({
   }),
   loader: async () => {
     const [count, fleet, hubVersion] = await Promise.all([
-      getServiceAttentionCount(),
+      readServiceAttentionCount(),
       readFleetSummary(),
       readHubVersion(),
     ]);
@@ -76,7 +87,9 @@ export const Route = createRootRoute({
           aria-hidden="true"
           className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-bar sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
         />
-        {children}
+        {/* The update watcher sits in the shell, outside the root route, so an error
+            page that replaces the layout during a deploy cannot stop it. */}
+        <UpdateWatcher>{children}</UpdateWatcher>
         <Scripts />
       </body>
     </html>
@@ -87,22 +100,20 @@ function Root() {
   const { count, fleet, hubVersion } = Route.useLoaderData();
   return (
     <ServiceAttentionCount value={count}>
-      <UpdateWatcher>
-        <AutoRefresh />
-        <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
-        <Outlet />
-        <footer
-          className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
-        >
-          <Link className="hover:text-foreground" to="/hub">
-            Heimdall dashboard v{DASHBOARD_VERSION} · Hub{' '}
-            {hubVersion === undefined ? 'version unknown' : `v${hubVersion}`} · Hub status ›
-          </Link>
-        </footer>
-        <div className="sm:hidden">
-          <AppNavigation />
-        </div>
-      </UpdateWatcher>
+      <AutoRefresh />
+      <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
+      <Outlet />
+      <footer
+        className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
+      >
+        <Link className="hover:text-foreground" to="/hub">
+          Heimdall dashboard v{DASHBOARD_VERSION} · Hub{' '}
+          {hubVersion === undefined ? 'version unknown' : `v${hubVersion}`} · Hub status ›
+        </Link>
+      </footer>
+      <div className="sm:hidden">
+        <AppNavigation />
+      </div>
     </ServiceAttentionCount>
   );
 }

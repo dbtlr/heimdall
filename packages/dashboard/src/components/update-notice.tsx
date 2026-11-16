@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { reloadsForMissingChunk, watchForUpdates } from '../lib/update-watch.ts';
 import type { RunningBuild, UpdateHost, UpdateState } from '../lib/update-watch.ts';
 import { DASHBOARD_BUILD, DASHBOARD_VERSION } from '../version.ts';
+import { browser } from './auto-refresh.tsx';
 
 const RUNNING: RunningBuild = { build: DASHBOARD_BUILD, version: DASHBOARD_VERSION };
 
@@ -32,23 +33,7 @@ const readServerBuild = async (): Promise<RunningBuild | undefined> => {
   return isRunningBuild(answer) ? { build: answer.build, version: answer.version } : undefined;
 };
 
-const browser: UpdateHost = {
-  isHidden: () => document.hidden,
-  onVisibilityChange: (listener) => {
-    document.addEventListener('visibilitychange', listener);
-    return () => {
-      document.removeEventListener('visibilitychange', listener);
-    };
-  },
-  readBuild: readServerBuild,
-  reload: reloadPage,
-  repeat: (tick, everyMs) => {
-    const timer = setInterval(tick, everyMs);
-    return () => {
-      clearInterval(timer);
-    };
-  },
-};
+const host: UpdateHost = { ...browser, readBuild: readServerBuild, reload: reloadPage };
 
 // Session storage can be missing or refuse a write, as in a private window.
 // Without it, only the server's answer keeps a missing chunk from reloading again.
@@ -86,7 +71,7 @@ export function UpdatePill({ onReload, state }: { onReload: () => void; state: U
       <div className="flex items-center gap-3 rounded-full border bg-popover py-1.5 pr-1.5 pl-4 text-sm shadow-[0_10px_30px_rgb(0_0_0/0.6)]">
         <span
           aria-hidden="true"
-          className="size-2 rounded-full bg-primary shadow-[0_0_0_4px_rgb(127_176_255/0.18)]"
+          className="size-2 rounded-full bg-primary ring-4 ring-primary/18"
         />
         New version ready
         <button
@@ -161,7 +146,7 @@ export function DashboardVersion() {
 // confirms it runs another build.
 export function UpdateWatcher({ children }: { children: ReactNode }) {
   const [state, setState] = useState<UpdateState>({ kind: 'unknown' });
-  useEffect(() => watchForUpdates(RUNNING, browser, setState), []);
+  useEffect(() => watchForUpdates(RUNNING, host, setState), []);
   useEffect(() => {
     // The error still reaches the router, which shows it; the reload, when
     // the server confirms a newer build, replaces it.
