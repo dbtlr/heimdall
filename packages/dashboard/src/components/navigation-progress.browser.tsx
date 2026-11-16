@@ -33,12 +33,14 @@ const heldRead = () => {
 };
 
 // A link inside a page leads to a page that takes a while: the wait shows after
-// its delay and clears on arrival. The paths are the app's own, which the
-// router's registered types want of a link. A page that is ready at once, and a refresh
-// of the page in view, never show it.
+// its delay and clears on arrival. A page that is ready at once never shows it,
+// and neither does a refresh of the page in view, in the background or, after
+// a failed read, in the foreground. The paths are the app's own, which the
+// router's registered types want of a link.
 async function run() {
   let held = heldRead();
   let slowReads = 0;
+  let failing = false;
   const root = createRootRoute({
     component: () => (
       <NavigationProgress>
@@ -70,6 +72,9 @@ async function run() {
     getParentRoute: () => root,
     loader: () => {
       slowReads += 1;
+      if (failing) {
+        throw new TypeError('Failed to fetch');
+      }
       return held.read;
     },
     path: '/services',
@@ -134,6 +139,23 @@ async function run() {
     held.release();
     await wait(SHOW_AFTER_MS);
     assert(seen.length === 0, `Nor does its end: ${seen.join(',')}`);
+
+    // The router reads a page whose last read failed in the foreground, with
+    // the error still in view.
+    failing = true;
+    await router.invalidate();
+    await wait(SHOW_AFTER_MS);
+    assert(shows('Something went wrong!'), `The read failed: ${container.textContent}`);
+    failing = false;
+    seen.length = 0;
+    held = heldRead();
+    void router.invalidate();
+    await wait(SHOW_AFTER_MS * 3);
+    assert(seen.length === 0, `A refresh after a failed read shows nothing: ${seen.join(',')}`);
+    held.release();
+    await wait(SHOW_AFTER_MS);
+    assert(shows('slow page'), `The page recovers: ${container.textContent}`);
+    assert(seen.length === 0, `Nor does its recovery: ${seen.join(',')}`);
   } finally {
     observer.disconnect();
     reactRoot.unmount();
