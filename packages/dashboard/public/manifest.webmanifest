@@ -1,0 +1,14 @@
+{
+  "name": "Heimdall",
+  "short_name": "Heimdall",
+  "description": "Every System's Vitals, Services, jobs, and agent Sessions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0f18",
+  "theme_color": "#0e1420",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

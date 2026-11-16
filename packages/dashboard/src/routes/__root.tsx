@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
 import { TopBar } from '../components/top-bar.tsx';
+import { UpdateWatcher } from '../components/update-notice.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
@@ -44,12 +45,15 @@ export const Route = createRootRoute({
       { href: '/favicon.ico', rel: 'icon', sizes: '32x32' },
       { href: '/favicon.svg', rel: 'icon', type: 'image/svg+xml' },
       { href: '/apple-touch-icon.png', rel: 'apple-touch-icon' },
+      // Names the app, its icons, and its standalone display for a home screen.
+      { href: '/manifest.webmanifest', rel: 'manifest' },
     ],
     meta: [
       // oxlint-disable-next-line unicorn/text-encoding-identifier-case -- HTML wants the name "utf-8".
       { charSet: 'utf-8' },
       { content: 'width=device-width, initial-scale=1, viewport-fit=cover', name: 'viewport' },
       { title: 'Heimdall' },
+      { content: 'Heimdall', name: 'apple-mobile-web-app-title' },
     ],
   }),
   loader: async () => {
@@ -83,20 +87,22 @@ function Root() {
   const { count, fleet, hubVersion } = Route.useLoaderData();
   return (
     <ServiceAttentionCount value={count}>
-      <AutoRefresh />
-      <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
-      <Outlet />
-      <footer
-        className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
-      >
-        <Link className="hover:text-foreground" to="/hub">
-          Heimdall dashboard v{DASHBOARD_VERSION} · Hub{' '}
-          {hubVersion === undefined ? 'version unknown' : `v${hubVersion}`} · Hub status ›
-        </Link>
-      </footer>
-      <div className="sm:hidden">
-        <AppNavigation />
-      </div>
+      <UpdateWatcher>
+        <AutoRefresh />
+        <TopBar fleet={fleet} loadJumpIndex={() => getJumpIndex()} />
+        <Outlet />
+        <footer
+          className={`${contentFrame('wide')} hidden py-6 text-sm text-muted-foreground sm:block`}
+        >
+          <Link className="hover:text-foreground" to="/hub">
+            Heimdall dashboard v{DASHBOARD_VERSION} · Hub{' '}
+            {hubVersion === undefined ? 'version unknown' : `v${hubVersion}`} · Hub status ›
+          </Link>
+        </footer>
+        <div className="sm:hidden">
+          <AppNavigation />
+        </div>
+      </UpdateWatcher>
     </ServiceAttentionCount>
   );
 }

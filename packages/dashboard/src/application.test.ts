@@ -218,6 +218,50 @@ test('serve logs a warning for a request it answers with a server error, but not
   });
 });
 
+test('serve sends pages as no-cache, so a reload always fetches the current build, and leaves other answers alone', async () => {
+  await withHome(async (home) => {
+    const app: BuiltServer = {
+      fetch: (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === '/assets/main-abc.js') {
+          return new Response('', {
+            headers: {
+              'cache-control': 'public, max-age=31536000, immutable',
+              'content-type': 'text/javascript',
+            },
+          });
+        }
+        if (pathname === '/api/version') {
+          return Response.json({}, { headers: { 'cache-control': 'no-store' } });
+        }
+        return new Response('<!doctype html>', {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+      },
+    };
+    const seen: Record<string, string | null> = {};
+
+    await invoke(['serve', '--port', '0'], {
+      home,
+      loadServer: () => Promise.resolve(app),
+      whileServing: async (url) => {
+        await Promise.all(
+          ['/more', '/assets/main-abc.js', '/api/version'].map(async (path) => {
+            const response = await fetch(new URL(path, url));
+            seen[path] = response.headers.get('cache-control');
+          }),
+        );
+      },
+    });
+
+    expect(seen).toEqual({
+      '/api/version': 'no-store',
+      '/assets/main-abc.js': 'public, max-age=31536000, immutable',
+      '/more': 'no-cache',
+    });
+  });
+});
+
 test('serve on a port already in use says which address it could not listen on, and exits 1', async () => {
   await withHome(async (home) => {
     const taken = Bun.serve({ fetch: () => new Response(), hostname: '127.0.0.1', port: 0 });

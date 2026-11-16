@@ -20,6 +20,7 @@ import { Route as MoreRouteImport } from './routes/more'
 import { Route as ServicesRouteImport } from './routes/services'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as ApiVersionRouteImport } from './routes/api.version'
 import { Route as ProjectsNameRouteImport } from './routes/projects.$name'
 import { Route as SystemsIndexRouteImport } from './routes/systems.index'
 import { Route as SystemsNameRouteImport } from './routes/systems.$name'
@@ -84,6 +85,11 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiVersionRoute = ApiVersionRouteImport.update({
+  id: '/api/version',
+  path: '/api/version',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsNameRoute = ProjectsNameRouteImport.update({
   id: '/projects/$name',
   path: '/projects/$name',
@@ -139,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/version': typeof ApiVersionRoute
   '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems/': typeof SystemsIndexRoute
@@ -160,6 +167,7 @@ export interface FileRoutesByTo {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/version': typeof ApiVersionRoute
   '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems': typeof SystemsIndexRoute
@@ -182,6 +190,7 @@ export interface FileRoutesById {
   '/services': typeof ServicesRoute
   '/timeline': typeof TimelineRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/version': typeof ApiVersionRoute
   '/projects/$name': typeof ProjectsNameRoute
   '/systems/$name': typeof SystemsNameRoute
   '/systems/': typeof SystemsIndexRoute
@@ -205,6 +214,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/api/version'
     | '/projects/$name'
     | '/systems/$name'
     | '/systems/'
@@ -226,6 +236,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/api/version'
     | '/projects/$name'
     | '/systems/$name'
     | '/systems'
@@ -247,6 +258,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/timeline'
     | '/api/health'
+    | '/api/version'
     | '/projects/$name'
     | '/systems/$name'
     | '/systems/'
@@ -269,6 +281,7 @@ export interface RootRouteChildren {
   ServicesRoute: typeof ServicesRoute
   TimelineRoute: typeof TimelineRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiVersionRoute: typeof ApiVersionRoute
   ProjectsNameRoute: typeof ProjectsNameRoute
   SystemsNameRoute: typeof SystemsNameRoute
   SystemsIndexRoute: typeof SystemsIndexRoute
@@ -358,6 +371,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/version': {
+      id: '/api/version'
+      path: '/api/version'
+      fullPath: '/api/version'
+      preLoaderRoute: typeof ApiVersionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/$name': {
       id: '/projects/$name'
       path: '/projects/$name'
@@ -429,6 +449,7 @@ const rootRouteChildren: RootRouteChildren = {
   ServicesRoute: ServicesRoute,
   TimelineRoute: TimelineRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiVersionRoute: ApiVersionRoute,
   ProjectsNameRoute: ProjectsNameRoute,
   SystemsNameRoute: SystemsNameRoute,
   SystemsIndexRoute: SystemsIndexRoute,

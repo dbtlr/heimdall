@@ -12,10 +12,27 @@ export type BuiltServer = { fetch: (request: Request) => Promise<Response> | Res
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+// A page answer marked no-cache, so a browser asks again on every load and a
+// reload always gets the build the server now runs. An answer that names its
+// own caching, or is not a page, is left as it is.
+const pageUncached = (response: Response): Response => {
+  const type = response.headers.get('content-type') ?? '';
+  if (!type.startsWith('text/html') || response.headers.has('cache-control')) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'no-cache');
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+};
+
 // The built app's handler, with a warning logged for each request it answers
 // with a server error, so a failing page leaves a line in the log. The page
 // itself shows the cause. A failed health check is left out, as the Hub leaves
-// it out, so an outage does not log on every poll.
+// it out, so an outage does not log on every poll. Pages go out no-cache.
 const answeringWith =
   (app: BuiltServer, log: RuntimeLog, clean: (message: string) => string) =>
   async (request: Request): Promise<Response> => {
@@ -24,7 +41,7 @@ const answeringWith =
     if (response.status >= 500 && pathname !== '/api/health') {
       await log.warn(clean(`${request.method} ${pathname} answered ${String(response.status)}.`));
     }
-    return response;
+    return pageUncached(response);
   };
 
 // `heimdall-dashboard serve`: serves the built app until systemd or a terminal
