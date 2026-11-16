@@ -110,7 +110,9 @@ describe('AgentsCard', () => {
 
     expect(rows.map((row) => row.groups?.id)).toEqual(['s0', 's1', 's2', 's3', 's4', 's5', 's6']);
     expect(phoneOnly.map((row) => row.groups?.id)).toEqual(['s5', 's6']);
-    expect(html).toMatch(/<a[^>]*class="[^"]*lg:hidden[^"]*"[^>]*href="\/agents"[^>]*>\+2 more/u);
+    expect(html).toMatch(
+      /<a[^>]*class="(?:[^"]* )?lg:hidden(?: [^"]*)?"[^>]*href="\/agents"[^>]*>\+2 more/u,
+    );
   });
 
   test('with none running, says so and when the latest Session ended', async () => {

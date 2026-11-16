@@ -332,10 +332,10 @@ function NothingOpen({
 // line each; or, with none open, the Condition that cleared last. The notes on
 // paired Systems follow as the last lines. They never tint the card (ADR-0017),
 // and maintenance notes and Service restarted notes wait elsewhere. From
-// 1024 px a card with nothing open is one line, eyebrow, title, sentence, and
-// the Activity link at the far right, with any notes in a row under it; an open
-// card lays the lead, its first step, and the other items in as many columns
-// as are present.
+// 1024 px a card with nothing open is one line, wrapping when it does not fit:
+// eyebrow, title, sentence, and the Activity link at the far right, with any
+// notes in a row under it; an open card lays the lead, its first step, and the
+// other items in as many columns as are present.
 export function NeedsAttention({
   attention,
   lastCleared,
