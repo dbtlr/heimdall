@@ -234,6 +234,20 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
         if (pathname === '/api/version') {
           return Response.json({}, { headers: { 'cache-control': 'no-store' } });
         }
+        if (pathname === '/broken') {
+          return new Response('Error', {
+            headers: { 'cache-control': 'public, max-age=600', 'content-type': 'text/plain' },
+            status: 500,
+          });
+        }
+        if (pathname === '/cached-page') {
+          return new Response('<!doctype html>', {
+            headers: { 'cache-control': 'private, max-age=5', 'content-type': 'text/html' },
+          });
+        }
+        if (pathname === '/upper') {
+          return new Response('<!doctype html>', { headers: { 'content-type': 'Text/HTML' } });
+        }
         if (pathname === '/assets/gone-abc.js') {
           return new Response('Not Found', {
             headers: {
@@ -255,12 +269,18 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
       loadServer: () => Promise.resolve(app),
       whileServing: async (url) => {
         await Promise.all(
-          ['/more', '/assets/main-abc.js', '/api/version', '/assets/gone-abc.js'].map(
-            async (path) => {
-              const response = await fetch(new URL(path, url));
-              seen[path] = response.headers.get('cache-control');
-            },
-          ),
+          [
+            '/more',
+            '/assets/main-abc.js',
+            '/api/version',
+            '/assets/gone-abc.js',
+            '/broken',
+            '/cached-page',
+            '/upper',
+          ].map(async (path) => {
+            const response = await fetch(new URL(path, url));
+            seen[path] = response.headers.get('cache-control');
+          }),
         );
       },
     });
@@ -269,7 +289,10 @@ test('serve sends pages as no-cache and failed answers as no-store, so a reload 
       '/api/version': 'no-store',
       '/assets/gone-abc.js': 'no-store',
       '/assets/main-abc.js': 'public, max-age=31536000, immutable',
+      '/broken': 'no-store',
+      '/cached-page': 'private, max-age=5',
       '/more': 'no-cache',
+      '/upper': 'no-cache',
     });
   });
 });

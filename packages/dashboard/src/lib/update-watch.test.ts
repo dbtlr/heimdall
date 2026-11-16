@@ -10,6 +10,8 @@ import type { RunningBuild, UpdateHost, UpdateState } from './update-watch.ts';
 
 const RUNNING: RunningBuild = { build: '1.0.0+a', version: '1.0.0' };
 const NEWER = { build: '1.1.0+b', version: '1.1.0' };
+// A rebuild of the running release, which must count as another build.
+const REBUILT = { build: '1.0.0+c', version: '1.0.0' };
 
 // A host whose clock, visibility, and server answer a test moves by hand. Each
 // read of the server's build waits until the test settles it, so a test can
@@ -248,6 +250,19 @@ describe('watchForUpdates', () => {
     expect(fake.state.periods).toEqual([5000]);
   });
 
+  test('a rebuild of the same release is another build: offered in use, loaded on return', async () => {
+    const fake = fakeHost();
+    const { states } = await watching(fake);
+
+    fake.serve(REBUILT);
+    await fake.elapse();
+    expect(states.at(-1)).toEqual({ kind: 'ready', ...REBUILT });
+
+    await fake.show(true);
+    await fake.show(false);
+    expect(fake.state.reloads).toBe(1);
+  });
+
   test('stopping cancels the timer and the listener, and ignores an answer still out', async () => {
     const fake = fakeHost();
     const states: UpdateState[] = [];
@@ -412,6 +427,17 @@ describe('reloadsForMissingChunk', () => {
   test('reloads when the server runs another build', () => {
     expect(
       reloadsForMissingChunk({ lastReloadAt: undefined, now: at, running: RUNNING, server: NEWER }),
+    ).toBe(true);
+  });
+
+  test('reloads for a rebuild of the same release', () => {
+    expect(
+      reloadsForMissingChunk({
+        lastReloadAt: undefined,
+        now: at,
+        running: RUNNING,
+        server: REBUILT,
+      }),
     ).toBe(true);
   });
 
