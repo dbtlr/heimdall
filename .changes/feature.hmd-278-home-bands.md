@@ -1,1 +1,0 @@
-- **Home on a desktop lays its cards in full-width bands** (HMD-278). From 1024 px each card spreads sideways before it grows taller: Needs attention is one line when nothing is open and the line fits, or columns when something is, the Agents card lists every running Session in a grid beside the cost, and the three cards at the bottom match in height. A phone is unchanged.

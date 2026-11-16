@@ -10,6 +10,18 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.14.0 - 2026-11-16
+
+### Features
+
+- **Home on a desktop lays its cards in full-width bands** (HMD-278). From 1024 px each card spreads sideways before it grows taller: Needs attention is one line when nothing is open and the line fits, or columns when something is, the Agents card lists every running Session in a grid beside the cost, and the three cards at the bottom match in height. A phone is unchanged.
+
+- **The dashboard notices a new version and updates itself** (HMD-279). A dashboard kept on a phone's home screen, or left open in a tab, now asks the dashboard server which build it runs. Coming back to it after a new build shipped reloads it at once; a new build that lands while it is in use shows a "New version ready · Reload" pill instead. More gains a Dashboard version row with the running and ready versions and an Update or Reload button, since a home-screen app has no reload of its own. A web app manifest names the app and its icon for the home screen, and pages are now served no-cache and failed answers no-store.
+
+### Fixes
+
+- **A large `heimdall-hub transcripts delete` or `purge <system> --transcripts` no longer stalls on stale statistics** (HMD-209). Statistics that counted almost none of a table's rows, as an ANALYZE during a bulk upload leaves them, made the planner pair every row of one table with every row of another. 140,000 generations took 40 seconds to lose their chunks, and a purge of 30,000 generations took 85 seconds. Around 500,000 generations, a delete would pass its 10-minute statement timeout and remove nothing. The delete and the purge now run ANALYZE inside their own transaction on the transcript and Session insight tables their joins read, so a delete of 250,000 generations takes under a minute whatever the statistics said before. Resetting the progress of Sessions that keep another generation also slowed down on accurate statistics: past two minutes for 200,000 Sessions. It now joins them instead. Refreshing statistics costs about a second on each delete, even one of a single generation.
+
 ## v0.13.1 - 2026-11-15
 
 ### Fixes
