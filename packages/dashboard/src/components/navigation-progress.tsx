@@ -50,7 +50,6 @@ const LINE: Record<NavigationPhase, string> = {
 // of the page in view shows neither.
 export function NavigationProgress({ children }: { children: ReactNode }) {
   const phase = useNavigationPhase();
-  const loading = phase === 'loading';
   return (
     <>
       <div
@@ -61,12 +60,10 @@ export function NavigationProgress({ children }: { children: ReactNode }) {
         )}
         data-navigation-line={phase}
       />
+      {/* The dim hangs on aria-busy, so the page is dimmed exactly while it is marked busy. */}
       <div
-        aria-busy={loading}
-        className={cn(
-          'transition-opacity duration-200 motion-reduce:transition-none',
-          loading && 'pointer-events-none opacity-40',
-        )}
+        aria-busy={phase === 'loading'}
+        className="transition-opacity duration-200 motion-reduce:transition-none aria-busy:pointer-events-none aria-busy:opacity-40"
       >
         {children}
       </div>
