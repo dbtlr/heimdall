@@ -102,6 +102,8 @@ The Hub sets every Condition's level: note, warning, or alert ([ADR-0017](../../
 
 Every page but the Session page, the Hub status page included, reads its data again every 15 seconds while its tab is visible, through the router's invalidation, and at once when the tab becomes visible again. A tick that finds the previous load still running is skipped.
 
+A page that takes more than 150 ms to arrive shows a thin line along the top edge and dims the page being left, which takes no taps until the next page is in view. Arrival runs the line to its end and fades it. Every navigation the router makes starts it: a link, the jump box, back and forward, or a search change a page reads by. The background refresh never does, because it reads with the location where it was. With reduced motion set, the line and the dim appear without sliding or fading.
+
 The Agents query benchmark runs against a disposable test database with 800 Sessions and 200,000 requests:
 
 ```sh
@@ -136,7 +138,7 @@ HEIMDALL_DATABASE_URL=postgres://localhost/heimdall_scratch bun run --cwd packag
 
 ## Browser interaction tests
 
-The Service filter sheet's, the jump box's, the System overview's, and the router's DOM tests use a Chromium executable without extra packages.
+The Service filter sheet's, the jump box's, the System overview's, the router's, and the page-load line's DOM tests use a Chromium executable without extra packages.
 Set `HEIMDALL_TEST_BROWSER` to its path, or put `chromium` or `google-chrome` on `PATH`:
 
 ```sh
@@ -148,6 +150,7 @@ The filter sheet's cover draft selection, Escape and backdrop dismissal, applyin
 The System overview's cover the keys that move the pinned sample along its time axis and the date on an old sample's disks.
 The jump box's cover the `/` shortcut, which a hidden box leaves to the browser, the combobox and listbox roles, arrow keys, Enter, Escape, and the page each kind of match opens.
 The router's covers a page read that fails on a refresh, as one does while the server restarts: the error shows inside the layout, so the navigation and the update watcher stay, and the next read recovers.
+The page-load line's covers a link to a slow page, which shows the line and marks the page busy until the page arrives, and a quick page and a refresh, which show nothing.
 
 ## Layout
 
