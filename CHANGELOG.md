@@ -10,6 +10,12 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.15.0 - 2026-11-16
+
+### Features
+
+- **A page that takes a while to load shows that it is loading** (HMD-282). After a link, the jump box, back or forward, or a range picker, a thin line runs along the top edge and the page you are leaving dims until the next one arrives. A page ready within 150 ms changes as before, and the background refresh shows nothing.
+
 ## v0.14.0 - 2026-11-16
 
 ### Features
