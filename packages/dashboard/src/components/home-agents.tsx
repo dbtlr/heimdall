@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 
-import { shownRunning, wholeDollars } from '../lib/home-agents.ts';
+import { RUNNING_SHOWN, shownRunning, wholeDollars } from '../lib/home-agents.ts';
 import { harnessName } from '../lib/lane.ts';
 import { modelName } from '../lib/session-format.ts';
 import { formatCost, formatSpan, formatWeekday } from '../lib/time.ts';
@@ -10,7 +10,10 @@ import type { AgentsSession } from '../server/agents-overview-types.ts';
 import type { DayCost, HomeAgents } from '../server/home-types.ts';
 import { HomeCard } from './home-cards.tsx';
 
-const ROW = 'border-t first:border-t-0';
+// A running Session is a row under a phone's width and, from 1024 px, a
+// small bordered cell on a surface darker than the card.
+const ROW =
+  'border-t first:border-t-0 lg:rounded-lg lg:border lg:first:border-t lg:bg-background/45 lg:px-2.5';
 
 // What is usually spent by now: whole dollars from $10, cents below.
 const usualText = (usd: number) => (usd >= 10 ? wholeDollars(usd) : formatCost(usd));
@@ -96,8 +99,17 @@ const modelText = (model: string | undefined): string | undefined => {
 
 // One running Session, linking to its page: a live mark, its project and
 // branch, its cost so far, and under them its System, Harness, the model it
-// asks most, and how long since it started.
-function RunningRow({ now, session }: { now: number; session: AgentsSession }) {
+// asks most, and how long since it started. `phoneOnlyHidden` hides it below
+// 1024 px, where the card lists only the first few.
+function RunningRow({
+  now,
+  phoneOnlyHidden,
+  session,
+}: {
+  now: number;
+  phoneOnlyHidden: boolean;
+  session: AgentsSession;
+}) {
   const facts = [
     session.system,
     harnessName(session.harness),
@@ -105,9 +117,9 @@ function RunningRow({ now, session }: { now: number; session: AgentsSession }) {
     formatSpan(Math.max(0, now - session.firstRequestAt)),
   ].filter((fact) => fact !== undefined);
   return (
-    <li className={ROW}>
+    <li className={cn(ROW, phoneOnlyHidden && 'max-lg:hidden')}>
       <Link
-        className="block py-2 hover:underline"
+        className="block py-2 hover:underline lg:py-1.5"
         params={{
           harness: session.harness,
           name: session.system,
@@ -149,13 +161,17 @@ function RunningRow({ now, session }: { now: number; session: AgentsSession }) {
   );
 }
 
-// The running Sessions, 5 at most with "+N more" after them, or, with none
-// running, when the latest Session's last request was.
+// The running Sessions, the latest request first. Every Session is rendered:
+// a phone lists the first RUNNING_SHOWN as rows, with "+N more" after them,
+// and from 1024 px all of them fill an auto-fill grid of cells and the link is
+// hidden. With none running, it says when the latest Session's last request
+// was.
 function Running({ agents, now }: { agents: HomeAgents; now: number }) {
-  const { more, shown } = shownRunning(agents.running);
+  const { shown } = shownRunning(agents.running, Number.POSITIVE_INFINITY);
+  const more = Math.max(0, shown.length - RUNNING_SHOWN);
   if (shown.length === 0) {
     return (
-      <p className="mt-3 border-t pt-2.5 text-[13px] text-muted-foreground">
+      <p className="mt-3 border-t pt-2.5 text-[13px] text-muted-foreground lg:mt-0 lg:border-t-0 lg:pt-2">
         No Session is running.
         {agents.latestRequestAt !== undefined &&
           ` The latest ended ${formatSpan(Math.max(0, now - agents.latestRequestAt))} ago.`}
@@ -164,8 +180,11 @@ function Running({ agents, now }: { agents: HomeAgents; now: number }) {
   }
   return (
     <>
-      <ul aria-label="Sessions running now" className="mt-2.5">
-        {shown.map((session) => (
+      <ul
+        aria-label="Sessions running now"
+        className="mt-2.5 lg:mt-0 lg:grid lg:grid-cols-[repeat(auto-fill,minmax(270px,1fr))] lg:gap-2"
+      >
+        {shown.map((session, index) => (
           <RunningRow
             key={JSON.stringify([
               session.system,
@@ -174,12 +193,16 @@ function Running({ agents, now }: { agents: HomeAgents; now: number }) {
               session.sessionId,
             ])}
             now={now}
+            phoneOnlyHidden={index >= RUNNING_SHOWN}
             session={session}
           />
         ))}
       </ul>
       {more > 0 && (
-        <Link className="mt-1 inline-block text-[13px] text-link hover:underline" to="/agents">
+        <Link
+          className="mt-1 inline-block text-[13px] text-link hover:underline lg:hidden"
+          to="/agents"
+        >
           +{more} more
         </Link>
       )}
@@ -188,9 +211,11 @@ function Running({ agents, now }: { agents: HomeAgents; now: number }) {
 }
 
 // Home's Agents card: today's list-price cost against what is usually spent
-// by now, the last 7 days' cost, and the Sessions running now. It waits for
-// the viewer's time zone, which its days are counted in, and says so when no
-// Session was ever recorded.
+// by now, the last 7 days' cost, and the Sessions running now: stacked below
+// 1024 px, and from there in two columns, the cost and bars at 300 px on the
+// left and the Sessions filling the rest. It waits for the viewer's time zone,
+// which its days are counted in, and says so when no Session was ever
+// recorded.
 export function AgentsCard({ agents, now }: { agents: HomeAgents | undefined; now: number }) {
   let body;
   if (agents === undefined) {
@@ -203,13 +228,15 @@ export function AgentsCard({ agents, now }: { agents: HomeAgents | undefined; no
     body = <p className="text-[13px] text-muted-foreground">No agent Session has been recorded.</p>;
   } else {
     body = (
-      <>
+      <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
         <div className="flex items-start justify-between gap-4">
           <TodayCost agents={agents} />
           <DayBars days={agents.days} timeZone={agents.timeZone} />
         </div>
-        <Running agents={agents} now={now} />
-      </>
+        <div className="min-w-0">
+          <Running agents={agents} now={now} />
+        </div>
+      </div>
     );
   }
   return (
