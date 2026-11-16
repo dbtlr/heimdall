@@ -2,6 +2,7 @@ import type { OpenGeneration } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { forgetDeletedGenerations, holdProjection } from './projection.ts';
+import { refreshStatistics } from './statistics.ts';
 import { seeSystem } from './store.ts';
 
 export type Opened = { generation: number; kind: 'opened' } | { kind: 'deleted' };
@@ -232,6 +233,7 @@ const deleteOnce = (
     // this delete commits, so nothing derived from a deleted generation is
     // stored behind its back (ADR-0014).
     await holdProjection(tx);
+    await refreshStatistics(tx, ['transcript_generations', 'transcript_chunks']);
     // Marking takes each generation's row lock, which an open at its path
     // waits for. Locks are taken in id order, as an open takes them, so the
     // two cannot deadlock. A generation opened while a pass ran is not in that
@@ -240,11 +242,12 @@ const deleteOnce = (
     // generations, however long, is sent back as parameters.
     // The locked ids are gathered once into an array the update and the
     // chunk delete look up by index. Joined as `IN (SELECT ...)` instead,
-    // `transcript_generations` statistics that count almost none of its rows,
-    // as an ANALYZE during a bulk insert leaves them, let the planner rescan
-    // the locking subquery once per generation: minutes for 70,000 of them,
-    // seconds now (HMD-199). Stale `transcript_chunks` statistics may still
-    // slow the chunk delete; that is tracked separately.
+    // `transcript_generations` statistics that count almost none of its rows
+    // let the planner rescan the locking subquery once per generation:
+    // minutes for 70,000 of them, seconds now (HMD-199). The statistics are
+    // refreshed first, since chunk statistics taken while one generation held
+    // every chunk made a scan of every chunk, each checked against the whole
+    // array, look cheapest: 40 seconds for 140,000 generations (HMD-209).
     const marked: Matched[] = [];
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- each pass sees what the last one missed.

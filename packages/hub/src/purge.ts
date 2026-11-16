@@ -2,6 +2,7 @@ import type { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
 import { holdProjection } from './projection.ts';
+import { refreshStatistics } from './statistics.ts';
 import { retryOnDeadlock } from './transcripts.ts';
 import type { Removed } from './transcripts.ts';
 
@@ -140,6 +141,13 @@ const purgeOnce = (
     await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
     let deleted = await deleteAll(tx, HISTORY, [system]);
     if (transcripts) {
+      // As a transcript delete does, so the deletes that look up the System's
+      // generations are planned on what the tables hold now.
+      await refreshStatistics(tx, [
+        'transcript_generations',
+        'transcript_chunks',
+        'parse_progress',
+      ]);
       deleted += await deleteAll(tx, TRANSCRIPTS, [system]);
     }
     if (deleted === 0) {

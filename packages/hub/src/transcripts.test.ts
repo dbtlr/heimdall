@@ -27,6 +27,8 @@ import {
 
 const FILE = { path: 'my-project/0b1c.jsonl', source: 'claude-code' };
 
+const DAY_MS = 86_400_000;
+
 const LINE_1 = '{"type":"user","message":"hello"}\n';
 const LINE_2 = '{"type":"assistant","message":"hi"}\n';
 
@@ -433,11 +435,111 @@ const failingBegins = (sql: SQL, failures: number, error: () => Error) => {
 };
 
 // Inserts `count` generations for laptop-1, with ids from 1, holding nothing.
-const insertGenerations = (sql: SQL, count: number) => sql`
+const insertGenerations = (
+  sql: SQL,
+  count: number,
+  { at = NOW, first = 1 }: { at?: number; first?: number } = {},
+) => sql`
   INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at, held)
-  SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(NOW)}, ${new Date(NOW)}, 1
-  FROM generate_series(1, ${count}::int) AS n
+  SELECT n, 'laptop-1', 'claude-code', 'many/' || n || '.jsonl', ${new Date(at)}, ${new Date(at)}, 1
+  FROM generate_series(${first}::int, ${first + count - 1}::int) AS n
 `;
+
+// Gives each generation from `first` to `last` progress under parser version
+// 1, in Session `session-<n % sessions>`.
+const insertProgress = (
+  sql: SQL,
+  { first = 1, last, sessions }: { first?: number; last: number; sessions: number },
+) => sql`
+  INSERT INTO parse_progress (harness, parser_version, generation, session_id, parsed_through, held_seen)
+  SELECT 'claude-code', 1, n, 'session-' || (n % ${sessions}::int), 1, 1
+  FROM generate_series(${first}::int, ${last}::int) AS n
+`;
+
+// Gives each generation from `first` to `last` one chunk, or `generation`
+// `count` chunks, a byte each.
+const insertChunks = (
+  sql: SQL,
+  chunks: { first: number; last: number } | { count: number; generation: number },
+) =>
+  'generation' in chunks
+    ? sql`
+        INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
+        SELECT ${chunks.generation}::bigint, n, 1, '\\x00'::bytea
+        FROM generate_series(0, ${chunks.count - 1}::int) AS n
+      `
+    : sql`
+        INSERT INTO transcript_chunks (generation, offset_bytes, length, content)
+        SELECT n, 0, 1, '\\x00'::bytea FROM generate_series(${chunks.first}::int, ${chunks.last}::int) AS n
+      `;
+
+// Turns autovacuum off for `tables`, so no ANALYZE freshens the statistics a
+// test sets up. Tests that do this take a newly migrated database
+// (`startHub({ fresh: true })`), which no other test sees again.
+const autovacuumOff = async (sql: SQL, tables: string[]) => {
+  for (const table of tables) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+    await sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
+  }
+};
+
+// Gives each generation from 1 to `last` a request, a tool call, and that
+// request's holder, in Session `session-<n % sessions>` as `insertProgress`
+// puts it, and every fifth request a second holder: the generation after it.
+const insertFacts = async (sql: SQL, { last, sessions }: { last: number; sessions: number }) => {
+  await sql`
+    INSERT INTO projected_sessions (harness, parser_version, system, source, session_id)
+    SELECT 'claude-code', 1, 'laptop-1', 'claude-code', 'session-' || n
+    FROM generate_series(0, ${sessions - 1}::int) AS n
+  `;
+  await sql`
+    INSERT INTO projected_requests (
+      harness, parser_version, system, source, session_id, request_id, at, model,
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation, byte_offset
+    )
+    SELECT 'claude-code', 1, 'laptop-1', 'claude-code', 'session-' || (n % ${sessions}::int),
+           'request-' || n, ${new Date(NOW)}, 'model', 1, 1, 1, 1, n, 0
+    FROM generate_series(1, ${last}::int) AS n
+  `;
+  await sql`
+    INSERT INTO projected_tool_calls (
+      harness, parser_version, system, source, session_id, call_id, at, kind, name, generation, byte_offset
+    )
+    SELECT 'claude-code', 1, 'laptop-1', 'claude-code', 'session-' || (n % ${sessions}::int),
+           'call-' || n, ${new Date(NOW)}, 'tool', 'Bash', n, 0
+    FROM generate_series(1, ${last}::int) AS n
+  `;
+  await sql`
+    INSERT INTO projected_holders (harness, parser_version, system, source, fact_id, generation)
+    SELECT 'claude-code', 1, 'laptop-1', 'claude-code', 'request-' || n, n
+    FROM generate_series(1, ${last}::int) AS n
+    UNION ALL
+    SELECT 'claude-code', 1, 'laptop-1', 'claude-code', 'request-' || n, n % ${last}::int + 1
+    FROM generate_series(5, ${last}::int, 5) AS n
+  `;
+};
+
+// Runs ANALYZE on the whole database from a connection of its own while
+// `fill` inserts in one transaction, so the statistics count none of what
+// `fill` inserts, in any table.
+const analyzeWhileFilling = async (h: Hub, fill: (tx: SQL) => Promise<void>) => {
+  const analyzer = new SQL(h.db.url.href, { max: 1 });
+  try {
+    await h.db.sql.begin(async (tx) => {
+      await fill(tx);
+      await analyzer`ANALYZE`;
+    });
+  } finally {
+    await analyzer.close();
+  }
+};
+
+const reltuples = async (sql: SQL, table: string) => {
+  const [row]: { reltuples: number }[] = await sql`
+    SELECT reltuples FROM pg_class WHERE relname = ${table}
+  `;
+  return row?.reltuples;
+};
 
 // Deletes laptop-1's transcripts, logging what the database is doing if that
 // takes far longer than the second or two it should.
@@ -700,31 +802,112 @@ describe('deleting transcripts', () => {
   // may, counts almost none of them. A delete planned on that once took
   // minutes here, rescanning every generation it locked once per generation.
   test('removes many generations in seconds when statistics count almost none of them', async () => {
+    await using h = await startHub({ fresh: true });
+    await autovacuumOff(h.db.sql, ['transcript_generations']);
+    await analyzeWhileFilling(h, (tx) => insertGenerations(tx, 70_000));
+    expect(await reltuples(h.db.sql, 'transcript_generations')).toBeLessThan(1000);
+
+    const removed = await deleteMany(h);
+
+    expect(removed.generations).toBe(70_000);
+  }, 30_000);
+
+  // Chunk statistics taken while one generation held every chunk say each
+  // generation has thousands of chunks and there are few generations. A chunk
+  // delete planned on that once compared every chunk with every generation it
+  // removed: 40 seconds for 140,000 of them, and past the 10-minute statement
+  // timeout around 500,000.
+  test('removes many one-chunk generations in seconds when chunk statistics saw only one generation', async () => {
+    await using h = await startHub({ fresh: true });
+    const many = 140_000;
+    await autovacuumOff(h.db.sql, ['transcript_generations', 'transcript_chunks']);
+    await insertGenerations(h.db.sql, 1);
+    await insertChunks(h.db.sql, { count: 2000, generation: 1 });
+    await h.db.sql`ANALYZE transcript_chunks`;
+    await insertGenerations(h.db.sql, many, { first: 2 });
+    await insertChunks(h.db.sql, { first: 2, last: many + 1 });
+    await h.db.sql`ANALYZE transcript_generations`;
+
+    const removed = await deleteMany(h);
+
+    expect(removed.generations).toBe(many + 1);
+    const [left] = await h.db.sql`SELECT count(*)::int AS n FROM transcript_chunks`;
+    expect(left).toEqual({ n: 0 });
+  }, 30_000);
+
+  // Forgetting what the projection derived from deleted generations joins
+  // their progress, facts, and holders to the generations, and resets the
+  // progress of each Session that keeps another generation. Planned on
+  // statistics that count almost none of those tables, it went quadratic, and
+  // with nested loops turned off the planner joined on one shared value and
+  // filtered the rest row by row: 228 seconds for 2,000 generations.
+  test('forgets and resets the progress of many generations in seconds when statistics count almost none of them', async () => {
+    await using h = await startHub({ fresh: true });
+    const many = 10_000;
+    const sessions = many / 5;
+    const tables = [
+      'transcript_generations',
+      'parse_progress',
+      'projected_sessions',
+      'projected_requests',
+      'projected_tool_calls',
+      'projected_holders',
+    ];
+    await autovacuumOff(h.db.sql, tables);
+    await analyzeWhileFilling(h, async (tx) => {
+      await insertGenerations(tx, many, { at: NOW - 2 * DAY_MS });
+      await insertGenerations(tx, many, { first: many + 1 });
+      await insertProgress(tx, { last: 2 * many, sessions });
+      await insertFacts(tx, { last: 2 * many, sessions });
+    });
+    expect(await reltuples(h.db.sql, 'parse_progress')).toBeLessThan(1000);
+
+    const removed = await diagnoseIfSlow(
+      h.db.url,
+      deleteTranscripts(h.db.sql, { before: NOW - DAY_MS, now: NOW, system: 'laptop-1' }),
+      { tables },
+    );
+
+    expect(removed.generations).toBe(many);
+    const [left] = await h.db.sql`
+      SELECT count(*)::int AS n, max(parsed_through)::int AS furthest FROM parse_progress
+    `;
+    expect(left).toEqual({ furthest: 0, n: many });
+  }, 30_000);
+
+  // A Session that loses a generation and keeps another is parsed again from
+  // the start. Finding the progress to reset once tested each row against
+  // every touched Session in turn whenever the planner expected more of them
+  // than fit in working memory, as accurate statistics say for 200,000: past
+  // two minutes. Working memory is shrunk here to reach that at a tenth of it.
+  test('resets the progress of many Sessions that keep a generation in seconds when they outgrow working memory', async () => {
     await using h = await startHub();
-    // Autovacuum stays off for the table, so no ANALYZE after the insert commits
-    // freshens the statistics this test depends on. The reset between tests
-    // keeps a table's storage options, so the test restores the setting itself.
-    await h.db.sql`ALTER TABLE transcript_generations SET (autovacuum_enabled = false)`;
+    const many = 20_000;
+    const old = NOW - 2 * DAY_MS;
+    await insertGenerations(h.db.sql, many, { at: old });
+    await insertGenerations(h.db.sql, many, { first: many + 1 });
+    await insertProgress(h.db.sql, { last: 2 * many, sessions: many });
+    // Earlier deletes left as many generations marked deleted, so the
+    // statistics expect each delete to find many.
+    await insertGenerations(h.db.sql, many, { at: old, first: 2 * many + 1 });
+    await h.db
+      .sql`UPDATE transcript_generations SET deleted_at = ${new Date(old)} WHERE id > ${2 * many}`;
+    await h.db.sql`ANALYZE transcript_generations, parse_progress`;
+    const cramped = new SQL(h.db.url.href, { connection: { work_mem: '64kB' } });
     try {
-      const analyzer = new SQL(h.db.url.href, { max: 1 });
-      try {
-        await h.db.sql.begin(async (tx) => {
-          await insertGenerations(tx, 70_000);
-          await analyzer`ANALYZE transcript_generations`;
-        });
-      } finally {
-        await analyzer.close();
-      }
-      const [stats]: { reltuples: number }[] = await h.db.sql`
-        SELECT reltuples FROM pg_class WHERE relname = 'transcript_generations'
+      const removed = await diagnoseIfSlow(
+        h.db.url,
+        deleteTranscripts(cramped, { before: NOW - DAY_MS, now: NOW, system: 'laptop-1' }),
+        { tables: ['transcript_generations', 'parse_progress'] },
+      );
+
+      expect(removed.generations).toBe(many);
+      const [left] = await h.db.sql`
+        SELECT count(*)::int AS n, max(parsed_through)::int AS furthest FROM parse_progress
       `;
-      expect(stats?.reltuples).toBeLessThan(1000);
-
-      const removed = await deleteMany(h);
-
-      expect(removed.generations).toBe(70_000);
+      expect(left).toEqual({ furthest: 0, n: many });
     } finally {
-      await h.db.sql`ALTER TABLE transcript_generations RESET (autovacuum_enabled)`;
+      await cramped.close();
     }
   }, 30_000);
 

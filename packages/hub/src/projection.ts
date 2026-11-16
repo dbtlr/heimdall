@@ -4,6 +4,7 @@ import { claudeCodeParser } from './claude-code-parser.ts';
 import { codexParser } from './codex-parser.ts';
 import { MAX_LINE_BYTES } from './session-insight.ts';
 import type { Batch, HarnessParser } from './session-insight.ts';
+import { refreshStatistics } from './statistics.ts';
 import { storable, storableJson } from './storable.ts';
 import { readHeldContent, UnreadableGenerationError } from './transcript-reader.ts';
 
@@ -1058,6 +1059,22 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
   // deleteOnce calls this with its transaction after holdProjection took the
   // exclusive lock. Relinking every version, deletion, and progress resets
   // therefore commit or roll back together, with no parse batch overlapping.
+  // The statistics count the generations the delete just marked, so no join
+  // below is planned on a table believed empty (HMD-209). The stored tables
+  // are joined by the trigger that forgets a hidden Session's stored insight.
+  await refreshStatistics(sql, [
+    'transcript_generations',
+    'parse_progress',
+    'projected_holders',
+    'projected_requests',
+    'projected_tool_calls',
+    'projected_subagents',
+    'projected_sessions',
+    'rederiving_sessions',
+    'stored_session_stretches',
+    'stored_session_totals',
+    'stored_session_model_totals',
+  ]);
   await linkCodexSubagents(sql);
   const [row]: { touched: number }[] = await sql`
     WITH deleted AS (
@@ -1088,14 +1105,24 @@ export const forgetDeletedGenerations = async (sql: SQL): Promise<number> => {
     forgotten AS (
       DELETE FROM parse_progress WHERE generation IN (SELECT generation FROM deleted)
     ),
+    -- Joined, not tested with IN under an OR: a planner that expects more
+    -- touched Sessions than fit in memory rescans them for every progress row.
+    rederived AS (
+      SELECT p.harness, p.parser_version, p.generation
+      FROM parse_progress p
+      JOIN transcript_generations g ON g.id = p.generation
+      JOIN touched t ON (t.harness, t.system, t.source, t.session_id)
+                      = (p.harness, g.system, g.source, p.session_id)
+      UNION
+      SELECT harness, parser_version, generation FROM holders
+    ),
     reset AS (
       UPDATE parse_progress p SET
         parsed_through = 0, held_seen = 0, skipping_line = false, unreadable_lines = 0,
         failed_attempts = 0, failed_at = NULL, failure = NULL, parser_state = NULL, agent_id = NULL
-      FROM transcript_generations g
-      WHERE g.id = p.generation AND g.deleted_at IS NULL
-        AND ((p.harness, g.system, g.source, p.session_id) IN (SELECT * FROM touched)
-             OR (p.harness, p.parser_version, p.generation) IN (SELECT * FROM holders))
+      FROM rederived r, transcript_generations g
+      WHERE (p.harness, p.parser_version, p.generation) = (r.harness, r.parser_version, r.generation)
+        AND g.id = p.generation AND g.deleted_at IS NULL
     ),
     unheld AS (
       DELETE FROM projected_holders WHERE generation IN (SELECT generation FROM deleted)
