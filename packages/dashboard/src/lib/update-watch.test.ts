@@ -263,6 +263,22 @@ describe('watchForUpdates', () => {
     expect(fake.state.reloads).toBe(1);
   });
 
+  test('each newer build is offered, even two rebuilds of one release', async () => {
+    const fake = fakeHost();
+    const { states } = await watching(fake);
+
+    fake.serve(NEWER);
+    await fake.elapse();
+    const rebuiltAgain = { build: '1.1.0+c', version: '1.1.0' };
+    fake.serve(rebuiltAgain);
+    await fake.elapse();
+
+    expect(states.filter(({ kind }) => kind === 'ready')).toEqual([
+      { kind: 'ready', ...NEWER },
+      { kind: 'ready', ...rebuiltAgain },
+    ]);
+  });
+
   test('stopping cancels the timer and the listener, and ignores an answer still out', async () => {
     const fake = fakeHost();
     const states: UpdateState[] = [];
