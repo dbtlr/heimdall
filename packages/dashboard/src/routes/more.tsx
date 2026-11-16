@@ -5,10 +5,10 @@ import type { ReactNode } from 'react';
 import { MARK_COLOR } from '../components/attention-status.tsx';
 import { ConditionGlyph } from '../components/condition-glyph.tsx';
 import { JumpBox } from '../components/jump-box.tsx';
+import { DashboardVersion } from '../components/update-notice.tsx';
 import type { FleetSummary } from '../lib/fleet.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { getJumpIndex } from '../server/jump-index-fn.ts';
-import { DASHBOARD_VERSION } from '../version.ts';
 
 export const Route = createFileRoute('/more')({ component: More });
 
@@ -48,9 +48,10 @@ function SystemsSummary({ fleet }: { fleet: FleetSummary }) {
 }
 
 // The phone's More tab: the sections the bottom bar has no room for, the jump
-// box, and the dashboard's version.
+// box, the Hub's status, and the dashboard's version with a way to load a
+// newer one.
 function More() {
-  const { fleet } = useLoaderData({ from: '__root__' });
+  const { fleet, hubVersion } = useLoaderData({ from: '__root__' });
   return (
     <main className={`${contentFrame('narrow')} pb-8`}>
       <h1 className="pt-5 pb-4 text-[24px] font-semibold sm:pt-6 sm:text-[28px]">More</h1>
@@ -78,8 +79,13 @@ function More() {
         </li>
         <li>
           <Link className={ROW} to="/hub">
-            <RowLink label="Version">v{DASHBOARD_VERSION} · Hub status</RowLink>
+            <RowLink label="Hub status">
+              {hubVersion === undefined ? 'Hub version unknown' : `Hub v${hubVersion}`}
+            </RowLink>
           </Link>
+        </li>
+        <li>
+          <DashboardVersion />
         </li>
       </ul>
     </main>

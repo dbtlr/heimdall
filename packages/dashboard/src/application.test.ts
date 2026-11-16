@@ -218,6 +218,95 @@ test('serve logs a warning for a request it answers with a server error, but not
   });
 });
 
+test('serve sends pages as no-cache and failed answers as no-store, so a reload always fetches the current build, and leaves other answers alone', async () => {
+  await withHome(async (home) => {
+    const app: BuiltServer = {
+      fetch: (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === '/assets/main-abc.js') {
+          return new Response('', {
+            headers: {
+              'cache-control': 'public, max-age=31536000, immutable',
+              'content-type': 'text/javascript',
+            },
+          });
+        }
+        if (pathname === '/api/version') {
+          return Response.json({}, { headers: { 'cache-control': 'no-store' } });
+        }
+        if (pathname === '/broken') {
+          return new Response('Error', {
+            headers: { 'cache-control': 'public, max-age=600', 'content-type': 'text/plain' },
+            status: 500,
+          });
+        }
+        if (pathname === '/cached-page') {
+          return new Response('<!doctype html>', {
+            headers: { 'cache-control': 'private, max-age=5', 'content-type': 'text/html' },
+          });
+        }
+        if (pathname === '/upper') {
+          return new Response('<!doctype html>', { headers: { 'content-type': 'Text/HTML' } });
+        }
+        if (pathname === '/assets/gone-abc.js') {
+          return new Response('Not Found', {
+            headers: {
+              'cache-control': 'public, max-age=31536000, immutable',
+              'content-type': 'text/html',
+            },
+            status: 404,
+          });
+        }
+        return new Response('<!doctype html>', {
+          headers: { 'content-type': 'text/html; charset=utf-8', 'x-probe': 'kept' },
+          status: 203,
+        });
+      },
+    };
+    const seen: Record<string, string | null> = {};
+    const answers: Record<string, { body: string; probe: string | null; status: number }> = {};
+
+    await invoke(['serve', '--port', '0'], {
+      home,
+      loadServer: () => Promise.resolve(app),
+      whileServing: async (url) => {
+        await Promise.all(
+          [
+            '/more',
+            '/assets/main-abc.js',
+            '/api/version',
+            '/assets/gone-abc.js',
+            '/broken',
+            '/cached-page',
+            '/upper',
+          ].map(async (path) => {
+            const response = await fetch(new URL(path, url));
+            seen[path] = response.headers.get('cache-control');
+            answers[path] = {
+              body: await response.text(),
+              probe: response.headers.get('x-probe'),
+              status: response.status,
+            };
+          }),
+        );
+      },
+    });
+
+    expect(seen).toEqual({
+      '/api/version': 'no-store',
+      '/assets/gone-abc.js': 'no-store',
+      '/assets/main-abc.js': 'public, max-age=31536000, immutable',
+      '/broken': 'no-store',
+      '/cached-page': 'private, max-age=5',
+      '/more': 'no-cache',
+      '/upper': 'no-cache',
+    });
+    // A rewritten answer keeps its status, body, and other headers.
+    expect(answers['/more']).toEqual({ body: '<!doctype html>', probe: 'kept', status: 203 });
+    expect(answers['/broken']).toEqual({ body: 'Error', probe: null, status: 500 });
+  });
+});
+
 test('serve on a port already in use says which address it could not listen on, and exits 1', async () => {
   await withHome(async (home) => {
     const taken = Bun.serve({ fetch: () => new Response(), hostname: '127.0.0.1', port: 0 });

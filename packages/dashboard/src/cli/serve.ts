@@ -12,10 +12,41 @@ export type BuiltServer = { fetch: (request: Request) => Promise<Response> | Res
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+// The caching the dashboard's answers need for a page to always load the
+// build the server runs. A page answer goes out no-cache, so a browser asks
+// again on every load. A failed answer goes out no-store whatever it says, so
+// a browser never keeps one: a script chunk a newer build no longer has would
+// otherwise stay missing under the year-long caching its path is given. Any
+// other answer, or a page that names its own caching, is left as it is.
+const cachingFor = (response: Response): string | undefined => {
+  if (response.status >= 400) {
+    return 'no-store';
+  }
+  const type = response.headers.get('content-type') ?? '';
+  return type.toLowerCase().startsWith('text/html') && !response.headers.has('cache-control')
+    ? 'no-cache'
+    : undefined;
+};
+
+const withCaching = (response: Response): Response => {
+  const caching = cachingFor(response);
+  if (caching === undefined || response.headers.get('cache-control') === caching) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', caching);
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+};
+
 // The built app's handler, with a warning logged for each request it answers
 // with a server error, so a failing page leaves a line in the log. The page
 // itself shows the cause. A failed health check is left out, as the Hub leaves
-// it out, so an outage does not log on every poll.
+// it out, so an outage does not log on every poll. Pages go out no-cache and
+// failed answers no-store.
 const answeringWith =
   (app: BuiltServer, log: RuntimeLog, clean: (message: string) => string) =>
   async (request: Request): Promise<Response> => {
@@ -24,7 +55,7 @@ const answeringWith =
     if (response.status >= 500 && pathname !== '/api/health') {
       await log.warn(clean(`${request.method} ${pathname} answered ${String(response.status)}.`));
     }
-    return response;
+    return withCaching(response);
   };
 
 // `heimdall-dashboard serve`: serves the built app until systemd or a terminal

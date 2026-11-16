@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { AppNavigation, ServiceAttentionCount } from '../components/app-navigation.tsx';
 import { AutoRefresh } from '../components/auto-refresh.tsx';
 import { TopBar } from '../components/top-bar.tsx';
+import { UpdateWatcher } from '../components/update-notice.tsx';
 import { fleetSummary } from '../lib/fleet.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { getFleetGlance } from '../server/fleet-overview-fn.ts';
@@ -21,6 +22,17 @@ const readFleetSummary = async () => {
     return fleetSummary(await getFleetGlance({ data: { unpaired: false } }));
   } catch {
     return undefined;
+  }
+};
+
+// The count of Services down or restarted beside Services. A failed read
+// shows none rather than failing every page: a failed root read would replace
+// the whole layout, its navigation and refresh included, with an error.
+const readServiceAttentionCount = async () => {
+  try {
+    return await getServiceAttentionCount();
+  } catch {
+    return 0;
   }
 };
 
@@ -44,17 +56,20 @@ export const Route = createRootRoute({
       { href: '/favicon.ico', rel: 'icon', sizes: '32x32' },
       { href: '/favicon.svg', rel: 'icon', type: 'image/svg+xml' },
       { href: '/apple-touch-icon.png', rel: 'apple-touch-icon' },
+      // Names the app, its icons, and its standalone display for a home screen.
+      { href: '/manifest.webmanifest', rel: 'manifest' },
     ],
     meta: [
       // oxlint-disable-next-line unicorn/text-encoding-identifier-case -- HTML wants the name "utf-8".
       { charSet: 'utf-8' },
       { content: 'width=device-width, initial-scale=1, viewport-fit=cover', name: 'viewport' },
       { title: 'Heimdall' },
+      { content: 'Heimdall', name: 'apple-mobile-web-app-title' },
     ],
   }),
   loader: async () => {
     const [count, fleet, hubVersion] = await Promise.all([
-      getServiceAttentionCount(),
+      readServiceAttentionCount(),
       readFleetSummary(),
       readHubVersion(),
     ]);
@@ -72,7 +87,9 @@ export const Route = createRootRoute({
           aria-hidden="true"
           className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[max(6px,env(safe-area-inset-top))] bg-bar sm:bg-background sm:pointer-fine:h-[env(safe-area-inset-top)]"
         />
-        {children}
+        {/* The update watcher sits in the shell, outside the root route, so it keeps
+            watching while any route, the root included, shows an error. */}
+        <UpdateWatcher>{children}</UpdateWatcher>
         <Scripts />
       </body>
     </html>

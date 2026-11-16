@@ -4,7 +4,8 @@ import { useEffect } from 'react';
 import { isLoadRunning, keepRefreshing } from '../lib/refresh.ts';
 import type { RefreshHost } from '../lib/refresh.ts';
 
-const browser: RefreshHost = {
+// The browser's visibility and timers, which every watcher of the page uses.
+export const browser: RefreshHost = {
   isHidden: () => document.hidden,
   onVisibilityChange: (listener) => {
     document.addEventListener('visibilitychange', listener);
