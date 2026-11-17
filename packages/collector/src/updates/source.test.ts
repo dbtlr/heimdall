@@ -137,21 +137,30 @@ test('APT sends no entry on a Linux whose os-release names another OS and that h
   expect(source.latest()?.managers).toEqual([]);
 });
 
-test('APT coverage is unavailable when os-release cannot be read', async () => {
+test('APT coverage is unavailable when os-release is missing or cannot be read', async () => {
   await using dir = await tempStateDir();
-  const source = createUpdatesSource({
-    config: parseUpdatesConfig({
-      homebrewPrefixes: [],
-      osRelease: join(dir.path, 'no-such-os-release'),
-    }),
-    now: () => 1000,
-    platform: 'linux',
-  });
-  await source.tick();
-  expect(source.latest()?.managers).toMatchObject([
-    { manager: 'apt', observedAt: 1000, result: { kind: 'unavailable' } },
-  ]);
-  expect(source.latest()?.reboot.kind).toBe('unavailable');
+  // A missing file, and a directory where the file should be.
+  for (const osRelease of [join(dir.path, 'no-such-os-release'), dir.path]) {
+    const source = createUpdatesSource({
+      config: parseUpdatesConfig({
+        apt: join(dir.path, 'no-apt'),
+        homebrewPrefixes: [],
+        osRelease,
+      }),
+      now: () => 1000,
+      platform: 'linux',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await source.tick();
+    expect(source.latest()?.managers).toMatchObject([
+      {
+        manager: 'apt',
+        observedAt: 1000,
+        result: { kind: 'unavailable', reason: 'APT coverage requires a readable os-release' },
+      },
+    ]);
+    expect(source.latest()?.reboot.kind).toBe('unavailable');
+  }
 });
 
 test('APT preserves complete installed census when metadata is missing and supports Debian reboot marker', async () => {

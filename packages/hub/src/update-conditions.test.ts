@@ -699,7 +699,7 @@ test('a package source a late earlier Report stores is retired by the next repea
   expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
 });
 
-test('a retired package source stays retired through unpairing and returns only with a newer pass', async () => {
+test('a retired package source stays retired through unpairing, returns only with a newer pass, and can retire again', async () => {
   await using h = await startHub();
   await send(h, [manager(NOW), brew(NOW)]);
   h.clock.now = NOW + 2;
@@ -714,6 +714,10 @@ test('a retired package source stays retired through unpairing and returns only 
   h.clock.now = NOW + 3;
   await send(h, [manager(NOW + 3), brew(NOW + 3)]);
   expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
+  // Restored, it can be retired again by the next pass that leaves it out.
+  h.clock.now = NOW + 4;
+  await send(h, [manager(NOW + 4)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
 });
 
 test('a section dated more than five minutes ahead of the Hub retires nothing', async () => {
