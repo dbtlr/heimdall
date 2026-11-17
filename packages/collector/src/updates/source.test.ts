@@ -82,12 +82,54 @@ test.skipIf(process.getuid?.() === 0)(
   },
 );
 
-test('APT sends no entry on a Linux whose os-release names another OS', async () => {
+test('a default Homebrew prefix whose brew link points nowhere still reports unavailable coverage', async () => {
+  await using dir = await tempStateDir();
+  const prefix = join(dir.path, 'usr-local');
+  await mkdir(join(prefix, 'bin'), { recursive: true });
+  await symlink('../Homebrew/bin/brew', join(prefix, 'bin', 'brew'));
+  const source = createUpdatesSource({
+    config: defaultPrefixes([prefix]),
+    now: () => 1000,
+    platform: 'darwin',
+  });
+  await source.tick();
+  expect(source.latest()?.managers.find(({ manager }) => manager === 'homebrew')).toMatchObject({
+    installation: prefix,
+    result: { kind: 'unavailable', reason: 'Homebrew executable is missing' },
+  });
+});
+
+test('APT coverage is unavailable where apt exists but os-release names no Debian-family OS', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  const apt = join(dir.path, 'apt');
+  await writeFile(osRelease, 'ID=deepin\n');
+  await writeFile(apt, '');
+  const source = createUpdatesSource({
+    config: parseUpdatesConfig({ apt, aptListsDir: dir.path, homebrewPrefixes: [], osRelease }),
+    now: () => 1000,
+    platform: 'linux',
+  });
+  await source.tick();
+  expect(source.latest()?.managers).toMatchObject([
+    {
+      manager: 'apt',
+      result: { kind: 'unavailable', reason: 'APT coverage requires a Debian-family OS' },
+    },
+  ]);
+});
+
+test('APT sends no entry on a Linux whose os-release names another OS and that has no apt', async () => {
   await using dir = await tempStateDir();
   const osRelease = join(dir.path, 'os-release');
   await writeFile(osRelease, 'ID=fedora\nID_LIKE="rhel centos"\n');
   const source = createUpdatesSource({
-    config: parseUpdatesConfig({ aptListsDir: dir.path, homebrewPrefixes: [], osRelease }),
+    config: parseUpdatesConfig({
+      apt: join(dir.path, 'no-apt'),
+      aptListsDir: dir.path,
+      homebrewPrefixes: [],
+      osRelease,
+    }),
     now: () => 1000,
     platform: 'linux',
   });

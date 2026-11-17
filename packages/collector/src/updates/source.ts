@@ -1,4 +1,4 @@
-import { open, readdir, stat } from 'node:fs/promises';
+import { lstat, open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -111,6 +111,16 @@ const missing = (error: unknown) =>
   error !== null &&
   'code' in error &&
   (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+// Whether `path` itself exists, a link that points nowhere included. Only a
+// path that is not there at all reads false.
+const present = async (path: string) => {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    return !missing(error);
+  }
+};
 const unavailable = (reason: string) =>
   ({ kind: 'unavailable', reason: reason.slice(0, 1024) }) as const;
 
@@ -281,8 +291,16 @@ export const createUpdatesSource = ({
           observedAt,
           result: unavailable('APT coverage requires a readable os-release'),
         });
+      } else if (await present(config.apt)) {
+        // An OS the marker does not recognize may still be Debian-derived.
+        managers.push({
+          installation: config.aptListsDir,
+          manager: 'apt',
+          observedAt,
+          result: unavailable('APT coverage requires a Debian-family OS'),
+        });
       }
-      // A readable os-release naming another OS has no APT to cover.
+      // A readable os-release naming another OS, without apt, has no APT to cover.
     }
     for (const prefix of config.homebrewPrefixes) {
       try {
@@ -293,8 +311,14 @@ export const createUpdatesSource = ({
           await observeHomebrew({ cacheDir: config.homebrewCacheDir, observedAt, prefix }),
         );
       } catch (error) {
-        // A default prefix is a guess: one without Homebrew has nothing to cover.
-        if (missing(error) && !config.homebrewPrefixesConfigured) {
+        // A default prefix is a guess: one without Homebrew has nothing to
+        // cover. A brew link that points nowhere is a broken installation.
+        if (
+          missing(error) &&
+          !config.homebrewPrefixesConfigured &&
+          // oxlint-disable-next-line no-await-in-loop -- part of this prefix's sequential check.
+          !(await present(join(prefix, 'bin', 'brew')))
+        ) {
           continue;
         }
         managers.push({

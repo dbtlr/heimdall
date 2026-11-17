@@ -296,8 +296,8 @@ The interval must be finite, at least one second (`1/3600` hours), and at most 5
 Local path settings are `apt`, `aptListsDir`, `dpkgQuery`, `osRelease`, `rebootMarker`, `homebrewPrefixes`, and `homebrewCacheDir`.
 Paths must be absolute. Homebrew prefixes list at most 14 distinct installations.
 The defaults use standard operating-system locations and the Collector account's Homebrew cache.
-A package manager the System does not have sends no entry. A default Homebrew prefix is a guess, so one where `bin/brew` does not exist sends none; one where the Collector cannot tell, such as a prefix it may not read, produces unavailable coverage. A prefix `homebrewPrefixes` names is expected, so one without `bin/brew` produces unavailable coverage.
-On Linux, APT is covered only when the `osRelease` file names a Debian-family OS, whatever APT paths are configured. A readable `osRelease` that names another OS sends no APT entry, and one that is missing or that the Collector cannot read produces unavailable APT coverage.
+A package manager the System does not have sends no entry. A default Homebrew prefix is a guess, so one where `bin/brew` does not exist sends none; one where the Collector cannot tell, such as a prefix it may not read or a `bin/brew` link that points nowhere, produces unavailable coverage. A prefix `homebrewPrefixes` names is expected, so one without `bin/brew` produces unavailable coverage.
+On Linux, APT is covered only when the `osRelease` file names a Debian-family OS, whatever APT paths are configured. A readable `osRelease` that names another OS sends no APT entry when the `apt` executable is not there either; where it is, the OS may be Debian-derived under a name the Collector does not know, so APT coverage is unavailable. An `osRelease` that is missing or that the Collector cannot read produces unavailable APT coverage.
 
 On Debian-family Linux, APT lists upgradable packages using existing local package indexes, with a separate complete `dpkg-query` census of installed packages.
 APT identities include package architecture.
