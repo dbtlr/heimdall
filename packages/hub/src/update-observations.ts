@@ -81,6 +81,58 @@ export const clearEmptySource = async (
   }
 };
 
+// A section lists every package source its pass covered, so a stored package
+// source it leaves out is gone from the System, or its configuration no longer
+// covers it. Retiring one drops its pending packages and ends its Condition,
+// and records the pass's time on it, so only a newer observation stores it
+// again: a late Report from an earlier pass cannot bring it back. A pass dated
+// beyond the future tolerance retires nothing; a stored package source dated
+// beyond it is retired as the upsert below would replace it.
+const retireUnlisted = async (
+  tx: SQL,
+  { receivedAt, section, system }: { receivedAt: number; section: UpdatesSection; system: string },
+) => {
+  const passAt = Math.max(
+    section.reboot.observedAt,
+    ...section.managers.map(({ observedAt }) => observedAt),
+  );
+  const ahead = receivedAt + FUTURE_SAMPLE_TOLERANCE_MS;
+  if (passAt > ahead) {
+    return;
+  }
+  const listed = new Set(
+    section.managers.map(({ installation, manager }) =>
+      updateSourceSubject({ installation, manager }),
+    ),
+  );
+  const stored: {
+    installation: string;
+    manager: UpdateManager['manager'];
+    observed_at: Date;
+  }[] = await tx`
+    SELECT manager, installation, observed_at FROM update_managers WHERE system = ${system}
+  `;
+  for (const source of stored) {
+    const subject = updateSourceSubject(source);
+    const at = source.observed_at.getTime();
+    if (listed.has(subject) || (at >= passAt && at <= ahead)) {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
+    await tx`
+      UPDATE update_managers SET withdrawn = true, observed_at = ${new Date(passAt)}
+      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+    `;
+    // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
+    await tx`
+      DELETE FROM update_subjects
+      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+    `;
+    // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
+    await clearEmptySource(tx, { now: new Date(receivedAt), subject, system });
+  }
+};
+
 // Per-manager observation time orders cached Reports. Failure replaces coverage,
 // but never discards positive evidence or restarts its Hub-confirmed age.
 export const storeUpdates = async (
@@ -168,6 +220,7 @@ export const storeUpdates = async (
       system,
     });
   }
+  await retireUnlisted(tx, { receivedAt, section, system });
   const reboot = section.reboot;
   if (reboot.observedAt > receivedAt + FUTURE_SAMPLE_TOLERANCE_MS) {
     return;

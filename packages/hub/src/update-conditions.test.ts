@@ -197,7 +197,8 @@ test('cached replay and older success cannot refresh evidence or recover a later
   });
   await send(h, [manager(NOW - 1, [])]);
   expect((await evaluate(h))[0]?.level).toBe('warning');
-  await send(h, []);
+  // A section from an earlier pass that lists nothing retires nothing.
+  await send(h, [], { kind: 'unavailable', observedAt: NOW - 1, reason: 'unsupported' });
   expect(await evaluate(h)).toHaveLength(1);
 });
 
@@ -637,4 +638,72 @@ test('missing reboot evidence holds, and fresh absence clears only that marker',
   };
   expect(judge(facts).reboot).toBe('clear');
   expect(judge(facts, NOW + 2 * DAY).reboot).toMatchObject({ level: 'note' });
+});
+
+const brew = (at: number, updates = [wget]): UpdateManager => ({
+  installation: '/opt/homebrew',
+  manager: 'homebrew',
+  observedAt: at,
+  result: { kind: 'available', metadataAt: at, updates },
+});
+const brewSubject = JSON.stringify(['homebrew', '/opt/homebrew']);
+const brewState = async (h: Hub) => {
+  const [stored]: { observed_at: Date; withdrawn: boolean }[] = await h.db.sql`
+    SELECT observed_at, withdrawn FROM update_managers
+    WHERE system = 'laptop-1' AND manager = 'homebrew'
+  `;
+  const [held]: { count: number }[] = await h.db.sql`
+    SELECT count(*)::int AS count FROM update_subjects
+    WHERE system = 'laptop-1' AND manager = 'homebrew'
+  `;
+  return { held: held?.count, withdrawn: stored?.withdrawn };
+};
+
+test('a package source a newer section leaves out is retired with its packages and its Condition', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW, [curl]), brew(NOW)]);
+  await evaluate(h);
+  h.clock.now += 1;
+  await send(h, [manager(h.clock.now, [curl])]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+  const [retired] = await rows(h, `c.subject = '${brewSubject}'`);
+  expect(retired).toMatchObject({ actions: ['raised', 'cleared'] });
+  expect(retired?.cleared_at).toEqual(new Date(h.clock.now));
+  // The APT source it kept is untouched.
+  expect(await evaluate(h)).toMatchObject([{ subject: sourceSubject }]);
+});
+
+test('a late Report from an earlier pass cannot bring a retired package source back, and a newer one does', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW), brew(NOW)]);
+  h.clock.now = NOW + 2;
+  await send(h, [manager(NOW + 2)]);
+  // The pass at NOW + 1 listed Homebrew, and its Report arrives last.
+  await send(h, [manager(NOW + 1), brew(NOW + 1)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+  expect(await evaluate(h)).toMatchObject([{ subject: sourceSubject }]);
+  h.clock.now = NOW + 3;
+  await send(h, [manager(NOW + 3), brew(NOW + 3)]);
+  expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
+});
+
+test('a section dated more than five minutes ahead of the Hub retires nothing', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW), brew(NOW)]);
+  const ahead = NOW + 6 * 60_000;
+  await send(h, [manager(ahead)], {
+    kind: 'unavailable',
+    observedAt: ahead,
+    reason: 'unsupported',
+  });
+  expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
+});
+
+test('a package source stored ahead of the Hub clock is retired by a section that leaves it out', async () => {
+  await using h = await startHub();
+  // Accepted within the five-minute tolerance, then the Hub's clock steps back.
+  await send(h, [manager(NOW), brew(NOW + 4 * 60_000)]);
+  h.clock.now = NOW - 10 * 60_000;
+  await send(h, [manager(h.clock.now)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
 });

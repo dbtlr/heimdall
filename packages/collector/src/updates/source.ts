@@ -16,6 +16,8 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 // Configuration is local to the Collector. Paths are explicit so tests and
 // nonstandard package-manager installations use the same observation boundary.
+// `homebrewPrefixesConfigured` says whether the prefixes were named, and so are
+// expected, or are the defaults, which a System may not have.
 export const parseUpdatesConfig = (value: unknown) => {
   const defaults = {
     apt: '/usr/bin/apt',
@@ -34,7 +36,7 @@ export const parseUpdatesConfig = (value: unknown) => {
     rebootMarker: '/var/run/reboot-required',
   };
   if (value === undefined) {
-    return defaults;
+    return { ...defaults, homebrewPrefixesConfigured: false };
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('updates must be a table');
@@ -86,7 +88,7 @@ export const parseUpdatesConfig = (value: unknown) => {
     }
     config.homebrewPrefixes = [...new Set(paths)];
   }
-  return config;
+  return { ...config, homebrewPrefixesConfigured: 'homebrewPrefixes' in value };
 };
 export type UpdatesConfig = ReturnType<typeof parseUpdatesConfig>;
 export type UpdatesSource = { latest: () => UpdatesSection | undefined };
@@ -147,8 +149,11 @@ export const createUpdatesSource = ({
     const managers: UpdateManager[] = [];
     let debian = false;
     if (platform === 'linux') {
+      // An unreadable os-release leaves the OS unknown, so APT coverage is
+      // unavailable rather than absent.
+      let release: string | undefined;
       try {
-        const release = await readSmall(config.osRelease);
+        release = await readSmall(config.osRelease);
         debian = /^(?:ID|ID_LIKE)=["']?(?:[^\n"']*\s)?(?:debian|ubuntu)(?:\s|["']?$)/m.test(
           release,
         );
@@ -269,14 +274,15 @@ export const createUpdatesSource = ({
           manager.result = unavailable(describeError(error));
         }
         managers.push(manager);
-      } else {
+      } else if (release === undefined) {
         managers.push({
           installation: config.aptListsDir,
           manager: 'apt',
           observedAt,
-          result: unavailable('APT coverage requires a Debian-family OS'),
+          result: unavailable('APT coverage requires a readable os-release'),
         });
       }
+      // A readable os-release naming another OS has no APT to cover.
     }
     for (const prefix of config.homebrewPrefixes) {
       try {
@@ -287,6 +293,10 @@ export const createUpdatesSource = ({
           await observeHomebrew({ cacheDir: config.homebrewCacheDir, observedAt, prefix }),
         );
       } catch (error) {
+        // A default prefix is a guess: one without Homebrew has nothing to cover.
+        if (missing(error) && !config.homebrewPrefixesConfigured) {
+          continue;
+        }
         managers.push({
           installation: prefix,
           manager: 'homebrew',

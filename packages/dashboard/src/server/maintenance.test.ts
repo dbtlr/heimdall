@@ -23,13 +23,14 @@ type Pending = { name: string; security: boolean | null };
 // One Report from `system` received at NOW, with an APT source holding
 // `pending` (or reporting `result` instead) and, when given, its `installed`
 // census names, any `sources` beside it, and a reboot marker, as a Collector
-// sends them.
+// sends them from a pass at `passAt`.
 const hear = async (
   h: Hub,
   system: string,
   pending: Pending[],
   {
     arch = 'x64',
+    passAt = NOW - 20 * MINUTE,
     installed,
     reboot = false,
     result,
@@ -37,6 +38,7 @@ const hear = async (
     sources = [],
   }: {
     arch?: string;
+    passAt?: number;
     installed?: string[];
     reboot?: boolean;
     result?: UpdateManager['result'];
@@ -62,9 +64,9 @@ const hear = async (
         managers: [
           {
             installation: 'system',
-            ...(installed && { installed: { names: installed, observedAt: NOW - 20 * MINUTE } }),
+            ...(installed && { installed: { names: installed, observedAt: passAt } }),
             manager: 'apt',
-            observedAt: NOW - 20 * MINUTE,
+            observedAt: passAt,
             result: result ?? {
               kind: 'available',
               metadataAt: NOW - 2 * HOUR,
@@ -78,7 +80,7 @@ const hear = async (
           },
           ...sources,
         ],
-        reboot: { kind: 'available', observedAt: NOW - 20 * MINUTE, required: reboot },
+        reboot: { kind: 'available', observedAt: passAt, required: reboot },
       },
     },
     { token: `${system.split('-')[0] ?? system}-token` },
@@ -247,6 +249,31 @@ test('a System with several package sources has a current check only when every 
     manager: 'Homebrew',
   });
   expect(checks.get('mini-1')).toEqual({ at: NOW - 20 * MINUTE, kind: 'current' });
+});
+
+test('a package source the Collector stops reporting leaves its System, so an apt-only System can read up to date', async () => {
+  await using h = await startHub();
+  const earlier = NOW - 3 * HOUR;
+  const missing = {
+    ...source('homebrew', '/home/linuxbrew/.linuxbrew', {
+      kind: 'unavailable',
+      reason: 'Homebrew executable is missing',
+    }),
+    observedAt: earlier,
+  };
+  await hear(h, 'server-1', [], { passAt: earlier, sources: [missing] });
+  const server = async () =>
+    (await readMaintenance(h.db.sql, NOW)).systems.find(({ system }) => system === 'server-1');
+  expect(await server()).toMatchObject({
+    check: { kind: 'failed' },
+    managers: ['APT', 'Homebrew'],
+  });
+
+  await hear(h, 'server-1', []);
+  expect(await server()).toMatchObject({
+    check: { at: NOW - 20 * MINUTE, kind: 'current' },
+    managers: ['APT'],
+  });
 });
 
 test('a malformed package observation leaves its source with no current check and every other System intact', async () => {
