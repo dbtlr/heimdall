@@ -119,7 +119,9 @@ const retireUnlisted = async (
   for (const source of stored) {
     const subject = updateSourceSubject(source);
     const at = source.observed_at.getTime();
-    if (listed.has(subject) || (at >= passAt && at <= ahead)) {
+    // A stored time ahead of the Hub's clock is retired like an older one,
+    // but a retired package source's time is a pass and never moves back.
+    if (listed.has(subject) || (at >= passAt && (source.retired || at <= ahead))) {
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.

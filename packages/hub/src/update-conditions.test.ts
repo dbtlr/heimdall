@@ -747,6 +747,20 @@ test('a Hub clock that steps back does not let a pass before retiring restore th
     reason: 'unsupported',
   });
   expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+  // An earlier pass that leaves it out never moves its time back, so a pass
+  // just after that one, still before retiring, cannot restore it either.
+  await send(h, [manager(earlier)], {
+    kind: 'unavailable',
+    observedAt: earlier,
+    reason: 'unsupported',
+  });
+  const later = earlier + 60_000;
+  await send(h, [manager(later), brew(later)], {
+    kind: 'unavailable',
+    observedAt: later,
+    reason: 'unsupported',
+  });
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
 });
 
 test('a section dated more than five minutes ahead of the Hub retires nothing', async () => {
