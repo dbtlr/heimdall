@@ -732,6 +732,23 @@ test('a retired package source stays retired through unpairing, returns only wit
   expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
 });
 
+test('a Hub clock that steps back does not let a pass before retiring restore the package source', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW), brew(NOW)]);
+  // Retired by a pass four minutes ahead, within the future tolerance.
+  const retiredAt = NOW + 4 * 60_000;
+  await send(h, [manager(retiredAt)]);
+  // The Hub's clock steps back, so the retiring time now reads as ahead of it.
+  h.clock.now = NOW - 10 * 60_000;
+  const earlier = NOW - 15 * 60_000;
+  await send(h, [manager(earlier), brew(earlier)], {
+    kind: 'unavailable',
+    observedAt: earlier,
+    reason: 'unsupported',
+  });
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+});
+
 test('a section dated more than five minutes ahead of the Hub retires nothing', async () => {
   await using h = await startHub();
   await send(h, [manager(NOW), brew(NOW)]);

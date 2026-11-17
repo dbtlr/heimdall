@@ -163,7 +163,10 @@ export const storeUpdates = async (
       WHERE update_managers.observed_at < excluded.observed_at
         OR (update_managers.withdrawn AND NOT update_managers.retired
             AND update_managers.observed_at = excluded.observed_at)
-        OR update_managers.observed_at > ${new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS)}
+        -- A retired package source's time is a Collector pass, which an
+        -- earlier pass must not pass even when the Hub's clock stepped back.
+        OR (NOT update_managers.retired
+            AND update_managers.observed_at > ${new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS)})
       RETURNING manager
     `;
     if (accepted.length === 0) {

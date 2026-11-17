@@ -137,6 +137,35 @@ test('APT sends no entry on a Linux whose os-release names another OS and that h
   expect(source.latest()?.managers).toEqual([]);
 });
 
+test('APT coverage is unavailable when os-release names no OS', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  for (const content of ['', 'NAME="Some Linux"\n']) {
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await writeFile(osRelease, content);
+    const source = createUpdatesSource({
+      config: parseUpdatesConfig({
+        apt: join(dir.path, 'no-apt'),
+        homebrewPrefixes: [],
+        osRelease,
+      }),
+      now: () => 1000,
+      platform: 'linux',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await source.tick();
+    expect(source.latest()?.managers).toMatchObject([
+      {
+        manager: 'apt',
+        result: {
+          kind: 'unavailable',
+          reason: 'APT coverage requires an os-release that names its OS',
+        },
+      },
+    ]);
+  }
+});
+
 test('APT coverage is unavailable when os-release is missing or cannot be read', async () => {
   await using dir = await tempStateDir();
   // A missing file, and a directory where the file should be.

@@ -291,6 +291,14 @@ export const createUpdatesSource = ({
           observedAt,
           result: unavailable('APT coverage requires a readable os-release'),
         });
+      } else if (!/^ID=["']?[^\s"']/m.test(release)) {
+        // Without an ID, the file does not say the OS is another one.
+        managers.push({
+          installation: config.aptListsDir,
+          manager: 'apt',
+          observedAt,
+          result: unavailable('APT coverage requires an os-release that names its OS'),
+        });
       } else if (await present(config.apt)) {
         // An OS the marker does not recognize may still be Debian-derived.
         managers.push({
