@@ -55,26 +55,32 @@ test('a default Homebrew prefix without Homebrew sends no entry', async () => {
   }
 });
 
-test('a default Homebrew prefix the Collector cannot inspect still reports unavailable coverage', async () => {
-  await using dir = await tempStateDir();
-  const prefix = join(dir.path, 'brew');
-  await mkdir(join(prefix, 'bin'), { recursive: true });
-  await chmod(prefix, 0o000);
-  try {
-    const source = createUpdatesSource({
-      config: defaultPrefixes([prefix]),
-      now: () => 1000,
-      platform: 'darwin',
-    });
-    await source.tick();
-    expect(source.latest()?.managers.find(({ manager }) => manager === 'homebrew')).toMatchObject({
-      installation: prefix,
-      result: { kind: 'unavailable', reason: 'Homebrew ownership cannot be established' },
-    });
-  } finally {
-    await chmod(prefix, 0o755);
-  }
-});
+// Root reads a mode-000 directory, so the prefix cannot be made unreadable.
+test.skipIf(process.getuid?.() === 0)(
+  'a default Homebrew prefix the Collector cannot inspect still reports unavailable coverage',
+  async () => {
+    await using dir = await tempStateDir();
+    const prefix = join(dir.path, 'brew');
+    await mkdir(join(prefix, 'bin'), { recursive: true });
+    await chmod(prefix, 0o000);
+    try {
+      const source = createUpdatesSource({
+        config: defaultPrefixes([prefix]),
+        now: () => 1000,
+        platform: 'darwin',
+      });
+      await source.tick();
+      expect(source.latest()?.managers.find(({ manager }) => manager === 'homebrew')).toMatchObject(
+        {
+          installation: prefix,
+          result: { kind: 'unavailable', reason: 'Homebrew ownership cannot be established' },
+        },
+      );
+    } finally {
+      await chmod(prefix, 0o755);
+    }
+  },
+);
 
 test('APT sends no entry on a Linux whose os-release names another OS', async () => {
   await using dir = await tempStateDir();

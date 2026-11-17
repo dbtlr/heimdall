@@ -159,10 +159,12 @@ export const storeServiceVersions = async (
         applications.find((record) => record.name === service.application)?.source ?? null,
       ) !== undefined,
   );
+  // A retired package source is gone from the System, so its census is left
+  // out; an unpaired System's withdrawn census still holds the last version.
   const managers: { observation: unknown; withdrawn: boolean }[] = censused
     ? await tx`
         SELECT observation, withdrawn FROM update_managers
-        WHERE system = ${system} ORDER BY manager, installation
+        WHERE system = ${system} AND NOT retired ORDER BY manager, installation
       `
     : [];
   const censuses = managers.flatMap(({ observation, withdrawn }) => {

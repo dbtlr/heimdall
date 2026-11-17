@@ -85,7 +85,9 @@ export const clearEmptySource = async (
 // source it leaves out is gone from the System, or its configuration no longer
 // covers it. Retiring one drops its pending packages and ends its Condition,
 // and records the pass's time on it, so only a newer observation stores it
-// again: a late Report from an earlier pass cannot bring it back. A pass dated
+// again: a late Report from an earlier pass cannot bring it back. Unlike
+// unpairing's withdrawal, re-pairing does not accept its cached observation
+// again, and its census gives no Service a version. A pass dated
 // beyond the future tolerance retires nothing; a stored package source dated
 // beyond it is retired as the upsert below would replace it.
 const retireUnlisted = async (
@@ -109,18 +111,19 @@ const retireUnlisted = async (
     installation: string;
     manager: UpdateManager['manager'];
     observed_at: Date;
+    retired: boolean;
   }[] = await tx`
-    SELECT manager, installation, observed_at FROM update_managers WHERE system = ${system}
+    SELECT manager, installation, observed_at, retired FROM update_managers WHERE system = ${system}
   `;
   for (const source of stored) {
     const subject = updateSourceSubject(source);
     const at = source.observed_at.getTime();
-    if (listed.has(subject) || (at >= passAt && at <= ahead)) {
+    if (source.retired || listed.has(subject) || (at >= passAt && at <= ahead)) {
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
     await tx`
-      UPDATE update_managers SET withdrawn = true, observed_at = ${new Date(passAt)}
+      UPDATE update_managers SET withdrawn = true, retired = true, observed_at = ${new Date(passAt)}
       WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
     `;
     // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
@@ -150,9 +153,11 @@ export const storeUpdates = async (
       VALUES (${system}, ${manager.manager}, ${manager.installation}, ${new Date(manager.observedAt)},
               ${storableJson(manager)}::text::jsonb)
       ON CONFLICT (system, manager, installation) DO UPDATE SET
-        observed_at = excluded.observed_at, observation = excluded.observation, withdrawn = false
+        observed_at = excluded.observed_at, observation = excluded.observation, withdrawn = false,
+        retired = false
       WHERE update_managers.observed_at < excluded.observed_at
-        OR (update_managers.withdrawn AND update_managers.observed_at = excluded.observed_at)
+        OR (update_managers.withdrawn AND NOT update_managers.retired
+            AND update_managers.observed_at = excluded.observed_at)
         OR update_managers.observed_at > ${new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS)}
       RETURNING manager
     `;

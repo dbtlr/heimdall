@@ -687,6 +687,35 @@ test('a late Report from an earlier pass cannot bring a retired package source b
   expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
 });
 
+test('a package source a late earlier Report stores is retired by the next repeat of the newer pass', async () => {
+  await using h = await startHub();
+  h.clock.now = NOW + 2;
+  await send(h, [manager(NOW + 2)]);
+  // The earlier pass, which listed Homebrew, arrives after the newer one.
+  await send(h, [manager(NOW + 1), brew(NOW + 1)]);
+  expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
+  // The Collector repeats its latest section, which leaves Homebrew out.
+  await send(h, [manager(NOW + 2)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+});
+
+test('a retired package source stays retired through unpairing and returns only with a newer pass', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW), brew(NOW)]);
+  h.clock.now = NOW + 2;
+  await send(h, [manager(NOW + 2)]);
+  await unpair(h.db.sql, 'laptop-1');
+  await evaluate(h);
+  await storeToken(h.db.sql, { pairedAt: h.clock.now, system: 'laptop-1', token: 'laptop-token' });
+  // Re-pairing accepts an identical cached observation again, but not one of
+  // a package source retired at that pass's time.
+  await send(h, [manager(NOW + 2), brew(NOW + 2)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+  h.clock.now = NOW + 3;
+  await send(h, [manager(NOW + 3), brew(NOW + 3)]);
+  expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
+});
+
 test('a section dated more than five minutes ahead of the Hub retires nothing', async () => {
   await using h = await startHub();
   await send(h, [manager(NOW), brew(NOW)]);

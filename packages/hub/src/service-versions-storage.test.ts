@@ -325,6 +325,26 @@ test('a gap in the package census keeps the installed version rather than record
   ).toEqual([{ version: '1.26-1ubuntu2' }]);
 });
 
+test('a retired package source gives a Service its recorded version back', async () => {
+  await using h = await startHub();
+  const send = async (at: number, updates: ReturnType<typeof aptCensus>) => {
+    h.clock.now = at;
+    const body = { ...report('laptop-1', [at]), records: records(), updates };
+    expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
+  };
+  await send(NOW, aptCensus(NOW, true));
+  // The next pass covers no APT, so the Hub retires the census.
+  const next = NOW + 60_000;
+  await send(next, { ...aptCensus(next, true), managers: [] });
+  expect(
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+    ),
+  ).toEqual([{ version: '1.26-1ubuntu2' }, { version: '1.26' }]);
+});
+
 test('a Hub clock that steps back still puts the newest version last', async () => {
   await using h = await startHub();
   const send = async (at: number, version: string) => {
