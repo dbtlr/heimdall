@@ -2,8 +2,12 @@ import { expect, test } from 'bun:test';
 
 import type { ApplicationRecord, ChecksSection, ServiceRecord } from '@heimdall/schema';
 
+import { parseConditionLimits } from './condition-limits.ts';
+import { unpair } from './pairing.ts';
 import { NOW, push, report, startHub } from './testing/hub.ts';
 import { plainRows } from './testing/postgres.ts';
+import { storeToken } from './tokens.ts';
+import { evaluateUpdateConditions } from './update-conditions.ts';
 
 const APPLICATION: ApplicationRecord = { name: 'nginx', source: 'apt:nginx', version: '1.26' };
 const SERVICE: ServiceRecord = { application: 'nginx', name: 'web', supervisor: 'none' };
@@ -322,6 +326,75 @@ test('a gap in the package census keeps the installed version rather than record
   await send(NOW + 120_000, true);
   expect(
     await plainRows(h.db.sql<Record<string, unknown>[]>`SELECT version FROM service_versions`),
+  ).toEqual([{ version: '1.26-1ubuntu2' }]);
+});
+
+test('a retired package source gives a Service its recorded version back', async () => {
+  await using h = await startHub();
+  const send = async (at: number, updates: ReturnType<typeof aptCensus>) => {
+    h.clock.now = at;
+    const body = { ...report('laptop-1', [at]), records: records(), updates };
+    expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
+  };
+  await send(NOW, aptCensus(NOW, true));
+  // The next pass covers no APT, so the Hub retires the census.
+  const next = NOW + 60_000;
+  await send(next, { ...aptCensus(next, true), managers: [] });
+  expect(
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+    ),
+  ).toEqual([{ version: '1.26-1ubuntu2' }, { version: '1.26' }]);
+});
+
+test('an unpaired System withdrawn census still holds the installed version after re-pairing', async () => {
+  await using h = await startHub();
+  h.clock.now = NOW;
+  // A pending package keeps the unpaired System in the update judgment.
+  const census = aptCensus(NOW, true);
+  const updates = {
+    ...census,
+    managers: [
+      {
+        installation: '/',
+        installed: {
+          names: ['nginx:amd64'],
+          observedAt: NOW,
+          versions: [{ name: 'nginx:amd64', version: '1.26-1ubuntu2' }],
+        },
+        manager: 'apt' as const,
+        observedAt: NOW,
+        result: {
+          kind: 'available' as const,
+          metadataAt: NOW,
+          updates: [{ available: '1.27', installed: '1.26', name: 'nginx:amd64', security: null }],
+        },
+      },
+    ],
+  };
+  const body = { ...report('laptop-1', [NOW]), records: records(), updates };
+  expect((await push(h.hub, body, { token: 'laptop-token' })).status).toBe(200);
+  await unpair(h.db.sql, 'laptop-1');
+  // The judgment withdraws an unpaired System's evidence without retiring it.
+  await evaluateUpdateConditions(h.db.sql, () => h.clock.now, parseConditionLimits(undefined));
+  expect(
+    await plainRows(
+      h.db.sql<Record<string, unknown>[]>`SELECT withdrawn, retired FROM update_managers`,
+    ),
+  ).toEqual([{ retired: false, withdrawn: true }]);
+  h.clock.now = NOW + 60_000;
+  await storeToken(h.db.sql, { pairedAt: h.clock.now, system: 'laptop-1', token: 'laptop-token' });
+  // The first Report after re-pairing carries records but no updates section.
+  const next = { ...report('laptop-1', [NOW + 60_000]), records: records() };
+  expect((await push(h.hub, next, { token: 'laptop-token' })).status).toBe(200);
+  expect(
+    await plainRows(
+      h.db.sql<
+        Record<string, unknown>[]
+      >`SELECT version FROM service_versions ORDER BY first_seen_at`,
+    ),
   ).toEqual([{ version: '1.26-1ubuntu2' }]);
 });
 

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, realpath, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, realpath, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { tempStateDir } from '../testing/fixtures.ts';
@@ -20,6 +20,176 @@ test('a missing configured Homebrew executable reports unavailable coverage with
     observedAt: 1000,
     result: { kind: 'unavailable' },
   });
+});
+
+// A default prefix is the Collector's guess, as though no homebrewPrefixes were configured.
+const defaultPrefixes = (homebrewPrefixes: string[]) => ({
+  ...parseUpdatesConfig({ homebrewPrefixes }),
+  homebrewPrefixesConfigured: false,
+});
+
+test('only a configured Homebrew prefix counts as expected', () => {
+  expect(parseUpdatesConfig(undefined).homebrewPrefixesConfigured).toBe(false);
+  expect(parseUpdatesConfig({ intervalHours: 1 }).homebrewPrefixesConfigured).toBe(false);
+  expect(parseUpdatesConfig({ homebrewPrefixes: [] }).homebrewPrefixesConfigured).toBe(true);
+  expect(() => parseUpdatesConfig({ homebrewPrefixesConfigured: false })).toThrow(
+    'Unknown updates setting: homebrewPrefixesConfigured',
+  );
+});
+
+test('a default Homebrew prefix without Homebrew sends no entry', async () => {
+  await using dir = await tempStateDir();
+  await writeFile(join(dir.path, 'os-release'), 'ID=fedora\n');
+  for (const platform of ['darwin', 'linux'] as const) {
+    const source = createUpdatesSource({
+      config: {
+        ...defaultPrefixes([join(dir.path, 'opt'), join(dir.path, 'usr-local')]),
+        osRelease: join(dir.path, 'os-release'),
+      },
+      now: () => 1000,
+      platform,
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one platform at a time.
+    await source.tick();
+    expect(source.latest()?.managers.filter(({ manager }) => manager === 'homebrew')).toEqual([]);
+  }
+});
+
+// Root reads a mode-000 directory, so the prefix cannot be made unreadable.
+test.skipIf(process.getuid?.() === 0)(
+  'a default Homebrew prefix the Collector cannot inspect still reports unavailable coverage',
+  async () => {
+    await using dir = await tempStateDir();
+    const prefix = join(dir.path, 'brew');
+    await mkdir(join(prefix, 'bin'), { recursive: true });
+    await chmod(prefix, 0o000);
+    try {
+      const source = createUpdatesSource({
+        config: defaultPrefixes([prefix]),
+        now: () => 1000,
+        platform: 'darwin',
+      });
+      await source.tick();
+      expect(source.latest()?.managers.find(({ manager }) => manager === 'homebrew')).toMatchObject(
+        {
+          installation: prefix,
+          result: { kind: 'unavailable', reason: 'Homebrew ownership cannot be established' },
+        },
+      );
+    } finally {
+      await chmod(prefix, 0o755);
+    }
+  },
+);
+
+test('a default Homebrew prefix whose brew link points nowhere still reports unavailable coverage', async () => {
+  await using dir = await tempStateDir();
+  const prefix = join(dir.path, 'usr-local');
+  await mkdir(join(prefix, 'bin'), { recursive: true });
+  await symlink('../Homebrew/bin/brew', join(prefix, 'bin', 'brew'));
+  const source = createUpdatesSource({
+    config: defaultPrefixes([prefix]),
+    now: () => 1000,
+    platform: 'darwin',
+  });
+  await source.tick();
+  expect(source.latest()?.managers.find(({ manager }) => manager === 'homebrew')).toMatchObject({
+    installation: prefix,
+    result: { kind: 'unavailable', reason: 'Homebrew executable is missing' },
+  });
+});
+
+test('APT coverage is unavailable where apt exists but os-release names no Debian-family OS', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  const apt = join(dir.path, 'apt');
+  await writeFile(osRelease, 'ID=deepin\n');
+  await writeFile(apt, '');
+  const source = createUpdatesSource({
+    config: parseUpdatesConfig({ apt, aptListsDir: dir.path, homebrewPrefixes: [], osRelease }),
+    now: () => 1000,
+    platform: 'linux',
+  });
+  await source.tick();
+  expect(source.latest()?.managers).toMatchObject([
+    {
+      manager: 'apt',
+      result: { kind: 'unavailable', reason: 'APT coverage requires a Debian-family OS' },
+    },
+  ]);
+});
+
+test('APT sends no entry on a Linux whose os-release names another OS and that has no apt', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  await writeFile(osRelease, 'ID=fedora\nID_LIKE="rhel centos"\n');
+  const source = createUpdatesSource({
+    config: parseUpdatesConfig({
+      apt: join(dir.path, 'no-apt'),
+      aptListsDir: dir.path,
+      homebrewPrefixes: [],
+      osRelease,
+    }),
+    now: () => 1000,
+    platform: 'linux',
+  });
+  await source.tick();
+  expect(source.latest()?.managers).toEqual([]);
+});
+
+test('APT coverage is unavailable when os-release names no OS', async () => {
+  await using dir = await tempStateDir();
+  const osRelease = join(dir.path, 'os-release');
+  for (const content of ['', 'NAME="Some Linux"\n']) {
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await writeFile(osRelease, content);
+    const source = createUpdatesSource({
+      config: parseUpdatesConfig({
+        apt: join(dir.path, 'no-apt'),
+        homebrewPrefixes: [],
+        osRelease,
+      }),
+      now: () => 1000,
+      platform: 'linux',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await source.tick();
+    expect(source.latest()?.managers).toMatchObject([
+      {
+        manager: 'apt',
+        result: {
+          kind: 'unavailable',
+          reason: 'APT coverage requires an os-release that names its OS',
+        },
+      },
+    ]);
+  }
+});
+
+test('APT coverage is unavailable when os-release is missing or cannot be read', async () => {
+  await using dir = await tempStateDir();
+  // A missing file, and a directory where the file should be.
+  for (const osRelease of [join(dir.path, 'no-such-os-release'), dir.path]) {
+    const source = createUpdatesSource({
+      config: parseUpdatesConfig({
+        apt: join(dir.path, 'no-apt'),
+        homebrewPrefixes: [],
+        osRelease,
+      }),
+      now: () => 1000,
+      platform: 'linux',
+    });
+    // oxlint-disable-next-line no-await-in-loop -- one os-release at a time.
+    await source.tick();
+    expect(source.latest()?.managers).toMatchObject([
+      {
+        manager: 'apt',
+        observedAt: 1000,
+        result: { kind: 'unavailable', reason: 'APT coverage requires a readable os-release' },
+      },
+    ]);
+    expect(source.latest()?.reboot.kind).toBe('unavailable');
+  }
 });
 
 test('APT preserves complete installed census when metadata is missing and supports Debian reboot marker', async () => {

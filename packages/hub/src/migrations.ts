@@ -2407,6 +2407,14 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 46,
   },
+  {
+    // A package source the Collector stopped reporting is retired: withdrawn
+    // like an unpaired System's, but an observation no newer than the pass
+    // that retired it cannot store it again, and its census gives no Service
+    // a version (HMD-284).
+    sql: `ALTER TABLE update_managers ADD COLUMN retired boolean NOT NULL DEFAULT false;`,
+    version: 47,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

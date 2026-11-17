@@ -81,6 +81,68 @@ export const clearEmptySource = async (
   }
 };
 
+// A section lists every package source its pass covered, so a stored package
+// source it leaves out is gone from the System, or its configuration no longer
+// covers it. Retiring one drops its pending packages and ends its Condition,
+// and records the pass's time on it, moved on by each newer pass that still
+// leaves it out, so only a newer observation stores it again: a late Report
+// from an earlier pass cannot bring it back. Unlike
+// unpairing's withdrawal, re-pairing does not accept its cached observation
+// again, and its census gives no Service a version. A pass dated
+// beyond the future tolerance retires nothing; a stored package source dated
+// beyond it is retired as the upsert below would replace it.
+const retireUnlisted = async (
+  tx: SQL,
+  { receivedAt, section, system }: { receivedAt: number; section: UpdatesSection; system: string },
+) => {
+  const passAt = Math.max(
+    section.reboot.observedAt,
+    ...section.managers.map(({ observedAt }) => observedAt),
+  );
+  const ahead = receivedAt + FUTURE_SAMPLE_TOLERANCE_MS;
+  if (passAt > ahead) {
+    return;
+  }
+  const listed = new Set(
+    section.managers.map(({ installation, manager }) =>
+      updateSourceSubject({ installation, manager }),
+    ),
+  );
+  const stored: {
+    installation: string;
+    manager: UpdateManager['manager'];
+    observed_at: Date;
+    retired: boolean;
+  }[] = await tx`
+    SELECT manager, installation, observed_at, retired FROM update_managers WHERE system = ${system}
+  `;
+  for (const source of stored) {
+    const subject = updateSourceSubject(source);
+    const at = source.observed_at.getTime();
+    // A stored time ahead of the Hub's clock is retired like an older one,
+    // but a retired package source's time is a pass and never moves back.
+    if (listed.has(subject) || (at >= passAt && (source.retired || at <= ahead))) {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
+    await tx`
+      UPDATE update_managers SET withdrawn = true, retired = true, observed_at = ${new Date(passAt)}
+      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+    `;
+    // A retired package source only moves its time on to the newer pass.
+    if (source.retired) {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
+    await tx`
+      DELETE FROM update_subjects
+      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+    `;
+    // oxlint-disable-next-line no-await-in-loop -- clearing shares the Report's System lock.
+    await clearEmptySource(tx, { now: new Date(receivedAt), subject, system });
+  }
+};
+
 // Per-manager observation time orders cached Reports. Failure replaces coverage,
 // but never discards positive evidence or restarts its Hub-confirmed age.
 export const storeUpdates = async (
@@ -98,10 +160,15 @@ export const storeUpdates = async (
       VALUES (${system}, ${manager.manager}, ${manager.installation}, ${new Date(manager.observedAt)},
               ${storableJson(manager)}::text::jsonb)
       ON CONFLICT (system, manager, installation) DO UPDATE SET
-        observed_at = excluded.observed_at, observation = excluded.observation, withdrawn = false
+        observed_at = excluded.observed_at, observation = excluded.observation, withdrawn = false,
+        retired = false
       WHERE update_managers.observed_at < excluded.observed_at
-        OR (update_managers.withdrawn AND update_managers.observed_at = excluded.observed_at)
-        OR update_managers.observed_at > ${new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS)}
+        OR (update_managers.withdrawn AND NOT update_managers.retired
+            AND update_managers.observed_at = excluded.observed_at)
+        -- A retired package source's time is a Collector pass, which an
+        -- earlier pass must not pass even when the Hub's clock stepped back.
+        OR (NOT update_managers.retired
+            AND update_managers.observed_at > ${new Date(receivedAt + FUTURE_SAMPLE_TOLERANCE_MS)})
       RETURNING manager
     `;
     if (accepted.length === 0) {
@@ -168,6 +235,7 @@ export const storeUpdates = async (
       system,
     });
   }
+  await retireUnlisted(tx, { receivedAt, section, system });
   const reboot = section.reboot;
   if (reboot.observedAt > receivedAt + FUTURE_SAMPLE_TOLERANCE_MS) {
     return;

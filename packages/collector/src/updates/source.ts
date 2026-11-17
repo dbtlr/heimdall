@@ -1,4 +1,4 @@
-import { open, readdir, stat } from 'node:fs/promises';
+import { lstat, open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -16,6 +16,8 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 // Configuration is local to the Collector. Paths are explicit so tests and
 // nonstandard package-manager installations use the same observation boundary.
+// `homebrewPrefixesConfigured` says whether the prefixes were named, and so are
+// expected, or are the defaults, which a System may not have.
 export const parseUpdatesConfig = (value: unknown) => {
   const defaults = {
     apt: '/usr/bin/apt',
@@ -34,7 +36,7 @@ export const parseUpdatesConfig = (value: unknown) => {
     rebootMarker: '/var/run/reboot-required',
   };
   if (value === undefined) {
-    return defaults;
+    return { ...defaults, homebrewPrefixesConfigured: false };
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('updates must be a table');
@@ -86,7 +88,7 @@ export const parseUpdatesConfig = (value: unknown) => {
     }
     config.homebrewPrefixes = [...new Set(paths)];
   }
-  return config;
+  return { ...config, homebrewPrefixesConfigured: 'homebrewPrefixes' in value };
 };
 export type UpdatesConfig = ReturnType<typeof parseUpdatesConfig>;
 export type UpdatesSource = { latest: () => UpdatesSection | undefined };
@@ -109,6 +111,16 @@ const missing = (error: unknown) =>
   error !== null &&
   'code' in error &&
   (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+// Whether `path` itself exists, a link that points nowhere included. Only a
+// path that is not there at all reads false.
+const present = async (path: string) => {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    return !missing(error);
+  }
+};
 const unavailable = (reason: string) =>
   ({ kind: 'unavailable', reason: reason.slice(0, 1024) }) as const;
 
@@ -147,8 +159,11 @@ export const createUpdatesSource = ({
     const managers: UpdateManager[] = [];
     let debian = false;
     if (platform === 'linux') {
+      // An unreadable os-release leaves the OS unknown, so APT coverage is
+      // unavailable rather than absent.
+      let release: string | undefined;
       try {
-        const release = await readSmall(config.osRelease);
+        release = await readSmall(config.osRelease);
         debian = /^(?:ID|ID_LIKE)=["']?(?:[^\n"']*\s)?(?:debian|ubuntu)(?:\s|["']?$)/m.test(
           release,
         );
@@ -269,7 +284,23 @@ export const createUpdatesSource = ({
           manager.result = unavailable(describeError(error));
         }
         managers.push(manager);
-      } else {
+      } else if (release === undefined) {
+        managers.push({
+          installation: config.aptListsDir,
+          manager: 'apt',
+          observedAt,
+          result: unavailable('APT coverage requires a readable os-release'),
+        });
+      } else if (!/^ID=["']?[^\s"']/m.test(release)) {
+        // Without an ID, the file does not say the OS is another one.
+        managers.push({
+          installation: config.aptListsDir,
+          manager: 'apt',
+          observedAt,
+          result: unavailable('APT coverage requires an os-release that names its OS'),
+        });
+      } else if (await present(config.apt)) {
+        // An OS the marker does not recognize may still be Debian-derived.
         managers.push({
           installation: config.aptListsDir,
           manager: 'apt',
@@ -277,6 +308,7 @@ export const createUpdatesSource = ({
           result: unavailable('APT coverage requires a Debian-family OS'),
         });
       }
+      // A readable os-release naming another OS, without apt, has no APT to cover.
     }
     for (const prefix of config.homebrewPrefixes) {
       try {
@@ -287,6 +319,16 @@ export const createUpdatesSource = ({
           await observeHomebrew({ cacheDir: config.homebrewCacheDir, observedAt, prefix }),
         );
       } catch (error) {
+        // A default prefix is a guess: one without Homebrew has nothing to
+        // cover. A brew link that points nowhere is a broken installation.
+        if (
+          missing(error) &&
+          !config.homebrewPrefixesConfigured &&
+          // oxlint-disable-next-line no-await-in-loop -- part of this prefix's sequential check.
+          !(await present(join(prefix, 'bin', 'brew')))
+        ) {
+          continue;
+        }
         managers.push({
           installation: prefix,
           manager: 'homebrew',

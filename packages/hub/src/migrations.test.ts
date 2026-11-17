@@ -527,3 +527,20 @@ test('migration 46 adds an empty Hub status table to a database that holds rows'
   expect(row?.last_runs).toEqual({});
   expect(await migrate(db.sql, through46)).toEqual([]);
 });
+
+test('migration 47 marks no stored package source retired', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 46),
+  );
+  await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await db.sql`INSERT INTO update_managers (system, manager, installation, observed_at, observation, withdrawn)
+    VALUES ('laptop-1', 'apt', '/', now(), '{}'::jsonb, true)`;
+  const through47 = MIGRATIONS.filter((m) => m.version <= 47);
+  expect(await migrate(db.sql, through47)).toEqual([47]);
+  expect(await db.sql`SELECT withdrawn, retired FROM update_managers`).toEqual([
+    { retired: false, withdrawn: true },
+  ]);
+  expect(await migrate(db.sql, through47)).toEqual([]);
+});

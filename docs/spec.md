@@ -296,7 +296,8 @@ The interval must be finite, at least one second (`1/3600` hours), and at most 5
 Local path settings are `apt`, `aptListsDir`, `dpkgQuery`, `osRelease`, `rebootMarker`, `homebrewPrefixes`, and `homebrewCacheDir`.
 Paths must be absolute. Homebrew prefixes list at most 14 distinct installations.
 The defaults use standard operating-system locations and the Collector account's Homebrew cache.
-Removing a prefix from configuration does not prove that its packages were uninstalled.
+A package manager the System does not have sends no entry. A default Homebrew prefix is a guess, so one where `bin/brew` does not exist sends none; one where the Collector cannot tell, such as a prefix it may not read or a `bin/brew` link that points nowhere, produces unavailable coverage. A prefix `homebrewPrefixes` names is expected, so one without `bin/brew` produces unavailable coverage.
+On Linux, APT is covered only when the `osRelease` file names a Debian-family OS, whatever APT paths are configured. A readable `osRelease` that names another OS sends no APT entry when the `apt` executable is not there either; where it is, the OS may be Debian-derived under a name the Collector does not know, so APT coverage is unavailable. An `osRelease` that is missing, that the Collector cannot read, or that has no `ID` naming its OS produces unavailable APT coverage.
 
 On Debian-family Linux, APT lists upgradable packages using existing local package indexes, with a separate complete `dpkg-query` census of installed packages.
 APT identities include package architecture.
@@ -328,6 +329,7 @@ The Collector sends changed observations and repeats them hourly using their ori
 Failed delivery retries the section. Resending a cached observation does not make it new evidence.
 An oversized observation becomes unavailable coverage, with no truncated successful package list or census.
 The Hub orders observations independently per manager installation and for reboot-required, ignoring repeated or older observations.
+`managers` lists every package source the Collector covered in the pass that made the section. The pass's time is the newest `observedAt` among its managers and its reboot observation. The Hub retires a stored package source of the System that the section leaves out when its stored observation is older than the pass's time, or more than five minutes ahead of the Hub's clock: its pending packages leave, its `pending_update` Condition clears in the Report's transaction, and the dashboard no longer shows it. A section whose pass time is more than five minutes ahead of the Hub's clock retires nothing. The Hub applies the rule to every section it receives, a repeated one included, so a package source stored from an earlier pass whose Report arrived late is retired by the next repeat. The Hub keeps the time of the latest pass that left the package source out, so only an observation newer than that time stores it again; a late Report from an earlier pass cannot bring it back, even after the Hub's clock steps back. A retired package source's installed census no longer gives Services their installed versions. Retiring differs from unpairing's withdrawal, after which an identical cached observation is accepted again.
 After unpairing withdraws a Condition, re-pairing can reconfirm an identical cached observation with a new pending age.
 Evidence more than five minutes ahead of the Hub's clock is ignored.
 
@@ -339,7 +341,7 @@ The census must be at least as recent as the package's last positive observation
 A newer observation still listing the package as pending prevents either local recovery inference.
 An unknown candidate or installed version cannot prove installation.
 An installed version that differs from the previous candidate, including a newer version, cannot use this recovery exception.
-Unknown, stale, failed, inaccessible, missing, disabled, or unsupported evidence alone cannot clear or lower an open update Condition.
+Unknown, stale, failed, inaccessible, missing, disabled, or unsupported evidence alone cannot clear or lower an open update Condition of a package source the Collector still reports.
 Metadata maintenance remains outside the Collector, so a quiet update list is not proof that a System is current.
 
 ### Identity, age, and clearing
@@ -348,12 +350,12 @@ The Hub raises and grades update Conditions once a minute under each System's lo
 It commits fresh recovery and clearing with the Report, so a later observation cannot erase recovery before the next judgment.
 `pending_update` has the subject `JSON.stringify([manager, installation])`: one Condition for each package source on a System, however many packages are pending in it.
 The Hub keeps one row of evidence for each pending package, with its own security age, and the Condition's reason counts them, such as "6 APT packages are out of date, 2 of them are security updates."
-A package joining or leaving the source changes the reason's counts and preserves the open occurrence and its pending age. A newer candidate version keeps the occurrence and its age; it changes the reason only when it changes the security count.
-Ordinary pending updates raise notes. A source is a warning when any of its packages is a confirmed security update that has waited more than three calendar days; otherwise it is a note.
+A package joining or leaving the package source changes the reason's counts and preserves the open occurrence and its pending age. A newer candidate version keeps the occurrence and its age; it changes the reason only when it changes the security count.
+Ordinary pending updates raise notes. A package source is a warning when any of its packages is a confirmed security update that has waited more than three calendar days; otherwise it is a note.
 The security age of a package starts when the Hub first receives positive security evidence for it, rather than a package release date or a backlogged observation's time.
 Unknown security evidence preserves an established security age.
 Fresh evidence explicitly identifying a pending update as non-security can reset that package's age.
-An open warning is lowered only when no package qualifies and fresh evidence establishes the security of every package left in the source.
+An open warning is lowered only when no package qualifies and fresh evidence establishes the security of every package left in the package source.
 
 `reboot_required` has an empty subject. It raises a note and becomes a warning after more than seven calendar days from Hub confirmation.
 Sleep and a quiet Collector do not pause either age.
@@ -361,11 +363,12 @@ The defaults are `securityWarningDays = 3` and `rebootWarningDays = 7` in `[cond
 `[conditions.systems.<System>.updates]` overrides individual fields and inherits the rest.
 Each value must be finite, positive, and no greater than 3650 days. Restarting the Hub applies changed limits without rewriting history.
 
-A fresh successful update list that omits a pending package removes that package from its source, and the Condition clears with the last package it lists.
+A fresh successful update list that omits a pending package removes that package from its package source, and the Condition clears with the last package it lists.
 Authoritative fresh local proof of uninstallation or exact installation of a package's previously reported candidate also removes it.
 A fresh explicit absence of the Debian reboot-required marker clears reboot-required.
-A missing executable, removed configuration entry, failed lookup, or lost installation access does not establish subject removal.
-Database migration 30 merged each System's open per-package occurrences into one for each source: the earliest-raised occurrence stayed open under the source subject at the worst level of the group, and the rest closed with a note that they were merged.
+A package source the Collector stops reporting, because the System no longer has the installation or the Collector's configuration no longer covers it, is retired with its packages, as above.
+A missing executable at a configured prefix, a failed lookup, or lost installation access is unavailable coverage, which does not establish subject removal.
+Database migration 30 merged each System's open per-package occurrences into one for each package source: the earliest-raised occurrence stayed open under the package source's subject at the worst level of the group, and the rest closed with a note that they were merged.
 Unpairing clears update Conditions at the next judgment. A later recurrence starts a new occurrence and age.
 The dashboard uses stored Hub levels and dates update evidence independently of Vitals and Last seen.
 
