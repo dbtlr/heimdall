@@ -84,8 +84,9 @@ export const clearEmptySource = async (
 // A section lists every package source its pass covered, so a stored package
 // source it leaves out is gone from the System, or its configuration no longer
 // covers it. Retiring one drops its pending packages and ends its Condition,
-// and records the pass's time on it, so only a newer observation stores it
-// again: a late Report from an earlier pass cannot bring it back. Unlike
+// and records the pass's time on it, moved on by each newer pass that still
+// leaves it out, so only a newer observation stores it again: a late Report
+// from an earlier pass cannot bring it back. Unlike
 // unpairing's withdrawal, re-pairing does not accept its cached observation
 // again, and its census gives no Service a version. A pass dated
 // beyond the future tolerance retires nothing; a stored package source dated
@@ -118,7 +119,7 @@ const retireUnlisted = async (
   for (const source of stored) {
     const subject = updateSourceSubject(source);
     const at = source.observed_at.getTime();
-    if (source.retired || listed.has(subject) || (at >= passAt && at <= ahead)) {
+    if (listed.has(subject) || (at >= passAt && at <= ahead)) {
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
@@ -126,6 +127,10 @@ const retireUnlisted = async (
       UPDATE update_managers SET withdrawn = true, retired = true, observed_at = ${new Date(passAt)}
       WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
     `;
+    // A retired package source only moves its time on to the newer pass.
+    if (source.retired) {
+      continue;
+    }
     // oxlint-disable-next-line no-await-in-loop -- retiring shares the Report's System lock.
     await tx`
       DELETE FROM update_subjects

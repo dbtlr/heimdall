@@ -687,6 +687,18 @@ test('a late Report from an earlier pass cannot bring a retired package source b
   expect(await brewState(h)).toEqual({ held: 1, withdrawn: false });
 });
 
+test('a late Report from a pass after retiring cannot restore a package source a still newer pass left out', async () => {
+  await using h = await startHub();
+  await send(h, [manager(NOW), brew(NOW)]);
+  h.clock.now = NOW + 2;
+  await send(h, [manager(NOW + 2)]);
+  h.clock.now = NOW + 4;
+  await send(h, [manager(NOW + 4)]);
+  // The pass at NOW + 3 listed Homebrew, and its Report arrives last.
+  await send(h, [manager(NOW + 3), brew(NOW + 3)]);
+  expect(await brewState(h)).toEqual({ held: 0, withdrawn: true });
+});
+
 test('a package source a late earlier Report stores is retired by the next repeat of the newer pass', async () => {
   await using h = await startHub();
   h.clock.now = NOW + 2;
