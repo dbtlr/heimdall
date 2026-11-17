@@ -4,7 +4,7 @@ title: ADR-0018 - The Collector checks package managers on a schedule
 description: "The Collector observes pending package and operating-system updates on an occasional local schedule. M7 starts with existing local metadata, reports unavailable coverage honestly, and leaves room to revisit metadata refresh separately from installing updates."
 status: accepted
 created: 2026-10-16
-modified: 2026-10-27
+modified: 2026-11-17
 ---
 
 # The Collector checks package managers on a schedule
@@ -85,3 +85,4 @@ Those runtime interfaces are not implemented by this ADR.
 
 - 2026-10-27: Clarification. The Collector's observations still compare nothing with Application records. The Hub reads them to give a Service whose Application names an `apt:` or `brew:` upstream its installed and available versions ([ADR-0022](0022-services-show-their-version-and-the-hub-checks-upstreams.md)). The decision is unchanged.
 - 2026-11-10: Clarification. The dashboard shows an open Pending update or Reboot required note on Home's Maintenance card and in its System's Maintenance section, not among the open Conditions; at warning or alert either stays with them ([ADR-0017](0017-the-hub-sets-condition-levels.md)). The card counts the packages the Hub holds as pending, so a failed check does not lower the count, as it does not lower the Condition. The decision is unchanged.
+- 2026-11-17: Amendment. A package manager the System does not have is not a check that failed (HMD-284). The Collector sends no entry for a default location without an installation: a default Homebrew prefix without `bin/brew`, or APT on Linux whose `/etc/os-release` names no Debian-family OS. A location the configuration names is expected, so a missing executable there is still unavailable coverage. Each Report's update section lists every source the Collector covers, so the Hub withdraws a stored source that a newer section leaves out, with its pending packages and its Pending update Condition. The Collector found no installation there, or its configuration no longer covers one, so the withdrawal is not missing evidence. Failed, inaccessible, and stale checks of a source still reported keep their protections. The decision is unchanged.
