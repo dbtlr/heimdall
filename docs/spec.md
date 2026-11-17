@@ -296,8 +296,8 @@ The interval must be finite, at least one second (`1/3600` hours), and at most 5
 Local path settings are `apt`, `aptListsDir`, `dpkgQuery`, `osRelease`, `rebootMarker`, `homebrewPrefixes`, and `homebrewCacheDir`.
 Paths must be absolute. Homebrew prefixes list at most 14 distinct installations.
 The defaults use standard operating-system locations and the Collector account's Homebrew cache.
-A default location is a guess, so a package manager the System does not have there sends no entry. A default Homebrew prefix without `bin/brew` sends none, and on Linux an `osRelease` file that names no Debian-family OS sends no APT entry.
-A location the configuration names is expected. A `homebrewPrefixes` entry without `bin/brew` produces unavailable coverage, and so does an `osRelease` file the Collector cannot read.
+A package manager the System does not have sends no entry. A default Homebrew prefix is a guess, so one without `bin/brew` sends none; a prefix `homebrewPrefixes` names is expected, so one without `bin/brew` produces unavailable coverage.
+On Linux, APT is covered only when the `osRelease` file names a Debian-family OS, whatever APT paths are configured. A readable `osRelease` that names another OS sends no APT entry, and one the Collector cannot read produces unavailable APT coverage.
 
 On Debian-family Linux, APT lists upgradable packages using existing local package indexes, with a separate complete `dpkg-query` census of installed packages.
 APT identities include package architecture.
@@ -329,7 +329,7 @@ The Collector sends changed observations and repeats them hourly using their ori
 Failed delivery retries the section. Resending a cached observation does not make it new evidence.
 An oversized observation becomes unavailable coverage, with no truncated successful package list or census.
 The Hub orders observations independently per manager installation and for reboot-required, ignoring repeated or older observations.
-`managers` lists every package source the Collector covered in the pass that made the section. The pass's time is the newest `observedAt` among its managers and its reboot observation. A stored source of the System that the section leaves out, with an observation older than that time, is withdrawn: its pending packages leave, its `pending_update` Condition clears in the Report's transaction, and the dashboard no longer shows it. A later observation of the same source stores it again.
+`managers` lists every package source the Collector covered in the pass that made the section. The pass's time is the newest `observedAt` among its managers and its reboot observation. The Hub retires a stored package source of the System that the section leaves out when its stored observation is older than the pass's time, or more than five minutes ahead of the Hub's clock: its pending packages leave, its `pending_update` Condition clears in the Report's transaction, and the dashboard no longer shows it. A section whose pass time is more than five minutes ahead of the Hub's clock retires nothing. The Hub keeps the retiring pass's time for the package source, so only an observation newer than that time stores it again; a late Report from an earlier pass cannot bring it back. Retiring differs from unpairing's withdrawal, after which an identical cached observation is accepted again.
 After unpairing withdraws a Condition, re-pairing can reconfirm an identical cached observation with a new pending age.
 Evidence more than five minutes ahead of the Hub's clock is ignored.
 
@@ -341,7 +341,7 @@ The census must be at least as recent as the package's last positive observation
 A newer observation still listing the package as pending prevents either local recovery inference.
 An unknown candidate or installed version cannot prove installation.
 An installed version that differs from the previous candidate, including a newer version, cannot use this recovery exception.
-Unknown, stale, failed, inaccessible, missing, disabled, or unsupported evidence alone cannot clear or lower an open update Condition of a source the Collector still reports.
+Unknown, stale, failed, inaccessible, missing, disabled, or unsupported evidence alone cannot clear or lower an open update Condition of a package source the Collector still reports.
 Metadata maintenance remains outside the Collector, so a quiet update list is not proof that a System is current.
 
 ### Identity, age, and clearing
@@ -366,7 +366,7 @@ Each value must be finite, positive, and no greater than 3650 days. Restarting t
 A fresh successful update list that omits a pending package removes that package from its source, and the Condition clears with the last package it lists.
 Authoritative fresh local proof of uninstallation or exact installation of a package's previously reported candidate also removes it.
 A fresh explicit absence of the Debian reboot-required marker clears reboot-required.
-A source the Collector stops reporting, because its installation is gone from a default location or its prefix was removed from configuration, is withdrawn with its packages, as above.
+A package source the Collector stops reporting, because its installation is gone from a default location or its prefix was removed from configuration, is retired with its packages, as above.
 A missing executable at a configured prefix, a failed lookup, or lost installation access is unavailable coverage, which does not establish subject removal.
 Database migration 30 merged each System's open per-package occurrences into one for each source: the earliest-raised occurrence stayed open under the source subject at the worst level of the group, and the rest closed with a note that they were merged.
 Unpairing clears update Conditions at the next judgment. A later recurrence starts a new occurrence and age.

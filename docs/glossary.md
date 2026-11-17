@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, package source, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -9,6 +9,7 @@ Condition levels and level-change history follow [ADR-0017](decisions/0017-the-h
 Delivery and silences follow [ADR-0020](decisions/0020-the-hub-delivers-alerts-through-ntfy.md).
 Service stops follow [ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md).
 Installed versions, upstreams, and available updates follow [ADR-0022](decisions/0022-services-show-their-version-and-the-hub-checks-upstreams.md).
+Package sources follow [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md).
 
 ## Language
 
@@ -47,6 +48,10 @@ _Avoid_: source (a transcript source), origin, registry (one kind of upstream)
 **available update**:
 A release on a Service's upstream newer than its installed version on the same channel: a stable version counts only stable releases, and a version with a suffix, such as `-next.32` or `-alpine`, also counts newer releases whose suffix has the same shape, with only its numbers changed. It is shown with the Service and is never a Condition.
 _Avoid_: outdated, pending update (an operating-system package update), Drift
+
+**package source**:
+One installation of a package manager that a System's Collector checks for pending updates: APT, one Homebrew prefix, or macOS Software Update. The Hub holds a System's pending packages by package source, with one Pending update Condition for each, and retires a package source the Collector stops reporting.
+_Avoid_: source (a transcript source), manager (the program, not its installation)
 
 **Service stop**:
 A time a Service's supervisor shows it stopped, from when it stopped to when it ran again, with the result, exit status, and restart count the supervisor holds. A reboot is not a Service stop, and a failed health check is not one either.
