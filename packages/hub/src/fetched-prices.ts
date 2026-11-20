@@ -1,7 +1,9 @@
 import type { SQL } from 'bun';
 
 import { MIGRATION_LOCK } from './migrations.ts';
+import { fetchPriceList } from './price-list.ts';
 import type { ListedEntry, ListedModel, SkippedModel } from './price-list.ts';
+import type { Fetch } from './upstream-releases.ts';
 
 // What a fetch adds to `fetched_model_prices` (ADR-0024, docs/spec.md "What a
 // fetch adds"): dated entries, tier by tier, never changing or deleting an
@@ -72,9 +74,9 @@ const unitError = (wanted: ListedEntry, today: Prices | undefined) => {
       if (ratio > UNIT_ERROR_RATIO) {
         const tier =
           wanted.promptOver === undefined
-            ? 'base'
-            : `over ${wanted.promptOver.toLocaleString('en-US')} prompt tokens`;
-        return `Its ${kind} price ${tier}, ${String(listed)} a million tokens, is more than ${String(UNIT_ERROR_RATIO)} times off the ${String(now)} in force today, as a unit error would be.`;
+            ? ''
+            : ` over ${wanted.promptOver.toLocaleString('en-US')} prompt tokens`;
+        return `Its ${kind} price${tier}, ${String(listed)} a million tokens, differs more than ${String(UNIT_ERROR_RATIO)} times from the ${String(now)} in force today, as a unit error would.`;
       }
     }
   }
@@ -265,3 +267,55 @@ export const applyFetchedPrices = (sql: SQL, models: readonly ListedModel[]) =>
     }
     return { added, skipped };
   });
+
+// Fetches the list at `source` and adds the entries it calls for. What it
+// skipped includes the models the list gives that do not fit the table.
+// Throws when the fetch fails, having changed nothing.
+export const updateFetchedPrices = async ({
+  fetch,
+  signal,
+  source,
+  sql,
+}: {
+  fetch: Fetch;
+  signal?: AbortSignal;
+  source: URL;
+  sql: SQL;
+}): Promise<AppliedPrices> => {
+  const list = await fetchPriceList({ fetch, source, ...(signal === undefined ? {} : { signal }) });
+  const { added, skipped } = await applyFetchedPrices(sql, list.models);
+  return { added, skipped: [...list.skipped, ...skipped] };
+};
+
+// "Added fetched prices for gpt-6.2-sol from 2020-01-01: every prompt, and
+// over 272,000 prompt tokens."
+export const describeAdded = ({ from, model, tiers }: AddedPrices) => {
+  const names = tiers.map((over) =>
+    over === 0 ? 'every prompt' : `over ${over.toLocaleString('en-US')} prompt tokens`,
+  );
+  const listed =
+    names.length > 1
+      ? `${names.slice(0, -1).join(', ')}, and ${names.at(-1) ?? ''}`
+      : names.join('');
+  return `Added fetched prices for ${model} from ${from}: ${listed}.`;
+};
+
+// A model skipped as a possible unit error, as serve and the command warn of it.
+export const describeSuspect = ({ model, reason }: SkippedModel) =>
+  `Skipped ${model}, a possible unit error: ${reason}`;
+
+const DAY_MS = 86_400_000;
+
+// Runs `fetch` unless it last succeeded within a day, by `now`, so a pass that
+// runs hourly fetches once a day and tries a failed fetch again on its next run.
+export const dailyFetch = ({ fetch, now }: { fetch: () => Promise<void>; now: () => number }) => {
+  let succeededAt: number | undefined;
+  return async () => {
+    if (succeededAt !== undefined && now() - succeededAt < DAY_MS) {
+      return;
+    }
+    const startedAt = now();
+    await fetch();
+    succeededAt = startedAt;
+  };
+};

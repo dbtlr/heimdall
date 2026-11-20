@@ -58,6 +58,19 @@ describe('the status recorder', () => {
     });
   });
 
+  test('a pass that is off records that in place of run times', async () => {
+    await using h = await startHub();
+    const status = recorder(h.db.sql, { now: T0 });
+    await status.start({
+      deliveryConfigured: false,
+      passes: { prices: { budgetMs: 1, intervalMs: 2, off: true } },
+      version: 'test',
+    });
+    expect((await statusRow(h.db.sql))?.last_runs).toEqual({
+      prices: { budget_ms: 1, interval_ms: 2, off: true },
+    });
+  });
+
   test('a pass records when it started before its work runs, then when it finished and succeeded', async () => {
     await using h = await startHub();
     const clock = { now: T0 };
@@ -190,6 +203,8 @@ test('each pass schedule is its timer interval and the longest one run is meant 
     delivery: { budgetMs: 30_000, intervalMs: 30_000 },
     listening: { budgetMs: 30_000, intervalMs: 30_000 },
     parse: { budgetMs: 30_000, intervalMs: 15_000 },
+    // The 30-second fetch, then a statement for the lock and one to read and write.
+    prices: { budgetMs: 90_000, intervalMs: 3_600_000 },
     prune: { budgetMs: 30_000, intervalMs: 3_600_000 },
     refresh: { budgetMs: 40_000, intervalMs: 15_000 },
     upstreams: { budgetMs: 30_000, intervalMs: 300_000 },
@@ -224,7 +239,14 @@ describe('serve', () => {
     expect(code).toBe(130);
     expect(row).toMatchObject({ delivery_configured: true, version: HUB_VERSION });
     expect(Object.keys(runs).toSorted()).toEqual(Object.keys(PASS_SCHEDULES).toSorted());
-    for (const [name, { budgetMs, intervalMs }] of Object.entries(PASS_SCHEDULES)) {
+    // The tests' price source is off, so the prices pass records that instead.
+    const { prices, ...ran } = PASS_SCHEDULES;
+    expect(runs.prices).toEqual({
+      budget_ms: prices.budgetMs,
+      interval_ms: prices.intervalMs,
+      off: true,
+    });
+    for (const [name, { budgetMs, intervalMs }] of Object.entries(ran)) {
       expect(runs[name]).toMatchObject({ budget_ms: budgetMs, interval_ms: intervalMs });
       expect(runs[name]?.finished_at).toBeNumber();
       expect(runs[name]?.started_at).toBeNumber();

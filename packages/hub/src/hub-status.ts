@@ -9,20 +9,24 @@ export type HubPass =
   | 'parse'
   | 'refresh'
   | 'listening'
-  | 'upstreams';
+  | 'upstreams'
+  | 'prices';
 
 // How serve runs a pass: `every` starts the next run `intervalMs` after the
 // previous one finished, and `budgetMs` is the longest one run is meant to
-// take. The dashboard judges a pass overdue from both (docs/spec.md).
-export type PassSchedule = { intervalMs: number; budgetMs: number };
+// take. The dashboard judges a pass overdue from both (docs/spec.md). A pass
+// its configuration turns `off` never runs.
+export type PassSchedule = { intervalMs: number; budgetMs: number; off?: true };
 
 // What `last_runs` holds for one pass, its times in epoch milliseconds: its
 // schedule, when its latest run started and finished, when a run last
 // succeeded, and, while its runs keep failing, when the first of them failed.
-// A run in progress has a `started_at` later than its `finished_at`.
+// A run in progress has a `started_at` later than its `finished_at`. A pass
+// that is off says so in place of run times.
 export type PassRecord = {
   interval_ms: number;
   budget_ms: number;
+  off?: true;
   started_at?: number;
   finished_at?: number;
   succeeded_at?: number;
@@ -105,9 +109,9 @@ export const hubStatusRecorder = ({
       version: string;
     }) => {
       runs = Object.fromEntries(
-        Object.entries(passes).map(([name, { budgetMs, intervalMs }]) => [
+        Object.entries(passes).map(([name, { budgetMs, intervalMs, off }]) => [
           name,
-          { budget_ms: budgetMs, interval_ms: intervalMs },
+          { budget_ms: budgetMs, interval_ms: intervalMs, ...(off === undefined ? {} : { off }) },
         ]),
       );
       const startedAt = new Date(now());

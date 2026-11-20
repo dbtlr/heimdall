@@ -26,7 +26,10 @@ const assertInside = (cwd: string, home: string) => {
 // timeout cancels it after a few seconds anyway. HOME is a fresh directory
 // unless `env` names one, so `serve` never rotates a real log, and the working
 // directory is that HOME unless `cwd` names one, so the lookup never finds a
-// configuration file above this checkout. `terminal`
+// configuration file above this checkout. The price source is `off` unless
+// `env` names one, or `configuredPriceSource` leaves it to the configuration
+// file, which must then name a list the test serves: no run reaches the real
+// price list. `terminal`
 // stands in for the process's own, so output does not depend on where the
 // tests run; without it, no stream is a terminal.
 export const invoke = async (
@@ -34,11 +37,13 @@ export const invoke = async (
   {
     cwd,
     env = {},
+    configuredPriceSource = false,
     terminal,
     whileServing,
   }: {
     cwd?: string | undefined;
     env?: Record<string, string>;
+    configuredPriceSource?: boolean;
     terminal?: MockTerminal | undefined;
     whileServing?: (hub: URL) => Promise<void>;
   } = {},
@@ -52,7 +57,7 @@ export const invoke = async (
   const mock = mockProcess({
     argv,
     cwd: effectiveCwd,
-    env: { HOME: home, ...env },
+    env: { HOME: home, ...(configuredPriceSource ? {} : { HEIMDALL_PRICE_SOURCE: 'off' }), ...env },
     ...(terminal === undefined ? {} : { terminal }),
   });
   let serving: Promise<void> | undefined;

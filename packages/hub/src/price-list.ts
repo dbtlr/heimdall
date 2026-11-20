@@ -11,9 +11,23 @@ import { HUB_VERSION } from './version.ts';
 // standard prices, and ignores batch, flex, and priority prices and cache-write
 // TTLs no Harness reports.
 
-export const LITELLM_PRICE_LIST = new URL(
-  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json',
-);
+export const LITELLM_PRICE_LIST =
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+
+// Where the Hub fetches the list from, or `off`, which stops the fetch.
+export type PriceSource = { kind: 'off' } | { kind: 'list'; url: URL };
+
+// The price source `text` names: `off`, or an `https://` URL, or an `http://`
+// one for a list served nearby. Undefined for anything else.
+export const parsePriceSource = (text: string): PriceSource | undefined => {
+  if (text === 'off') {
+    return { kind: 'off' };
+  }
+  const url = URL.parse(text);
+  return url !== null && (url.protocol === 'https:' || url.protocol === 'http:')
+    ? { kind: 'list', url }
+    : undefined;
+};
 
 // One tier the list gives a model, as an entry of the price table without its
 // date, which the fetch decides. `contextWindow` is the list's
@@ -183,7 +197,11 @@ export const readPriceList = (text: string): PriceList => {
 
 // How long a fetch waits for the whole answer, and how much of it it reads.
 export const FETCH_TIMEOUT_MS = 30_000;
-const MAX_LIST_BYTES = 32 * 1024 * 1024;
+const MIB = 1024 * 1024;
+const MAX_LIST_BYTES = 32 * MIB;
+
+const sizeText = (bytes: number) =>
+  bytes % MIB === 0 ? `${String(bytes / MIB)} MiB` : `${String(bytes)} bytes`;
 
 // The body of `response`, refused once it passes `maxBytes`, so no source can
 // fill memory.
@@ -201,9 +219,7 @@ const readCapped = async (response: Response, maxBytes: number) => {
     if (length > maxBytes) {
       // oxlint-disable-next-line no-await-in-loop -- the read ends here.
       await reader?.cancel();
-      throw new Error(
-        `The price list is more than the ${String(maxBytes / 1024 / 1024)} MiB the Hub reads.`,
-      );
+      throw new Error(`The answer is more than the ${sizeText(maxBytes)} the Hub reads.`);
     }
     chunks.push(chunk.value);
   }
@@ -239,7 +255,7 @@ export const fetchPriceList = async ({
     });
     if (response.status !== 200) {
       await response.body?.cancel();
-      throw new Error(`${source.host} answered with status ${String(response.status)}.`);
+      throw new Error(`It answered with status ${String(response.status)}.`);
     }
     // The body can stall after the headers, so the wait covers it too.
     const ended = Promise.withResolvers<never>();

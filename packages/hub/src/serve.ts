@@ -14,6 +14,12 @@ import type { DeliveryChannel } from './delivery-config.ts';
 import { clearFailingRun, deliverAlerts } from './delivery.ts';
 import { describeError } from './errors.ts';
 import { evaluateConditions } from './evaluate-conditions.ts';
+import {
+  dailyFetch,
+  describeAdded,
+  describeSuspect,
+  updateFetchedPrices,
+} from './fetched-prices.ts';
 import { hubStatusRecorder } from './hub-status.ts';
 import type { HubPass, PassSchedule } from './hub-status.ts';
 import { createHub } from './hub.ts';
@@ -21,6 +27,8 @@ import { keepInsightReaderGranted } from './insight-reader.ts';
 import { recordListening } from './listening.ts';
 import { describeLockWait, lockTimeoutOption, migrateWhenFree } from './migration-wait.ts';
 import { ntfySender } from './ntfy.ts';
+import { FETCH_TIMEOUT_MS } from './price-list.ts';
+import type { PriceSource } from './price-list.ts';
 import { loadPriceOverrides, syncPrices } from './price-table.ts';
 import { BUNDLED_PRICES } from './prices.ts';
 import type { PriceEntry } from './prices.ts';
@@ -49,18 +57,25 @@ const PROJECT_INTERVAL_MS = 15_000;
 // UPSTREAM_CHECK_INTERVAL_MS between its checks; this only bounds how soon a
 // newly recorded one is first checked.
 const UPSTREAM_PASS_INTERVAL_MS = 300_000;
+// How often serve checks whether the price list is due a fetch. It fetches when
+// the process has had no successful fetch in the last day, so a failed fetch
+// is tried again this much later (ADR-0024).
+const PRICES_INTERVAL_MS = 3_600_000;
 
 // Each timer pass's interval and budget, which the Hub status row records so
 // the dashboard can tell a late pass from a slow one. A refresh stops taking
 // Sessions after REFRESH_BUDGET_MS and overshoots by at most one statement.
-// The other passes have no time cap of their own, so their budget is one
-// statement's timeout; the dashboard never calls a pass that is still running
-// overdue, and waits two intervals after a run finishes (docs/spec.md).
+// A prices run waits at most FETCH_TIMEOUT_MS for the list, then one statement
+// for the lock and one to read and write the prices. The other passes have no
+// time cap of their own, so their budget is one statement's timeout; the
+// dashboard never calls a pass that is still running overdue, and waits two
+// intervals after a run finishes (docs/spec.md).
 export const PASS_SCHEDULES = {
   conditions: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: CONDITIONS_INTERVAL_MS },
   delivery: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: DELIVERY_INTERVAL_MS },
   listening: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: LISTENING_INTERVAL_MS },
   parse: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
+  prices: { budgetMs: FETCH_TIMEOUT_MS + 2 * STATEMENT_TIMEOUT_MS, intervalMs: PRICES_INTERVAL_MS },
   prune: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PRUNE_INTERVAL_MS },
   refresh: { budgetMs: REFRESH_BUDGET_MS + STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
   upstreams: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: UPSTREAM_PASS_INTERVAL_MS },
@@ -221,7 +236,16 @@ const serveUntilStopped = async ({
         void log.warn(clean(message));
       },
     });
-    const { delivery: deliverySchedule, ...otherSchedules } = PASS_SCHEDULES;
+    const priceSource: PriceSource = options['price-source'];
+    // A prices pass whose source is off never runs, and its record says so.
+    const schedules = {
+      ...PASS_SCHEDULES,
+      prices:
+        priceSource.kind === 'off'
+          ? { ...PASS_SCHEDULES.prices, off: true as const }
+          : PASS_SCHEDULES.prices,
+    };
+    const { delivery: deliverySchedule, ...otherSchedules } = schedules;
     // Pruning, judging Conditions, delivering alerts, parsing transcripts, and
     // checking upstreams are routine, so only a failure, a parser switch, or a
     // parser left behind is logged, and the next round tries again. A failed
@@ -233,13 +257,14 @@ const serveUntilStopped = async ({
     let stopProjecting: (() => Promise<void>) | undefined;
     let stopRefreshing: (() => Promise<void>) | undefined;
     let stopChecking: (() => Promise<void>) | undefined;
+    let stopPricing: (() => Promise<void>) | undefined;
     const outdatedLogged = new Set<string>();
     try {
       // Only a Hub that listens replaces the status row, and before any pass
       // writes to it, since starting clears the previous process's passes.
       await status.start({
         deliveryConfigured: delivery !== undefined,
-        passes: delivery === undefined ? otherSchedules : PASS_SCHEDULES,
+        passes: delivery === undefined ? otherSchedules : schedules,
         version: HUB_VERSION,
       });
       const paired = await pairedSystemCount(sql);
@@ -333,11 +358,41 @@ const serveUntilStopped = async ({
             }),
           ),
       });
+      if (priceSource.kind === 'list') {
+        // Each run that fetches logs the models it adds entries for and the ones
+        // it skips as possible unit errors; a failed fetch fails the run.
+        const fetchDaily = dailyFetch({
+          fetch: async () => {
+            const { added, skipped } = await updateFetchedPrices({
+              fetch,
+              signal,
+              source: priceSource.url,
+              sql,
+            });
+            for (const entry of added) {
+              // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+              await log.info(clean(describeAdded(entry)));
+            }
+            for (const suspect of skipped.filter(({ kind }) => kind === 'suspect')) {
+              // oxlint-disable-next-line no-await-in-loop -- one line at a time, in order.
+              await log.warn(clean(describeSuspect(suspect)));
+            }
+          },
+          now: Date.now,
+        });
+        stopPricing = every({
+          intervalMs: PASS_SCHEDULES.prices.intervalMs,
+          onError: (error) => {
+            void log.warn(clean(`Could not update the fetched prices: ${describeError(error)}`));
+          },
+          task: () => status.pass('prices', fetchDaily),
+        });
+      }
       if (!signal.aborted) {
         await once(signal, 'abort');
       }
     } finally {
-      // A record, prune, judgment, delivery, parse, refresh, or upstream check still running must finish before the database closes.
+      // A record, prune, judgment, delivery, parse, refresh, upstream check, or price fetch still running must finish before the database closes.
       await stopListening?.();
       await stopPruning?.();
       await stopJudging?.();
@@ -345,6 +400,7 @@ const serveUntilStopped = async ({
       await stopProjecting?.();
       await stopRefreshing?.();
       await stopChecking?.();
+      await stopPricing?.();
       await server.stop();
     }
   } finally {
