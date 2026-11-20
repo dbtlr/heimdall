@@ -59,6 +59,22 @@ const priceEntry = z
     };
   });
 
+// `entry` as a price table entry when it follows the rules an overrides entry
+// follows, else why not, its issues in one line.
+export const checkPriceEntry = (
+  entry: unknown,
+): { kind: 'fits'; entry: PriceEntry } | { kind: 'unfit'; problem: string } => {
+  const parsed = priceEntry.safeParse(entry);
+  return parsed.success
+    ? { entry: parsed.data, kind: 'fits' }
+    : {
+        kind: 'unfit',
+        problem: parsed.error.issues
+          .map((issue) => `${issue.path.join('.') || 'The entry'}: ${issue.message}`)
+          .join(' '),
+      };
+};
+
 const overrides = z
   .strictObject({ prices: z.array(priceEntry) })
   .superRefine(({ prices }, context) => {

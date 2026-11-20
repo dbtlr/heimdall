@@ -1,0 +1,254 @@
+import { describeError } from './errors.ts';
+import { checkPriceEntry } from './price-table.ts';
+import type { PriceEntry } from './prices.ts';
+import { rounded } from './prices.ts';
+import type { Fetch } from './upstream-releases.ts';
+import { HUB_VERSION } from './version.ts';
+
+// Reading LiteLLM's public price list (ADR-0024, docs/spec.md "Fetched
+// prices"): a JSON object keyed by model, each entry priced per token. The
+// Hub reads the Anthropic and OpenAI models in chat and responses modes at
+// standard prices, and ignores batch, flex, and priority prices and cache-write
+// TTLs no Harness reports.
+
+export const LITELLM_PRICE_LIST = new URL(
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json',
+);
+
+// One tier the list gives a model, as an entry of the price table without its
+// date, which the fetch decides. `contextWindow` is the list's
+// `max_input_tokens` on every tier.
+export type ListedEntry = Omit<PriceEntry, 'validFrom'>;
+
+// A model the list prices: its base entry first, then each tier by threshold.
+export type ListedModel = { entries: ListedEntry[]; model: string };
+
+// A model the Hub skips, and why: `unfit` when the list's entry does not fit
+// the price table, `suspect` when a price looks like a unit error.
+export type SkippedModel = { kind: 'suspect' | 'unfit'; model: string; reason: string };
+
+export type PriceList = { models: ListedModel[]; skipped: SkippedModel[] };
+
+const PROVIDERS = new Set(['anthropic', 'openai']);
+const MODES = new Set(['chat', 'responses']);
+
+// The list's field for each price of an entry. A tier's field adds
+// `_above_<N>k_tokens`.
+const FIELDS = {
+  cacheRead: 'cache_read_input_token_cost',
+  cacheWrite1h: 'cache_creation_input_token_cost_above_1hr',
+  cacheWrite5m: 'cache_creation_input_token_cost',
+  input: 'input_cost_per_token',
+  output: 'output_cost_per_token',
+} as const;
+
+const TIER_FIELD = new RegExp(`^(?:${Object.values(FIELDS).join('|')})_above_(\\d+)k_tokens$`, 'u');
+const DATE_SUFFIX = /^(.+)-(\d{8})$/u;
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// A per-token price as dollars per million tokens, rounded to a millionth of a
+// dollar. Anything but a number is passed on for the entry's rules to refuse.
+const perMillion = (value: unknown) => (typeof value === 'number' ? rounded(value * 1e6) : value);
+
+// The prices of one tier: the base when `suffix` is empty.
+const tierPrices = (fields: Record<string, unknown>, suffix: string) =>
+  Object.fromEntries(
+    Object.entries(FIELDS)
+      .filter(([, field]) => fields[`${field}${suffix}`] !== undefined)
+      .map(([name, field]) => [name, perMillion(fields[`${field}${suffix}`])]),
+  );
+
+class SkipError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'SkipError';
+  }
+}
+
+// The entries `fields` gives `model`, or a SkipError saying why it has none.
+const modelEntries = (model: string, fields: Record<string, unknown>): ListedEntry[] => {
+  const contextWindow = fields.max_input_tokens;
+  if (fields[FIELDS.input] === undefined) {
+    throw new SkipError('It has no input price.');
+  }
+  if (fields[FIELDS.output] === undefined) {
+    throw new SkipError('It has no output price.');
+  }
+  if (contextWindow === undefined) {
+    throw new SkipError('It has no max_input_tokens.');
+  }
+  if (fields[FIELDS.input] === 0 && fields[FIELDS.output] === 0) {
+    throw new SkipError('Its input and output prices are both 0.');
+  }
+  const thresholds = [
+    ...new Set(
+      Object.keys(fields).flatMap((field) => {
+        const n = TIER_FIELD.exec(field)?.[1];
+        return n === undefined ? [] : [Number(n) * 1000];
+      }),
+    ),
+  ].toSorted((a, b) => a - b);
+  return [undefined, ...thresholds].map((promptOver) => {
+    const suffix = promptOver === undefined ? '' : `_above_${String(promptOver / 1000)}k_tokens`;
+    const tier: Record<string, unknown> = tierPrices(fields, suffix);
+    if (promptOver !== undefined && (tier.input === undefined || tier.output === undefined)) {
+      throw new SkipError(
+        `Its tier over ${promptOver.toLocaleString('en-US')} prompt tokens lacks an input or an output price.`,
+      );
+    }
+    tier.contextWindow = contextWindow;
+    tier.model = model;
+    if (promptOver !== undefined) {
+      tier.promptOver = promptOver;
+    }
+    // The date is the fetch's to give; any valid one checks the rest.
+    tier.validFrom = '2020-01-01';
+    const checked = checkPriceEntry(tier);
+    if (checked.kind === 'unfit') {
+      throw new SkipError(`It does not fit the price table: ${checked.problem}`);
+    }
+    const { validFrom: _undated, ...entry } = checked.entry;
+    return entry;
+  });
+};
+
+// The list's entries the Hub reads, by the model each stands for: a key
+// ending in `-YYYYMMDD` stands for the model without it unless the list has
+// that key too, and of several such keys the latest date wins.
+const entriesByModel = (list: Record<string, unknown>) => {
+  const chosen = new Map<string, { date: string; fields: Record<string, unknown> }>();
+  const slashed: string[] = [];
+  for (const [key, fields] of Object.entries(list)) {
+    if (
+      !isObject(fields) ||
+      !PROVIDERS.has(String(fields.litellm_provider)) ||
+      !MODES.has(String(fields.mode))
+    ) {
+      continue;
+    }
+    if (key.includes('/')) {
+      slashed.push(key);
+      continue;
+    }
+    const dated = DATE_SUFFIX.exec(key);
+    // An undated key sorts after every date, so it wins.
+    const model = dated?.[1] ?? key;
+    const date = dated?.[2] ?? '99999999';
+    if ((chosen.get(model)?.date ?? '') < date) {
+      chosen.set(model, { date, fields });
+    }
+  }
+  return { chosen, slashed };
+};
+
+const byModel = (a: { model: string }, b: { model: string }) => a.model.localeCompare(b.model);
+
+// The models `text`, the list's JSON, prices, and those it names that the
+// Hub skips, with why. Throws when the text is not a JSON object or no model
+// in it fits.
+export const readPriceList = (text: string): PriceList => {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('The price list is not JSON.');
+  }
+  if (!isObject(json)) {
+    throw new Error('The price list is not a JSON object.');
+  }
+  const { chosen, slashed } = entriesByModel(json);
+  const models: ListedModel[] = [];
+  const skipped: SkippedModel[] = slashed.map((model) => ({
+    kind: 'unfit',
+    model,
+    reason: 'Its key names a provider path.',
+  }));
+  for (const [model, { fields }] of chosen) {
+    try {
+      models.push({ entries: modelEntries(model, fields), model });
+    } catch (error) {
+      if (!(error instanceof SkipError)) {
+        throw error;
+      }
+      skipped.push({ kind: 'unfit', model, reason: error.message });
+    }
+  }
+  if (models.length === 0) {
+    throw new Error('The price list has no model the Hub can price.');
+  }
+  return { models: models.toSorted(byModel), skipped: skipped.toSorted(byModel) };
+};
+
+// How long a fetch waits for the whole answer, and how much of it it reads.
+export const FETCH_TIMEOUT_MS = 30_000;
+const MAX_LIST_BYTES = 32 * 1024 * 1024;
+
+// The body of `response`, refused once it passes `maxBytes`, so no source can
+// fill memory.
+const readCapped = async (response: Response, maxBytes: number) => {
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream reads in order.
+    const chunk = await reader?.read();
+    if (chunk === undefined || chunk.done) {
+      break;
+    }
+    length += chunk.value.byteLength;
+    if (length > maxBytes) {
+      // oxlint-disable-next-line no-await-in-loop -- the read ends here.
+      await reader?.cancel();
+      throw new Error(
+        `The price list is more than the ${String(maxBytes / 1024 / 1024)} MiB the Hub reads.`,
+      );
+    }
+    chunks.push(chunk.value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+};
+
+// Fetches the list at `source` and reads it, sending no credentials. It waits
+// at most `timeoutMs` for the whole answer, and `signal` ends it early when
+// serve stops. Throws, saying why, when no answer comes in time, its status is
+// not 200, it is over `maxBytes`, it is not a JSON object, or no model in it
+// fits.
+export const fetchPriceList = async ({
+  fetch,
+  maxBytes = MAX_LIST_BYTES,
+  signal,
+  source,
+  timeoutMs = FETCH_TIMEOUT_MS,
+}: {
+  fetch: Fetch;
+  maxBytes?: number;
+  signal?: AbortSignal;
+  source: URL;
+  timeoutMs?: number;
+}): Promise<PriceList> => {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const ends = signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
+  let text: string;
+  try {
+    const response = await fetch(source, {
+      credentials: 'omit',
+      headers: { Accept: 'application/json', 'User-Agent': `heimdall-hub/${HUB_VERSION}` },
+      signal: ends,
+    });
+    if (response.status !== 200) {
+      await response.body?.cancel();
+      throw new Error(`${source.host} answered with status ${String(response.status)}.`);
+    }
+    // The body can stall after the headers, so the wait covers it too.
+    const ended = Promise.withResolvers<never>();
+    ends.addEventListener('abort', () => ended.reject(ends.reason), { once: true });
+    text = await Promise.race([readCapped(response, maxBytes), ended.promise]);
+  } catch (error) {
+    throw new Error(`Could not fetch the price list from ${source.host}: ${describeError(error)}`, {
+      cause: error,
+    });
+  }
+  return readPriceList(text);
+};

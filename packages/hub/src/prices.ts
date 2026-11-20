@@ -86,7 +86,7 @@ const OPENAI_LONG_WINDOW = 1_050_000;
 const OPENAI_LONG_PROMPT = 272_000;
 
 // To the micro-dollar, so a scaled price is the figure a page lists.
-const rounded = (price: number) => Math.round(price * MILLION) / MILLION;
+export const rounded = (price: number) => Math.round(price * MILLION) / MILLION;
 
 // The tier OpenAI prices above 272K prompt tokens: twice a base entry's input,
 // cache read, and cache write prices, and 1.5 times its output price.

@@ -557,7 +557,9 @@ test('migration 48 adds an empty fetched price table and marks every Session tot
   expect(await db.sql`SELECT * FROM fetched_model_prices`).toEqual([]);
   expect(
     await db.sql`SELECT system, harness, since, until, stretches, totals FROM stale_ranges`,
-  ).toEqual([{ harness: null, since: null, stretches: false, system: null, totals: true, until: null }]);
+  ).toEqual([
+    { harness: null, since: null, stretches: false, system: null, totals: true, until: null },
+  ]);
   expect(await migrate(db.sql, through48)).toEqual([]);
 });
 

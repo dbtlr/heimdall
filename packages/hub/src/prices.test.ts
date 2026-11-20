@@ -10,6 +10,7 @@ import type { PriceEntry } from './prices.ts';
 import { BUNDLED_PRICES } from './prices.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { migratedDatabase, startTestServer } from './testing/postgres.ts';
+import { seedRequests as seed } from './testing/requests.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
@@ -26,52 +27,6 @@ const PRICE: PriceEntry = {
   model: MODEL,
   output: 20,
   validFrom: '2026-01-01',
-};
-
-type Row = {
-  at: string;
-  cacheRead?: number;
-  cacheWrite1h?: number | null;
-  cacheWrite5m?: number | null;
-  id: string;
-  input?: number;
-  model?: string;
-  output?: number;
-  session?: string;
-};
-
-// Seeds a Session's requests as the projection would leave them, with the
-// parser current, so the `insight` views read them.
-const seed = async (sql: SQL, rows: Row[], { session = 's-1' }: { session?: string } = {}) => {
-  await sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', now()) ON CONFLICT DO NOTHING`;
-  await sql`
-    INSERT INTO transcript_generations (id, system, source, path, opened_at, last_upload_at)
-    VALUES (1, 'laptop-1', 'claude-code', 'projects/p/s.jsonl', now(), now())
-    ON CONFLICT DO NOTHING
-  `;
-  await sql`INSERT INTO current_parsers (harness, version) VALUES ('claude-code', 1) ON CONFLICT DO NOTHING`;
-  await sql`
-    INSERT INTO projected_sessions (harness, parser_version, system, source, session_id)
-    VALUES ('claude-code', 1, 'laptop-1', 'claude-code', ${session})
-    ON CONFLICT DO NOTHING
-  `;
-  for (const row of rows) {
-    const cacheWrite5m = row.cacheWrite5m === undefined ? 0 : row.cacheWrite5m;
-    const cacheWrite1h = row.cacheWrite1h === undefined ? 0 : row.cacheWrite1h;
-    // oxlint-disable-next-line no-await-in-loop -- a few rows, in order.
-    await sql`
-      INSERT INTO projected_requests (
-        harness, parser_version, system, source, session_id, request_id, at, model,
-        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-        cache_write_5m_tokens, cache_write_1h_tokens, generation, byte_offset
-      )
-      VALUES (
-        'claude-code', 1, 'laptop-1', 'claude-code', ${session}, ${row.id}, ${row.at},
-        ${row.model ?? MODEL}, ${row.input ?? 0}, ${row.output ?? 0}, ${row.cacheRead ?? 0},
-        ${(cacheWrite5m ?? 0) + (cacheWrite1h ?? 0)}, ${cacheWrite5m}, ${cacheWrite1h}, 1, 0
-      )
-    `;
-  }
 };
 
 const prepared = async (prices: { bundled?: PriceEntry[]; configured?: PriceEntry[] }) => {
