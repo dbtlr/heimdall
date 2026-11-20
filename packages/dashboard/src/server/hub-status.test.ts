@@ -33,7 +33,7 @@ const SCHEDULES = {
   delivery: { budget_ms: 30_000, interval_ms: 30_000 },
   listening: { budget_ms: 30_000, interval_ms: 30_000 },
   parse: { budget_ms: 30_000, interval_ms: 15_000 },
-  prices: { budget_ms: 90_000, interval_ms: 3_600_000 },
+  prices: { budget_ms: 180_000, interval_ms: 3_600_000 },
   prune: { budget_ms: 30_000, interval_ms: 3_600_000 },
   refresh: { budget_ms: 40_000, interval_ms: 15_000 },
   upstreams: { budget_ms: 30_000, interval_ms: 300_000 },
@@ -583,7 +583,7 @@ test('the price table warns while the prices pass is failing, overdue, or runnin
   expect(
     await priceTableWith({
       finished_at: NOW - 3 * 3_600_000,
-      started_at: NOW - 2 * 3_600_000 - 100_000,
+      started_at: NOW - 2 * 3_600_000 - 190_000,
     }),
   ).toMatchObject({
     detail: expect.stringContaining('longer than its usual most'),

@@ -498,5 +498,6 @@ describe('the price source', () => {
   test('refuses a URL with a user name or password, since a fetch sends no credentials', () => {
     expect(parsePriceSource('https://user:secret@prices.example/list.json')).toBeUndefined();
     expect(parsePriceSource('https://user@prices.example/list.json')).toBeUndefined();
+    expect(parsePriceSource('https://:secret@prices.example/list.json')).toBeUndefined();
   });
 });
