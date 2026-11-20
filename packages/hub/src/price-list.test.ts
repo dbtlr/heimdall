@@ -370,6 +370,20 @@ describe('fetching the price list', () => {
     ).toContain('more than');
   });
 
+  test('reads an answer of exactly the limit, and refuses one a byte over it', async () => {
+    const body = listOf({ m: SOL });
+    const bytes = Buffer.byteLength(body);
+    await using source = serving(() => new Response(body));
+
+    const atLimit = await fetchPriceList({ fetch, maxBytes: bytes, source: source.url });
+    const overLimit = await failureOf(
+      fetchPriceList({ fetch, maxBytes: bytes - 1, source: source.url }),
+    );
+
+    expect(atLimit.models.map((m) => m.model)).toEqual(['m']);
+    expect(overLimit).toContain(`more than the ${String(bytes - 1)} bytes`);
+  });
+
   test('fails when the answer takes longer than the timeout, even after its headers', async () => {
     await using slow = serving(async () => {
       await Bun.sleep(1000);

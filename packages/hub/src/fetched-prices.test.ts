@@ -197,6 +197,29 @@ describe('a model the table already prices', () => {
     ]);
   });
 
+  test('a new tier is written even at the prices a lower tier gives', async () => {
+    await using db = await prepared({ bundled: [TABLED] });
+    const { today } = await days(db.sql);
+
+    await applyFetchedPrices(db.sql, [listed({}, { promptOver: 100_000 })]);
+
+    expect(await fetchedRows(db.sql)).toEqual([
+      `test-model ${today} over 100000: 3/15/0.3 window 200000`,
+    ]);
+  });
+
+  test.each([
+    ['5-minute', { cacheWrite5m: 4 }],
+    ['1-hour', { cacheWrite1h: 7.5 }],
+  ])('a change only to the %s cache-write price adds an entry', async (_name, change) => {
+    await using db = await prepared({ bundled: [{ ...TABLED, cacheWrite1h: 6 }] });
+    const { today } = await days(db.sql);
+
+    const applied = await applyFetchedPrices(db.sql, [listed({ cacheWrite1h: 6, ...change })]);
+
+    expect(applied.added).toEqual([{ from: today, model: MODEL, tiers: [0] }]);
+  });
+
   test('takes the list window when the table has no entry in force today', async () => {
     await using db = await prepared({ bundled: [{ ...TABLED, validFrom: '2999-01-01' }] });
     const { today } = await days(db.sql);
@@ -215,6 +238,42 @@ describe('a model the table already prices', () => {
     await applyFetchedPrices(db.sql, [listed({ model: 'other-model' })]);
 
     expect(await fetchedRows(db.sql)).toHaveLength(2);
+  });
+});
+
+describe('the entry a tier is compared with is the one the views price it by', () => {
+  test('an older configured entry wins over a newer bundled one, so the tier gets nothing', async () => {
+    await using db = await prepared({
+      bundled: [{ ...TABLED, validFrom: '2026-06-01' }],
+      configured: [{ ...TABLED, input: 5, validFrom: '2026-01-01' }],
+    });
+
+    expect(await applyFetchedPrices(db.sql, [listed({ input: 2 })])).toEqual({
+      added: [],
+      skipped: [],
+    });
+  });
+
+  test('an older fetched entry wins over a newer bundled one', async () => {
+    await using db = await prepared();
+    await applyFetchedPrices(db.sql, [listed({})]);
+    await syncPrices(db.sql, {
+      bundled: [{ ...TABLED, input: 4, validFrom: '2026-06-01' }],
+      configured: [],
+    });
+
+    expect(await applyFetchedPrices(db.sql, [listed({})])).toEqual({ added: [], skipped: [] });
+  });
+
+  test('of two fetched entries, the newer wins', async () => {
+    await using db = await prepared();
+    await applyFetchedPrices(db.sql, [listed({})]);
+    await applyFetchedPrices(db.sql, [listed({ input: 4 })]);
+
+    expect(await applyFetchedPrices(db.sql, [listed({ input: 4 })])).toEqual({
+      added: [],
+      skipped: [],
+    });
   });
 });
 
@@ -298,6 +357,17 @@ describe('a price that looks like a unit error', () => {
     expect(await fetchedRows(db.sql)).toEqual([
       'other 2020-01-01 over -1: 3/15/0.3 window 1000000',
     ]);
+  });
+
+  test.each([
+    ['exactly 100 times is taken', 300, []],
+    ['just over 100 times is skipped', 300.000_001, [MODEL]],
+  ])('a price %s', async (_name, input, skipped) => {
+    await using db = await prepared({ bundled: [TABLED] });
+
+    const applied = await applyFetchedPrices(db.sql, [listed({ input })]);
+
+    expect(applied.skipped.map((s) => s.model)).toEqual(skipped);
   });
 
   test('is judged against the price a request in the tier gets today, from a lower tier when the table has none there', async () => {
