@@ -511,9 +511,9 @@ and `delivery` when delivery is configured) to its schedule, `interval_ms` and
 (`succeeded_at`), and, while its runs keep failing, when the first of them failed
 (`failing_since`). Starting replaces the previous process's passes. A pass's
 budget is the longest one run is meant to take: for refresh, its 10-second
-budget plus one 30-second statement timeout; for prices, 90 seconds, which covers its 30-second fetch,
-the wait for the lock, and the reads and writes of the prices, each statement
-bounded by a statement timeout; for every other pass, which has no time cap of its
+budget plus one 30-second statement timeout; for prices, its 30-second fetch plus one 30-second statement
+timeout for each of the five statements its write runs, the lock wait
+included, 180 seconds in all; for every other pass, which has no time cap of its
 own, one statement timeout. A status write waits at most one
 second for a lock another session holds on the row. A failed status write logs a
 warning and fails neither startup nor the pass.
@@ -529,7 +529,7 @@ finished within twice its interval; one that never ran counts from when the Hub
 started. With the intervals above, that is 150 seconds for Conditions, 90
 seconds for listening and delivery, 60 seconds for parse, 70 seconds for
 refresh, 630 seconds for upstream checks, two hours and 30 seconds for
-prune, and two hours and 90 seconds for prices. A pass whose runs keep failing shows as failing since its first failure,
+prune, and two hours and three minutes for prices. A pass whose runs keep failing shows as failing since its first failure,
 even while a new run is in progress. The Hub was last heard at the newest of
 `hub_listening.heard_at`, the row's `started_at`, and every pass's
 `started_at`, `finished_at`, and `succeeded_at`, since the running Hub wrote

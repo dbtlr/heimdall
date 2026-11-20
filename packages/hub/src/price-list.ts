@@ -221,12 +221,15 @@ const sizeText = (bytes: number) =>
 const followable = (url: URL, from: URL | undefined) =>
   url.protocol === 'https:' || (url.protocol === 'http:' && from?.protocol !== 'https:');
 
-// Why a redirect's address was refused.
+// Why an address was refused: the source itself, or one a redirect led to.
 const refusedReason = ({ from, url }: { from: URL | undefined; url: URL }) => {
+  if (from === undefined) {
+    return 'The source is not an HTTP or HTTPS address without a user name or password.';
+  }
   if (hasCredentials(url)) {
     return 'It redirected the Hub to an address that carries a user name or password.';
   }
-  return from?.protocol === 'https:'
+  return from.protocol === 'https:'
     ? 'It redirected the Hub from HTTPS to an address that is not HTTPS.'
     : 'It redirected the Hub to an address that is not HTTP or HTTPS.';
 };

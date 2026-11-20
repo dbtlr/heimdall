@@ -65,9 +65,9 @@ const PRICES_INTERVAL_MS = 3_600_000;
 // Each timer pass's interval and budget, which the Hub status row records so
 // the dashboard can tell a late pass from a slow one. A refresh stops taking
 // Sessions after REFRESH_BUDGET_MS and overshoots by at most one statement.
-// A prices run's budget, 90 seconds, covers its FETCH_TIMEOUT_MS fetch, the
-// lock wait, and the reads and writes of the prices, each statement bounded
-// by STATEMENT_TIMEOUT_MS. The other passes have no
+// A prices run's budget covers its FETCH_TIMEOUT_MS fetch and one
+// STATEMENT_TIMEOUT_MS for each of the five statements applying it runs: the
+// lock, the clock, the two reads, and the write. The other passes have no
 // time cap of their own, so their budget is one statement's timeout; the
 // dashboard never calls a pass that is still running overdue, and waits two
 // intervals after a run finishes (docs/spec.md).
@@ -76,7 +76,7 @@ export const PASS_SCHEDULES = {
   delivery: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: DELIVERY_INTERVAL_MS },
   listening: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: LISTENING_INTERVAL_MS },
   parse: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
-  prices: { budgetMs: FETCH_TIMEOUT_MS + 2 * STATEMENT_TIMEOUT_MS, intervalMs: PRICES_INTERVAL_MS },
+  prices: { budgetMs: FETCH_TIMEOUT_MS + 5 * STATEMENT_TIMEOUT_MS, intervalMs: PRICES_INTERVAL_MS },
   prune: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: PRUNE_INTERVAL_MS },
   refresh: { budgetMs: REFRESH_BUDGET_MS + STATEMENT_TIMEOUT_MS, intervalMs: PROJECT_INTERVAL_MS },
   upstreams: { budgetMs: STATEMENT_TIMEOUT_MS, intervalMs: UPSTREAM_PASS_INTERVAL_MS },

@@ -204,7 +204,7 @@ test('each pass schedule is its timer interval and the longest one run is meant 
     listening: { budgetMs: 30_000, intervalMs: 30_000 },
     parse: { budgetMs: 30_000, intervalMs: 15_000 },
     // The 30-second fetch, then a statement for the lock and one to read and write.
-    prices: { budgetMs: 90_000, intervalMs: 3_600_000 },
+    prices: { budgetMs: 180_000, intervalMs: 3_600_000 },
     prune: { budgetMs: 30_000, intervalMs: 3_600_000 },
     refresh: { budgetMs: 40_000, intervalMs: 15_000 },
     upstreams: { budgetMs: 30_000, intervalMs: 300_000 },

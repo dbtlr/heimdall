@@ -269,18 +269,21 @@ const failureOf = async (promise: Promise<unknown>) => {
 
 describe('fetching the price list', () => {
   test('reads the list a source serves, with no Authorization or Cookie header', async () => {
-    const seen: Request[] = [];
+    // Read inside the handler: Bun drops a request's headers once it is answered.
+    const seen: (string | null)[][] = [];
     await using source = serving((request) => {
-      seen.push(request);
+      seen.push([
+        request.method,
+        request.headers.get('authorization'),
+        request.headers.get('cookie'),
+      ]);
       return new Response(listOf({ 'gpt-6.1-sol': SOL }));
     });
 
     const list = await fetchPriceList({ fetch, source: source.url });
 
     expect(list.models.map((m) => m.model)).toEqual(['gpt-6.1-sol']);
-    expect(
-      seen.map((r) => [r.method, r.headers.get('authorization'), r.headers.get('cookie')]),
-    ).toEqual([['GET', null, null]]);
+    expect(seen).toEqual([['GET', null, null]]);
   });
 
   test('follows a redirect from HTTPS to HTTPS, and refuses one to plain HTTP before contacting it', async () => {
@@ -359,6 +362,31 @@ describe('fetching the price list', () => {
       );
       expect(sent).toEqual(['https://source.example/prices.json']);
     }
+  });
+
+  test('refuses a source, or a redirect, to an address that is neither HTTP nor HTTPS, before contacting it', async () => {
+    const sent: string[] = [];
+    const stub: Fetch = async (url) => {
+      sent.push(url.href);
+      return url.href === 'http://source.example/prices.json'
+        ? Response.redirect('file:///etc/passwd', 302)
+        : new Response(listOf({ 'gpt-6.1-sol': SOL }));
+    };
+
+    const redirected = await failureOf(
+      fetchPriceList({ fetch: stub, source: new URL('http://source.example/prices.json') }),
+    );
+    const started = await failureOf(
+      fetchPriceList({ fetch: stub, source: new URL('ftp://source.example/prices.json') }),
+    );
+
+    expect(redirected).toBe(
+      'Could not fetch the price list from source.example: It redirected the Hub to an address that is not HTTP or HTTPS.',
+    );
+    expect(started).toBe(
+      'Could not fetch the price list from source.example: The source is not an HTTP or HTTPS address without a user name or password.',
+    );
+    expect(sent).toEqual(['http://source.example/prices.json']);
   });
 
   test('follows a redirect from a plain HTTP source to another', async () => {

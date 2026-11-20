@@ -400,6 +400,17 @@ describe('a price that looks like a unit error', () => {
     ]);
   });
 
+  test('only a tier configured at exactly its threshold escapes the 100 times check', async () => {
+    await using db = await prepared({ bundled: [TABLED], configured: [{ ...TABLED, input: 3 }] });
+
+    const applied = await applyFetchedPrices(db.sql, [
+      listed({ input: 3 }, { input: 600, promptOver: 100_000 }),
+    ]);
+
+    expect(applied.added).toEqual([]);
+    expect(applied.skipped.map((s) => [s.model, s.kind])).toEqual([[MODEL, 'suspect']]);
+  });
+
   test('zero or absent prices are not compared', async () => {
     const { cacheRead: _absent, ...withoutCacheRead } = TABLED;
     await using db = await prepared({ bundled: [{ ...withoutCacheRead, output: 0 }] });
