@@ -210,6 +210,21 @@ describe('prices update', () => {
     expect(stderr).toContain('off');
     expect(code).toBe(2);
   });
+
+  test('refuses a source with a user name or password, and says the URL must omit them', async () => {
+    const { code, stderr } = await invoke([
+      'prices',
+      'update',
+      '--database',
+      'postgres://127.0.0.1:1/none',
+      '--price-source',
+      'https://user:secret@example.test/prices.json',
+    ]);
+
+    expect(stderr).toContain('without a user name or password');
+    expect(stderr).not.toContain('secret');
+    expect(code).toBe(2);
+  });
 });
 
 // The Hub's status row, as serve writes it.

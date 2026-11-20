@@ -98,7 +98,7 @@ A model the list drops keeps its entries.
 It takes the lock that migrations and `serve`'s own price load take before it reads the prices in force.
 It writes nothing when it adds no entry, so it marks no totals for recalculation.
 A failed fetch leaves `fetched_model_prices` as it was.
-A fetch fails when it gets no answer; a redirect from HTTPS to plain HTTP, to an address that is neither HTTP nor HTTPS or that carries a user name or password, or past 5 redirects; a status other than 200; an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
+A fetch fails when it gets no answer; a redirect from HTTPS to plain HTTP, to an address that is neither HTTP nor HTTPS or that carries a user name or password, to a `Location` that is not a URL, or past 5 redirects; a status other than 200; an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
 A skipped model does not fail the fetch.
 In `serve`, a failed fetch is a failed run of the `prices` pass: `serve` logs a warning, keeps running, and the Hub status page shows the pass failing.
 The command prints why and exits 1. The bundled and configured entries it loaded first stay loaded.

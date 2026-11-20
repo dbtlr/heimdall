@@ -314,6 +314,19 @@ test('Retry-After seconds count from when the answer arrives', async () => {
   });
 });
 
+test('a redirect to an address with a user name or password is refused, and the reason says so without naming it', async () => {
+  const { fetch, sent } = stubFetch({
+    'https://api.github.com/repos/o/creds/releases?per_page=100': () =>
+      Response.redirect('https://user:secret@api.github.com/repositories/44/releases', 302),
+  });
+
+  expect(await list('github:o/creds', fetch)).toEqual({
+    kind: 'failed',
+    reason: 'api.github.com redirected the Hub to an address that carries a user name or password.',
+  });
+  expect(sent).toHaveLength(1);
+});
+
 test('a redirect to an address that does not parse is not called a failure to reach the host', async () => {
   const { fetch } = stubFetch({
     'https://api.github.com/repos/o/broken/releases?per_page=100': () =>

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { describeError } from './errors.ts';
-import { followRedirects, readCapped } from './outbound-http.ts';
+import { followRedirects, hasCredentials, readCapped } from './outbound-http.ts';
 import type { Fetch, Followed } from './outbound-http.ts';
 import { HUB_VERSION } from './version.ts';
 
@@ -63,6 +63,16 @@ const rateLimited = (response: Response) =>
   (response.status === 403 &&
     (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')));
 
+// Why the address a check was to request, or one a redirect led to, was
+// refused. The address itself is never named, so no user name or password it
+// carries reaches a reason.
+const refusedReason = (host: string, { from, url }: { from: URL | undefined; url: URL }) => {
+  const how = from === undefined ? 'gave the Hub' : 'redirected the Hub to';
+  return hasCredentials(url)
+    ? `${host} ${how} an address that carries a user name or password.`
+    : `${host} ${how} an address that is not HTTPS.`;
+};
+
 type Answer = { body: string; response: Response; url: URL };
 // How a check makes its requests. `now` reads a Retry-After given in seconds
 // when the answer arrives, and `signal` ends a request early when serve stops.
@@ -115,7 +125,7 @@ const get = async (
     start,
   });
   if (followed.kind === 'refused') {
-    throw new CheckFailureError(`${host} redirected the Hub to an address that is not HTTPS.`);
+    throw new CheckFailureError(refusedReason(host, followed));
   }
   if (followed.kind === 'too-many') {
     throw new CheckFailureError(`${host} redirected the Hub too many times.`);

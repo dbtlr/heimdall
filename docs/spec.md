@@ -944,7 +944,7 @@ A fetch takes the migrations' lock before it reads the prices in force. It reads
 **When a fetch fails.** A fetch fails, and leaves `fetched_model_prices` unchanged, in any of these cases:
 
 - it gets no answer;
-- a redirect leads from HTTPS to an address that is not HTTPS, to one that is neither HTTP nor HTTPS, or to one that carries a user name or password, or the redirects go on past 5. Only 301, 302, 303, 307, and 308 redirect; any other status but 200 fails the fetch;
+- a redirect leads from HTTPS to an address that is not HTTPS, to one that is neither HTTP nor HTTPS, or to one that carries a user name or password, or to a `Location` that is not a URL, or the redirects go on past 5. Only 301, 302, 303, 307, and 308 redirect; any other status but 200 fails the fetch;
 - the answer has a status other than 200;
 - the answer is over 32 MiB;
 - the answer is not a JSON object;

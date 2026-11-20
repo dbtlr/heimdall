@@ -60,7 +60,13 @@ const priceSource = {
     parse: (raw) => {
       const source = parsePriceSource(raw);
       return source === undefined
-        ? { issues: [{ message: 'Use an https:// or http:// URL, or off.' }] }
+        ? {
+            issues: [
+              {
+                message: 'Use an https:// or http:// URL without a user name or password, or off.',
+              },
+            ],
+          }
         : { value: source };
     },
   }),
