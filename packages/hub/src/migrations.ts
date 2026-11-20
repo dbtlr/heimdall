@@ -2514,7 +2514,7 @@ export const MIGRATIONS: readonly Migration[] = [
 
 // Serializes Hubs that start against the same database at once. The name is
 // arbitrary; it only has to be the same for every Hub. Loading the price table
-// takes the lock too (price-table.ts).
+// and adding fetched prices take the lock too (price-table.ts, fetched-prices.ts).
 export const MIGRATION_LOCK = 'heimdall-migrations';
 
 // How long a migration waits for a lock another session holds before it gives
