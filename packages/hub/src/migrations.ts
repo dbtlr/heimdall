@@ -2415,6 +2415,101 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: `ALTER TABLE update_managers ADD COLUMN retired boolean NOT NULL DEFAULT false;`,
     version: 47,
   },
+  {
+    // Prices fetched from a public price list (ADR-0024) live beside the
+    // bundled and configured ones, in a table only a fetch writes, so `serve`
+    // replacing `model_prices` whole never touches them. A fetch adds dated
+    // rows and never changes an earlier day's, so the key has no source.
+    // insight.requests now chooses, of the rows in force for a request, the
+    // highest tier its prompt reaches, then within that tier the first source
+    // with a row, configured, fetched, then bundled, and within the source the
+    // latest `valid_from`: so a configured row wins in its tier over rows of
+    // any date from the other sources. The view inlines the union, since it
+    // may call only functions that read no table: it reads the tables with its
+    // owner's rights, and a function would read them with the insight
+    // reader's. A write to the new table marks every Session's totals stale,
+    // as one to `model_prices` does, and the new order can change which price
+    // applies, so this marks them too.
+    sql: `
+      CREATE TABLE fetched_model_prices (
+        model text NOT NULL,
+        valid_from timestamptz NOT NULL,
+        input_per_mtok numeric NOT NULL CHECK (input_per_mtok >= 0),
+        output_per_mtok numeric NOT NULL CHECK (output_per_mtok >= 0),
+        cache_read_per_mtok numeric CHECK (cache_read_per_mtok >= 0),
+        cache_write_5m_per_mtok numeric CHECK (cache_write_5m_per_mtok >= 0),
+        cache_write_1h_per_mtok numeric CHECK (cache_write_1h_per_mtok >= 0),
+        context_window bigint NOT NULL CHECK (context_window > 0),
+        min_prompt_tokens bigint NOT NULL DEFAULT 0 CHECK (min_prompt_tokens >= 0),
+        PRIMARY KEY (model, valid_from, min_prompt_tokens)
+      );
+      CREATE TRIGGER mark_stale_on_fetched_price_change
+        AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON fetched_model_prices
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_priced_sessions_stale();
+
+      CREATE OR REPLACE VIEW insight.requests WITH (security_barrier = true) AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.request_id, r.at, r.model,
+             r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cache_read_tokens,
+             r.cache_write_tokens, r.cache_write_5m_tokens, r.cache_write_1h_tokens,
+             r.input_tokens + r.cache_read_tokens + r.cache_write_tokens AS context_tokens,
+             r.stop_reason, r.skill, g.path, r.generation, r.byte_offset, r.parser_version,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+               + price_tokens(r.output_tokens, price.output_per_mtok)
+               + price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+               + price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
+                              price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cost_usd,
+             COALESCE(r.context_window, price.context_window) AS context_window,
+             (r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)::numeric * 100
+               / COALESCE(r.context_window, price.context_window) AS context_fill_percent,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.input_tokens, price.input_per_mtok)
+             END AS input_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.output_tokens, price.output_per_mtok)
+             END AS output_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(r.cache_read_tokens, price.cache_read_per_mtok)
+             END AS cache_read_cost_usd,
+             CASE WHEN price.model IS NULL THEN NULL ELSE
+               price_tokens(GREATEST(r.cache_write_tokens - COALESCE(r.cache_write_1h_tokens, 0), 0),
+                            price.cache_write_5m_per_mtok)
+               + price_tokens(COALESCE(r.cache_write_1h_tokens, 0), price.cache_write_1h_per_mtok)
+             END AS cache_write_cost_usd
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      JOIN transcript_generations g ON g.id = r.generation
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM (
+          SELECT m.model, m.valid_from, m.input_per_mtok, m.output_per_mtok, m.cache_read_per_mtok,
+                 m.cache_write_5m_per_mtok, m.cache_write_1h_per_mtok, m.context_window,
+                 m.min_prompt_tokens, CASE WHEN m.source = 'configured' THEN 0 ELSE 2 END AS rank
+          FROM model_prices m
+          UNION ALL
+          SELECT f.model, f.valid_from, f.input_per_mtok, f.output_per_mtok, f.cache_read_per_mtok,
+                 f.cache_write_5m_per_mtok, f.cache_write_1h_per_mtok, f.context_window,
+                 f.min_prompt_tokens, 1 AS rank
+          FROM fetched_model_prices f
+        ) p
+        WHERE p.model = regexp_replace(r.model, '-[0-9]{8}$', '') AND p.valid_from <= r.at
+          AND p.min_prompt_tokens <= r.input_tokens + r.cache_read_tokens + r.cache_write_tokens
+        ORDER BY p.min_prompt_tokens DESC, p.rank, p.valid_from DESC
+        LIMIT 1
+      ) price ON true
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+
+      INSERT INTO stale_ranges (system, harness, since, until, stretches, totals)
+      VALUES (NULL, NULL, NULL, NULL, false, true);
+    `,
+    version: 48,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

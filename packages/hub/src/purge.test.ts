@@ -18,6 +18,7 @@ const AT = new Date(Date.UTC(2026, 9, 6, 12, 0, 0));
 const FLEET_TABLES = new Set([
   'current_parsers',
   'delivery_status',
+  'fetched_model_prices',
   'hub_listening',
   'hub_status',
   'model_prices',
@@ -287,6 +288,9 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
 // laptop-1, which is paired, and the Hub's configuration file for it.
 const setup = async () => {
   const db = await migratedDatabase();
+  // Migrating marks every Session's totals with a range that names no System;
+  // the first refresh would consume it.
+  await db.sql`DELETE FROM stale_ranges`;
   await seedSystem(db.sql, 'old-1', 1001);
   await seedSystem(db.sql, 'laptop-1', 2002);
   await storeToken(db.sql, { pairedAt: AT.getTime(), system: 'laptop-1', token: 'laptop-token' });

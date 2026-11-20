@@ -544,3 +544,53 @@ test('migration 47 marks no stored package source retired', async () => {
   ]);
   expect(await migrate(db.sql, through47)).toEqual([]);
 });
+
+test('migration 48 adds an empty fetched price table and marks every Session total for recalculation', async () => {
+  await using db = await testDatabase();
+  await migrate(
+    db.sql,
+    MIGRATIONS.filter((m) => m.version <= 47),
+  );
+  await db.sql`DELETE FROM stale_ranges`;
+  const through48 = MIGRATIONS.filter((m) => m.version <= 48);
+  expect(await migrate(db.sql, through48)).toEqual([48]);
+  expect(await db.sql`SELECT * FROM fetched_model_prices`).toEqual([]);
+  expect(
+    await db.sql`SELECT system, harness, since, until, stretches, totals FROM stale_ranges`,
+  ).toEqual([{ harness: null, since: null, stretches: false, system: null, totals: true, until: null }]);
+  expect(await migrate(db.sql, through48)).toEqual([]);
+});
+
+test('a write to the fetched price table marks every Session total for recalculation', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  await db.sql`DELETE FROM stale_ranges`;
+  await db.sql`
+    INSERT INTO fetched_model_prices (model, valid_from, input_per_mtok, output_per_mtok, context_window)
+    VALUES ('m', '2026-01-01T00:00:00Z', 1, 2, 1000), ('n', '2026-01-01T00:00:00Z', 1, 2, 1000)
+  `;
+  expect(await db.sql`SELECT totals, stretches FROM stale_ranges`).toEqual([
+    { stretches: false, totals: true },
+  ]);
+});
+
+test('only insight.requests reads the price tables, and no function does', async () => {
+  await using db = await testDatabase();
+  await migrate(db.sql);
+  const views: { view: string }[] = await db.sql`
+    SELECT DISTINCT v.oid::regclass::text AS view
+    FROM pg_depend d
+    JOIN pg_rewrite w ON w.oid = d.objid
+    JOIN pg_class v ON v.oid = w.ev_class
+    WHERE d.refobjid IN ('model_prices'::regclass, 'fetched_model_prices'::regclass)
+      AND v.oid NOT IN ('model_prices'::regclass, 'fetched_model_prices'::regclass)
+    ORDER BY 1
+  `;
+  const functions: { name: string }[] = await db.sql`
+    SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+      AND p.prosrc LIKE '%model\\_prices%'
+  `;
+  expect(views).toEqual([{ view: 'insight.requests' }]);
+  expect(functions).toEqual([]);
+});

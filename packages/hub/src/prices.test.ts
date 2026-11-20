@@ -318,7 +318,7 @@ describe('a configured price overrides the bundled one', () => {
     expect(await costs(db.sql)).toEqual({ after: 3, before: 4 });
   });
 
-  test('a bundled price dated after an override takes over from its date', async () => {
+  test('an override wins in its tier over a bundled price of a later date', async () => {
     await using db = await prepared({
       bundled: [PRICE, { ...PRICE, input: 2, validFrom: '2026-09-01' }],
       configured: [{ ...PRICE, input: 3, validFrom: '2026-06-01' }],
@@ -328,7 +328,7 @@ describe('a configured price overrides the bundled one', () => {
       { at: '2026-10-01T00:00:00Z', id: 'later', input: 1_000_000 },
     ]);
 
-    expect(await costs(db.sql)).toEqual({ between: 3, later: 2 });
+    expect(await costs(db.sql)).toEqual({ between: 3, later: 3 });
   });
 
   test('an override prices a model the bundled table does not know', async () => {
@@ -345,6 +345,85 @@ describe('a configured price overrides the bundled one', () => {
     await syncPrices(db.sql, { bundled: [PRICE], configured: [] });
 
     expect(await costs(db.sql)).toEqual({ r1: 4 });
+  });
+});
+
+// Stores entries as a fetch would, in the fetched price table.
+const storeFetched = async (sql: SQL, entries: PriceEntry[]) => {
+  for (const entry of entries) {
+    // oxlint-disable-next-line no-await-in-loop -- a few rows, in order.
+    await sql`
+      INSERT INTO fetched_model_prices (
+        model, valid_from, input_per_mtok, output_per_mtok, cache_read_per_mtok,
+        cache_write_5m_per_mtok, cache_write_1h_per_mtok, context_window, min_prompt_tokens
+      )
+      VALUES (
+        ${entry.model}, ${`${entry.validFrom}T00:00:00Z`}, ${entry.input}, ${entry.output},
+        ${entry.cacheRead ?? null}, ${entry.cacheWrite5m ?? null}, ${entry.cacheWrite1h ?? null},
+        ${entry.contextWindow}, ${(entry.promptOver ?? -1) + 1}
+      )
+    `;
+  }
+};
+
+describe('within a prompt tier, the source decides before the date', () => {
+  test('a fetched price wins over a bundled price of any date in its tier', async () => {
+    await using db = await prepared({
+      bundled: [PRICE, { ...PRICE, input: 2, validFrom: '2026-09-01' }],
+    });
+    await storeFetched(db.sql, [{ ...PRICE, input: 3, validFrom: '2026-06-01' }]);
+    await seed(db.sql, [
+      { at: '2026-05-01T00:00:00Z', id: 'a-before-fetched', input: 1_000_000 },
+      { at: '2026-07-01T00:00:00Z', id: 'b-fetched', input: 1_000_000 },
+      { at: '2026-10-01T00:00:00Z', id: 'c-after-later-bundled', input: 1_000_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({
+      'a-before-fetched': 4,
+      'b-fetched': 3,
+      'c-after-later-bundled': 3,
+    });
+  });
+
+  test('a configured price wins over a fetched price of any date in its tier', async () => {
+    await using db = await prepared({
+      configured: [{ ...PRICE, input: 5, validFrom: '2026-03-01' }],
+    });
+    await storeFetched(db.sql, [
+      { ...PRICE, input: 3, validFrom: '2026-01-01' },
+      { ...PRICE, input: 2, validFrom: '2026-06-01' },
+    ]);
+    await seed(db.sql, [
+      { at: '2026-02-01T00:00:00Z', id: 'a-before-override', input: 1_000_000 },
+      { at: '2026-07-01T00:00:00Z', id: 'b-after-later-fetched', input: 1_000_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({ 'a-before-override': 3, 'b-after-later-fetched': 5 });
+  });
+
+  test('within a source the latest date applies', async () => {
+    await using db = await prepared({});
+    await storeFetched(db.sql, [
+      { ...PRICE, input: 3, validFrom: '2026-01-01' },
+      { ...PRICE, input: 2, validFrom: '2026-06-01' },
+    ]);
+    await seed(db.sql, [
+      { at: '2026-02-01T00:00:00Z', id: 'a-early', input: 1_000_000 },
+      { at: '2026-07-01T00:00:00Z', id: 'b-late', input: 1_000_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({ 'a-early': 3, 'b-late': 2 });
+  });
+
+  test('the highest tier the prompt reaches applies before any source: an override of the base leaves a fetched higher tier', async () => {
+    await using db = await prepared({ configured: [{ ...BASE_TIER, input: 1 }] });
+    await storeFetched(db.sql, [BASE_TIER, HIGH_TIER]);
+    await seed(db.sql, [
+      { at: '2026-03-01T00:00:00Z', id: 'a-base', input: 10_000 },
+      { at: '2026-03-01T00:00:00Z', id: 'b-high', input: 200_000 },
+    ]);
+
+    expect(await costs(db.sql)).toEqual({ 'a-base': 0.01, 'b-high': 1.6 });
   });
 });
 

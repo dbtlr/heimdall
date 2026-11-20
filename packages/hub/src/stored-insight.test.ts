@@ -717,7 +717,8 @@ test('a database migrated to version 31 has model totals beside its Session tota
 
   await migrate(db.sql);
 
-  expect(await stale(db.sql)).toEqual([]);
+  // Only migration 48, which changes which price applies, marks the totals.
+  expect(await stale(db.sql)).toEqual(['s1 totals']);
   expect(await modelTotals(db.sql, 's1')).toEqual(['priced-model: 2, 10, 0']);
   const [{ sessions, models }] = await db.sql`
     SELECT (SELECT sum(requests) FROM insight.session_totals)::int AS sessions,
@@ -745,7 +746,8 @@ test('a stored Session that insight.sessions no longer lists is marked for refre
 
   await migrate(db.sql);
 
-  expect(await stale(db.sql)).toEqual(['unlisted totals']);
+  // Migration 48 marks every Session's totals, s1's included.
+  expect(await stale(db.sql)).toEqual(['s1 totals', 'unlisted totals']);
   await refreshSessionInsight(db.sql);
   expect(await differences(db.sql)).toEqual([]);
 });
