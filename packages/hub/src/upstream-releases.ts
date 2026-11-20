@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 import { describeError } from './errors.ts';
+import { followRedirects, hasCredentials, readCapped } from './outbound-http.ts';
+import type { Fetch, Followed } from './outbound-http.ts';
 import { HUB_VERSION } from './version.ts';
-
-export type Fetch = (url: URL, init: RequestInit) => Promise<Response>;
 
 // What one check of an upstream found: every release it lists, or why it
 // could not tell. A rate-limited answer says when the upstream allows asking
@@ -63,26 +63,14 @@ const rateLimited = (response: Response) =>
   (response.status === 403 &&
     (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')));
 
-// Reads at most MAX_ANSWER_BYTES of the body, so no upstream can fill memory.
-const readCapped = async (response: Response, host: string) => {
-  const reader = response.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- a stream reads in order.
-    const chunk = await reader?.read();
-    if (chunk === undefined || chunk.done) {
-      break;
-    }
-    length += chunk.value.byteLength;
-    if (length > MAX_ANSWER_BYTES) {
-      // oxlint-disable-next-line no-await-in-loop -- the read ends here.
-      await reader?.cancel();
-      throw new CheckFailureError(`${host} answered with more than the Hub reads.`);
-    }
-    chunks.push(chunk.value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
+// Why the address a check was to request, or one a redirect led to, was
+// refused. The address itself is never named, so no user name or password it
+// carries reaches a reason.
+const refusedReason = (host: string, { from, url }: { from: URL | undefined; url: URL }) => {
+  const how = from === undefined ? 'gave the Hub' : 'redirected the Hub to';
+  return hasCredentials(url)
+    ? `${host} ${how} an address that carries a user name or password.`
+    : `${host} ${how} an address that is not HTTPS.`;
 };
 
 type Answer = { body: string; response: Response; url: URL };
@@ -108,62 +96,60 @@ const get = async (
     request: Requester;
   },
 ): Promise<Answer> => {
-  let url = start;
-  for (let hops = 0; ; hops += 1) {
-    if (url.protocol !== 'https:') {
-      throw new CheckFailureError(`${host} redirected the Hub to an address that is not HTTPS.`);
-    }
-    const headers: Record<string, string> = {
-      Accept: accept,
-      'User-Agent': `heimdall-hub/${HUB_VERSION}`,
-    };
-    if (authorization !== undefined && authorization.origin === url.origin) {
-      headers.Authorization = authorization.value;
-    }
-    let response: Response;
+  // Only a request that fails is a failure to reach the host; a bad redirect
+  // address or a failed cancel throws as it is.
+  const reach: Fetch = async (url, init) => {
     try {
-      // oxlint-disable-next-line no-await-in-loop -- each hop needs the last one's answer.
-      response = await fetch(url, {
-        headers,
-        redirect: 'manual',
-        signal:
-          signal === undefined
-            ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-            : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]),
-      });
+      return await fetch(url, init);
     } catch (error) {
       throw new CheckFailureError(`Could not reach ${host}: ${describeError(error)}`);
     }
-    const location = response.headers.get('location');
-    if (response.status >= 300 && response.status < 400 && location !== null) {
-      // oxlint-disable-next-line no-await-in-loop -- the hop's body is unused.
-      await response.body?.cancel();
-      if (hops >= MAX_REDIRECTS) {
-        throw new CheckFailureError(`${host} redirected the Hub too many times.`);
-      }
-      url = new URL(location, url);
-      continue;
-    }
-    if (rateLimited(response)) {
-      // oxlint-disable-next-line no-await-in-loop -- the body is unused.
-      await response.body?.cancel();
-      throw new CheckFailureError(`${host} is rate-limiting the Hub.`, {
-        retryAt: retryTime(response, now()),
-      });
-    }
-    if (response.status === 401) {
-      // oxlint-disable-next-line no-await-in-loop -- the body is unused.
-      await response.body?.cancel();
-      return { body: '', response, url };
-    }
-    if (!response.ok) {
-      // oxlint-disable-next-line no-await-in-loop -- the body is unused.
-      await response.body?.cancel();
-      throw new CheckFailureError(`${host} answered ${String(response.status)}.`);
-    }
-    // oxlint-disable-next-line no-await-in-loop -- the last hop's body is the answer.
-    return { body: await readCapped(response, host), response, url };
+  };
+  const followed: Followed = await followRedirects({
+    allowed: (url) => url.protocol === 'https:',
+    fetch: reach,
+    init: (url) => ({
+      headers: {
+        Accept: accept,
+        'User-Agent': `heimdall-hub/${HUB_VERSION}`,
+        ...(authorization !== undefined && authorization.origin === url.origin
+          ? { Authorization: authorization.value }
+          : {}),
+      },
+      signal:
+        signal === undefined
+          ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]),
+    }),
+    maxRedirects: MAX_REDIRECTS,
+    start,
+  });
+  if (followed.kind === 'refused') {
+    throw new CheckFailureError(refusedReason(host, followed));
   }
+  if (followed.kind === 'too-many') {
+    throw new CheckFailureError(`${host} redirected the Hub too many times.`);
+  }
+  const { response, url } = followed;
+  if (rateLimited(response)) {
+    await response.body?.cancel();
+    throw new CheckFailureError(`${host} is rate-limiting the Hub.`, {
+      retryAt: retryTime(response, now()),
+    });
+  }
+  if (response.status === 401) {
+    await response.body?.cancel();
+    return { body: '', response, url };
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new CheckFailureError(`${host} answered ${String(response.status)}.`);
+  }
+  const body = await readCapped(response, MAX_ANSWER_BYTES);
+  if (body.kind === 'over') {
+    throw new CheckFailureError(`${host} answered with more than the Hub reads.`);
+  }
+  return { body: body.text, response, url };
 };
 
 const parseJson = <T>(answer: Answer, schema: z.ZodType<T>, host: string, what: string): T => {

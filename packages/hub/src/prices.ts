@@ -1,9 +1,10 @@
-// The API list prices the Hub applies to a Session's requests (glossary:
-// list-price cost). One entry per model, `validFrom` date, and prompt tier; the
-// entry that applies to a request is the one with the latest `validFrom` on or
-// before the request's time, so a price change is a new entry and never
-// reprices an earlier request. The Hub's configuration can add or replace
-// entries (price-table.ts).
+// The bundled API list prices the Hub applies to a Session's requests
+// (glossary: list-price cost). One entry per model, `validFrom` date, and
+// prompt tier; a price change is a new entry and never reprices an earlier
+// request. They are the starting table for a new Hub and cover the models the
+// fetched price list does not carry: within a prompt tier, a configured entry
+// (price-table.ts) wins over a fetched one (fetched-prices.ts), and a fetched
+// one over a bundled one, whatever their dates (ADR-0024).
 //
 // Prices are US dollars per million tokens. `validFrom` is a UTC day. The
 // dates below are lower bounds: each is on or before the model's first
@@ -15,7 +16,8 @@
 // input, cache read, and cache write tokens together, is over that many
 // tokens; one without it applies to every prompt. Of the entries in force, the
 // one with the highest `promptOver` the prompt exceeds applies, and among
-// those the latest `validFrom`: so a dated entry replaces only its own tier.
+// those the first source's, then the latest `validFrom`: so a dated entry
+// replaces only its own tier.
 //
 // `cacheRead` is the price of tokens served from a prompt cache. For OpenAI
 // models it is the cached-input price, which the Codex parser reads out of
@@ -86,7 +88,7 @@ const OPENAI_LONG_WINDOW = 1_050_000;
 const OPENAI_LONG_PROMPT = 272_000;
 
 // To the micro-dollar, so a scaled price is the figure a page lists.
-const rounded = (price: number) => Math.round(price * MILLION) / MILLION;
+export const rounded = (price: number) => Math.round(price * MILLION) / MILLION;
 
 // The tier OpenAI prices above 272K prompt tokens: twice a base entry's input,
 // cache read, and cache write prices, and 1.5 times its output price.

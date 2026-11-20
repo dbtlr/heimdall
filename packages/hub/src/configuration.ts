@@ -13,7 +13,7 @@ const hubFile = z.object({
   delivery: z.unknown().optional(),
   host: z.string().optional(),
   port: z.union([z.string(), z.number()]).optional(),
-  prices: z.object({ overrides: z.string().optional() }).optional(),
+  prices: z.object({ overrides: z.string().optional(), source: z.string().optional() }).optional(),
 });
 
 // `plugin` goes in the Application; a Command that reads the file's sections

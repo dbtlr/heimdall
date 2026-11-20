@@ -6,10 +6,12 @@ import { formatSpan, formatSpanShort } from './time.ts';
 // What the Hub's status row holds for one timer pass, in epoch milliseconds
 // (packages/hub/src/hub-status.ts): its schedule, when its latest run started
 // and finished, when one last succeeded, and, while its runs keep failing,
-// when the first of them failed.
+// when the first of them failed. A pass its configuration turns off records
+// `off` in place of run times.
 export type PassRecord = {
   interval_ms?: number;
   budget_ms?: number;
+  off?: boolean;
   started_at?: number;
   finished_at?: number;
   succeeded_at?: number;

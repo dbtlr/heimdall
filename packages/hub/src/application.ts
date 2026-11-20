@@ -5,13 +5,15 @@ import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
 import { verbose } from '@loomcli/plugins/verbose';
 import { version } from '@loomcli/plugins/version';
-import { date, integer, text, url } from '@loomcli/validators';
+import { createValidator, date, integer, text, url } from '@loomcli/validators';
 
 import { configPlugin, configValues } from './configuration.ts';
 import { deliveryTestAction } from './delivery-commands.ts';
 import { duration } from './duration.ts';
 import { INSIGHT_READER_ROLE } from './insight-reader.ts';
 import { pairAction, unpairAction } from './pair-commands.ts';
+import { pricesUpdateAction } from './price-commands.ts';
+import { LITELLM_PRICE_LIST, parsePriceSource } from './price-list.ts';
 import { purgeServiceAction, purgeSystemAction } from './purge-commands.ts';
 import { serveAction } from './serve.ts';
 import { silenceAction } from './silence-commands.ts';
@@ -33,6 +35,41 @@ const database = {
   required: true,
   type: 'string',
   validate: url({ protocols: ['postgres', 'postgresql'] }),
+} as const;
+
+// The price overrides file `serve` and `prices update` load, from its flag,
+// then its variable, then `[prices] overrides` in the configuration file.
+const priceOverrides = {
+  description:
+    'JSON file of model prices that add to or replace the bundled and fetched list prices in their tiers, dated like them.',
+  env: 'HEIMDALL_PRICE_OVERRIDES',
+  extensions: [configInput({ path: 'prices.overrides' })],
+  type: 'string',
+  validate: text({ minLength: 1 }),
+} as const;
+
+// Where `serve` and `prices update` fetch list prices from, as `priceOverrides`
+// is found; `off` stops the fetch (ADR-0024).
+const priceSource = {
+  default: LITELLM_PRICE_LIST,
+  description: 'URL of the public price list to fetch list prices from, or off.',
+  env: 'HEIMDALL_PRICE_SOURCE',
+  extensions: [configInput({ path: 'prices.source' })],
+  type: 'string',
+  validate: createValidator({
+    parse: (raw) => {
+      const source = parsePriceSource(raw);
+      return source === undefined
+        ? {
+            issues: [
+              {
+                message: 'Use an https:// or http:// URL without a user name or password, or off.',
+              },
+            ],
+          }
+        : { value: source };
+    },
+  }),
 } as const;
 
 // Each `serve` setting comes from its flag, then its variable, then the
@@ -58,14 +95,8 @@ export const serve = new Command('serve', {
     type: 'string',
     validate: integer({ max: 65_535, min: 0 }),
   })
-  .option('price-overrides', {
-    description:
-      'JSON file of model prices that add to or replace the bundled list prices, dated like them.',
-    env: 'HEIMDALL_PRICE_OVERRIDES',
-    extensions: [configInput({ path: 'prices.overrides' })],
-    type: 'string',
-    validate: text({ minLength: 1 }),
-  })
+  .option('price-overrides', priceOverrides)
+  .option('price-source', priceSource)
   // The role the provisioner creates to read the insight views, and nothing
   // else. Unset, serve grants no role anything.
   .option('insight-reader', {
@@ -245,6 +276,19 @@ const delivery = new Command('delivery', {
   description: 'Check how the Hub delivers alerts.',
 }).command(deliveryTest);
 
+export const pricesUpdate = new Command('update', {
+  description:
+    'Load the bundled and configured prices, as serve does when it starts, then fetch the price list and add the prices it changes.',
+})
+  .option('database', database)
+  .option('price-overrides', priceOverrides)
+  .option('price-source', priceSource)
+  .action(pricesUpdateAction);
+
+const prices = new Command('prices', {
+  description: 'Keep the list prices Session insight costs requests at.',
+}).command(pricesUpdate);
+
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
@@ -260,4 +304,5 @@ export const app = new Application('heimdall-hub', {
   .command(purge)
   .command(transcripts)
   .command(delivery)
+  .command(prices)
   .command(serviceCommand({ binary: 'hub', version: HUB_VERSION }));

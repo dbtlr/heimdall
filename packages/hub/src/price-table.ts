@@ -8,9 +8,12 @@ import { MIGRATION_LOCK } from './migrations.ts';
 import type { PriceEntry } from './prices.ts';
 import { UNATTRIBUTED_MODEL } from './session-insight.ts';
 
-// The price table the `insight` views read (migration 16): the bundled prices
-// and the ones the Hub's configuration adds, loaded when `serve` starts. The
-// table is derived from them and replaced whole, never edited.
+// The bundled and configured part of the price table the `insight` views read
+// (migration 16): the bundled prices and the ones the Hub's configuration adds,
+// loaded when `serve` starts and by `heimdall-hub prices update`. `model_prices`
+// is derived from them and replaced whole, never edited. Fetched prices live
+// beside it in `fetched_model_prices`, which only a fetch writes
+// (fetched-prices.ts, migration 48), so loading these never touches them.
 
 // A day in UTC, as `YYYY-MM-DD`, that exists.
 const day = z.string().refine((text) => {
@@ -58,6 +61,22 @@ const priceEntry = z
       ...(promptOver === undefined ? {} : { promptOver }),
     };
   });
+
+// `entry` as a price table entry when it follows the rules an overrides entry
+// follows, else why not, its issues in one line.
+export const checkPriceEntry = (
+  entry: unknown,
+): { kind: 'fits'; entry: PriceEntry } | { kind: 'unfit'; problem: string } => {
+  const parsed = priceEntry.safeParse(entry);
+  return parsed.success
+    ? { entry: parsed.data, kind: 'fits' }
+    : {
+        kind: 'unfit',
+        problem: parsed.error.issues
+          .map((issue) => `${issue.path.join('.') || 'The entry'}: ${issue.message}`)
+          .join(' '),
+      };
+};
 
 const overrides = z
   .strictObject({ prices: z.array(priceEntry) })
@@ -108,10 +127,10 @@ export const loadPriceOverrides = async (path: string): Promise<PriceEntry[]> =>
   }
 };
 
-// Replaces the price table with `bundled` and `configured` entries, and leaves
-// it untouched when it already holds exactly those. Both stay in it: where a
-// configured entry and a bundled one share a model, a date, and a prompt tier,
-// the views choose the configured one. The replacement holds the lock
+// Replaces `model_prices` with `bundled` and `configured` entries, and leaves
+// it untouched when it already holds exactly those. Both stay in it: within a
+// prompt tier the views choose a configured entry over a bundled one of any
+// date. It never touches the fetched entries. The replacement holds the lock
 // migrations take, so Hubs that start together load it one at a time. An
 // entry for the reserved `unknown` model, bundled or configured, refuses the
 // load before it touches the table.

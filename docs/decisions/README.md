@@ -26,7 +26,7 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0011 — Collectors hold what provisioners record, and Heimdall stores no declarations](0011-collectors-hold-what-provisioners-record.md)
 - [ADR-0012 — The Hub archives agent Session transcripts](0012-hub-archives-agent-session-transcripts.md)
 - [ADR-0013 — Transcripts upload as acknowledged chunks into PostgreSQL, from sources each System opts into](0013-transcripts-upload-as-acknowledged-chunks-into-postgresql.md)
-- [ADR-0014 — Session insight is a rebuildable projection, read through insight views](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md) (stored totals superseded by ADR-0016)
+- [ADR-0014 — Session insight is a rebuildable projection, read through insight views](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md) (stored totals superseded by ADR-0016; compiled prices superseded by ADR-0024)
 - [ADR-0015 — The dashboard is its own app, reading the Hub's database](0015-dashboard-is-its-own-app-reading-the-hubs-database.md)
 - [ADR-0016 — Session stretches and totals are stored, and the Hub refreshes them](0016-session-stretches-and-totals-are-stored-and-refreshed.md)
 - [ADR-0017 — The Hub sets each Condition's level](0017-the-hub-sets-condition-levels.md)
@@ -36,3 +36,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0021 — The Collector logs Service stops from supervisor facts, and the Hub raises a note](0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md)
 - [ADR-0022 — Each Service shows its installed version, and the Hub checks its upstream for newer releases](0022-services-show-their-version-and-the-hub-checks-upstreams.md)
 - [ADR-0023 — The Collector holds each job run until the Hub takes it, and the Hub keeps each job's run history](0023-the-collector-holds-each-job-run-until-the-hub-takes-it.md)
+- [ADR-0024 — The Hub fetches list prices daily and adds dated entries, never repricing an earlier day](0024-the-hub-fetches-list-prices-daily.md)

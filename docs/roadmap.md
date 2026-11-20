@@ -81,7 +81,7 @@ Agent work becomes visible: what each Session did, used, and cost, and which Ses
 
 - A versioned parser per Harness turns stored transcripts into a projection the Hub can always rebuild: each Session and subagent, each API request with its model, tokens, and context used, and each tool call, skill, and MCP tool. A parser version change rebuilds that Harness's rows from the archive ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)).
 - A Session is a main conversation, and its subagents count toward it. Totals are available with and without them.
-- Cost is an approximation at API list prices, from a dated price table that ships with the Hub and that configuration can override. It is computed when read, and a model with no known price shows as unpriced.
+- Cost is an approximation at API list prices, from a dated price table that ships with the Hub, that the Hub keeps current from a public price list, and that configuration can override. It is computed when read, and a model with no known price shows as unpriced.
 - SQL views in an `insight` schema are the one read model. A read-only database role lets a person or an agent query months of history, and M6's reports read the same views. The views carry facts and locators, never transcript content; `heimdall-hub transcripts show` prints a Session's raw transcripts on the Hub's System.
 - The Collector detects Harness processes and records each root process with its Harness, working directory, start and end, and CPU and memory summed over its process tree, on the same time axis as Vitals. The Hub links one to the Sessions it ran only when the match is unambiguous.
 - The Collector reports each Harness's installed version without running Harness binaries.

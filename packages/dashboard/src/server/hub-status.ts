@@ -2,7 +2,7 @@ import type { SQL } from 'bun';
 
 import { deliveryFailingShown, isAsleep } from '../lib/fleet.ts';
 import { agoText, isRunning, judgePass, usualMost } from '../lib/hub-passes.ts';
-import type { PassRecord } from '../lib/hub-passes.ts';
+import type { PassJudgment, PassRecord } from '../lib/hub-passes.ts';
 import { harnessName } from '../lib/lane.ts';
 import { joinPhrases, whenAt } from '../lib/phrase.ts';
 import type { Moment, Phrase } from '../lib/phrase.ts';
@@ -608,20 +608,48 @@ export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> =
           ),
     );
 
-    const [prices]: { models: number; configured: number }[] =
-      await tx`SELECT count(DISTINCT model)::int AS models, count(DISTINCT model) FILTER (WHERE source = 'configured')::int AS configured FROM model_prices`;
+    // A Hub older than its fetched prices has only the table of bundled and
+    // configured ones.
+    const [fetchedTable]: { present: boolean }[] =
+      await tx`SELECT to_regclass('fetched_model_prices') IS NOT NULL AS present`;
+    const [prices]: { models: number; configured: number; fetched: number }[] =
+      fetchedTable?.present === true
+        ? await tx`
+          SELECT count(DISTINCT model)::int AS models,
+                 count(DISTINCT model) FILTER (WHERE source = 'configured')::int AS configured,
+                 count(DISTINCT model) FILTER (WHERE source = 'fetched')::int AS fetched
+          FROM (SELECT model, source FROM model_prices
+                UNION ALL SELECT model, 'fetched' FROM fetched_model_prices) p`
+        : await tx`
+          SELECT count(DISTINCT model)::int AS models,
+                 count(DISTINCT model) FILTER (WHERE source = 'configured')::int AS configured,
+                 0 AS fetched
+          FROM model_prices`;
     const [unpriced]: { requests: string }[] =
       await tx`SELECT coalesce(sum(unpriced_requests), 0)::text AS requests FROM insight.session_model_totals`;
     const unpricedCount = Number(unpriced?.requests ?? 0);
+    const pricesRun = runtime.row?.last_runs.prices;
+    const priceFetch: Pick<PassJudgment, 'phrase' | 'state'> =
+      pricesRun?.off === true
+        ? { phrase: ['Fetching off'], state: 'ok' }
+        : pass('prices', 'Price fetch', pricesRun);
     add(
       'Price table',
-      'ok',
-      [`${count(prices?.models ?? 0, 'model')}, ${String(prices?.configured ?? 0)} configured`],
+      priceFetch.state,
       [
-        unpricedCount === 0
-          ? 'Every stored request has a price'
-          : `${count(unpricedCount, 'unpriced request')} in stored Session totals`,
+        `${count(prices?.models ?? 0, 'model')}, ${String(prices?.configured ?? 0)} configured, ${String(prices?.fetched ?? 0)} fetched`,
       ],
+      joinPhrases(
+        [
+          priceFetch.phrase,
+          [
+            unpricedCount === 0
+              ? 'Every stored request has a price'
+              : `${count(unpricedCount, 'unpriced request')} in stored Session totals`,
+          ],
+        ],
+        ' · ',
+      ),
     );
 
     const [kept]: { raw: Date | null; rollup: Date | null }[] = await tx`

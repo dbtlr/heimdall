@@ -33,6 +33,7 @@ const SCHEDULES = {
   delivery: { budget_ms: 30_000, interval_ms: 30_000 },
   listening: { budget_ms: 30_000, interval_ms: 30_000 },
   parse: { budget_ms: 30_000, interval_ms: 15_000 },
+  prices: { budget_ms: 180_000, interval_ms: 3_600_000 },
   prune: { budget_ms: 30_000, interval_ms: 3_600_000 },
   refresh: { budget_ms: 40_000, interval_ms: 15_000 },
   upstreams: { budget_ms: 30_000, interval_ms: 300_000 },
@@ -531,4 +532,97 @@ test('storage shows the total, the largest tables, and everything else; migratio
     'Migrations applied',
   ]);
   expect(row(status, 'Database').text).toMatch(/schema \d+, applied /u);
+});
+
+// Two bundled models, one of them configured too, and fetched entries for
+// that one and a third: three models priced, one configured, two fetched.
+const pricedModels = async (h: Hub) => {
+  await h.db.sql`
+    INSERT INTO model_prices (model, valid_from, source, input_per_mtok, output_per_mtok, context_window)
+    VALUES ('model-a', '2026-01-01', 'bundled', 1, 1, 1000),
+           ('model-b', '2026-01-01', 'bundled', 1, 1, 1000),
+           ('model-b', '2026-01-01', 'configured', 2, 2, 1000)`;
+  await h.db.sql`
+    INSERT INTO fetched_model_prices (model, valid_from, input_per_mtok, output_per_mtok, context_window)
+    VALUES ('model-b', '2026-01-01', 3, 3, 1000), ('model-c', '2026-01-01', 3, 3, 1000)`;
+};
+
+test('the price table counts the models across both tables, the configured ones, and the fetched ones', async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  await pricedModels(h);
+  const prices = row(await readHubStatus(h.db.sql, NOW + 12_000), 'Price table');
+  expect(prices).toEqual({
+    detail: 'Price fetch ran 12 s ago · Every stored request has a price',
+    state: 'ok',
+    text: '3 models, 1 configured, 2 fetched',
+  });
+});
+
+// The price table row of a running Hub whose prices pass recorded `prices`,
+// read at `at`, when the Hub was last heard.
+const priceTableWith = async (prices: object, at = NOW) => {
+  await using h = await startHub();
+  await runningHub(h, { runs: { prices } });
+  await h.db.sql`UPDATE hub_listening SET heard_at = ${new Date(at)}`;
+  return row(await readHubStatus(h.db.sql, at), 'Price table');
+};
+
+test('the price table warns while the prices pass is failing, overdue, or running too long', async () => {
+  expect(
+    await priceTableWith({ failing_since: NOW - 60_000, succeeded_at: NOW - 3_600_000 }),
+  ).toMatchObject({
+    detail: expect.stringContaining('Price fetch failing since 11:59'),
+    state: 'warning',
+  });
+  const later = NOW + 3 * 3_600_000;
+  expect(await priceTableWith({}, later)).toMatchObject({
+    detail: expect.stringContaining('Price fetch overdue: last started 3 h ago'),
+    state: 'warning',
+  });
+  expect(
+    await priceTableWith({
+      finished_at: NOW - 3 * 3_600_000,
+      started_at: NOW - 2 * 3_600_000 - 190_000,
+    }),
+  ).toMatchObject({
+    detail: expect.stringContaining('longer than its usual most'),
+    state: 'warning',
+  });
+  // Inside its usual most, twice its interval plus its 180-second budget.
+  expect(
+    await priceTableWith({
+      finished_at: NOW - 3 * 3_600_000,
+      started_at: NOW - 2 * 3_600_000 - 170_000,
+    }),
+  ).not.toMatchObject({ detail: expect.stringContaining('longer than its usual most') });
+});
+
+test('the price table says fetching is off when the prices pass records it, and unknown without one', async () => {
+  await using h = await startHub();
+  await runningHub(h, {
+    runs: {
+      prices: { finished_at: undefined, off: true, started_at: undefined, succeeded_at: undefined },
+    },
+  });
+  expect(row(await readHubStatus(h.db.sql, NOW), 'Price table')).toMatchObject({
+    detail: 'Fetching off · Every stored request has a price',
+    state: 'ok',
+  });
+  await h.db.sql`UPDATE hub_status SET last_runs = last_runs - 'prices'`;
+  expect(row(await readHubStatus(h.db.sql, NOW), 'Price table')).toMatchObject({
+    detail: 'Price fetch unknown · Every stored request has a price',
+    state: 'unknown',
+  });
+});
+
+test('the price table of a Hub older than the fetched prices counts only its own table', async () => {
+  await using h = await startHub();
+  await runningHub(h);
+  await pricedModels(h);
+  // Out of the way without dropping the views that read it.
+  await h.db.sql`ALTER TABLE fetched_model_prices RENAME TO fetched_model_prices_later`;
+  expect(row(await readHubStatus(h.db.sql, NOW), 'Price table').text).toBe(
+    '2 models, 1 configured, 0 fetched',
+  );
 });

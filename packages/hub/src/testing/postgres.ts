@@ -235,8 +235,14 @@ const migrateShared = async () => {
     SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_tables
     WHERE schemaname NOT LIKE 'pg\\_%' AND schemaname <> 'information_schema'
       AND tablename <> 'schema_migrations'`;
-  const sequences: { name: string }[] = await own`
-    SELECT format('%I.%I', schemaname, sequencename) AS name FROM pg_sequences
+  // Each sequence goes back to where migrating left it, so a seeded row that
+  // took an identity, such as the stale range a migration marks, is not handed
+  // out again.
+  const sequences: { name: string; restart: string }[] = await own`
+    SELECT format('%I.%I', schemaname, sequencename) AS name,
+           CASE WHEN last_value IS NULL THEN 'RESTART'
+                ELSE format('RESTART WITH %s', last_value + increment_by) END AS restart
+    FROM pg_sequences
     WHERE schemaname NOT LIKE 'pg\\_%'`;
   const seeds = await Promise.all(
     tables.map(async ({ name }) => {
@@ -245,7 +251,9 @@ const migrateShared = async () => {
       );
       return row?.rows == null
         ? []
-        : [`INSERT INTO ${name} SELECT * FROM json_populate_recordset(NULL::${name}, ${row.rows})`];
+        : [
+            `INSERT INTO ${name} OVERRIDING SYSTEM VALUE SELECT * FROM json_populate_recordset(NULL::${name}, ${row.rows})`,
+          ];
     }),
   );
   // Ends the connections an earlier test left open, as dropping a database with
@@ -274,7 +282,7 @@ const migrateShared = async () => {
          EXECUTE 'TRUNCATE ' || array_to_string(filled, ', ') || ' CASCADE';
        END IF;
      END $$`,
-    ...sequences.map(({ name }) => `ALTER SEQUENCE ${name} RESTART`),
+    ...sequences.map(({ name, restart }) => `ALTER SEQUENCE ${name} ${restart}`),
     ...seeds.flat(),
     'COMMIT',
   ].join(';\n');
