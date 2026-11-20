@@ -500,13 +500,12 @@ When two Hubs share a database, as during an upgrade, one delivery pass runs at 
 ## Hub runtime status
 
 The Hub records its own health in the single-row `hub_status` table. Once it
-listens, and before any timer pass runs, it stores `version`, `started_at`,
+listens, and before any timer pass runs, it stores `version`, `started_at`, and
 `delivery_configured`, a boolean that never includes a destination, topic, or
-credential, and `price_fetching`, a boolean that is false when the price source
-is `off`. A Hub that fails to start, such as one that cannot bind its port,
+credential. A Hub that fails to start, such as one that cannot bind its port,
 leaves the running Hub's row alone. `last_runs` maps each timer pass the Hub runs
-(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, `prices`
-unless its source is `off`, and `delivery` when delivery is configured) to its schedule, `interval_ms` and
+(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, `prices`,
+and `delivery` when delivery is configured) to its schedule, `interval_ms` and
 `budget_ms`, and, in epoch milliseconds, when its latest run started
 (`started_at`) and finished (`finished_at`), when a run last succeeded
 (`succeeded_at`), and, while its runs keep failing, when the first of them failed
@@ -547,8 +546,10 @@ Conditions, and upstream checks count only upstreams some System records and
 the Hub asks for releases, which leaves out APT and Homebrew upstreams. The price
 table row counts the models priced and how many have a configured or a fetched
 entry. It warns while the prices pass is failing, overdue, or running too long,
-and says that fetching is off when `price_fetching` is false. A row without
-`price_fetching`, from a Hub that predates it, shows the fetch as unknown. Alert
+and says that fetching is off when the prices pass's record carries `off: true`,
+which a Hub whose price source is `off` records in place of run times. A row
+whose `last_runs` has no prices pass, from a Hub that predates it, shows the
+fetch as unknown. Alert
 delivery shows as failing after the 10 minutes Home waits, whether the failure
 is recorded in the delivery status or on the delivery pass; a delivery pass that
 falls behind shows as overdue on its own schedule. Missing runtime fields show
@@ -882,13 +883,13 @@ Cost is list-price cost (glossary): what a request's tokens would cost at the mo
 
 **The price table** has one entry per model, `valid_from` day (UTC), prompt tier, and source. Each entry gives a price in US dollars per million tokens for each kind of token: `input`, `output`, `cache_read`, `cache_write_5m`, and `cache_write_1h`. It also gives the model's `context_window` in tokens, which Claude Code transcripts do not record. An entry may also carry `promptOver`, a prompt size in tokens, for a model that reprices the whole request above it; see below.
 
-Entries come from three sources, recorded in each `model_prices` row's `source` ([ADR-0024](decisions/0024-the-hub-fetches-list-prices-daily.md)):
+Entries come from three sources ([ADR-0024](decisions/0024-the-hub-fetches-list-prices-daily.md)):
 
 - `bundled`: real list prices for the Anthropic models Claude Code runs and the OpenAI models Codex runs, in `packages/hub/src/prices.ts`, which records each provider's source and when it was read;
 - `configured`: the overrides the configuration adds;
 - `fetched`: prices the Hub fetches from a public price list.
 
-Bundled and configured entries live in `model_prices`, which `serve` replaces whole when it starts. Fetched entries live in `fetched_model_prices`, with the same columns except `source`. Only a fetch writes that table, so a restart, or a Hub rolled back to a release that predates it, never touches them. The migration that adds `fetched_model_prices` marks every Session's totals for recalculation, because it changes which entry applies.
+Bundled and configured entries live in `model_prices`, which `serve` replaces whole when it starts. `model_prices.source` tells a bundled row from a configured one. Fetched entries live in `fetched_model_prices`, with the same columns except `source`, and every row there is fetched. Only a fetch writes that table, so a restart, or a Hub rolled back to a release that predates it, never touches them. The migration that adds `fetched_model_prices` marks every Session's totals for recalculation, because it changes which entry applies. It gives the table the same statement-level trigger as `model_prices`, so every later write to it marks the totals too.
 
 **Which entry applies.** An entry is in force for a request when its `valid_from` is on or before the request's time and the request's prompt reaches its tier. Of the entries in force for the request's model, the highest tier the prompt reaches applies. Within that tier, the first source with an entry in force applies, in the order `configured`, `fetched`, `bundled`, and within that source the latest `valid_from`. In each tier, a configured entry therefore wins over fetched and bundled entries of any date, and a fetched entry wins over bundled entries of any date. A change of price is a new entry, so it never reprices a request from an earlier day. A model id is matched without a trailing `-YYYYMMDD`, so `claude-haiku-4-5-20251001` takes `claude-haiku-4-5`'s entry. A request before its model's first entry, or for a model with no entry, is unpriced.
 
@@ -925,7 +926,7 @@ The Hub skips a model in any of these cases:
 
 A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key. Of several dated keys for one model, the latest date is used. A key with a dashed date, such as `o3-2025-04-16`, is a model of its own.
 
-**What a fetch adds.** For each model it reads, a fetch first works out the entries it wants. It wants one entry for each tier the list gives. For each tier the table has in force today that the list no longer names, it wants an entry at the list's price for a prompt one token over that tier's threshold. A tier the list dropped then takes the base prices, and a tier whose threshold moved takes the price the list now gives there. It then compares those wanted prices, tier by tier, with the prices a request in each tier would get today (UTC), by the rule above. Prices match when input, output, and the three cache prices are equal, and an absent price matches only an absent one. The context window is not compared. Then:
+**What a fetch adds.** For each model it reads, a fetch first works out the entries it wants. It wants one entry for each tier the list gives. For each tier the table has in force today that the list no longer names, it wants an entry at the list's price for a prompt one token over that tier's threshold. A tier the list dropped then takes the base prices, and a tier whose threshold moved takes the price the list now gives there. It then compares each wanted entry with the entry in force today (UTC) at exactly that tier's threshold, from any source, by the rule above. A tier with no such entry counts as changed, even when a lower tier would price its requests the same. Prices match when input, output, and the three cache prices are equal, and an absent price matches only an absent one. The context window is not compared. Then:
 
 - **A tier with a configured entry in force today** gets nothing.
 - **A model with no entry in the table** gets its wanted entries from 2020-01-01, with the list's context window.

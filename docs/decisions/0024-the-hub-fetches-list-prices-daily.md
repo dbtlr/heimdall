@@ -1,7 +1,7 @@
 ---
 type: adr
 title: ADR-0024 - The Hub fetches list prices daily and adds dated entries, never repricing an earlier day
-description: "The Hub's price table has three sources: configured overrides, entries fetched from LiteLLM's public price list, and bundled prices. A request takes the highest prompt tier its prompt reaches, and within that tier the first source with an entry in force, configured first, then fetched, then bundled, whatever their dates. The Hub fetches the list when serve starts and again once a day, and `heimdall-hub prices update` fetches it on demand. A model the table has never priced gets fetched entries from 2020-01-01. A tier whose price changed gets a fetched entry from the day the change was found. A tier with a configured entry in force is left alone, and so is an unchanged price. No fetch changes or deletes an entry from an earlier day, and a failed fetch leaves the table unchanged. This supersedes ADR-0014's prices compiled into the Hub."
+description: "The Hub's price table has three sources: configured overrides, entries fetched from LiteLLM's public price list, and bundled prices. A request takes the highest prompt tier its prompt reaches, and within that tier the first source with an entry in force, configured first, then fetched, then bundled, whatever their dates. The Hub fetches the list when serve starts and again once a day, and `heimdall-hub prices update` fetches it on demand. A model the table has never priced gets fetched entries from 2020-01-01. A tier whose price changed gets a fetched entry from the day the change was found. A tier with a configured entry in force is left alone, and so is an unchanged price. No fetch changes or deletes an entry from an earlier day, and a failed fetch leaves the fetched entries unchanged. This supersedes ADR-0014's prices compiled into the Hub."
 status: accepted
 created: 2026-11-20
 modified: 2026-11-20
@@ -49,7 +49,7 @@ Tiers stay independent: an override replaces only the tiers it names, as it does
 Fetched entries live in a table of their own, `fetched_model_prices`, beside `model_prices`, which holds the bundled and configured entries.
 When `serve` starts, it replaces `model_prices` whole, as it does today, and never touches the fetched entries.
 A Hub rolled back to a release before this decision therefore cannot delete them.
-The migration that adds the table and changes the views marks every Session's totals for recalculation, since the new order can change which price applies.
+The migration that adds the table and changes the views marks every Session's totals for recalculation, since the new order can change which price applies. The new table gets the same trigger as `model_prices`, so each later fetch that writes marks them too.
 
 **The Hub fetches LiteLLM's price list when `serve` starts and again once a day.**
 `serve` runs a `prices` pass every hour.
@@ -82,7 +82,7 @@ A tier that lacks a cache price the model's base has keeps that price absent, so
 **A fetch adds dated entries tier by tier, and never reprices an earlier day.**
 The fetch works out the entries it wants for each model: one for each tier the list gives.
 For a tier the table has in force that the list no longer names, it wants an entry at the list's price for a prompt one token over that tier's threshold, so a dropped or moved tier stops applying.
-It compares each wanted entry with the price a request in that tier would get today, by the rule above.
+It compares each wanted entry with the entry in force today at exactly that tier, from any source, by the rule above; a tier with no such entry counts as changed.
 - **A model with no entry at all** gets its wanted entries from 2020-01-01, so its earlier requests are priced.
 - **A tier with a configured entry in force today** gets nothing: its price belongs to the operator.
 - **A tier whose prices match** gets nothing. The context window is not compared.
@@ -96,7 +96,7 @@ A model the list drops keeps its entries.
 **A fetch reads the table and writes its entries in one transaction, or does nothing.**
 It takes the lock that migrations and `serve`'s own price load take before it reads the prices in force.
 It writes nothing when it adds no entry, so it marks no totals for recalculation.
-A failed fetch leaves the table as it was.
+A failed fetch leaves `fetched_model_prices` as it was.
 A fetch fails when it gets no answer, a status other than 200, an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
 A skipped model does not fail the fetch.
 In `serve`, a failed fetch is a failed run of the `prices` pass: `serve` logs a warning, keeps running, and the Hub status page shows the pass failing.
