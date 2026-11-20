@@ -10,6 +10,17 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.16.0 - 2026-11-20
+
+### Features
+
+- **The Hub keeps list prices current from LiteLLM's public price list** (HMD-287). `serve` fetches the list as it starts and about once a day, so a new model is priced, its earlier requests included, without a release, and a price change applies from the day it is found without repricing earlier days. `heimdall-hub prices update` loads the bundled and configured prices and fetches the list on demand, and `[prices] source` names another list or turns fetching `off`. The Hub status page counts the fetched models and warns when the fetch keeps failing.
+- **An override now wins in its tier over later bundled prices** (HMD-287). A configured price lasts until it is removed from the overrides file, even when a later release bundles a newer price for its tier.
+
+### Fixes
+
+- **Maintenance no longer flags a package manager a System does not have** (HMD-284). An apt-only System lists APT alone and can read up to date, instead of saying its Homebrew check failed because the executable is missing. The Collector leaves out a default Homebrew prefix that has no Homebrew, and APT on a Linux that is not Debian-family; a prefix named in `homebrewPrefixes` is still expected, and a missing executable there still reads as a failed check. The Hub retires a package source a Collector stops reporting, with its pending packages and its Pending update Condition, whatever its level, so a removed Homebrew installation no longer keeps its System from reading up to date. Removing a prefix from `homebrewPrefixes` now retires it the same way, where before its pending packages stayed. A Service whose `apt:` or `brew:` package source is retired goes back to its recorded version.
+
 ## v0.15.0 - 2026-11-16
 
 ### Features
