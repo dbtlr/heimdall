@@ -504,8 +504,8 @@ listens, and before any timer pass runs, it stores `version`, `started_at`, and
 `delivery_configured`, a boolean that never includes a destination, topic, or
 credential. A Hub that fails to start, such as one that cannot bind its port,
 leaves the running Hub's row alone. `last_runs` maps each timer pass the Hub runs
-(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, and
-`delivery` when delivery is configured) to its schedule, `interval_ms` and
+(`listening`, `prune`, `conditions`, `parse`, `refresh`, `upstreams`, `prices`
+when fetching prices is on, and `delivery` when delivery is configured) to its schedule, `interval_ms` and
 `budget_ms`, and, in epoch milliseconds, when its latest run started
 (`started_at`) and finished (`finished_at`), when a run last succeeded
 (`succeeded_at`), and, while its runs keep failing, when the first of them failed
@@ -526,8 +526,8 @@ running is overdue once no run has started within its usual most and none has
 finished within twice its interval; one that never ran counts from when the Hub
 started. With the intervals above, that is 150 seconds for Conditions, 90
 seconds for listening and delivery, 60 seconds for parse, 70 seconds for
-refresh, 630 seconds for upstream checks, and two hours and 30 seconds for
-prune. A pass whose runs keep failing shows as failing since its first failure,
+refresh, 630 seconds for upstream checks, two hours and 30 seconds for
+prune, and 48 hours and 30 seconds for prices. A pass whose runs keep failing shows as failing since its first failure,
 even while a new run is in progress. The Hub was last heard at the newest of
 `hub_listening.heard_at`, the row's `started_at`, and every pass's
 `started_at`, `finished_at`, and `succeeded_at`, since the running Hub wrote
@@ -542,7 +542,9 @@ the Hub has recorded nothing for that long and may be stopped or stuck; a Hub
 without the status table is judged by its heartbeat and the two-minute outage
 limit instead. Intake counts open Stale System
 Conditions, and upstream checks count only upstreams some System records and
-the Hub asks for releases, which leaves out APT and Homebrew upstreams. Alert
+the Hub asks for releases, which leaves out APT and Homebrew upstreams. The price
+table row counts the models priced and how many have a configured or a fetched
+entry, and warns while the prices pass is failing, overdue, or running too long. Alert
 delivery shows as failing after the 10 minutes Home waits, whether the failure
 is recorded in the delivery status or on the delivery pass; a delivery pass that
 falls behind shows as overdue on its own schedule. Missing runtime fields show
@@ -874,13 +876,46 @@ A spike in `insight.vitals` reads as the rows of the other Vitals views at the s
 
 Cost is list-price cost (glossary): what a request's tokens would cost at the model's API list prices on the day they were used, an approximation and not what a subscription plan billed. `insight.requests` computes it when read. `insight.session_totals` reads the totals the Hub stores, computed by the same rules, and a price change marks every Session's totals for the next refresh ([ADR-0016](decisions/0016-session-stretches-and-totals-are-stored-and-refreshed.md)). A price fix therefore shows within a few refreshes, with no rebuild.
 
-**The price table** has one entry per model, `valid_from` day (UTC), and prompt tier, with a price in US dollars per million tokens for each kind of token: `input`, `output`, `cache_read`, `cache_write_5m`, and `cache_write_1h`; and the model's `context_window` in tokens, which Claude Code transcripts do not record. An entry may also carry `promptOver`, a prompt size in tokens, for a model that reprices the whole request above it; see below. The Hub bundles real list prices for the Anthropic models Claude Code runs and the OpenAI models Codex runs (`packages/hub/src/prices.ts`, which records each provider's source and when it was read), and `serve` loads them into the database when it starts.
+**The price table** has one entry per model, `valid_from` day (UTC), and prompt tier, with a price in US dollars per million tokens for each kind of token: `input`, `output`, `cache_read`, `cache_write_5m`, and `cache_write_1h`; and the model's `context_window` in tokens, which Claude Code transcripts do not record. An entry may also carry `promptOver`, a prompt size in tokens, for a model that reprices the whole request above it; see below. Entries come from three sources ([ADR-0024](decisions/0024-the-hub-fetches-list-prices-daily.md)). The Hub bundles real list prices for the Anthropic models Claude Code runs and the OpenAI models Codex runs (`packages/hub/src/prices.ts`, which records each provider's source and when it was read). The configuration can add overrides, and the Hub fetches prices from a public price list. When `serve` starts, it replaces the bundled and configured entries in the database and leaves the fetched ones in place. Each row of `model_prices` records its `source`: `bundled`, `configured`, or `fetched`.
 
 **Which entry applies.** A request is priced by the entry for its model with the latest `valid_from` on or before the request's time, so a change of price is a new entry and never reprices an earlier request. A model id is matched without a trailing `-YYYYMMDD`, so `claude-haiku-4-5-20251001` takes `claude-haiku-4-5`'s entry. A request before its model's first entry, or for a model with no entry, is unpriced. The model name `unknown` is reserved for usage a Harness cannot attribute to a model, as Codex stores usage it cannot attribute to a turn, so a request for it is always unpriced: the price table refuses an entry for `unknown`, bundled or configured, and a configured one stops `serve` like any other entry that does not fit.
 
 **Prompt tiers.** Some models reprice the whole request, every kind of token and not only the excess, when its prompt is over a size: Claude Haiku 5.5 over 100,000 tokens, and gpt-5.4, gpt-5.5, gpt-5.6 and gpt-6.x over 272,000. A tier is an entry with `promptOver`; an entry without it applies to every prompt. A request's prompt is its input, cache read, and cache write tokens together, which is `context_tokens`, so a prompt of exactly `promptOver` tokens is in the lower tier and one token more is in the higher. Of the entries in force at the request's time, the one with the highest `promptOver` the prompt exceeds applies, and among those the latest `valid_from`. Tiers are independent: a dated entry replaces only its own tier, and a model that stops tiering needs a new entry for each tier it had. A model with a tier has a base entry from the same date, or its smaller prompts are unpriced.
 
-**Configuration overrides.** `[prices] overrides` in the Hub's configuration file, `--price-overrides`, or `HEIMDALL_PRICE_OVERRIDES` names a JSON file, `{"prices": [...]}`, whose entries have the table's fields: `model`, `validFrom` (`YYYY-MM-DD`), `input`, `output`, `contextWindow`, and optionally `cacheRead`, `cacheWrite5m`, `cacheWrite1h`, and `promptOver`. A relative path resolves from the working directory the Hub runs in. A file that cannot be read or does not fit stops `serve` before it touches the database, with a line that names the file. Overrides are dated like the bundled entries and follow the same rule, so a dated override never reprices an earlier request. Where a configured entry and a bundled one have the same model, `valid_from`, and prompt tier, the configured entry wins; otherwise the entry with the latest `valid_from` applies in its tier, whichever it came from. An entry omits a cache price the model has none of, and a request with tokens of that kind is unpriced.
+**Configuration overrides.** `[prices] overrides` in the Hub's configuration file, `--price-overrides`, or `HEIMDALL_PRICE_OVERRIDES` names a JSON file, `{"prices": [...]}`, whose entries have the table's fields: `model`, `validFrom` (`YYYY-MM-DD`), `input`, `output`, `contextWindow`, and optionally `cacheRead`, `cacheWrite5m`, `cacheWrite1h`, and `promptOver`. A relative path resolves from the working directory the Hub runs in. A file that cannot be read or does not fit stops `serve` before it touches the database, with a line that names the file. Overrides are dated like the bundled entries and follow the same rule, so a dated override never reprices an earlier request. Where entries have the same model, `valid_from`, and prompt tier, a configured entry wins over a fetched one, and a fetched entry wins over a bundled one. Otherwise the entry with the latest `valid_from` applies in its tier, whichever source it came from. A change to the file takes effect at the next start of `serve`. An entry omits a cache price the model has none of, and a request with tokens of that kind is unpriced.
+
+**Fetched prices.** `serve` fetches a price list as it starts and every 24 hours after that, and `heimdall-hub prices update` fetches it on demand. Both take `[prices] source` in the Hub's configuration, `--price-source`, or `HEIMDALL_PRICE_SOURCE`: an `https://` or `http://` URL, by default LiteLLM's `https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`, or `off`, which stops the fetch. A fetch sends no credentials, waits at most 30 seconds, and reads at most 32 MiB of the answer.
+
+The list is a JSON object keyed by model. The Hub reads only the entries whose `litellm_provider` is `anthropic` or `openai` and whose `mode` is `chat` or `responses`, and it reads them at standard prices, ignoring batch, flex, and priority prices. Each price in the list is per token, and the Hub multiplies it by 1,000,000 and rounds it to a millionth of a dollar:
+
+| List field | Entry field |
+| --- | --- |
+| `input_cost_per_token` | `input` |
+| `output_cost_per_token` | `output` |
+| `cache_read_input_token_cost` | `cacheRead` |
+| `cache_creation_input_token_cost` | `cacheWrite5m` |
+| `cache_creation_input_token_cost_above_1hr` | `cacheWrite1h` |
+| `max_input_tokens` | `contextWindow` |
+
+A field with the suffix `_above_<N>k_tokens`, such as `input_cost_per_token_above_272k_tokens`, prices the tier `promptOver` N × 1,000. That tier's cache prices come from the same suffix, and its 1-hour write from `cache_creation_input_token_cost_above_1hr_above_<N>k_tokens`. A tier without both an input and an output price is skipped. The Hub skips a model in any of these cases:
+
+- its key holds a `/`;
+- it lacks an input price, an output price, or `max_input_tokens`;
+- its input and output prices are both 0;
+- it fails the rules an override entry follows, the reserved model `unknown` included.
+
+A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key. Of several dated keys for one model, the latest date is used.
+
+For each model and tier the Hub read, a fetch compares the list's prices with the table's entry in force today (UTC), by the rule above:
+
+- **A model with no entry in the table** gets an entry from 2020-01-01, with the list's context window.
+- **The same prices** (input, output, and the three cache prices, an absent price matching only an absent one) add nothing. The context window is not compared.
+- **A configured entry in force** adds nothing.
+- **Any other difference, or no entry for that tier,** adds an entry from today. A model the table already prices keeps its context window, from the entry in force for the tier or else the model's base entry.
+
+A fetch never changes or deletes an entry from an earlier day, and a model or tier the list drops keeps its entries. A fetched entry from today is replaced by a later fetch the same day. A fetch writes all of its entries in one transaction under the migrations' lock, or none, and writes nothing when nothing changed, so an unchanged list marks no totals for recalculation.
+
+A fetch fails, and leaves the table unchanged, when it gets no answer, an answer with a status other than 200, one over 32 MiB, one that is not a JSON object, or a list in which no model fits. A skipped model does not fail it. `serve` runs the fetch as its `prices` pass: a failed run logs a warning, `serve` keeps running, and the next run comes 24 hours later. Each added entry is logged as an info line. `heimdall-hub prices update` applies pending migrations like every command, prints one line for each added entry, or `Prices are up to date.` when there are none, then a count of skipped models, and exits 0. A failed fetch, or a source set to `off`, prints why and exits 1.
 
 **What each token kind costs.**
 
