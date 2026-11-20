@@ -100,7 +100,8 @@ const unitError = (wanted: ListedEntry, today: Prices | undefined) => {
     const listed = wanted[kind];
     if (now !== undefined && listed !== undefined && now > 0 && listed > 0) {
       const ratio = Math.max(now / listed, listed / now);
-      if (ratio > UNIT_ERROR_RATIO) {
+      // Floating-point division can put an exact 100 times a hair over it.
+      if (ratio > UNIT_ERROR_RATIO * (1 + 1e-9)) {
         return `${priceName(wanted, kind, listed)}, differs more than ${String(UNIT_ERROR_RATIO)} times from the ${String(now)} in force today, as a unit error would.`;
       }
     }

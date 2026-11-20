@@ -67,8 +67,10 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // A per-token price as dollars per million tokens, rounded to a millionth of a
-// dollar. Anything but a number is passed on for the entry's rules to refuse.
-const perMillion = (value: unknown) => (typeof value === 'number' ? rounded(value * 1e6) : value);
+// dollar. Anything but a number that is not negative is passed on as it is for
+// the entry's rules to refuse, so no rounding turns a negative price into 0.
+const perMillion = (value: unknown) =>
+  typeof value === 'number' && value >= 0 ? rounded(value * 1e6) : value;
 
 // The prices of one tier: the base when `suffix` is empty.
 const tierPrices = (fields: Record<string, unknown>, suffix: string) =>

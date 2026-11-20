@@ -360,10 +360,11 @@ describe('a price that looks like a unit error', () => {
   });
 
   test.each([
-    ['exactly 100 times is taken', 300, []],
-    ['just over 100 times is skipped', 300.000_001, [MODEL]],
-  ])('a price %s', async (_name, input, skipped) => {
-    await using db = await prepared({ bundled: [TABLED] });
+    ['exactly 100 times is taken', 3, 300, []],
+    ['exactly 100 times is taken where division rounds over 100', 0.57, 57, []],
+    ['just over 100 times is skipped', 3, 300.000_001, [MODEL]],
+  ])('a price %s', async (_name, inForce, input, skipped) => {
+    await using db = await prepared({ bundled: [{ ...TABLED, input: inForce }] });
 
     const applied = await applyFetchedPrices(db.sql, [listed({ input })]);
 

@@ -226,6 +226,12 @@ describe('a model the Hub cannot price is skipped, with the reason', () => {
     ['the reserved model unknown', 'unknown', SOL, 'reserved'],
     ['a negative price', 'negative', { ...SOL, cache_read_input_token_cost: -1e-7 }, 'cacheRead'],
     [
+      'a negative price small enough to round to 0',
+      'tiny-negative',
+      { ...SOL, cache_read_input_token_cost: -1e-13 },
+      'cacheRead',
+    ],
+    [
       'a price that is not a number',
       'text-price',
       { ...SOL, input_cost_per_token: '2e-6' },
