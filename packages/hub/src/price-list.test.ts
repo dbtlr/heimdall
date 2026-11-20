@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { Fetch } from './outbound-http.ts';
-import { fetchPriceList, readPriceList } from './price-list.ts';
+import { fetchPriceList, parsePriceSource, readPriceList } from './price-list.ts';
 
 // An Anthropic entry as LiteLLM's list gives Claude Haiku 5.5: per-token
 // prices, a 1-hour write, a tier over 100k prompt tokens, and fields the Hub
@@ -317,6 +317,50 @@ describe('fetching the price list', () => {
     expect(sent).not.toContain('http://prices.example/prices.json');
   });
 
+  test('refuses a redirect to an address with a user name or password before contacting it', async () => {
+    const sent: string[] = [];
+    const stub: Fetch = async (url) => {
+      sent.push(url.href);
+      return url.href === 'https://source.example/prices.json'
+        ? Response.redirect('https://user:secret@prices.example/prices.json', 302)
+        : new Response(listOf({ 'gpt-6.1-sol': SOL }));
+    };
+
+    const failure = await failureOf(
+      fetchPriceList({ fetch: stub, source: new URL('https://source.example/prices.json') }),
+    );
+
+    expect(failure).toBe(
+      'Could not fetch the price list from source.example: It redirected the Hub to an address that carries a user name or password.',
+    );
+    expect(sent).toEqual(['https://source.example/prices.json']);
+  });
+
+  test('follows only redirect statuses: a 300 or 304 with an address fails as its status', async () => {
+    for (const status of [300, 304]) {
+      const sent: string[] = [];
+      const stub: Fetch = async (url) => {
+        sent.push(url.href);
+        return url.href === 'https://source.example/prices.json'
+          ? new Response(null, {
+              headers: { location: 'https://prices.example/prices.json' },
+              status,
+            })
+          : new Response(listOf({ 'gpt-6.1-sol': SOL }));
+      };
+
+      // oxlint-disable-next-line no-await-in-loop -- one status at a time.
+      const failure = await failureOf(
+        fetchPriceList({ fetch: stub, source: new URL('https://source.example/prices.json') }),
+      );
+
+      expect(failure).toBe(
+        `Could not fetch the price list from source.example: It answered with status ${String(status)}.`,
+      );
+      expect(sent).toEqual(['https://source.example/prices.json']);
+    }
+  });
+
   test('follows a redirect from a plain HTTP source to another', async () => {
     await using target = serving(() => new Response(listOf({ 'gpt-6.1-sol': SOL })));
     await using source = serving(() => Response.redirect(target.url.href, 302));
@@ -409,5 +453,22 @@ describe('fetching the price list', () => {
       expect(failure).toContain('Could not fetch the price list');
       expect(performance.now() - started).toBeLessThan(900);
     }
+  });
+});
+
+describe('the price source', () => {
+  test('is off, an HTTPS URL, or an HTTP one', () => {
+    expect(parsePriceSource('off')).toEqual({ kind: 'off' });
+    expect(parsePriceSource('https://prices.example/list.json')).toEqual({
+      kind: 'list',
+      url: new URL('https://prices.example/list.json'),
+    });
+    expect(parsePriceSource('http://127.0.0.1:8080/list.json')?.kind).toBe('list');
+    expect(parsePriceSource('ftp://prices.example/list.json')).toBeUndefined();
+  });
+
+  test('refuses a URL with a user name or password, since a fetch sends no credentials', () => {
+    expect(parsePriceSource('https://user:secret@prices.example/list.json')).toBeUndefined();
+    expect(parsePriceSource('https://user@prices.example/list.json')).toBeUndefined();
   });
 });

@@ -5,6 +5,13 @@
 
 export type Fetch = (url: URL, init: RequestInit) => Promise<Response>;
 
+// The statuses that redirect a request. 300 and 304 carry no address to follow.
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+
+// Whether `url` carries a user name or password, which `fetch` would send as
+// credentials.
+export const hasCredentials = (url: URL) => url.username !== '' || url.password !== '';
+
 // The body read as text, or `over` when it ran past the cap.
 export type CappedBody = { kind: 'over' } | { kind: 'read'; text: string };
 
@@ -41,7 +48,8 @@ export type Followed =
 
 // Requests `start`, and follows each redirect by hand, at most `maxRedirects`
 // times. `allowed` judges each address before it is contacted, `start`
-// included, given the address that redirected to it. `init` gives each
+// included, given the address that redirected to it; an address that carries
+// credentials is always refused, so none is sent. `init` gives each
 // request's options, so a header can go to one origin only. A request that
 // fails throws as `fetch` does.
 export const followRedirects = async ({
@@ -60,13 +68,13 @@ export const followRedirects = async ({
   let url = start;
   let from: URL | undefined;
   for (let hops = 0; ; hops += 1) {
-    if (!allowed(url, from)) {
+    if (hasCredentials(url) || !allowed(url, from)) {
       return { from, kind: 'refused', url };
     }
     // oxlint-disable-next-line no-await-in-loop -- each hop needs the last one's answer.
     const response = await fetch(url, { ...init(url), redirect: 'manual' });
     const location = response.headers.get('location');
-    if (response.status < 300 || response.status >= 400 || location === null) {
+    if (!REDIRECTS.has(response.status) || location === null) {
       return { kind: 'answered', response, url };
     }
     // oxlint-disable-next-line no-await-in-loop -- the hop's body is unused.

@@ -86,30 +86,34 @@ const get = async (
     request: Requester;
   },
 ): Promise<Answer> => {
-  let followed: Followed;
-  try {
-    followed = await followRedirects({
-      allowed: (url) => url.protocol === 'https:',
-      fetch,
-      init: (url) => ({
-        headers: {
-          Accept: accept,
-          'User-Agent': `heimdall-hub/${HUB_VERSION}`,
-          ...(authorization !== undefined && authorization.origin === url.origin
-            ? { Authorization: authorization.value }
-            : {}),
-        },
-        signal:
-          signal === undefined
-            ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-            : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]),
-      }),
-      maxRedirects: MAX_REDIRECTS,
-      start,
-    });
-  } catch (error) {
-    throw new CheckFailureError(`Could not reach ${host}: ${describeError(error)}`);
-  }
+  // Only a request that fails is a failure to reach the host; a bad redirect
+  // address or a failed cancel throws as it is.
+  const reach: Fetch = async (url, init) => {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      throw new CheckFailureError(`Could not reach ${host}: ${describeError(error)}`);
+    }
+  };
+  const followed: Followed = await followRedirects({
+    allowed: (url) => url.protocol === 'https:',
+    fetch: reach,
+    init: (url) => ({
+      headers: {
+        Accept: accept,
+        'User-Agent': `heimdall-hub/${HUB_VERSION}`,
+        ...(authorization !== undefined && authorization.origin === url.origin
+          ? { Authorization: authorization.value }
+          : {}),
+      },
+      signal:
+        signal === undefined
+          ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]),
+    }),
+    maxRedirects: MAX_REDIRECTS,
+    start,
+  });
   if (followed.kind === 'refused') {
     throw new CheckFailureError(`${host} redirected the Hub to an address that is not HTTPS.`);
   }

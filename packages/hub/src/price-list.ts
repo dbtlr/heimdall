@@ -1,5 +1,5 @@
 import { describeError } from './errors.ts';
-import { followRedirects, readCapped } from './outbound-http.ts';
+import { followRedirects, hasCredentials, readCapped } from './outbound-http.ts';
 import type { Fetch } from './outbound-http.ts';
 import { checkPriceEntry } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
@@ -19,13 +19,16 @@ export const LITELLM_PRICE_LIST =
 export type PriceSource = { kind: 'off' } | { kind: 'list'; url: URL };
 
 // The price source `text` names: `off`, or an `https://` URL, or an `http://`
-// one for a list served nearby. Undefined for anything else.
+// one for a list served nearby. Undefined for anything else, a URL with a user
+// name or password included, since a fetch sends no credentials.
 export const parsePriceSource = (text: string): PriceSource | undefined => {
   if (text === 'off') {
     return { kind: 'off' };
   }
   const url = URL.parse(text);
-  return url !== null && (url.protocol === 'https:' || url.protocol === 'http:')
+  return url !== null &&
+    !hasCredentials(url) &&
+    (url.protocol === 'https:' || url.protocol === 'http:')
     ? { kind: 'list', url }
     : undefined;
 };
@@ -218,6 +221,16 @@ const sizeText = (bytes: number) =>
 const followable = (url: URL, from: URL | undefined) =>
   url.protocol === 'https:' || (url.protocol === 'http:' && from?.protocol !== 'https:');
 
+// Why a redirect's address was refused.
+const refusedReason = ({ from, url }: { from: URL | undefined; url: URL }) => {
+  if (hasCredentials(url)) {
+    return 'It redirected the Hub to an address that carries a user name or password.';
+  }
+  return from?.protocol === 'https:'
+    ? 'It redirected the Hub from HTTPS to an address that is not HTTPS.'
+    : 'It redirected the Hub to an address that is not HTTP or HTTPS.';
+};
+
 // Fetches the list at `source` and reads it, sending no credentials and
 // following redirects by hand. It waits at most `timeoutMs` for the whole
 // answer, and `signal` ends it early when serve stops. Throws, saying why,
@@ -252,11 +265,7 @@ export const fetchPriceList = async ({
       start: source,
     });
     if (followed.kind === 'refused') {
-      throw new Error(
-        followed.from?.protocol === 'https:'
-          ? 'It redirected the Hub from HTTPS to an address that is not HTTPS.'
-          : 'It redirected the Hub to an address that is not HTTP or HTTPS.',
-      );
+      throw new Error(refusedReason(followed));
     }
     if (followed.kind === 'too-many') {
       throw new Error('It redirected the Hub too many times.');

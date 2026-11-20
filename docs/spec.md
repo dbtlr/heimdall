@@ -902,7 +902,7 @@ The model name `unknown` is reserved for usage a Harness cannot attribute to a m
 
 **Fetched prices.** `serve` runs a `prices` pass every hour. The pass fetches the price list when the process has had no successful fetch in the last 24 hours, so it fetches as `serve` starts and about once a day after that. `serve` loads the bundled and configured entries before the pass first runs. `heimdall-hub prices update` first loads the bundled and configured entries, as `serve` does when it starts, and then fetches the list.
 
-Both take `[prices] source` in the Hub's configuration, `--price-source`, or `HEIMDALL_PRICE_SOURCE`. The value is an `https://` URL, an `http://` URL for a list served nearby, or `off`, which stops the fetch. It defaults to LiteLLM's list, `https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`. A fetch sends no credentials, waits at most 30 seconds, and reads at most 32 MiB of the answer.
+Both take `[prices] source` in the Hub's configuration, `--price-source`, or `HEIMDALL_PRICE_SOURCE`. The value is an `https://` URL, an `http://` URL for a list served nearby, or `off`, which stops the fetch. A URL with a user name or password is refused, since a fetch sends no credentials. It defaults to LiteLLM's list, `https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`. A fetch sends no credentials, waits at most 30 seconds, and reads at most 32 MiB of the answer.
 
 The list is a JSON object keyed by model. The Hub reads only the entries whose `litellm_provider` is `anthropic` or `openai` and whose `mode` is `chat` or `responses`. It reads standard prices and ignores batch, flex, and priority prices. It also ignores cache-write TTLs that no Harness reports, such as `_above_12hr`. Each price in the list is per token. The Hub multiplies it by 1,000,000 and rounds it to a millionth of a dollar:
 
@@ -944,7 +944,7 @@ A fetch takes the migrations' lock before it reads the prices in force. It reads
 **When a fetch fails.** A fetch fails, and leaves `fetched_model_prices` unchanged, in any of these cases:
 
 - it gets no answer;
-- a redirect leads from HTTPS to an address that is not HTTPS, or to one that is neither HTTP nor HTTPS, or the redirects go on past 5;
+- a redirect leads from HTTPS to an address that is not HTTPS, to one that is neither HTTP nor HTTPS, or to one that carries a user name or password, or the redirects go on past 5. Only 301, 302, 303, 307, and 308 redirect; any other status but 200 fails the fetch;
 - the answer has a status other than 200;
 - the answer is over 32 MiB;
 - the answer is not a JSON object;

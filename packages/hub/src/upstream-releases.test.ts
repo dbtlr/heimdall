@@ -314,6 +314,18 @@ test('Retry-After seconds count from when the answer arrives', async () => {
   });
 });
 
+test('a redirect to an address that does not parse is not called a failure to reach the host', async () => {
+  const { fetch } = stubFetch({
+    'https://api.github.com/repos/o/broken/releases?per_page=100': () =>
+      new Response(null, { headers: { location: 'https://[' }, status: 302 }),
+  });
+
+  const result = await list('github:o/broken', fetch);
+
+  expect(result.kind).toBe('failed');
+  expect(result.kind === 'failed' ? result.reason : '').not.toStartWith('Could not reach');
+});
+
 test('a redirect loop fails after a few hops', async () => {
   const url = 'https://api.github.com/repos/o/loop/releases?per_page=100';
   const { fetch, sent } = stubFetch({ [url]: () => Response.redirect(url, 302) });
