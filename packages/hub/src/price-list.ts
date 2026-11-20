@@ -1,8 +1,9 @@
 import { describeError } from './errors.ts';
+import { followRedirects, readCapped } from './outbound-http.ts';
+import type { Fetch } from './outbound-http.ts';
 import { checkPriceEntry } from './price-table.ts';
 import type { PriceEntry } from './prices.ts';
 import { rounded } from './prices.ts';
-import type { Fetch } from './upstream-releases.ts';
 import { HUB_VERSION } from './version.ts';
 
 // Reading LiteLLM's public price list (ADR-0024, docs/spec.md "Fetched
@@ -128,11 +129,20 @@ const modelEntries = (model: string, fields: Record<string, unknown>): ListedEnt
   });
 };
 
+// Whether a key dated `date`, undefined when undated, wins over the key
+// already chosen for its model, dated `current`. An undated key wins over any
+// dated one, and of two dated keys the later date wins. Two dated keys for one
+// model never share a date, since they would be the same key; were they to,
+// the first would stay.
+const winsOver = (date: string | undefined, current: { date: string | undefined } | undefined) =>
+  current === undefined ||
+  (current.date !== undefined && (date === undefined || current.date < date));
+
 // The list's entries the Hub reads, by the model each stands for: a key
 // ending in `-YYYYMMDD` stands for the model without it unless the list has
 // that key too, and of several such keys the latest date wins.
 const entriesByModel = (list: Record<string, unknown>) => {
-  const chosen = new Map<string, { date: string; fields: Record<string, unknown> }>();
+  const chosen = new Map<string, { date: string | undefined; fields: Record<string, unknown> }>();
   const slashed: string[] = [];
   for (const [key, fields] of Object.entries(list)) {
     if (
@@ -147,10 +157,9 @@ const entriesByModel = (list: Record<string, unknown>) => {
       continue;
     }
     const dated = DATE_SUFFIX.exec(key);
-    // An undated key sorts after every date, so it wins.
     const model = dated?.[1] ?? key;
-    const date = dated?.[2] ?? '99999999';
-    if ((chosen.get(model)?.date ?? '') < date) {
+    const date = dated?.[2];
+    if (winsOver(date, chosen.get(model))) {
       chosen.set(model, { date, fields });
     }
   }
@@ -199,38 +208,22 @@ export const readPriceList = (text: string): PriceList => {
 export const FETCH_TIMEOUT_MS = 30_000;
 const MIB = 1024 * 1024;
 const MAX_LIST_BYTES = 32 * MIB;
+const MAX_REDIRECTS = 5;
 
 const sizeText = (bytes: number) =>
   bytes % MIB === 0 ? `${String(bytes / MIB)} MiB` : `${String(bytes)} bytes`;
 
-// The body of `response`, refused once it passes `maxBytes`, so no source can
-// fill memory.
-const readCapped = async (response: Response, maxBytes: number) => {
-  const reader = response.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- a stream reads in order.
-    const chunk = await reader?.read();
-    if (chunk === undefined || chunk.done) {
-      break;
-    }
-    length += chunk.value.byteLength;
-    if (length > maxBytes) {
-      // oxlint-disable-next-line no-await-in-loop -- the read ends here.
-      await reader?.cancel();
-      throw new Error(`The answer is more than the ${sizeText(maxBytes)} the Hub reads.`);
-    }
-    chunks.push(chunk.value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-};
+// A redirect may lead to HTTPS, or to plain HTTP from plain HTTP, never from
+// HTTPS down to HTTP.
+const followable = (url: URL, from: URL | undefined) =>
+  url.protocol === 'https:' || (url.protocol === 'http:' && from?.protocol !== 'https:');
 
-// Fetches the list at `source` and reads it, sending no credentials. It waits
-// at most `timeoutMs` for the whole answer, and `signal` ends it early when
-// serve stops. Throws, saying why, when no answer comes in time, its status is
-// not 200, it is over `maxBytes`, it is not a JSON object, or no model in it
-// fits.
+// Fetches the list at `source` and reads it, sending no credentials and
+// following redirects by hand. It waits at most `timeoutMs` for the whole
+// answer, and `signal` ends it early when serve stops. Throws, saying why,
+// when no answer comes in time, a redirect leaves HTTPS or goes on too long,
+// its status is not 200, it is over `maxBytes`, it is not a JSON object, or no
+// model in it fits.
 export const fetchPriceList = async ({
   fetch,
   maxBytes = MAX_LIST_BYTES,
@@ -248,11 +241,27 @@ export const fetchPriceList = async ({
   const ends = signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
   let text: string;
   try {
-    const response = await fetch(source, {
-      credentials: 'omit',
-      headers: { Accept: 'application/json', 'User-Agent': `heimdall-hub/${HUB_VERSION}` },
-      signal: ends,
+    const followed = await followRedirects({
+      allowed: followable,
+      fetch,
+      init: () => ({
+        headers: { Accept: 'application/json', 'User-Agent': `heimdall-hub/${HUB_VERSION}` },
+        signal: ends,
+      }),
+      maxRedirects: MAX_REDIRECTS,
+      start: source,
     });
+    if (followed.kind === 'refused') {
+      throw new Error(
+        followed.from?.protocol === 'https:'
+          ? 'It redirected the Hub from HTTPS to an address that is not HTTPS.'
+          : 'It redirected the Hub to an address that is not HTTP or HTTPS.',
+      );
+    }
+    if (followed.kind === 'too-many') {
+      throw new Error('It redirected the Hub too many times.');
+    }
+    const { response } = followed;
     if (response.status !== 200) {
       await response.body?.cancel();
       throw new Error(`It answered with status ${String(response.status)}.`);
@@ -260,7 +269,11 @@ export const fetchPriceList = async ({
     // The body can stall after the headers, so the wait covers it too.
     const ended = Promise.withResolvers<never>();
     ends.addEventListener('abort', () => ended.reject(ends.reason), { once: true });
-    text = await Promise.race([readCapped(response, maxBytes), ended.promise]);
+    const body = await Promise.race([readCapped(response, maxBytes), ended.promise]);
+    if (body.kind === 'over') {
+      throw new Error(`The answer is more than the ${sizeText(maxBytes)} the Hub reads.`);
+    }
+    ({ text } = body);
   } catch (error) {
     throw new Error(`Could not fetch the price list from ${source.host}: ${describeError(error)}`, {
       cause: error,

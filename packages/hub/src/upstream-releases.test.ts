@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
+import type { Fetch } from './outbound-http.ts';
 import { checkedUpstream, listReleases } from './upstream-releases.ts';
-import type { Fetch } from './upstream-releases.ts';
 
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
 

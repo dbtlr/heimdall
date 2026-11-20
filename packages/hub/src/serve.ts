@@ -65,8 +65,9 @@ const PRICES_INTERVAL_MS = 3_600_000;
 // Each timer pass's interval and budget, which the Hub status row records so
 // the dashboard can tell a late pass from a slow one. A refresh stops taking
 // Sessions after REFRESH_BUDGET_MS and overshoots by at most one statement.
-// A prices run waits at most FETCH_TIMEOUT_MS for the list, then one statement
-// for the lock and one to read and write the prices. The other passes have no
+// A prices run's budget, 90 seconds, covers its FETCH_TIMEOUT_MS fetch, the
+// lock wait, and the reads and writes of the prices, each statement bounded
+// by STATEMENT_TIMEOUT_MS. The other passes have no
 // time cap of their own, so their budget is one statement's timeout; the
 // dashboard never calls a pass that is still running overdue, and waits two
 // intervals after a run finishes (docs/spec.md).

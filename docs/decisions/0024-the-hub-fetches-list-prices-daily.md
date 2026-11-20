@@ -69,13 +69,14 @@ For each model it reads these fields:
 It ignores batch, flex, and priority prices.
 It also ignores cache-write TTLs that no Harness reports, such as 12 hours.
 It skips a key that holds a `/`, which names a provider path.
-A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key.
+A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key, which always wins. Of several dated keys, the latest date wins.
 An id with a dashed date, such as `o3-2025-04-16`, is a model of its own.
 The Hub skips a model in any of these cases:
 - it lacks an input price, an output price, or `max_input_tokens`, or names a tier without both;
 - both its input and output prices are 0;
 - it fails the rules an overrides entry follows, the reserved id `unknown` included;
-- a price differs from the model's price in force for the same tier and kind of token by more than 100 times either way, as a unit error would. Only two present, nonzero prices are compared this way.
+- a price, in any tier and of any kind, is over $10,000 per million tokens, as a unit error would be, whether or not the table prices the model;
+- a price differs from the model's price in force for the same tier and kind of token by more than 100 times either way, as a unit error would. Only two present, nonzero prices are compared this way, and a tier whose entry in force today is configured is not compared, since it gets nothing.
 
 A tier that lacks a cache price the model's base has keeps that price absent, so a request in that tier with that kind of token is unpriced, never guessed.
 
@@ -97,7 +98,7 @@ A model the list drops keeps its entries.
 It takes the lock that migrations and `serve`'s own price load take before it reads the prices in force.
 It writes nothing when it adds no entry, so it marks no totals for recalculation.
 A failed fetch leaves `fetched_model_prices` as it was.
-A fetch fails when it gets no answer, a status other than 200, an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
+A fetch fails when it gets no answer, a redirect from HTTPS to plain HTTP, a status other than 200, an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
 A skipped model does not fail the fetch.
 In `serve`, a failed fetch is a failed run of the `prices` pass: `serve` logs a warning, keeps running, and the Hub status page shows the pass failing.
 The command prints why and exits 1. The bundled and configured entries it loaded first stay loaded.
@@ -121,7 +122,7 @@ The command prints why and exits 1. The bundled and configured entries it loaded
 - The Hub depends on a third-party list for new models and price changes. A wrong price in the list becomes the model's price from the day it is fetched, or for its whole history when the model is new. An override for the tier corrects it at any date, because a configured entry wins in its tier.
 - A price change is dated the day the Hub first fetches it. Requests between the provider's change and that fetch keep the old price, and requests earlier on the fetch day take the new one.
 - The first fetch on an existing Hub adds nothing for models whose bundled prices match the list. Where they differ, it adds entries from that day.
-- A model priced from 2020-01-01 is priced at its first fetched price for its whole history. That is wrong for a model whose price changed before the Hub first fetched it, or whose first list entry was wrong. A first entry off by a unit error also makes every later, correct price fail the 100-times check, so the model is skipped with a warning on each fetch until an override corrects it.
+- A model priced from 2020-01-01 is priced at its first fetched price for its whole history. That is wrong for a model whose price changed before the Hub first fetched it, or whose first list entry was wrong. The $10,000 ceiling refuses a per-token unit slip before it can price that history, but a first price wrong by less than the ceiling still prices the model's history until an override corrects it.
 - Once a tier has a fetched entry, a release that changes its bundled price no longer applies to it, except for requests from before that entry. A release that adds, changes, or removes a bundled entry still reprices the requests that entry prices, as it always has. A bundled tier added for a model the list carries without that tier applies from its date until the next fetch retires it.
 - Bundled prices are the starting table for a new Hub and cover models the list does not carry. A bundled entry applies to a request only when no fetched or configured entry is in force in its tier.
 - The window of a model first priced by a fetch is the list's `max_input_tokens`. For OpenAI models that is often below the real window. It shows only where the Harness recorded no window of its own, and a configured entry corrects it.

@@ -1,9 +1,9 @@
 import type { SQL } from 'bun';
 
 import { MIGRATION_LOCK } from './migrations.ts';
+import type { Fetch } from './outbound-http.ts';
 import { fetchPriceList } from './price-list.ts';
 import type { ListedEntry, ListedModel, SkippedModel } from './price-list.ts';
-import type { Fetch } from './upstream-releases.ts';
 
 // What a fetch adds to `fetched_model_prices` (ADR-0024, docs/spec.md "What a
 // fetch adds"): dated entries, tier by tier, never changing or deleting an
@@ -20,6 +20,11 @@ const BACKFILL_FROM = '2020-01-01';
 // How far a price may stray from the one in force before the model is skipped
 // as a likely unit error.
 const UNIT_ERROR_RATIO = 100;
+
+// The most a listed price may be, in dollars per million tokens, before the
+// model is skipped as a likely unit error, priced or not: a per-token price
+// slipped by a million is far over it.
+const PLAUSIBLE_CEILING = 10_000;
 
 const KINDS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'] as const;
 type Prices = Pick<ListedEntry, (typeof KINDS)[number]>;
@@ -62,6 +67,30 @@ const tierFor = <T>(tiers: ReadonlyMap<number, T>, prompt: number) => {
   return reached.length === 0 ? undefined : tiers.get(Math.max(...reached));
 };
 
+// "Its input price over 200,000 prompt tokens, 6 a million tokens", naming
+// one price of `entry`.
+const priceName = (entry: ListedEntry, kind: (typeof KINDS)[number], price: number) => {
+  const tier =
+    entry.promptOver === undefined
+      ? ''
+      : ` over ${entry.promptOver.toLocaleString('en-US')} prompt tokens`;
+  return `Its ${kind} price${tier}, ${String(price)} a million tokens`;
+};
+
+// Why some price of `listed` is over the plausible ceiling, or undefined when
+// none is.
+const implausible = (listed: ListedModel) => {
+  for (const entry of listed.entries) {
+    for (const kind of KINDS) {
+      const price = entry[kind];
+      if (price !== undefined && price > PLAUSIBLE_CEILING) {
+        return `${priceName(entry, kind, price)}, is over the ceiling of ${String(PLAUSIBLE_CEILING)} a million tokens, as a unit error would be.`;
+      }
+    }
+  }
+  return undefined;
+};
+
 // Why the price of some kind in `wanted` looks like a unit error next to the
 // one a request in its tier gets today, or undefined when none does. Only two
 // present, nonzero prices are compared.
@@ -72,11 +101,7 @@ const unitError = (wanted: ListedEntry, today: Prices | undefined) => {
     if (now !== undefined && listed !== undefined && now > 0 && listed > 0) {
       const ratio = Math.max(now / listed, listed / now);
       if (ratio > UNIT_ERROR_RATIO) {
-        const tier =
-          wanted.promptOver === undefined
-            ? ''
-            : ` over ${wanted.promptOver.toLocaleString('en-US')} prompt tokens`;
-        return `Its ${kind} price${tier}, ${String(listed)} a million tokens, differs more than ${String(UNIT_ERROR_RATIO)} times from the ${String(now)} in force today, as a unit error would.`;
+        return `${priceName(wanted, kind, listed)}, differs more than ${String(UNIT_ERROR_RATIO)} times from the ${String(now)} in force today, as a unit error would.`;
       }
     }
   }
@@ -120,6 +145,10 @@ const plan = (
     today,
   }: { inForce: ReadonlyMap<number, InForce>; priced: boolean; today: string },
 ): { kind: 'rows'; rows: FetchedRow[] } | { kind: 'skipped'; reason: string } => {
+  const ceiling = implausible(listed);
+  if (ceiling !== undefined) {
+    return { kind: 'skipped', reason: ceiling };
+  }
   if (!priced) {
     return {
       kind: 'rows',
@@ -127,7 +156,8 @@ const plan = (
     };
   }
   const wanted = wantedEntries(listed, inForce);
-  for (const entry of wanted) {
+  // A configured tier gets nothing, so its price is never compared.
+  for (const entry of wanted.filter((e) => inForce.get(minPromptTokens(e))?.rank !== CONFIGURED)) {
     const reason = unitError(entry, tierFor(inForce, minPromptTokens(entry))?.prices);
     if (reason !== undefined) {
       return { kind: 'skipped', reason };
@@ -183,13 +213,15 @@ const inForceOf = (row: InForceRow): InForce => ({
 // Adds the entries `models`, read from the price list, call for, in one
 // transaction that holds the lock migrations and price loads take, and says
 // what it added and which models it skipped as likely unit errors. "Today" is
-// the UTC day on the transaction's clock. It writes nothing when it adds
+// the UTC day on the database's clock once the lock is held, so a fetch that
+// waited for the lock past midnight dates its entries the day it reads the
+// prices in force, not the day it started. It writes nothing when it adds
 // nothing, so a fetch that changes no price marks no totals stale.
 export const applyFetchedPrices = (sql: SQL, models: readonly ListedModel[]) =>
   sql.begin(async (tx): Promise<AppliedPrices> => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     const [clock]: { today: string }[] =
-      await tx`SELECT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS today`;
+      await tx`SELECT to_char((clock_timestamp() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS today`;
     const today = clock?.today ?? '';
     const names = JSON.stringify(models.map(({ model }) => model));
     const priced: { model: string }[] = await tx`
@@ -308,10 +340,12 @@ const DAY_MS = 86_400_000;
 
 // Runs `fetch` unless it last succeeded within a day, by `now`, so a pass that
 // runs hourly fetches once a day and tries a failed fetch again on its next run.
+// A clock that went back since the last success makes it due, so it never stalls.
 export const dailyFetch = ({ fetch, now }: { fetch: () => Promise<void>; now: () => number }) => {
   let succeededAt: number | undefined;
   return async () => {
-    if (succeededAt !== undefined && now() - succeededAt < DAY_MS) {
+    const elapsed = succeededAt === undefined ? undefined : now() - succeededAt;
+    if (elapsed !== undefined && elapsed >= 0 && elapsed < DAY_MS) {
       return;
     }
     const startedAt = now();

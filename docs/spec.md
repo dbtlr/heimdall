@@ -511,8 +511,9 @@ and `delivery` when delivery is configured) to its schedule, `interval_ms` and
 (`succeeded_at`), and, while its runs keep failing, when the first of them failed
 (`failing_since`). Starting replaces the previous process's passes. A pass's
 budget is the longest one run is meant to take: for refresh, its 10-second
-budget plus one 30-second statement timeout; for prices, its 30-second fetch
-plus two statement timeouts, one for the lock and one for the read and write; for every other pass, which has no time cap of its
+budget plus one 30-second statement timeout; for prices, 90 seconds, which covers its 30-second fetch,
+the wait for the lock, and the reads and writes of the prices, each statement
+bounded by a statement timeout; for every other pass, which has no time cap of its
 own, one statement timeout. A status write waits at most one
 second for a lock another session holds on the row. A failed status write logs a
 warning and fails neither startup nor the pass.
@@ -922,11 +923,14 @@ The Hub skips a model in any of these cases:
 - it lacks an input price, an output price, or `max_input_tokens`, or names a tier without both an input and an output price;
 - its input and output prices are both 0;
 - it fails the rules an override entry follows, including the reserved model `unknown`;
-- one of its prices is more than 100 times, or less than a hundredth of, the price for the same tier and kind of token that a request gets today, as a unit error would be. Only two present, nonzero prices are compared this way.
+- one of its prices, in any tier and of any kind, is over $10,000 per million tokens, as a unit error would be, whether or not the table prices it;
+- one of its prices is more than 100 times, or less than a hundredth of, the price for the same tier and kind of token that a request gets today, as a unit error would be. Only two present, nonzero prices are compared this way, and a tier whose entry in force today at exactly that tier is configured is not compared, since it gets nothing.
 
-A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key. Of several dated keys for one model, the latest date is used. A key with a dashed date, such as `o3-2025-04-16`, is a model of its own.
+The Hub warns of a model skipped for either of the last two reasons as a possible unit error.
 
-**What a fetch adds.** For each model it reads, a fetch first works out the entries it wants. It wants one entry for each tier the list gives. For each tier the table has in force today that the list no longer names, it wants an entry at the list's price for a prompt one token over that tier's threshold. A tier the list dropped then takes the base prices, and a tier whose threshold moved takes the price the list now gives there. It then compares each wanted entry with the entry in force today, the UTC day on the fetch transaction's clock, at exactly that tier's threshold, from any source, by the rule above. A tier with no such entry counts as changed, even when a lower tier would price its requests the same. Prices match when input, output, and the three cache prices are equal, and an absent price matches only an absent one. The context window is not compared. Then:
+A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless the list also has the undated key, which always wins over a dated one, whatever the keys' order. Of several dated keys for one model, the latest date is used; two dated keys for one model cannot share a date, since they would be the same key. A key with a dashed date, such as `o3-2025-04-16`, is a model of its own.
+
+**What a fetch adds.** For each model it reads, a fetch first works out the entries it wants. It wants one entry for each tier the list gives. For each tier the table has in force today that the list no longer names, it wants an entry at the list's price for a prompt one token over that tier's threshold. A tier the list dropped then takes the base prices, and a tier whose threshold moved takes the price the list now gives there. It then compares each wanted entry with the entry in force today, the UTC day on the database's clock once the fetch holds the lock, at exactly that tier's threshold, from any source, by the rule above. A tier with no such entry counts as changed, even when a lower tier would price its requests the same. Prices match when input, output, and the three cache prices are equal, and an absent price matches only an absent one. The context window is not compared. Then:
 
 - **A tier with a configured entry in force today** gets nothing.
 - **A model with no entry in the table** gets its wanted entries from 2020-01-01, with the list's context window.
@@ -940,6 +944,7 @@ A fetch takes the migrations' lock before it reads the prices in force. It reads
 **When a fetch fails.** A fetch fails, and leaves `fetched_model_prices` unchanged, in any of these cases:
 
 - it gets no answer;
+- a redirect leads from HTTPS to an address that is not HTTPS, or to one that is neither HTTP nor HTTPS, or the redirects go on past 5;
 - the answer has a status other than 200;
 - the answer is over 32 MiB;
 - the answer is not a JSON object;

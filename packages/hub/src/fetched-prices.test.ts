@@ -310,11 +310,82 @@ describe('a price that looks like a unit error', () => {
     expect(applied.skipped.map((s) => s.model)).toEqual([MODEL]);
   });
 
+  test('a tier whose entry in force today is configured is not compared, so the other tiers still change', async () => {
+    await using db = await prepared({
+      bundled: [TABLED, { ...TABLED, input: 6, promptOver: 100_000 }],
+      configured: [{ ...TABLED, input: 900 }],
+    });
+    const { today } = await days(db.sql);
+
+    const applied = await applyFetchedPrices(db.sql, [
+      listed({}, { input: 7, promptOver: 100_000 }),
+    ]);
+
+    expect(applied).toEqual({
+      added: [{ from: today, model: MODEL, tiers: [100_000] }],
+      skipped: [],
+    });
+    expect(await fetchedRows(db.sql)).toEqual([
+      `test-model ${today} over 100000: 7/15/0.3 window 200000`,
+    ]);
+  });
+
   test('zero or absent prices are not compared', async () => {
     const { cacheRead: _absent, ...withoutCacheRead } = TABLED;
     await using db = await prepared({ bundled: [{ ...withoutCacheRead, output: 0 }] });
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ cacheRead: 300, output: 15_000 })]);
+    const applied = await applyFetchedPrices(db.sql, [listed({ cacheRead: 300, output: 3000 })]);
+
+    expect(applied.skipped).toEqual([]);
+    expect(applied.added.map((a) => a.model)).toEqual([MODEL]);
+  });
+});
+
+describe('a price over $10,000 per million tokens is implausible', () => {
+  test('skips a model the table has never priced, so a corrected list later prices its history', async () => {
+    await using db = await prepared();
+
+    const applied = await applyFetchedPrices(db.sql, [listed({ input: 2_000_000 })]);
+
+    expect(applied).toEqual({
+      added: [],
+      skipped: [
+        {
+          kind: 'suspect',
+          model: MODEL,
+          reason:
+            'Its input price, 2000000 a million tokens, is over the ceiling of 10000 a million tokens, as a unit error would be.',
+        },
+      ],
+    });
+    expect(await fetchedRows(db.sql)).toEqual([]);
+    expect((await applyFetchedPrices(db.sql, [listed({ input: 2 })])).added).toEqual([
+      { from: '2020-01-01', model: MODEL, tiers: [0] },
+    ]);
+  });
+
+  test('skips a model the table prices, in any tier and kind, even within 100 times of the price in force', async () => {
+    await using db = await prepared({ bundled: [{ ...TABLED, cacheWrite5m: 200 }] });
+
+    const applied = await applyFetchedPrices(db.sql, [
+      listed({ cacheWrite5m: 200 }, { cacheWrite5m: 10_001, promptOver: 100_000 }),
+    ]);
+
+    expect(applied.skipped).toEqual([
+      {
+        kind: 'suspect',
+        model: MODEL,
+        reason:
+          'Its cacheWrite5m price over 100,000 prompt tokens, 10001 a million tokens, is over the ceiling of 10000 a million tokens, as a unit error would be.',
+      },
+    ]);
+    expect(await fetchedRows(db.sql)).toEqual([]);
+  });
+
+  test('takes a price of exactly $10,000 per million tokens', async () => {
+    await using db = await prepared();
+
+    const applied = await applyFetchedPrices(db.sql, [listed({ output: 10_000 })]);
 
     expect(applied.skipped).toEqual([]);
     expect(applied.added.map((a) => a.model)).toEqual([MODEL]);

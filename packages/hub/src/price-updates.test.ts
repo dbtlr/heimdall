@@ -339,4 +339,21 @@ describe('the daily fetch', () => {
     await run();
     expect(fetches).toBe(3);
   });
+
+  test('is due when the clock has gone back since its last success', async () => {
+    const clock = { now: 10 * DAY };
+    let fetches = 0;
+    const run = dailyFetch({
+      fetch: async () => {
+        fetches += 1;
+      },
+      now: () => clock.now,
+    });
+
+    await run();
+    clock.now -= 1;
+    await run();
+
+    expect(fetches).toBe(2);
+  });
 });

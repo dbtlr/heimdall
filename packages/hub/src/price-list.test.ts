@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import type { Fetch } from './outbound-http.ts';
 import { fetchPriceList, readPriceList } from './price-list.ts';
 
 // An Anthropic entry as LiteLLM's list gives Claude Haiku 5.5: per-token
@@ -147,6 +148,36 @@ describe('reading the price list', () => {
     expect(models.map((m) => [m.model, m.entries[0]?.input])).toEqual([['claude-sonnet-4-5', 3]]);
   });
 
+  test.each([
+    ['the undated key first', ['claude-sonnet-4-5', 'claude-sonnet-4-5-99999999']],
+    ['the dated key first', ['claude-sonnet-4-5-99999999', 'claude-sonnet-4-5']],
+  ])('an undated key wins over a key dated 99999999, with %s', (_name, keys) => {
+    const prices: Record<string, number> = {
+      'claude-sonnet-4-5': 3e-6,
+      'claude-sonnet-4-5-99999999': 4e-6,
+    };
+    const { models } = readPriceList(
+      listOf(
+        Object.fromEntries(
+          keys.map((key) => [key, { ...HAIKU, input_cost_per_token: prices[key] }]),
+        ),
+      ),
+    );
+
+    expect(models.map((m) => [m.model, m.entries[0]?.input])).toEqual([['claude-sonnet-4-5', 3]]);
+  });
+
+  test('the latest of several dated keys wins, whatever their order', () => {
+    const { models } = readPriceList(
+      listOf({
+        'claude-sonnet-4-5-20250929': { ...HAIKU, input_cost_per_token: 3e-6 },
+        'claude-sonnet-4-5-20251201': { ...HAIKU, input_cost_per_token: 4e-6 },
+      }),
+    );
+
+    expect(models.map((m) => [m.model, m.entries[0]?.input])).toEqual([['claude-sonnet-4-5', 4]]);
+  });
+
   test('a key with a dashed date is a model of its own', () => {
     const { models } = readPriceList(listOf({ o3: SOL, 'o3-2025-04-16': SOL }));
 
@@ -237,7 +268,7 @@ const failureOf = async (promise: Promise<unknown>) => {
 };
 
 describe('fetching the price list', () => {
-  test('reads the list a source serves, sending no credentials', async () => {
+  test('reads the list a source serves, with no Authorization or Cookie header', async () => {
     const seen: Request[] = [];
     await using source = serving((request) => {
       seen.push(request);
@@ -250,6 +281,62 @@ describe('fetching the price list', () => {
     expect(
       seen.map((r) => [r.method, r.headers.get('authorization'), r.headers.get('cookie')]),
     ).toEqual([['GET', null, null]]);
+  });
+
+  test('follows a redirect from HTTPS to HTTPS, and refuses one to plain HTTP before contacting it', async () => {
+    const sent: string[] = [];
+    const routes: Record<string, () => Response> = {
+      'https://downgrade.example/prices.json': () =>
+        Response.redirect('http://prices.example/prices.json', 302),
+      'https://moved.example/prices.json': () =>
+        Response.redirect('https://prices.example/prices.json', 301),
+      'https://prices.example/prices.json': () => new Response(listOf({ 'gpt-6.1-sol': SOL })),
+    };
+    const stub: Fetch = async (url, init) => {
+      sent.push(url.href);
+      expect(init.redirect).toBe('manual');
+      const route = routes[url.href];
+      if (route === undefined) {
+        throw new Error(`Unexpected request to ${url.href}`);
+      }
+      return route();
+    };
+
+    const moved = await fetchPriceList({
+      fetch: stub,
+      source: new URL('https://moved.example/prices.json'),
+    });
+    const downgraded = await failureOf(
+      fetchPriceList({ fetch: stub, source: new URL('https://downgrade.example/prices.json') }),
+    );
+
+    expect(moved.models.map((m) => m.model)).toEqual(['gpt-6.1-sol']);
+    expect(downgraded).toBe(
+      'Could not fetch the price list from downgrade.example: It redirected the Hub from HTTPS to an address that is not HTTPS.',
+    );
+    expect(sent).not.toContain('http://prices.example/prices.json');
+  });
+
+  test('follows a redirect from a plain HTTP source to another', async () => {
+    await using target = serving(() => new Response(listOf({ 'gpt-6.1-sol': SOL })));
+    await using source = serving(() => Response.redirect(target.url.href, 302));
+
+    const list = await fetchPriceList({ fetch, source: source.url });
+
+    expect(list.models.map((m) => m.model)).toEqual(['gpt-6.1-sol']);
+  });
+
+  test('fails on a redirect loop after a few hops', async () => {
+    let requests = 0;
+    await using source = serving((request) => {
+      requests += 1;
+      return Response.redirect(request.url, 302);
+    });
+
+    expect(await failureOf(fetchPriceList({ fetch, source: source.url }))).toContain(
+      'too many times',
+    );
+    expect(requests).toBe(6);
   });
 
   test('fails on a status other than 200, and names it', async () => {
