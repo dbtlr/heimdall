@@ -167,15 +167,35 @@ describe('reading the price list', () => {
     expect(models.map((m) => [m.model, m.entries[0]?.input])).toEqual([['claude-sonnet-4-5', 3]]);
   });
 
-  test('the latest of several dated keys wins, whatever their order', () => {
+  test.each([
+    ['older first', ['claude-sonnet-4-5-20250929', 'claude-sonnet-4-5-20251201']],
+    ['newer first', ['claude-sonnet-4-5-20251201', 'claude-sonnet-4-5-20250929']],
+  ])('the latest of several dated keys wins, %s', (_order, keys) => {
+    const prices: Record<string, number> = {
+      'claude-sonnet-4-5-20250929': 3e-6,
+      'claude-sonnet-4-5-20251201': 4e-6,
+    };
     const { models } = readPriceList(
-      listOf({
-        'claude-sonnet-4-5-20250929': { ...HAIKU, input_cost_per_token: 3e-6 },
-        'claude-sonnet-4-5-20251201': { ...HAIKU, input_cost_per_token: 4e-6 },
-      }),
+      listOf(
+        Object.fromEntries(
+          keys.map((key) => [key, { ...HAIKU, input_cost_per_token: prices[key] }]),
+        ),
+      ),
     );
 
     expect(models.map((m) => [m.model, m.entries[0]?.input])).toEqual([['claude-sonnet-4-5', 4]]);
+  });
+
+  test('an entry whose provider or mode is not a string is passed over, and the rest of the list is read', () => {
+    const { models } = readPriceList(
+      listOf({
+        'gpt-6.1-sol': SOL,
+        'odd-mode': { ...SOL, mode: { toString: 1 } },
+        'odd-provider': { ...SOL, litellm_provider: { toString: 1 } },
+      }),
+    );
+
+    expect(models.map((m) => m.model)).toEqual(['gpt-6.1-sol']);
   });
 
   test('a key with a dashed date is a model of its own', () => {

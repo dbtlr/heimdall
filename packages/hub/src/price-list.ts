@@ -150,8 +150,10 @@ const entriesByModel = (list: Record<string, unknown>) => {
   for (const [key, fields] of Object.entries(list)) {
     if (
       !isObject(fields) ||
-      !PROVIDERS.has(String(fields.litellm_provider)) ||
-      !MODES.has(String(fields.mode))
+      typeof fields.litellm_provider !== 'string' ||
+      !PROVIDERS.has(fields.litellm_provider) ||
+      typeof fields.mode !== 'string' ||
+      !MODES.has(fields.mode)
     ) {
       continue;
     }
