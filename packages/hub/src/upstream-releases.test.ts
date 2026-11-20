@@ -196,6 +196,18 @@ test('a token challenge whose realm is not HTTPS is refused before it is contact
   expect(sent).toHaveLength(1);
 });
 
+test('a token address with a user name or password is refused before it is contacted, and the reason does not name it', async () => {
+  const { fetch, sent } = stubFetch({
+    'https://ghcr.io/v2/o/app/tags/list': () => challenge('https://u:secret@ghcr.io/token'),
+  });
+
+  expect(await list('oci:ghcr.io/o/app', fetch)).toEqual({
+    kind: 'failed',
+    reason: 'ghcr.io gave the Hub an address that carries a user name or password.',
+  });
+  expect(sent).toHaveLength(1);
+});
+
 test('a redirect to plain HTTP is refused, and one to HTTPS is followed', async () => {
   const { fetch, sent } = stubFetch({
     'https://api.github.com/repos/o/insecure/releases?per_page=100': () =>

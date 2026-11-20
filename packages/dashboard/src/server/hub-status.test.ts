@@ -589,6 +589,13 @@ test('the price table warns while the prices pass is failing, overdue, or runnin
     detail: expect.stringContaining('longer than its usual most'),
     state: 'warning',
   });
+  // Inside its usual most, twice its interval plus its 180-second budget.
+  expect(
+    await priceTableWith({
+      finished_at: NOW - 3 * 3_600_000,
+      started_at: NOW - 2 * 3_600_000 - 170_000,
+    }),
+  ).not.toMatchObject({ detail: expect.stringContaining('longer than its usual most') });
 });
 
 test('the price table says fetching is off when the prices pass records it, and unknown without one', async () => {

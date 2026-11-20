@@ -389,6 +389,18 @@ describe('fetching the price list', () => {
     expect(sent).toEqual(['http://source.example/prices.json']);
   });
 
+  test('fails on a redirect whose Location is not a URL', async () => {
+    const failure = await failureOf(
+      fetchPriceList({
+        fetch: async () =>
+          new Response(null, { headers: { location: 'http://[bad' }, status: 302 }),
+        source: new URL('https://source.example/prices.json'),
+      }),
+    );
+
+    expect(failure).toStartWith('Could not fetch the price list from source.example:');
+  });
+
   test('follows a redirect from a plain HTTP source to another', async () => {
     await using target = serving(() => new Response(listOf({ 'gpt-6.1-sol': SOL })));
     await using source = serving(() => Response.redirect(target.url.href, 302));
