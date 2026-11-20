@@ -45,7 +45,10 @@ A request is priced from the highest layer that has an entry in force for its mo
 "In force" means the entry's `valid_from` is on or before the request's time and its prompt tier is one the request's prompt reaches.
 Within the chosen layer, the existing rule applies: the highest prompt tier the prompt reaches, then the latest `valid_from`.
 A configured entry therefore wins over fetched and bundled entries of any date until the operator removes it, and a fetched entry wins over bundled entries of any date.
-When `serve` starts, it replaces the bundled and configured entries, as it does today, and leaves the fetched ones in place.
+Fetched entries live in a table of their own, `fetched_model_prices`, beside `model_prices`, which holds the bundled and configured entries.
+When `serve` starts, it replaces `model_prices` whole, as it does today, and never touches the fetched entries.
+A Hub rolled back to a release before this decision therefore cannot delete them.
+The migration that adds the table and changes the views marks every Session's totals for recalculation, since the new order can change which price applies.
 
 **The Hub fetches LiteLLM's price list when `serve` starts and again once a day.**
 `serve` runs a `prices` pass every hour.
@@ -70,13 +73,13 @@ The Hub skips a model in any of these cases:
 - it lacks an input price, an output price, or `max_input_tokens`;
 - both its input and output prices are 0;
 - it fails the rules an overrides entry follows, the reserved id `unknown` included;
-- a price differs from the model's price in force by more than 100 times either way, as a unit error would.
+- a price differs from the model's price in force for the same tier and kind of token by more than 100 times either way, as a unit error would. Only two present, nonzero prices are compared this way.
 
 A tier that lacks a cache price the model's base has keeps that price absent, so a request in that tier with that kind of token is unpriced, never guessed.
 
 **A fetch adds a full set of dated entries for a model, and never reprices an earlier day.**
 The fetch works out the entries it wants for each model: one for each tier the list gives.
-For a tier the table has in force that the list no longer names, it wants an entry at the list's base prices, so a dropped tier stops applying.
+For a tier the table has in force that the list no longer names, it wants an entry at the list's price for a prompt just over that tier's threshold, so a dropped or moved tier stops applying.
 It compares those wanted entries with the prices a request in each tier would get today, by the rule above.
 - **A model with a configured entry in force today** gets nothing: its prices belong to the operator.
 - **A model with no entry at all** gets its wanted entries from 2020-01-01, so its earlier requests are priced.
@@ -95,7 +98,7 @@ A failed fetch leaves the table as it was.
 A fetch fails when it gets no answer, a status other than 200, an answer over the limit, an answer that is not a JSON object, or a list in which no model fits.
 A skipped model does not fail the fetch.
 In `serve`, a failed fetch is a failed run of the `prices` pass: `serve` logs a warning, keeps running, and the Hub status page shows the pass failing.
-The command prints why and exits 1.
+The command prints why and exits 1. The bundled and configured entries it loaded first stay loaded.
 
 ## Considered options
 
@@ -118,7 +121,7 @@ The command prints why and exits 1.
 - A model priced from 2020-01-01 is priced at its first fetched price for its whole history. That is wrong for a model whose price changed before the Hub first fetched it, or whose first list entry was wrong.
 - Once a model has fetched entries, a release that changes its bundled price no longer applies, except to requests from before its first fetched entry.
 - Bundled prices are the starting table for a new Hub and cover models the list does not carry. A model's bundled price applies to a request only when no fetched entry for that model is in force at the request's time.
-- The window of a model first priced by a fetch is the list's `max_input_tokens`. For OpenAI models that is often below the real window. It shows only where the Harness recorded no window of its own, and a bundled or configured entry corrects it.
+- The window of a model first priced by a fetch is the list's `max_input_tokens`. For OpenAI models that is often below the real window. It shows only where the Harness recorded no window of its own, and a configured entry corrects it.
 - Fetched entries are history that cannot be rebuilt from the Hub's code and configuration. A Hub whose database is lost and restored without them dates every price change from its next fetch.
 - An override now lasts until it is removed, even when a later release bundles a newer price. Before this decision, a bundled entry with a later date took over from it.
 - An overrides file takes effect at the next start of `serve` or the next `heimdall-hub prices update`.
