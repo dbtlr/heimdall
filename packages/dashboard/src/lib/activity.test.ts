@@ -83,6 +83,26 @@ test("of one Condition's changes at the same moment, the later one leads its lin
   expect([words.change, words.level, words.open]).toEqual(['note → alert', 'alert', true]);
 });
 
+test('of interleaved same-moment changes to two Conditions, the first Condition leads with its latest', () => {
+  const x = { condition: 'low_disk', conditionId: 'x', subject: '/x' } as const;
+  const y = { condition: 'low_disk', conditionId: 'y', subject: '/y' } as const;
+  const raised = { level: 'note', open: false } as const;
+  const rose = { action: 'level_changed', level: 'alert', previousLevel: 'note' } as const;
+  for (const run of [
+    [condition({ ...x, ...raised }), condition({ ...y, ...raised }), condition({ ...x, ...rose })],
+    [
+      condition({ ...x, ...raised }),
+      condition({ ...y, ...raised }),
+      condition({ ...x, ...rose }),
+      condition({ ...y, ...rose }),
+    ],
+  ]) {
+    const [line] = groupActivity(run);
+    const words = lineWords(line!);
+    expect([words.subject, words.change, words.open]).toEqual(['/x', 'note → alert', true]);
+  }
+});
+
 test('a merged line takes its time from the change that leads its sentence, and sorts by it', () => {
   const lines = groupActivity([
     version({ at: T }),

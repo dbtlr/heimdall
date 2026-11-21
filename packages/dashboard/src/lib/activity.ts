@@ -46,18 +46,27 @@ const LEAD_RANK: Record<ActivityKind, number> = {
 const byLead = (a: ActivityEvent, b: ActivityEvent) =>
   LEAD_RANK[a.kind] - LEAD_RANK[b.kind] || b.at - a.at;
 
-// A run comes in the order its changes happened. Of two changes to one
-// Condition occurrence at the same moment, the later leads, so the line tells
-// what the Condition became.
+// A run comes in the order its changes happened. Changes at the same moment
+// keep that order, except that one Condition occurrence's changes take the
+// place of its first and the later leads, so the line tells what the
+// Condition became.
 const lineOf = (run: readonly ActivityEvent[]): ActivityLine => {
-  const order = new Map(run.map((event, index) => [event, index]));
-  const later = (a: ActivityEvent, b: ActivityEvent) =>
-    (a.kind === 'condition' || a.kind === 'drift') &&
-    (b.kind === 'condition' || b.kind === 'drift') &&
-    a.conditionId === b.conditionId
-      ? (order.get(b) ?? 0) - (order.get(a) ?? 0)
-      : 0;
-  const events = run.toSorted((a, b) => byLead(a, b) || later(a, b));
+  const first = new Map<string, number>();
+  const keyed = run.map((event, index) => {
+    const occurrence =
+      event.kind === 'condition' || event.kind === 'drift' ? event.conditionId : undefined;
+    if (occurrence !== undefined && !first.has(occurrence)) {
+      first.set(occurrence, index);
+    }
+    return {
+      event,
+      index,
+      place: occurrence === undefined ? index : (first.get(occurrence) ?? index),
+    };
+  });
+  const events = keyed
+    .toSorted((a, b) => byLead(a.event, b.event) || a.place - b.place || b.index - a.index)
+    .map(({ event }) => event);
   const [lead] = events;
   return { at: lead?.at ?? 0, events, system: lead?.system ?? '' };
 };
