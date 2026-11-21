@@ -47,14 +47,16 @@ const byLead = (a: ActivityEvent, b: ActivityEvent) =>
   LEAD_RANK[a.kind] - LEAD_RANK[b.kind] || b.at - a.at;
 
 // A run comes in the order its changes happened. Changes at the same moment
-// keep that order, except that one Condition occurrence's changes take the
-// place of its first and the later leads, so the line tells what the
-// Condition became.
+// keep that order, except that one Condition occurrence's changes at that
+// moment take the place of its first there and the later leads, so the line
+// tells what the Condition became.
 const lineOf = (run: readonly ActivityEvent[]): ActivityLine => {
   const first = new Map<string, number>();
   const keyed = run.map((event, index) => {
     const occurrence =
-      event.kind === 'condition' || event.kind === 'drift' ? event.conditionId : undefined;
+      event.kind === 'condition' || event.kind === 'drift'
+        ? `${String(event.at)}|${event.conditionId}`
+        : undefined;
     if (occurrence !== undefined && !first.has(occurrence)) {
       first.set(occurrence, index);
     }

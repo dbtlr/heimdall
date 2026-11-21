@@ -103,6 +103,21 @@ test('of interleaved same-moment changes to two Conditions, the first Condition 
   }
 });
 
+test('same-moment changes of different Conditions keep the order they happened in', () => {
+  const [line] = groupActivity([
+    condition({ conditionId: 'x', level: 'note', subject: '/x' }),
+    condition({ at: T + MIN, conditionId: 'y', subject: '/y' }),
+    condition({
+      action: 'level_changed',
+      at: T + MIN,
+      conditionId: 'x',
+      previousLevel: 'note',
+      subject: '/x',
+    }),
+  ]);
+  expect(lineWords(line!).subject).toBe('/y');
+});
+
 test('a merged line takes its time from the change that leads its sentence, and sorts by it', () => {
   const lines = groupActivity([
     version({ at: T }),
