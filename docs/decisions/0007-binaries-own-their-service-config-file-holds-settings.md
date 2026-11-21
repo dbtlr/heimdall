@@ -4,7 +4,7 @@ title: ADR-0007 - Each binary installs and supervises its own Service, and its c
 description: "The Collector and the Hub each install, run, and report their own systemd user unit or launchd user agent through a shared service package. The unit carries no settings: both binaries read ~/.config/heimdall/, and service install writes a setting there only when its value changes."
 status: accepted
 created: 2026-10-06
-modified: 2026-11-05
+modified: 2026-11-21
 ---
 
 # Each binary installs and supervises its own Service, and its config file is the one home for its settings

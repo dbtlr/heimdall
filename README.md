@@ -238,7 +238,7 @@ A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"
 › Ignored option "--port" from port in .config/heimdall/hub.toml: Expected a whole number from 0 through 65535.
 ```
 
-The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run with nothing ignored prints only the `Read configuration from` line, or `› Found no configuration file.` when it read none. A unit installed before `-v` was added runs without it until `service install` runs again.
+The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run with nothing ignored prints only the `Read configuration from` line, or `› Found no configuration file.` when the lookup found none. A unit installed before `-v` was added runs without it until `service install` runs again.
 
 [Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run the three binaries.
 
