@@ -1,0 +1,2 @@
+- **`-v` names a misspelled configuration key** (HMD-297). A key that `hub.toml`, `collector.toml`, or `dashboard.toml` does not declare used to be dropped silently. At `-v`, the start now writes `› Ignored <key> in <file>: Unknown key.` to the Service log, after a `› Read configuration from <file>.` line naming the file the binary read. The binary still starts without the key.
+- **Heimdall runs on Loom 0.20** (HMD-297). The binaries read the same files as before.

@@ -1,4 +1,5 @@
 import { configuration } from '@loomcli/plugins/config';
+import { toml } from '@loomcli/plugins/config/toml';
 import { z } from 'zod';
 
 // The keys of collector.toml. The scalar ones feed options through
@@ -17,5 +18,6 @@ const collectorFile = z.object({
 // declares `uses: [values]` and reads them as `provided.config`.
 export const { plugin: configPlugin, values: configValues } = configuration({
   file: '.config/heimdall/collector.{toml,json}',
+  formats: [toml],
   schema: collectorFile,
 });

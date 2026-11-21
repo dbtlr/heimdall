@@ -267,7 +267,7 @@ test('changelog guard fails when Loom cannot read its configuration', async () =
     'packages/collector/loom.config.json': '{',
   });
   const { code, stderr } = await guardAgainst(base);
-  expect(stderr).toContain('checked 0');
+  expect(stderr).toContain('loom.config.json is not valid JSON');
   expect(code).toBe(1);
 });
 

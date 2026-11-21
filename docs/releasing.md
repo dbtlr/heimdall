@@ -25,7 +25,7 @@ bun run --cwd packages/collector loom changelog check
    bun run release:cut
    ```
 
-   Without `--target`, Loom takes the next version from the highest kind among the pending fragments: a breaking fragment raises the minor version while Heimdall is pre-1.0, a feature or fix raises the patch. To choose the version, pass `--target 0.11.0`; it must rank above the current version and meet the version the fragments call for. `--date YYYY-MM-DD` sets the release date, which defaults to today in UTC.
+   Heimdall stays below 1.0. A release with a feature or breaking change raises the minor version, and a release of fixes alone raises the patch. Without `--target`, Loom takes the next version from the highest kind among the pending fragments by that rule, so a plain cut picks the right version. To choose the version, pass `--target 0.11.0`; it must rank above the current version and meet the version the fragments call for, so a patch target fails while a feature fragment is pending. `--date YYYY-MM-DD` sets the release date, which defaults to today in UTC.
 
    The cut writes the `## v0.11.0` section into `CHANGELOG.md`, with Breaking Changes, Features, and Fixes groups, deletes the compiled fragments, and sets the version of the Collector, the Hub, and the dashboard in their `package.json` files. The script then refreshes `bun.lock`, except under `--dry-run`, which changes no file. Loom refuses to cut, and changes nothing, when a fragment is invalid, when a fragment is not committed yet, when no fragment is pending, or when `CHANGELOG.md` already holds the version. The cut needs full git history, because Loom orders entries by the commit that added each fragment.
 

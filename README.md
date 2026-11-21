@@ -227,16 +227,18 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 
 ### A setting that has no effect
 
-A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored. The binary then runs on that option's default, or, for a setting with no default such as `[database] url`, stops with a usage error naming the missing option. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored without any line, even at `-v`, so check the spelling of a setting that has no effect and prints nothing.
+A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored. The binary then runs on that option's default, or, for a setting with no default such as `[database] url`, stops with a usage error naming the missing option. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored too.
 
-`-v` names each ignored value on stderr, once per run, before anything else the run prints:
+`-v` names the config file the run read, then each ignored value, on stderr, once per run, before anything else the run prints:
 
 ```text
+› Read configuration from .config/heimdall/hub.toml.
 › Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number
+› Ignored state_dir in .config/heimdall/hub.toml: Unknown key. Check its spelling, or remove it.
 › Ignored option "--port" from port in .config/heimdall/hub.toml: Expected a whole number from 0 through 65535.
 ```
 
-The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run with nothing ignored prints nothing more. A unit installed before `-v` was added runs without it until `service install` runs again.
+The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run with nothing ignored prints only the `Read configuration from` line, or `› Found no configuration file.` when it read none. A unit installed before `-v` was added runs without it until `service install` runs again.
 
 [Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run the three binaries.
 

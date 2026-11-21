@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { Application } from '@loomcli/core';
 import { configuration } from '@loomcli/plugins/config';
+import { toml } from '@loomcli/plugins/config/toml';
 import { mockProcess } from '@loomcli/testing';
 import { z } from 'zod';
 
@@ -67,6 +68,7 @@ const invoke = async (
         // A copy of the binaries' schemas: a test-only import from hub, collector,
         // or dashboard would point this package at packages that depend on it.
         file: `.config/heimdall/${spec.binary}.{toml,json}`,
+        formats: [toml],
         schema: z.object({
           host: z.string().optional(),
           hub: z.string().optional(),
