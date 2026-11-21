@@ -74,6 +74,15 @@ test('changes on one System within 2 minutes of the first merge into one line', 
   expect(lines[0]?.events).toHaveLength(3);
 });
 
+test("of one Condition's changes at the same moment, the later one leads its line", () => {
+  const [line] = groupActivity([
+    condition({ level: 'note', open: false }),
+    condition({ action: 'level_changed', level: 'alert', previousLevel: 'note' }),
+  ]);
+  const words = lineWords(line!);
+  expect([words.change, words.level, words.open]).toEqual(['note → alert', 'alert', true]);
+});
+
 test('a merged line takes its time from the change that leads its sentence, and sorts by it', () => {
   const lines = groupActivity([
     version({ at: T }),
