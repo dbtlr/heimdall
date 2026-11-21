@@ -155,8 +155,9 @@ export type LineWords = {
   detail: Phrase;
   // The level pill, for a line led by a Condition.
   level: ConditionLevel | undefined;
-  // The lead is still happening: its Condition or alert open, or its Service
-  // still stopped.
+  // The lead is still happening: it is its Condition's latest change and the
+  // Condition is still open, its alert is open, or its Service is still
+  // stopped.
   open: boolean;
   // A monospace subject after the title: the subject of a Condition or alert.
   subject: string;
@@ -224,8 +225,9 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
 };
 
 // The words of a change that follows the lead in a line: whole enough to
-// stand alone, with its subject, a Condition's level and whether it is still
-// open, and when an alert's recovery went out.
+// stand alone, with its subject, a Condition's level and, on its Condition's
+// latest change, whether it is still open, and when an alert's recovery went
+// out.
 const phrase = (event: ActivityEvent): Phrase => {
   if (event.kind === 'version' || event.kind === 'stop') {
     return [sentence(event).title];

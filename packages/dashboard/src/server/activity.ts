@@ -20,6 +20,9 @@ type TransitionRow = {
   cleared_at: Date | null;
   id: string;
   kind: string;
+  // The occurrence's latest transition, which may fall after the window when
+  // the Hub's clock ran ahead or a transition landed after `now`.
+  latest: boolean;
   level: string;
   previous_level: string | null;
   raised_at: Date;
@@ -38,17 +41,15 @@ type DeliveryRow = {
 };
 
 // Each Condition transition in the window, at the level it left the Condition
-// at, and open only when it is the latest of an occurrence still open. Rows
-// come in transition order and the window ends now, so an occurrence's last
-// row is its latest transition. A transition that only concerns levels the
-// list keeps off is left out: maintenance notes and Service restarted notes on paired Systems, which live
+// at, and open only when it is the latest of an occurrence still open. A
+// transition that only concerns levels the list keeps off is left out:
+// maintenance notes and Service restarted notes on paired Systems, which live
 // on Maintenance and Services. A level change into or out of one stays.
 const conditionEvents = (
   rows: readonly TransitionRow[],
   paired: ReadonlySet<string>,
-): ConditionActivity[] => {
-  const latest = new Map(rows.map((row) => [row.id, row]));
-  return rows.flatMap((row): ConditionActivity[] => {
+): ConditionActivity[] =>
+  rows.flatMap((row): ConditionActivity[] => {
     const condition = conditionKind(row.kind);
     const level = ConditionLevelSchema.parse(row.level);
     const previousLevel =
@@ -67,7 +68,7 @@ const conditionEvents = (
         conditionId: row.id,
         kind: condition === 'drift' ? 'drift' : 'condition',
         level,
-        open: row.cleared_at === null && latest.get(row.id) === row,
+        open: row.cleared_at === null && row.latest,
         previousLevel,
         raisedAt: row.raised_at.getTime(),
         reason: row.reason,
@@ -76,7 +77,6 @@ const conditionEvents = (
       },
     ];
   });
-};
 
 // Alerts pushed in the window, each with the time its recovered message went
 // out, as the Hub recorded it.
@@ -114,7 +114,10 @@ export const readActivitySnapshot = async (
   ] = await Promise.all([
     tx`
       SELECT c.id::text AS id, c.system, c.kind, c.subject, c.raised_at, c.cleared_at,
-        t.action, t.level, t.previous_level, t.at, t.reason
+        t.action, t.level, t.previous_level, t.at, t.reason,
+        t.id = (
+          SELECT max(l.id) FROM condition_transitions l WHERE l.condition = c.id
+        ) AS latest
       FROM condition_transitions t
       JOIN conditions c ON c.id = t.condition
       WHERE t.at >= ${start} AND t.at <= ${end}
