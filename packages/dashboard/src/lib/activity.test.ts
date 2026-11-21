@@ -72,7 +72,63 @@ test('changes on one System within 2 minutes of the first merge into one line', 
   ]);
   expect(lines).toHaveLength(1);
   expect(lines[0]?.events).toHaveLength(3);
-  expect(lines[0]?.at).toBe(T + 2 * MIN);
+});
+
+test("of one Condition's changes at the same moment, the later one leads its line", () => {
+  const [line] = groupActivity([
+    condition({ level: 'note', open: false }),
+    condition({ action: 'level_changed', level: 'alert', previousLevel: 'note' }),
+  ]);
+  const words = lineWords(line!);
+  expect([words.change, words.level, words.open]).toEqual(['note → alert', 'alert', true]);
+});
+
+test('of interleaved same-moment changes to two Conditions, the first Condition leads with its latest', () => {
+  const x = { condition: 'low_disk', conditionId: 'x', subject: '/x' } as const;
+  const y = { condition: 'low_disk', conditionId: 'y', subject: '/y' } as const;
+  const raised = { level: 'note', open: false } as const;
+  const rose = { action: 'level_changed', level: 'alert', previousLevel: 'note' } as const;
+  for (const run of [
+    [condition({ ...x, ...raised }), condition({ ...y, ...raised }), condition({ ...x, ...rose })],
+    [
+      condition({ ...x, ...raised }),
+      condition({ ...y, ...raised }),
+      condition({ ...x, ...rose }),
+      condition({ ...y, ...rose }),
+    ],
+  ]) {
+    const [line] = groupActivity(run);
+    const words = lineWords(line!);
+    expect([words.subject, words.change, words.open]).toEqual(['/x', 'note → alert', true]);
+  }
+});
+
+test('same-moment changes of different Conditions keep the order they happened in', () => {
+  const [line] = groupActivity([
+    condition({ conditionId: 'x', level: 'note', subject: '/x' }),
+    condition({ at: T + MIN, conditionId: 'y', subject: '/y' }),
+    condition({
+      action: 'level_changed',
+      at: T + MIN,
+      conditionId: 'x',
+      previousLevel: 'note',
+      subject: '/x',
+    }),
+  ]);
+  expect(lineWords(line!).subject).toBe('/y');
+});
+
+test('a merged line takes its time from the change that leads its sentence, and sorts by it', () => {
+  const lines = groupActivity([
+    version({ at: T }),
+    condition({ at: T + MIN }),
+    stop({ at: T + 2 * MIN }),
+    stop({ at: T + 90_000, system: 'laptop-1' }),
+  ]);
+  expect(lines.map((line) => [line.system, line.events[0]?.kind, line.at])).toEqual([
+    ['laptop-1', 'stop', T + 90_000],
+    ['server-1', 'condition', T + MIN],
+  ]);
 });
 
 test('a change more than 2 minutes after the first opens a new line, newest line first', () => {

@@ -27,7 +27,8 @@ export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 // A Condition transition: its occurrence `raised`, its level changed from
 // `previousLevel`, or `cleared`, at `at`. `level` is the level the transition
 // left it at, or held as it cleared, and `reason` the Hub's reason then.
-// `open` says whether the occurrence is still open now.
+// `open` says the transition is its occurrence's latest and the occurrence is
+// still open now, so an earlier transition never reads as open.
 export type ConditionActivity = {
   action: 'cleared' | 'level_changed' | 'raised';
   at: number;

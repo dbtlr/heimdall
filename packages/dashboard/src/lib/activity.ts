@@ -29,7 +29,7 @@ export const DEFAULT_ACTIVITY_RANGE: ActivityRange = '7d';
 export type ActivityLine = {
   // The line's changes, the one that leads its sentence first.
   events: ActivityEvent[];
-  // The time of the line's newest change.
+  // The time of the change that leads its sentence.
   at: number;
   system: string;
 };
@@ -46,16 +46,34 @@ const LEAD_RANK: Record<ActivityKind, number> = {
 const byLead = (a: ActivityEvent, b: ActivityEvent) =>
   LEAD_RANK[a.kind] - LEAD_RANK[b.kind] || b.at - a.at;
 
+// A run comes in the order its changes happened. Changes at the same moment
+// keep that order, except that one Condition occurrence's changes at that
+// moment take the place of its first there and the later leads, so the line
+// tells what the Condition became.
 const lineOf = (run: readonly ActivityEvent[]): ActivityLine => {
-  const [first] = run;
-  return {
-    at: Math.max(...run.map((event) => event.at)),
-    events: run.toSorted(byLead),
-    system: first?.system ?? '',
-  };
+  const first = new Map<string, number>();
+  const keyed = run.map((event, index) => {
+    const occurrence =
+      event.kind === 'condition' || event.kind === 'drift'
+        ? `${String(event.at)}|${event.conditionId}`
+        : undefined;
+    if (occurrence !== undefined && !first.has(occurrence)) {
+      first.set(occurrence, index);
+    }
+    return {
+      event,
+      index,
+      place: occurrence === undefined ? index : (first.get(occurrence) ?? index),
+    };
+  });
+  const events = keyed
+    .toSorted((a, b) => byLead(a.event, b.event) || a.place - b.place || b.index - a.index)
+    .map(({ event }) => event);
+  const [lead] = events;
+  return { at: lead?.at ?? 0, events, system: lead?.system ?? '' };
 };
 
-// The changes merged into lines under the grouping rule, newest line first.
+// The changes merged into lines under the grouping rule, newest lead first.
 export const groupActivity = (events: readonly ActivityEvent[]): ActivityLine[] => {
   const lines: ActivityLine[] = [];
   for (const own of Map.groupBy(events, (event) => event.system).values()) {
@@ -158,8 +176,9 @@ export type LineWords = {
   detail: Phrase;
   // The level pill, for a line led by a Condition.
   level: ConditionLevel | undefined;
-  // The lead is still happening: its Condition or alert open, or its Service
-  // still stopped.
+  // The lead is still happening: it is its Condition's latest change and the
+  // Condition is still open, its alert is open, or its Service is still
+  // stopped.
   open: boolean;
   // A monospace subject after the title: the subject of a Condition or alert.
   subject: string;
@@ -227,8 +246,9 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
 };
 
 // The words of a change that follows the lead in a line: whole enough to
-// stand alone, with its subject, a Condition's level and whether it is still
-// open, and when an alert's recovery went out.
+// stand alone, with its subject, a Condition's level and, on its Condition's
+// latest change, whether it is still open, and when an alert's recovery went
+// out.
 const phrase = (event: ActivityEvent): Phrase => {
   if (event.kind === 'version' || event.kind === 'stop') {
     return [sentence(event).title];
