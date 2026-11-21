@@ -4,7 +4,7 @@ title: ADR-0007 - Each binary installs and supervises its own Service, and its c
 description: "The Collector and the Hub each install, run, and report their own systemd user unit or launchd user agent through a shared service package. The unit carries no settings: both binaries read ~/.config/heimdall/, and service install writes a setting there only when its value changes."
 status: accepted
 created: 2026-10-06
-modified: 2026-11-05
+modified: 2026-11-21
 ---
 
 # Each binary installs and supervises its own Service, and its config file is the one home for its settings
@@ -13,7 +13,7 @@ modified: 2026-11-05
 
 Fleet runs the Hub and the Collector as Applications with native Services (Fleet ADR-0021). A native Service is supervised by the Application itself. Fleet calls the binary's `install`, `restart`, and `status` commands as the System's package user, renders the Application's config file from a template with 1Password secrets, and checks an HTTP health URL on loopback. Fleet's native Services run only on Linux today, and the Collector on a Mac still needs a launchd user agent.
 Fleet's per-System Service file already holds values such as the port that its ingress and health check use, and its config templates render the files each Application reads.
-Mimir follows the same pattern with its own `service` commands. Loom has a service plugin, but it declined to write unit output to a file or to take over an existing unit, so Heimdall keeps its own.
+Mimir follows the same pattern with its own `service` commands. Loom has a service plugin, but it cannot take over an existing unit, so Heimdall keeps its own. It writes unit output to a file only since Loom 0.20.
 Both binaries look up their config file with Loom's configuration plugin. As of Loom 0.17 the lookup reads one file: the file `--config` names, or else the first match of the relative path in the working directory and each of its ancestors below home (up to the filesystem root when the working directory is outside home), then in home, then the XDG user file (`config.toml` or `config.json` in `$XDG_CONFIG_HOME/heimdall-<binary>`, or under `~/.config` when the variable is unset, empty, or relative). `--no-config` reads none.
 
 ## Decision
@@ -51,3 +51,4 @@ If `install` rewrote a Fleet-rendered file, Heimdall's own Drift check would rep
 - 2026-10-13: Addendum. The dashboard ([ADR-0015](0015-dashboard-is-its-own-app-reading-the-hubs-database.md)) supervises itself the same way: `heimdall-dashboard service` installs `com.dbtlr.heimdall.dashboard`, which runs plain `serve`, logs to `dashboard.log`, and serves `GET /api/health` in the Hub's shape. Its settings, `host` and `port`, live in `~/.config/heimdall/dashboard.toml`. It reads the Hub's database URL from `hub.toml` on the same System, because it reads the database as the Hub's role, so the secret is rendered into one file. The decision is unchanged.
 - 2026-11-05: Amendment. The binaries run on Loom 0.18. Since Loom 0.17, its configuration plugin walks from the working directory up through its ancestors to the directory below home, then reads the home file, then the XDG user file, instead of trying the working directory and then home (HMD-206). The decision is unchanged.
 - 2026-11-06: Amendment. Each unit runs `serve -v` or `run -v`: Loom names a config value it ignores only at `-v`, and a supervised run shows nothing else (HMD-207). The flag changes no setting, so a hand run and the supervised run still read the same file. A log's age now comes from its first timestamped line, because Loom writes untimestamped lines before the first rotation check, and a log with none is kept until it reaches 10 MB. A log from before timestamps no longer rotates on sight; every install had already rotated its log that way. The decision is unchanged.
+- 2026-11-21: Amendment. The binaries run on Loom 0.20, which reads a TOML file only through the reader each binary passes in `formats`. At `-v`, each start now also names the config file it read, and Loom names a key the file does not declare as well as a value it refuses (HMD-297). Loom's service plugin writes unit output to a file since 0.20 but still cannot take over an existing unit, so Heimdall keeps its own. The decision is unchanged.
