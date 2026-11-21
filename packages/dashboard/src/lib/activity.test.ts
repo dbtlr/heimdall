@@ -72,7 +72,19 @@ test('changes on one System within 2 minutes of the first merge into one line', 
   ]);
   expect(lines).toHaveLength(1);
   expect(lines[0]?.events).toHaveLength(3);
-  expect(lines[0]?.at).toBe(T + 2 * MIN);
+});
+
+test('a merged line takes its time from the change that leads its sentence, and sorts by it', () => {
+  const lines = groupActivity([
+    version({ at: T }),
+    condition({ at: T + MIN }),
+    stop({ at: T + 2 * MIN }),
+    stop({ at: T + 90_000, system: 'laptop-1' }),
+  ]);
+  expect(lines.map((line) => [line.system, line.events[0]?.kind, line.at])).toEqual([
+    ['laptop-1', 'stop', T + 90_000],
+    ['server-1', 'condition', T + MIN],
+  ]);
 });
 
 test('a change more than 2 minutes after the first opens a new line, newest line first', () => {

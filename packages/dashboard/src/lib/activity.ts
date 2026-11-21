@@ -29,7 +29,7 @@ export const DEFAULT_ACTIVITY_RANGE: ActivityRange = '7d';
 export type ActivityLine = {
   // The line's changes, the one that leads its sentence first.
   events: ActivityEvent[];
-  // The time of the line's newest change.
+  // The time of the change that leads its sentence.
   at: number;
   system: string;
 };
@@ -47,15 +47,12 @@ const byLead = (a: ActivityEvent, b: ActivityEvent) =>
   LEAD_RANK[a.kind] - LEAD_RANK[b.kind] || b.at - a.at;
 
 const lineOf = (run: readonly ActivityEvent[]): ActivityLine => {
-  const [first] = run;
-  return {
-    at: Math.max(...run.map((event) => event.at)),
-    events: run.toSorted(byLead),
-    system: first?.system ?? '',
-  };
+  const events = run.toSorted(byLead);
+  const [lead] = events;
+  return { at: lead?.at ?? 0, events, system: lead?.system ?? '' };
 };
 
-// The changes merged into lines under the grouping rule, newest line first.
+// The changes merged into lines under the grouping rule, newest lead first.
 export const groupActivity = (events: readonly ActivityEvent[]): ActivityLine[] => {
   const lines: ActivityLine[] = [];
   for (const own of Map.groupBy(events, (event) => event.system).values()) {

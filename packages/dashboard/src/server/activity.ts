@@ -38,14 +38,17 @@ type DeliveryRow = {
 };
 
 // Each Condition transition in the window, at the level it left the Condition
-// at. A transition that only concerns levels the list keeps off is left out:
-// maintenance notes and Service restarted notes on paired Systems, which live
+// at, and open only when it is the latest of an occurrence still open. Rows
+// come in transition order and the window ends now, so an occurrence's last
+// row is its latest transition. A transition that only concerns levels the
+// list keeps off is left out: maintenance notes and Service restarted notes on paired Systems, which live
 // on Maintenance and Services. A level change into or out of one stays.
 const conditionEvents = (
   rows: readonly TransitionRow[],
   paired: ReadonlySet<string>,
-): ConditionActivity[] =>
-  rows.flatMap((row): ConditionActivity[] => {
+): ConditionActivity[] => {
+  const latest = new Map(rows.map((row) => [row.id, row]));
+  return rows.flatMap((row): ConditionActivity[] => {
     const condition = conditionKind(row.kind);
     const level = ConditionLevelSchema.parse(row.level);
     const previousLevel =
@@ -64,7 +67,7 @@ const conditionEvents = (
         conditionId: row.id,
         kind: condition === 'drift' ? 'drift' : 'condition',
         level,
-        open: row.cleared_at === null,
+        open: row.cleared_at === null && latest.get(row.id) === row,
         previousLevel,
         raisedAt: row.raised_at.getTime(),
         reason: row.reason,
@@ -73,6 +76,7 @@ const conditionEvents = (
       },
     ];
   });
+};
 
 // Alerts pushed in the window, each with the time its recovered message went
 // out, as the Hub recorded it.

@@ -138,6 +138,39 @@ test('each level change is listed at its time, and each transition carries the l
   ]);
 });
 
+test("only an open Condition's latest transition reads as open", async () => {
+  await using h = await startHub();
+  await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
+  await addCondition(h.db.sql, {
+    kind: 'low_disk',
+    level: 'note',
+    raisedAt: ago(5 * HOUR),
+    subject: '/',
+    system: 'server-1',
+    transitions: [{ at: ago(HOUR), level: 'alert' }],
+  });
+  await addCondition(h.db.sql, {
+    clearedAt: ago(HOUR),
+    kind: 'service_down',
+    raisedAt: ago(3 * HOUR),
+    subject: 'caddy',
+    system: 'server-1',
+  });
+  const { events } = await readActivity(h.db.sql, { now: NOW, range: '24h' });
+  expect(
+    events
+      .flatMap((event) =>
+        event.kind === 'condition' ? [[event.subject, event.action, event.open, event.at]] : [],
+      )
+      .toSorted((a, b) => Number(a[3]) - Number(b[3])),
+  ).toEqual([
+    ['/', 'raised', false, NOW - 5 * HOUR],
+    ['caddy', 'raised', false, NOW - 3 * HOUR],
+    ['/', 'level_changed', true, NOW - HOUR],
+    ['caddy', 'cleared', false, NOW - HOUR],
+  ]);
+});
+
 test('a maintenance Condition raised as a warning stays listed after it falls to a note', async () => {
   await using h = await startHub();
   await push(h.hub, report('server-1', [NOW]), { token: 'server-token' });
