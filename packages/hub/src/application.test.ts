@@ -721,7 +721,7 @@ test('serve stops on a top-level database key, which the file now holds as a [da
 
   const { code, stderr } = await invoke(serveArgs(config));
 
-  expect(stderr).toContain('database');
+  expect(stderr).toMatch(/Configuration value database in \S*hub\.toml: /u);
   expect(code).toBe(2);
 });
 
@@ -1070,4 +1070,44 @@ test('serve refuses invalid [conditions] in the hub.toml the lookup finds in hom
 
   expect(stderr).toContain('Invalid Hub Condition limits');
   expect(code).toBe(1);
+});
+
+test.each([
+  ['[database]', 'passwrd = "x"', 'passwrd'],
+  ['[prices]', 'sorce = "off"', 'sorce'],
+])('serve stops with code 2 and names a misspelled key under %s', async (table, line, key) => {
+  await using config = await configFile([table, line]);
+
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  expect(stderr).toContain(key);
+  expect(code).toBe(2);
+});
+
+test.each([
+  ['a key the file does not declare', 'prot = 8080', 'prot'],
+  ['a port the option refuses', 'port = "eighty"', 'port'],
+  ['a port above 65535', 'port = 70000', 'port'],
+  ['a file that is not valid TOML', 'port = ', 'line 1'],
+])('service status stops with code 2 on %s, and prints no unit state', async (_, line, named) => {
+  await using home = await homeWithHubConfig([line]);
+
+  const { code, stderr, stdout } = await invoke(['service', 'status'], {
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toContain(named);
+  expect(stdout).toBe('');
+  expect(code).toBe(2);
+});
+
+test('-v names the configuration file the run read', async () => {
+  await using home = await homeWithHubConfig(['port = 9191']);
+
+  const { code, stderr } = await invoke(['service', 'status', '-v'], {
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toMatch(/› Read configuration from \S*hub\.toml\./u);
+  expect(code).toBe(0);
 });

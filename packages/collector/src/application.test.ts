@@ -331,21 +331,27 @@ test.each([['--token', 's3cret']])('run no longer takes %s', async (flag, value)
   expect(code).toBe(2);
 });
 
-test('run stops with code 2 and names a system or token the file holds', async () => {
-  await using dir = await tempStateDir();
-  await givenIdentity(dir.path, { system: 'server-1' });
-  const configFile = join(dir.path, 'collector.toml');
-  await writeFile(
-    configFile,
-    ['hub = "http://h.example/"', 'token = "s3cret"', `stateDir = "${dir.path}"`].join('\n'),
-  );
+test.each([
+  ['token', 'token = "s3cret"'],
+  ['system', 'system = "s3cret"'],
+])(
+  'run stops with code 2 and names the %s the file holds, without echoing it',
+  async (key, line) => {
+    await using dir = await tempStateDir();
+    await givenIdentity(dir.path, { system: 'server-1' });
+    const configFile = join(dir.path, 'collector.toml');
+    await writeFile(
+      configFile,
+      ['hub = "http://h.example/"', line, `stateDir = "${dir.path}"`].join('\n'),
+    );
 
-  const { code, stderr } = await startAndStop(['run', '--config', configFile]);
+    const { code, stderr } = await startAndStop(['run', '--config', configFile]);
 
-  expect(stderr).toContain('token');
-  expect(stderr).not.toContain('s3cret');
-  expect(code).toBe(2);
-});
+    expect(stderr).toContain(key);
+    expect(stderr).not.toContain('s3cret');
+    expect(code).toBe(2);
+  },
+);
 
 test('run ignores the System and token the environment names, and uses its identity', async () => {
   await using dir = await tempStateDir();
@@ -579,6 +585,35 @@ test('service status stops with code 2 and names a key collector.toml does not d
   expect(stderr).toContain('state_dir');
   expect(stdout).toBe('');
   expect(code).toBe(2);
+});
+
+test.each([
+  ['a Hub the option refuses', 'hub = "ftp://h/"', 'hub'],
+  ['a file that is not valid TOML', 'hub = ', 'line 1'],
+])('service status stops with code 2 on %s, and prints no unit state', async (_, line, named) => {
+  await using home = await homeWithConfig();
+  await writeFile(join(home.path, '.config', 'heimdall', 'collector.toml'), line);
+
+  const { code, stderr, stdout } = await invoke(['service', 'status'], {
+    cwd: home.path,
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toContain(named);
+  expect(stdout).toBe('');
+  expect(code).toBe(2);
+});
+
+test('-v names the configuration file the run read', async () => {
+  await using home = await homeWithConfig();
+
+  const { code, stderr } = await invoke(['service', 'status', '-v'], {
+    cwd: home.path,
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toMatch(/› Read configuration from \S*collector\.toml\./u);
+  expect(code).toBe(0);
 });
 
 test('service status flags a configured Hub other than the one this System paired with, and exits 0', async () => {

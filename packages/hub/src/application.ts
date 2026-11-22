@@ -292,7 +292,7 @@ const prices = new Command('prices', {
 // The `heimdall-hub` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-hub', {
   description: 'Store Reports from every System and serve the dashboard.',
-  // `verbose` gives -v, at which Loom names each configuration value it ignores.
+  // `verbose` gives -v, at which Loom names the configuration file it read.
   plugins: [help(), version({ postfix: versionPostfix }), verbose(), configPlugin],
   shutdown,
   version: HUB_VERSION,

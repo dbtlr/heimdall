@@ -157,6 +157,35 @@ test('serve stops with code 2 and names a dashboard.toml value of the wrong type
   });
 });
 
+test.each([
+  ['a key the file does not declare', 'prot = 8080\n', 'prot'],
+  ['a port the option refuses', 'port = "eighty"\n', 'port'],
+  ['a file that is not valid TOML', 'port = \n', 'line 1'],
+])('service status stops with code 2 on %s, and prints no unit state', async (_, line, named) => {
+  await withHome(async (home) => {
+    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+    await writeFile(join(home, '.config', 'heimdall', 'dashboard.toml'), line);
+
+    const { code, stderr, stdout } = await invoke(['service', 'status'], { home });
+
+    expect(stderr).toContain(named);
+    expect(stdout).toBe('');
+    expect(code).toBe(2);
+  });
+});
+
+test('-v names the configuration file the run read', async () => {
+  await withHome(async (home) => {
+    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+    await writeFile(join(home, '.config', 'heimdall', 'dashboard.toml'), 'port = 9191\n');
+
+    const { code, stderr } = await invoke(['service', 'status', '-v'], { home });
+
+    expect(stderr).toMatch(/› Read configuration from \S*dashboard\.toml\./u);
+    expect(code).toBe(0);
+  });
+});
+
 // Bun checks idle sockets about every 4 seconds, so a 1 second timeout cuts a
 // request that has waited 6 seconds off after about 4.
 test('serve gives the server its idle timeout, which cuts off a request slower than it', async () => {
