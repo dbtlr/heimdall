@@ -38,7 +38,7 @@ Forgetting a job removes its runs, taken or not.
 
 **The Hub keeps 90 days of runs, and each job's latest 14.**
 It stores each run by System, job, and start, with the Report's `sentAt` and its own received time, and replaces a held run under the guard it uses for Service stops, so a re-sent run is stored once.
-It stores every time the section accepts, so a run from a broken clock never fails a Report; since 2026-11-14 it drops a run that starts more than 5 minutes ahead of its own clock (see Changelog).
+It stores every time the section accepts, so a run from a broken clock never fails a Report; since 2026-11-14 it drops a run that starts more than 5 minutes ahead of its own clock, and since 2026-11-22 one that finishes that far ahead (see Changelog).
 It prunes runs that started more than 90 days before its own clock, except each job's latest 14 runs, so a job that runs weekly or monthly still shows its last 14.
 Runs are evidence for the dashboard, apart from the records ([ADR-0011](0011-collectors-hold-what-provisioners-record.md)).
 
@@ -62,8 +62,9 @@ The mirror stays the source of each job's latest run and status; the history is 
 - A Hub restored from a backup lacks the runs it took after that backup until the Collector is paired with it again; the latest runs come back with the next hourly runs section.
 - A job's latest 14 runs stay at the Hub after the job is forgotten, until its System is purged.
 - The history holds a run older than 90 days only once the Hub has taken it, so a monthly job shows the 3 or so runs its Collector keeps at first, and reaches 14 over the months that follow.
-- Run times are on the System's clock and pruning is on the Hub's, so a System whose clock runs behind loses its runs a little early, and one whose clock runs more than 5 minutes ahead loses the runs it starts that far ahead, which the Hub drops as they arrive.
+- Run times are on the System's clock and pruning is on the Hub's, so a System whose clock runs behind loses its runs a little early, and one whose clock runs more than 5 minutes ahead loses the runs it starts or finishes that far ahead, which the Hub drops as they arrive.
 
 ## Changelog
 
 - 2026-11-14: Amendment. The Hub no longer stores every time the section accepts. It takes runs one at a time and drops an entry that is not a valid run, a run that repeats the key of an earlier run that passes the run rules, and a run that starts more than 5 minutes after its own clock when the Report arrives: the same 5-minute tolerance it gives samples, measured once, at arrival, so a run from a clock that runs ahead never outlasts real runs in the 90 days and the latest 14. A bad run therefore never fails a Report ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)), and dropping a run leaves what the Hub already holds for its key unchanged. A delivered Report settles every run it carried, dropped ones included, which ends the automatic resending of a dropped run; recording it again, or pairing, holds it again.
+- 2026-11-22: Amendment. The Hub also drops a run whose `finished` is more than 5 minutes after its own clock when the Report arrives, under the same tolerance, so a run from a clock that runs ahead never shows a vast duration in the run history (HMD-291). The decision is unchanged.
