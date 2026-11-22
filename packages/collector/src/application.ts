@@ -61,7 +61,7 @@ const pairedSystem = async (dir: string) => {
 // The `heimdall-collector` command line. `main.ts` runs it against the process.
 export const app = new Application('heimdall-collector', {
   description: 'Sample this System and push Reports to the Hub.',
-  // `verbose` gives -v, at which Loom names each configuration value it ignores.
+  // `verbose` gives -v, at which Loom names the configuration file it read.
   plugins: [help(), version({ postfix: versionPostfix }), verbose(), configPlugin],
   shutdown,
   version: packageJson.version,

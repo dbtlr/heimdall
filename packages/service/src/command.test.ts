@@ -65,7 +65,7 @@ const invoke = async (
     description: `The ${spec.binary} service command under test.`,
     plugins: [
       configuration({
-        // A copy of the binaries' schemas: a test-only import from hub, collector,
+        // A copy of the binaries' schemas, strict like theirs: a test-only import from hub, collector,
         // or dashboard would point this package at packages that depend on it.
         file: `.config/heimdall/${spec.binary}.{toml,json}`,
         formats: [toml],
@@ -75,6 +75,7 @@ const invoke = async (
           port: z.union([z.string(), z.number()]).optional(),
           stateDir: z.string().optional(),
         }),
+        strict: true,
       }).plugin,
     ],
   }).command(
@@ -405,20 +406,42 @@ test('status passes on the supervisor notes, such as linger being off', async ()
   expect(result.stdout).toEndWith('  note     linger is off; the unit stops at logout\n');
 });
 
-test('status with a port setting that is not a port says so, and exits 0', async () => {
+// Port 0 is valid for `serve`, which picks a free one, so `status` has none to ask.
+test('status with port 0 has no port to ask for health, and exits 0', async () => {
   await using home = await tempHome();
 
   const result = await invoke(HUB, ['service', 'status'], {
-    env: { HEIMDALL_PORT: 'not-a-port' },
+    env: { HEIMDALL_PORT: '0' },
     fake: fakeSupervisor({ installed: true }),
     home: home.path,
   });
 
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain(
-    '  health   unknown (the port setting not-a-port is not a port)\n',
-  );
+  expect(result.stdout).toContain('  health   unknown (the port setting 0 names no port to ask)\n');
 });
+
+test.each([
+  ['hub', 'port = "eighty"', 'port', HUB],
+  ['hub', 'port = 70000', 'port', HUB],
+  ['dashboard', 'port = "eighty"', 'port', DASHBOARD],
+  ['collector', 'hub = "ftp://h/"', 'hub', COLLECTOR],
+])(
+  'status refuses a setting its Service refuses: %s.toml with %s exits 2',
+  async (binary, line, key, spec) => {
+    await using home = await tempHome();
+    await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
+    await writeFile(join(home.path, '.config', 'heimdall', `${binary}.toml`), line);
+
+    const result = await invoke(spec, ['service', 'status'], {
+      fake: fakeSupervisor({ installed: true }),
+      home: home.path,
+    });
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(key);
+    expect(result.stdout).toBe('');
+  },
+);
 
 test('status on a platform with no supervisor backend says so, and exits 0', async () => {
   await using home = await tempHome();

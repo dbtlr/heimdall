@@ -27,7 +27,7 @@ export const createApp = ({
 }) =>
   new Application('heimdall-dashboard', {
     description: "Serve the dashboard of every System, read from the Hub's database.",
-    // `verbose` gives -v, at which Loom names each configuration value it ignores.
+    // `verbose` gives -v, at which Loom names the configuration file it read.
     plugins: [help(), version({ postfix: versionPostfix }), verbose(), configPlugin],
     shutdown,
     version: DASHBOARD_VERSION,

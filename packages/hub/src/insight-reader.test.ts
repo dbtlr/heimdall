@@ -649,13 +649,13 @@ describe('serve', () => {
     expect(code).toBe(2);
   });
 
-  test('ignores a reader name in the configuration file that is not a plain role name, and grants no role', async () => {
+  test('refuses a reader name in the configuration file that is not a plain role name', async () => {
     await using db = await testDatabase();
     await using config = await hubConfig(db, ['insight_reader = "public"']);
 
-    const { stdout } = await invoke(['serve', ...configArgs(config)]);
+    const { code, stderr } = await invoke(['serve', ...configArgs(config)]);
 
-    expect(stdout).toContain('Listening on');
-    expect(stdout).not.toContain('insight views');
+    expect(stderr).toContain('insight_reader');
+    expect(code).toBe(2);
   });
 });

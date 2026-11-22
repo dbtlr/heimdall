@@ -3,7 +3,6 @@ import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 
 import { Command, escapeControlCharacters } from '@loomcli/core';
-import type { StandardSchemaV1 } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
 import { integer } from '@loomcli/validators';
 
@@ -13,6 +12,7 @@ import type { HttpGet } from './http-get.ts';
 import { TITLE, displayPath, serviceDefinition, servicePaths } from './names.ts';
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
+import { hubUrlCheck, listenHostCheck, listenPortCheck, stateDirCheck } from './setting-checks.ts';
 import { setPort } from './settings.ts';
 import {
   healthUrl,
@@ -91,24 +91,18 @@ const LISTENING = {
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// Accepts a setting as given, so a bad value reaches `status`, which reports it
-// instead of failing: Fleet aborts on any exit code but 0.
-const asGiven: StandardSchemaV1<unknown, unknown> = {
-  '~standard': { validate: (value) => ({ value }), vendor: '@heimdall/service', version: 1 },
-};
-
 const portOf = (value: unknown) => {
   const port = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN;
   return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
 };
 
-// The origin of a configured Hub URL, or undefined when it is not one.
+// The origin of the configured Hub, which `url` hands over as a URL, or
+// undefined when it has none.
 const originOf = (value: unknown) => {
-  if (typeof value !== 'string' || !URL.canParse(value)) {
+  if (!(value instanceof URL)) {
     return undefined;
   }
-  const { origin } = new URL(value);
-  return origin === 'null' ? undefined : origin;
+  return value.origin === 'null' ? undefined : value.origin;
 };
 
 // The parts of a Loom action context the commands use.
@@ -286,7 +280,10 @@ export const serviceCommand = (
     const port = portOf(portSetting);
     if (port === undefined) {
       return [
-        ['health', `unknown (the port setting ${String(portSetting)} is not a port)`] as const,
+        [
+          'health',
+          `unknown (the port setting ${String(portSetting)} names no port to ask)`,
+        ] as const,
       ];
     }
     const url = healthUrl(host, port);
@@ -322,8 +319,8 @@ export const serviceCommand = (
     return [['system', system] as const, ['queue', queue] as const, ['spool', spool] as const];
   };
 
-  // Status always exits 0, whatever it finds: Fleet prints the text verbatim and
-  // aborts on any other code.
+  // Status exits 0 whatever the unit's state: Fleet prints the text verbatim and
+  // aborts on any other code. Only a config file Loom refuses stops it first.
   const status = async (
     context: Context,
     setting: { host?: unknown; hub?: unknown; port?: unknown; stateDir?: unknown },
@@ -355,7 +352,8 @@ export const serviceCommand = (
     }
   };
 
-  const statusDescription = 'Print the unit state, paths, and health. Always exits 0.';
+  const statusDescription =
+    "Print the unit state, paths, and health. Exits 0 whatever the unit's state, and 2 when the config file holds a key or value the binary refuses.";
   // Status reads the settings `serve` and `run` read, from the same flag,
   // variable, and file key, so it asks the running binary where it listens.
   const statusCommand =
@@ -367,7 +365,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'hub' })],
             hidden: true,
             type: 'string',
-            validate: asGiven,
+            validate: hubUrlCheck,
           })
           .option('state-dir', {
             description:
@@ -376,7 +374,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'stateDir' })],
             hidden: true,
             type: 'string',
-            validate: asGiven,
+            validate: stateDirCheck,
           })
           .action((context) =>
             status(context, {
@@ -391,7 +389,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'host' })],
             hidden: true,
             type: 'string',
-            validate: asGiven,
+            validate: listenHostCheck,
           })
           .option('port', {
             default: LISTENING[binary].defaultPort,
@@ -400,7 +398,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'port' })],
             hidden: true,
             type: 'string',
-            validate: asGiven,
+            validate: listenPortCheck,
           })
           .action((context) =>
             status(context, { host: context.options.host, port: context.options.port }),
