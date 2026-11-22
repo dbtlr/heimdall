@@ -216,7 +216,7 @@ Each binary installs and supervises itself as a systemd user unit on Linux and a
 - `start`, `stop`, and `restart` drive the installed unit, and exit 1 when none is installed.
 - `status` prints plain text and always exits 0, because Fleet aborts on any other code. It names the unit's state and its unit, log, and config paths. The Hub's and the dashboard's add their health from `GET http://<host>:<port>/api/health`, with the host and port each reads from its own config file and loopback in place of a wildcard host, asked when the unit runs or its state is unknown, and the version that runs, with `restart pending` when that differs from the binary on disk. The Collector's adds the System it is paired as and the Hub it paired with, flags a configured Hub of another origin, or says `not paired` with how to pair it, how many samples wait in its queue, and the size of its transcript spool and the age of its oldest content. It never shows the token. On Linux it notes when linger is off for the user, because the unit then stops at logout; turn it on with `loginctl enable-linger`.
 
-The unit runs `<absolute path of the binary> serve -v` or `run -v` from home, with no other flags and no environment, so a hand run and the supervised run read the same config file. `-v` makes every start write to the log each config value the binary ignores, as [A setting that has no effect](#a-setting-that-has-no-effect) describes. The systemd unit restarts the binary 10 seconds after any exit and never gives up; an end by SIGTERM or SIGINT, or exit status 143 or 130, counts as a clean stop.
+The unit runs `<absolute path of the binary> serve -v` or `run -v` from home, with no other flags and no environment, so a hand run and the supervised run read the same config file. `-v` makes every start write to the log the config file the binary read, as [A mistyped setting](#a-mistyped-setting) describes. The systemd unit restarts the binary 10 seconds after any exit and never gives up; an end by SIGTERM or SIGINT, or exit status 143 or 130, counts as a clean stop.
 
 On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user's GUI domain, `gui/<uid>`, as Mimir's agent is. It runs only while the user is logged in and loads again at each login. The plist runs the same command from home with no environment, appends both output streams to the same log, and has launchd relaunch the binary after any exit, at most once every 10 seconds.
 
@@ -225,20 +225,17 @@ On macOS the unit is `~/Library/LaunchAgents/<unit>.plist`, loaded into the user
 - `uninstall` boots the agent out and deletes the plist. The config file, the log, and the Collector's queue and spool stay.
 - `status` reads `launchctl print` and changes nothing. A stopped agent reads `not loaded, stopped`. When the user has no GUI login session, it notes that the agent loads when the user logs in.
 
-### A setting that has no effect
+### A mistyped setting
 
-A config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, or one its option refuses, such as `port = "eighty"`, is ignored. The binary then runs on that option's default, or, for a setting with no default such as `[database] url`, stops with a usage error naming the missing option. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` is different: it stops `serve` or `run` at startup, naming the setting. A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, is ignored too.
-
-`-v` names the config file the run read, then each ignored value, on stderr, once per run, before the run's own output:
+A key the binary does not know, such as a misspelled `state_dir` for `stateDir`, stops the binary with exit code 2 and a message that names the key. So does a config value with the wrong type, such as `port = true`, `sleeps = "sometimes"`, or `[database] url = 5`, and one its option refuses, such as `port = "eighty"`. This holds for every command of the Hub, the Collector, and the dashboard, not only `serve` and `run`. A bad value inside `[delivery]`, `[conditions]`, `[sessions]`, or `[updates]` stops `serve` or `run` at startup too, naming the setting.
 
 ```text
-› Read configuration from .config/heimdall/hub.toml.
-› Ignored host in .config/heimdall/hub.toml: Invalid input: expected string, received number
-› Ignored state_dir in .config/heimdall/hub.toml: Unknown key. Check its spelling, or remove it.
-› Ignored option "--port" from port in .config/heimdall/hub.toml: Expected a whole number from 0 through 65535.
+heimdall-hub: Unknown key state_dir in hub.toml. Check its spelling, or remove it.
+heimdall-hub: Configuration value host in hub.toml: Invalid input: expected string, received number. Correct the value, or remove it.
+heimdall-hub: Option "--port" (from port in hub.toml): Expected a whole number from 0 through 65535.
 ```
 
-The Service runs with `-v`, so look for `Ignored` lines in its log after each start. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`; a run that reads a file and ignores nothing prints its `Read configuration from` line and no `Ignored` line. A unit installed before `-v` was added runs without it until `service install` runs again.
+A Service whose config file holds such a key or value does not start, and the unit's restart policy retries it every 10 seconds, so look for these lines in its log. `-v` names the config file the run read, on stderr, before the run's own output: `› Read configuration from .config/heimdall/hub.toml.`. Run by hand, add `-v` to the command, such as `heimdall-hub serve -v`. A unit installed before `-v` was added runs without it until `service install` runs again.
 
 [Running Heimdall with Fleet](docs/fleet.md) covers the Application declarations, config templates, and native Services Fleet, one provisioner, uses to run the three binaries.
 

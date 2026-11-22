@@ -713,25 +713,39 @@ test('serve without a database is a usage error that names the option', async ()
   expect(code).toBe(2);
 });
 
-// Before pairing, the database URL was a top-level key (ADR-0009).
-test('serve reads the database only from [database] url, not a top-level database key', async () => {
+// Before pairing, the database URL was a top-level key (ADR-0009). The file
+// now holds a [database] table, so the old key is a wrong-typed value and stops
+// the binary, naming it, rather than leaving the Hub on a default.
+test('serve stops on a top-level database key, which the file now holds as a [database] table', async () => {
   await using config = await configFile([`database = "${UNREACHED_DATABASE.href}"`, 'port = 0']);
 
   const { code, stderr } = await invoke(serveArgs(config));
 
-  expect(stderr).toContain('--database');
+  expect(stderr).toContain('database');
   expect(code).toBe(2);
 });
 
-// Loom drops a file value its schema or its option rejects and runs on the
-// default; -v names each one, so an operator can see why a setting has no effect.
-test('serve -v names each hub.toml value it ignores: a wrong type, and one the option refuses', async () => {
-  await using config = await configFile(['host = 5', 'port = "eighty"']);
+test('serve stops with code 2 and names each hub.toml value it rejects: a wrong type, and one the option refuses', async () => {
+  await using config = await configFile(['host = 5']);
+  await using refused = await configFile(['port = "eighty"']);
 
-  const { code, stderr } = await invoke([...serveArgs(config), '-v']);
+  const wrongType = await invoke(serveArgs(config));
+  const refusedByOption = await invoke(serveArgs(refused));
 
-  expect(stderr).toMatch(/Ignored host in \S*hub\.toml: /u);
-  expect(stderr).toMatch(/Ignored option "--port" from port in \S*hub\.toml: /u);
+  expect(wrongType.stderr).toMatch(/Configuration value host in \S*hub\.toml: /u);
+  expect(wrongType.code).toBe(2);
+  expect(refusedByOption.stderr).toMatch(/Option "--port" \(from port in \S*hub\.toml\): /u);
+  expect(refusedByOption.code).toBe(2);
+});
+
+// A key hub.toml does not declare stops the binary, so a misspelling cannot
+// leave a setting on its default unnoticed (ADR-0007).
+test('serve stops with code 2 and names a key hub.toml does not declare', async () => {
+  await using config = await configFile(['hots = "127.0.0.1"', 'port = 0']);
+
+  const { code, stderr } = await invoke(serveArgs(config));
+
+  expect(stderr).toContain('hots');
   expect(code).toBe(2);
 });
 

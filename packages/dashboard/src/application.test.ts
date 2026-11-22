@@ -131,25 +131,29 @@ test.each([
   },
 );
 
-// Loom drops a file value its schema rejects and runs on the default; -v names
-// each one, so an operator can see why a setting has no effect.
-test('serve -v names the dashboard.toml value it ignores and serves on the default', async () => {
+// A key dashboard.toml does not declare stops the binary, so a misspelling
+// cannot leave a setting on its default unnoticed (ADR-0007).
+test('serve stops with code 2 and names a key dashboard.toml does not declare', async () => {
   await withHome(async (home) => {
-    const port = await freePort();
     await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
-    await writeFile(
-      join(home, '.config', 'heimdall', 'dashboard.toml'),
-      ['host = 5', `port = ${String(port)}`].join('\n'),
-    );
+    await writeFile(join(home, '.config', 'heimdall', 'dashboard.toml'), 'prot = 8080\n');
 
-    const { code, stderr, stdout } = await invoke(['serve', '-v'], {
-      home,
-      whileServing: async () => {},
-    });
+    const { code, stderr } = await invoke(['serve'], { home });
 
-    expect(stderr).toMatch(/Ignored host in \S*dashboard\.toml: /u);
-    expect(stdout).toContain(`Listening on http://127.0.0.1:${String(port)}/`);
-    expect(code).toBe(130);
+    expect(stderr).toContain('prot');
+    expect(code).toBe(2);
+  });
+});
+
+test('serve stops with code 2 and names a dashboard.toml value of the wrong type', async () => {
+  await withHome(async (home) => {
+    await mkdir(join(home, '.config', 'heimdall'), { recursive: true });
+    await writeFile(join(home, '.config', 'heimdall', 'dashboard.toml'), 'host = 5\n');
+
+    const { code, stderr } = await invoke(['serve'], { home });
+
+    expect(stderr).toContain('host');
+    expect(code).toBe(2);
   });
 });
 

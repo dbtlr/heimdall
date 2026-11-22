@@ -14,10 +14,14 @@ const collectorFile = z.object({
   updates: z.unknown().optional(),
 });
 
+// `strict` stops the binary with exit code 2, naming the key, on a key the
+// schema does not declare or a value it rejects, instead of running on the
+// default. The loose sections are `unknown`, so their own parsers judge them.
 // `plugin` goes in the Application; a Command that reads the file's sections
 // declares `uses: [values]` and reads them as `provided.config`.
 export const { plugin: configPlugin, values: configValues } = configuration({
   file: '.config/heimdall/collector.{toml,json}',
   formats: [toml],
   schema: collectorFile,
+  strict: true,
 });
