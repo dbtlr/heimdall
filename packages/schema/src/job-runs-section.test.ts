@@ -120,8 +120,16 @@ describe('a Report', () => {
   });
 
   test('takes a run finishing exactly 5 minutes after the Hub clock and drops one finishing a second later', () => {
-    const edge = { ...FAILED, finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS), started: at(ARRIVAL) };
-    const over = { ...edge, finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS + 1000), job: 'other' };
+    const edge = {
+      ...FAILED,
+      finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS),
+      started: at(ARRIVAL),
+    };
+    const over = {
+      ...edge,
+      finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS + 1000),
+      job: 'other',
+    };
 
     const { dropped, taken } = takeJobRuns([edge, over], ARRIVAL);
 
