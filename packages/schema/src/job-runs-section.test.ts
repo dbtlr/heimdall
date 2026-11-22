@@ -119,6 +119,18 @@ describe('a Report', () => {
     ]);
   });
 
+  test('drops a run that finishes in year 9999 and takes one finishing 4 minutes after the Hub clock', () => {
+    const endless = { ...FAILED, finished: '9999-12-31T23:59:59Z', started: at(ARRIVAL) };
+    const soon = { ...FAILED, finished: at(ARRIVAL + 4 * 60_000), started: at(ARRIVAL) };
+
+    const { dropped, taken } = takeJobRuns([endless, soon], ARRIVAL);
+
+    expect(taken).toEqual([soon]);
+    expect(dropped).toEqual([
+      { job: FAILED.job, reason: expect.stringContaining('finishes'), started: endless.started },
+    ]);
+  });
+
   test('takes a run from the first second of year 0000', () => {
     const run = { ...FAILED, finished: '0000-01-01T00:00:00Z', started: '0000-01-01T00:00:00Z' };
 

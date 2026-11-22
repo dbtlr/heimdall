@@ -62,8 +62,8 @@ const reasonOf = (error: z.ZodError) =>
 // Takes the entries of a Report's job runs section one at a time, in order, for
 // a Report that reached the Hub at `arrival` (epoch milliseconds). An entry is
 // dropped when it is not a valid run, when it repeats the key (job and
-// `started`) of an earlier entry that passed, or when it starts more than the
-// samples' tolerance after `arrival`. Keys count only among passing entries, so
+// `started`) of an earlier entry that passed, or when it starts or finishes more
+// than the samples' tolerance after `arrival`. Keys count only among passing entries, so
 // an invalid entry never shadows a later valid one.
 export const takeJobRuns = (
   entries: readonly unknown[],
@@ -85,6 +85,8 @@ export const takeJobRuns = (
       drop(reasonOf(parsed.error));
     } else if (Date.parse(parsed.data.started) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
       drop("it starts more than 5 minutes after the Hub's clock");
+    } else if (Date.parse(parsed.data.finished) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
+      drop("it finishes more than 5 minutes after the Hub's clock");
     } else {
       const key = JSON.stringify([parsed.data.job, parsed.data.started]);
       if (keys.has(key)) {
