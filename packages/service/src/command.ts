@@ -4,11 +4,7 @@ import { dirname } from 'node:path';
 
 import { Command, escapeControlCharacters } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
-import {
-  integer as integerValidator,
-  text as textValidator,
-  url as urlValidator,
-} from '@loomcli/validators';
+import { integer } from '@loomcli/validators';
 
 import { runsCompiled } from './compiled.ts';
 import { httpGet } from './http-get.ts';
@@ -16,6 +12,7 @@ import type { HttpGet } from './http-get.ts';
 import { TITLE, displayPath, serviceDefinition, servicePaths } from './names.ts';
 import { platformSupervisor, supported } from './platform.ts';
 import { createSpawnRunner } from './runner.ts';
+import { hubUrlCheck, listenHostCheck, listenPortCheck, stateDirCheck } from './setting-checks.ts';
 import { setPort } from './settings.ts';
 import {
   healthUrl,
@@ -93,13 +90,6 @@ const LISTENING = {
 } as const;
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-// The checks `serve` and `run` apply to the settings `status` reads, so a file
-// that stops the Service from starting also stops `status` with exit 2.
-const hostCheck = textValidator({ minLength: 1 });
-const listenPortCheck = integerValidator({ max: 65_535, min: 0 });
-const hubCheck = urlValidator({ protocols: ['http', 'https'] });
-const stateDirCheck = textValidator();
 
 const portOf = (value: unknown) => {
   const port = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN;
@@ -212,7 +202,7 @@ export const serviceCommand = (
           .option('port', {
             description: `Store this port in ${binary}.toml, unless the file already holds it.`,
             type: 'string',
-            validate: integerValidator({ max: 65_535, min: 1 }),
+            validate: integer({ max: 65_535, min: 1 }),
           })
           .action((context) => install(context, context.options.port));
 
@@ -375,7 +365,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'hub' })],
             hidden: true,
             type: 'string',
-            validate: hubCheck,
+            validate: hubUrlCheck,
           })
           .option('state-dir', {
             description:
@@ -399,7 +389,7 @@ export const serviceCommand = (
             extensions: [configInput({ path: 'host' })],
             hidden: true,
             type: 'string',
-            validate: hostCheck,
+            validate: listenHostCheck,
           })
           .option('port', {
             default: LISTENING[binary].defaultPort,

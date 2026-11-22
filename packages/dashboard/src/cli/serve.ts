@@ -1,10 +1,16 @@
 import { once } from 'node:events';
 
-import { keepLogRotated, listenOrFail, runtimeLog, servicePaths } from '@heimdall/service';
+import {
+  keepLogRotated,
+  listenHostCheck,
+  listenOrFail,
+  listenPortCheck,
+  runtimeLog,
+  servicePaths,
+} from '@heimdall/service';
 import type { RuntimeLog } from '@heimdall/service';
 import { Command, escapeControlCharacters } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
-import { integer, text } from '@loomcli/validators';
 
 // The app Vite built: one handler that renders the pages, answers the server
 // functions and API routes, and serves the static assets.
@@ -73,7 +79,7 @@ export const serveCommand = (loadServer: () => Promise<BuiltServer>, idleTimeout
       env: 'HEIMDALL_DASHBOARD_HOST',
       extensions: [configInput({ path: 'host' })],
       type: 'string',
-      validate: text({ minLength: 1 }),
+      validate: listenHostCheck,
     })
     .option('port', {
       default: '3000',
@@ -81,7 +87,7 @@ export const serveCommand = (loadServer: () => Promise<BuiltServer>, idleTimeout
       env: 'HEIMDALL_DASHBOARD_PORT',
       extensions: [configInput({ path: 'port' })],
       type: 'string',
-      validate: integer({ max: 65_535, min: 0 }),
+      validate: listenPortCheck,
     })
     .action(async ({ host, options, out, signal, style }) => {
       const clean = (message: string) => style.escape(escapeControlCharacters(message));

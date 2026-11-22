@@ -15,5 +15,6 @@ export { listenOrFail } from './listen.ts';
 export { runtimeLog, timestamped } from './log.ts';
 export type { RuntimeLog } from './log.ts';
 export { servicePaths } from './names.ts';
+export { hubUrlCheck, listenHostCheck, listenPortCheck, stateDirCheck } from './setting-checks.ts';
 export type { Binary, ServicePaths } from './names.ts';
 export { keepLogRotated, rotateLog } from './rotation.ts';

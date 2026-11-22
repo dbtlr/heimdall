@@ -1,5 +1,5 @@
+import { hubUrlCheck, stateDirCheck } from '@heimdall/service';
 import { configInput } from '@loomcli/plugins/config/extension';
-import { text, url } from '@loomcli/validators';
 
 // The Hub's base URL, from its flag, then its variable, then the top-level
 // `hub` key, which holds no secret and is the same on every System.
@@ -9,7 +9,7 @@ export const hub = {
   extensions: [configInput({ path: 'hub' })],
   required: true,
   type: 'string',
-  validate: url({ protocols: ['http', 'https'] }),
+  validate: hubUrlCheck,
 } as const;
 
 // Where the queue, the identity, and the records live, read the same way.
@@ -19,7 +19,7 @@ export const stateDir = {
   env: 'HEIMDALL_STATE_DIR',
   extensions: [configInput({ path: 'stateDir' })],
   type: 'string',
-  validate: text(),
+  validate: stateDirCheck,
 } as const;
 
 // Whether this System sleeps, such as a laptop, read the same way. The Hub

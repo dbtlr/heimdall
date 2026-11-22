@@ -1,5 +1,5 @@
 import { RECORD_NAME, SOURCE_NAME, SYSTEM_NAME } from '@heimdall/schema';
-import { serviceCommand } from '@heimdall/service';
+import { listenHostCheck, listenPortCheck, serviceCommand } from '@heimdall/service';
 import { Application, Command } from '@loomcli/core';
 import { configInput } from '@loomcli/plugins/config/extension';
 import { help } from '@loomcli/plugins/help';
@@ -85,7 +85,7 @@ export const serve = new Command('serve', {
     env: 'HEIMDALL_HOST',
     extensions: [configInput({ path: 'host' })],
     type: 'string',
-    validate: text({ minLength: 1 }),
+    validate: listenHostCheck,
   })
   .option('port', {
     default: '8080',
@@ -93,7 +93,7 @@ export const serve = new Command('serve', {
     env: 'HEIMDALL_PORT',
     extensions: [configInput({ path: 'port' })],
     type: 'string',
-    validate: integer({ max: 65_535, min: 0 }),
+    validate: listenPortCheck,
   })
   .option('price-overrides', priceOverrides)
   .option('price-source', priceSource)
