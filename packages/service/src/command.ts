@@ -319,8 +319,8 @@ export const serviceCommand = (
     return [['system', system] as const, ['queue', queue] as const, ['spool', spool] as const];
   };
 
-  // Status always exits 0, whatever it finds: Fleet prints the text verbatim and
-  // aborts on any other code.
+  // Status exits 0 whatever the unit's state: Fleet prints the text verbatim and
+  // aborts on any other code. Only a config file Loom refuses stops it first.
   const status = async (
     context: Context,
     setting: { host?: unknown; hub?: unknown; port?: unknown; stateDir?: unknown },

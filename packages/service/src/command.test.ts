@@ -421,13 +421,13 @@ test('status with port 0 has no port to ask for health, and exits 0', async () =
 });
 
 test.each([
-  [HUB, 'hub', 'port = "eighty"', 'port'],
-  [HUB, 'hub', 'port = 70000', 'port'],
-  [DASHBOARD, 'dashboard', 'port = "eighty"', 'port'],
-  [COLLECTOR, 'collector', 'hub = "ftp://h/"', 'hub'],
+  ['hub', 'port = "eighty"', 'port', HUB],
+  ['hub', 'port = 70000', 'port', HUB],
+  ['dashboard', 'port = "eighty"', 'port', DASHBOARD],
+  ['collector', 'hub = "ftp://h/"', 'hub', COLLECTOR],
 ])(
-  '%#: status refuses what serve and run refuse: %s.toml with %s exits 2',
-  async (spec, binary, line, key) => {
+  'status refuses a setting its Service refuses: %s.toml with %s exits 2',
+  async (binary, line, key, spec) => {
     await using home = await tempHome();
     await mkdir(join(home.path, '.config', 'heimdall'), { recursive: true });
     await writeFile(join(home.path, '.config', 'heimdall', `${binary}.toml`), line);
