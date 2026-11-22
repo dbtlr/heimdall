@@ -247,15 +247,34 @@ test('the first run of a key is kept, and an invalid run of the key does not sha
 
 test('a run more than 5 minutes ahead of the Hub clock at arrival is dropped and one exactly 5 minutes ahead kept', async () => {
   await using h = await startHub();
+  const edge = NOW + 5 * MINUTE;
 
   const response = await sendBody(h, {
-    runs: [jobRun(NOW + 5 * MINUTE), jobRun(NOW + 5 * MINUTE + 1000, { job: 'ahead' })],
+    runs: [
+      jobRun(edge, { finished: whole(edge) }),
+      jobRun(edge + 1000, { finished: whole(edge + 1000), job: 'ahead' }),
+    ],
   });
 
   expect(response.status).toBe(200);
   expect(await stored(h)).toMatchObject([
     { job: 'backup', started_at: new Date(NOW + 5 * MINUTE) },
   ]);
+  expect(h.warnings).toHaveLength(1);
+});
+
+test('a run that starts before the Hub clock but finishes more than 5 minutes after it is dropped', async () => {
+  await using h = await startHub();
+
+  const response = await sendBody(h, {
+    runs: [
+      jobRun(NOW, { finished: whole(NOW + 5 * MINUTE) }),
+      jobRun(NOW, { finished: whole(NOW + 5 * MINUTE + 1000), job: 'ahead' }),
+    ],
+  });
+
+  expect(response.status).toBe(200);
+  expect(await stored(h)).toMatchObject([{ job: 'backup', started_at: new Date(NOW) }]);
   expect(h.warnings).toHaveLength(1);
 });
 

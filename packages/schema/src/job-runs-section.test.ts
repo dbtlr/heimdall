@@ -119,6 +119,38 @@ describe('a Report', () => {
     ]);
   });
 
+  test('takes a run finishing exactly 5 minutes after the Hub clock and drops one finishing a second later', () => {
+    const edge = {
+      ...FAILED,
+      finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS),
+      started: at(ARRIVAL),
+    };
+    const over = {
+      ...edge,
+      finished: at(ARRIVAL + FUTURE_SAMPLE_TOLERANCE_MS + 1000),
+      job: 'other',
+    };
+
+    const { dropped, taken } = takeJobRuns([edge, over], ARRIVAL);
+
+    expect(taken).toEqual([edge]);
+    expect(dropped).toEqual([
+      { job: 'other', reason: expect.stringContaining('finishes'), started: over.started },
+    ]);
+  });
+
+  test('drops a run that finishes in year 9999 and takes one finishing 4 minutes after the Hub clock', () => {
+    const endless = { ...FAILED, finished: '9999-12-31T23:59:59Z', started: at(ARRIVAL) };
+    const soon = { ...FAILED, finished: at(ARRIVAL + 4 * 60_000), started: at(ARRIVAL) };
+
+    const { dropped, taken } = takeJobRuns([endless, soon], ARRIVAL);
+
+    expect(taken).toEqual([soon]);
+    expect(dropped).toEqual([
+      { job: FAILED.job, reason: expect.stringContaining('finishes'), started: endless.started },
+    ]);
+  });
+
   test('takes a run from the first second of year 0000', () => {
     const run = { ...FAILED, finished: '0000-01-01T00:00:00Z', started: '0000-01-01T00:00:00Z' };
 
