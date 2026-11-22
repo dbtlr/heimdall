@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { REPORT_SCHEMA_VERSION } from '@heimdall/schema';
@@ -562,6 +562,23 @@ test('service status says when this System is not paired, and exits 0', async ()
 
   expect(stdout).toContain('  system   not paired; run heimdall-collector pair <code>\n');
   expect(code).toBe(0);
+});
+
+test('service status stops with code 2 and names a key collector.toml does not declare', async () => {
+  await using home = await homeWithConfig();
+  await appendFile(
+    join(home.path, '.config', 'heimdall', 'collector.toml'),
+    '\nstate_dir = "/srv"\n',
+  );
+
+  const { code, stderr, stdout } = await invoke(['service', 'status'], {
+    cwd: home.path,
+    env: { HOME: home.path },
+  });
+
+  expect(stderr).toContain('state_dir');
+  expect(stdout).toBe('');
+  expect(code).toBe(2);
 });
 
 test('service status flags a configured Hub other than the one this System paired with, and exits 0', async () => {
