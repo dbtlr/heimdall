@@ -33,7 +33,8 @@ heimdall-collector: Unknown key state_dir in .config/heimdall/collector.toml. Ch
 **Steps.**
 
 1. After updating, run `service status` for each binary on each System, from the home directory, where each Service runs. Run from a project, the lookup can find a `.config/heimdall/` file there first and check that file instead.
-2. Where it exits 2, correct or remove the key it names, in the provisioner's template when a provisioner renders the file, then render the file onto the System and restart the Service.
+2. Where it exits 2, correct or remove the key it names, or fix the TOML at the line it names, in the provisioner's template when a provisioner renders the file, then render the file onto the System.
+3. Restart each Service, whether or not its file changed: the install scripts replace a binary without restarting its Service, so the old binary keeps running until then.
 
 **Validation.** `service status` exits 0 for each binary, and each Service starts. `status` checks the file's keys and the settings it reads itself, but not what only `serve` or `run` checks: a key or value inside the Hub's `[conditions]` or `[delivery]` section or the Collector's `[sessions]` or `[updates]` section, or a value such as `[prices] source`. A Service that does not start names its reason in its log.
 
