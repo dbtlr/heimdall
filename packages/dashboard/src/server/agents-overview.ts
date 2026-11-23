@@ -3,7 +3,7 @@ import type { SQL } from 'bun';
 import { breakdownTotals } from '../lib/agents-breakdown.ts';
 import { agentsSearch, sessionsQueryOf } from '../lib/agents-search.ts';
 import { sessionsPage } from '../lib/agents-sessions.ts';
-import { isRunning, localDays, usualByNow } from '../lib/home-agents.ts';
+import { isRunning, localDays, RUNNING_MS, usualByNow } from '../lib/home-agents.ts';
 import { readCostChart } from './agents-costs.ts';
 import type {
   AgentsOverview,
@@ -186,6 +186,28 @@ export const readPeriodSessions = async (
   return { models, sessions };
 };
 
+// The bound past every request a running Session can have: a Collector's
+// clock running ahead stamps a request after the dashboard's now, and that
+// request is no older than RUNNING_MS too.
+const NO_LATER = new Date('9999-12-31T00:00:00Z');
+
+// The Sessions running at `now`, of one project when given, each priced over
+// all its requests, even one stamped after `now`. Read apart from any
+// period, since a Session can have run up to just before the period began.
+// Call it inside a snapshot.
+export const readRunningSessions = async (
+  sql: SQL,
+  { now, project }: { now: number; project?: string | undefined },
+): Promise<AgentsSession[]> => {
+  const { sessions } = await readPeriodSessions(sql, {
+    from: new Date(0),
+    lastRequestFrom: new Date(now - RUNNING_MS),
+    project,
+    to: NO_LATER,
+  });
+  return sessions.filter(({ lastRequestAt }) => isRunning(lastRequestAt, now));
+};
+
 // The sum of the Sessions' amounts, so a total always matches the amounts shown.
 export const periodTotals = (sessions: readonly PeriodTotals[]): PeriodTotals =>
   sessions.reduce(
@@ -241,8 +263,9 @@ export const readPeriodOverview = async (
   },
 ): Promise<PeriodOverview> => {
   const period = { ...agentsPeriod({ now, range, timeZone }), project };
-  const [{ models, sessions }, chart, earlier] = await Promise.all([
+  const [{ models, sessions }, running, chart, earlier] = await Promise.all([
     readPeriodSessions(sql, period),
+    readRunningSessions(sql, { now, project }),
     readCostChart(sql, { now, period, range, timeZone }),
     project === undefined
       ? readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1))
@@ -254,7 +277,7 @@ export const readPeriodOverview = async (
     from: period.from.getTime(),
     now,
     range,
-    running: sessions.filter(({ lastRequestAt }) => isRunning(lastRequestAt, now)),
+    running,
     sessionCount: sessions.length,
     systemCount: new Set(sessions.map(({ system }) => system)).size,
     table: sessionsPage(sessions, table, now),

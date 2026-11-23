@@ -215,6 +215,22 @@ test.each([
   },
 );
 
+test('Running counts a Session whose last request was just before local midnight', async () => {
+  await using h = await start();
+  const now = Date.UTC(2026, 9, 25, 0, 2);
+  await timeline(now).addSession(h.db.sql, {
+    id: 'before-midnight',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-180],
+    system: 'laptop-1',
+  });
+  const result = await read(h, { now, range: 'today', timeZone: 'UTC' });
+  expect(result.sessions).toEqual([]);
+  expect(result.running.map(({ sessionId }) => sessionId)).toEqual(['before-midnight']);
+});
+
 test('a price refresh lag can mix stored and current prices while the total still matches displayed amounts', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
