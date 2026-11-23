@@ -1,0 +1,1 @@
+- **The Agents page counts a Session that ran up to midnight as running** (HMD-290). In the 5 minutes after local midnight, a Session whose last request came just before midnight was missing from Running on the Today range, because it belonged to yesterday's period. Running now reads Sessions by their last request, as Home does, so it no longer depends on the range.

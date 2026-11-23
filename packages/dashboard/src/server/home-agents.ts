@@ -1,17 +1,17 @@
 import type { SQL } from 'bun';
 
-import { isRunning, localDays, RUNNING_MS, shownRunning, usualByNow } from '../lib/home-agents.ts';
-import { periodTotals, readPeriodSessions, todayPeriod } from './agents-overview.ts';
+import { localDays, shownRunning, usualByNow } from '../lib/home-agents.ts';
+import {
+  periodTotals,
+  readPeriodSessions,
+  readRunningSessions,
+  todayPeriod,
+} from './agents-overview.ts';
 import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import type { HomeAgents } from './home-types.ts';
 
 // How many local days the bars show, today among them.
 const BAR_DAYS = 7;
-
-// The bound past every request a running Session can have: a Collector's
-// clock running ahead stamps a request after the dashboard's now, and that
-// request is no older than RUNNING_MS too.
-const NO_LATER = new Date('9999-12-31T00:00:00Z');
 
 // The newest request of any Session, by its stored stretches. The planner
 // cannot read the view in the order of its index, so the newest stored end,
@@ -46,19 +46,12 @@ export const readHomeAgents = async (
   const days = localDays(now, timeZone, USUAL_DAYS + 1);
   const today = days.at(-1);
   const earlier = days.slice(0, -1);
-  const [todays, recent, earlierCosts] = await Promise.all([
+  const [todays, runningSessions, earlierCosts] = await Promise.all([
     readPeriodSessions(sql, todayPeriod(now, timeZone)),
-    readPeriodSessions(sql, {
-      from: new Date(0),
-      lastRequestFrom: new Date(now - RUNNING_MS),
-      to: NO_LATER,
-    }),
+    readRunningSessions(sql, { now }),
     readDayCosts(sql, earlier),
   ]);
-  const running = shownRunning(
-    recent.sessions.filter((session) => isRunning(session.lastRequestAt, now)),
-    Number.POSITIVE_INFINITY,
-  ).shown;
+  const running = shownRunning(runningSessions, Number.POSITIVE_INFINITY).shown;
   const totals = periodTotals(todays.sessions);
   const bars = earlier.slice(1 - BAR_DAYS).map(({ start }, index) => {
     const { pricedCostUsd, requests, unpricedRequests } = earlierCosts[
