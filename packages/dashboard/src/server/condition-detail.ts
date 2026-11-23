@@ -189,7 +189,8 @@ const readPackages = async (
       WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
       ORDER BY security_since IS NULL, name
     `,
-    readOwnArchitecture(sql, system),
+    // Only APT names carry an architecture to hide.
+    source.manager === 'apt' ? readOwnArchitecture(sql, system) : undefined,
   ]);
   return rows.map((row) =>
     Object.assign(pendingPackageOf(row), packageLabel(row.name, source.manager, own)),
@@ -240,7 +241,7 @@ const readNewestSampleAt = async (
 // One Condition occurrence of a System, with its history of transitions, the
 // evidence and next steps while it is open, the limits the Hub judges by now,
 // the readings around it, and for high memory the processes holding the most. Undefined when the System has no such occurrence.
-// Read-only.
+// Read-only. Call it inside a snapshot.
 export const readConditionDetail = async (
   sql: SQL,
   { id, name, now }: { id: string; name: string; now: number },
