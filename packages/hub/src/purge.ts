@@ -139,10 +139,18 @@ const purgeOnce = (
       SELECT 1 FROM transcript_source_harnesses WHERE system = ${system}
     `;
     await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
+    // As a transcript delete does, so the history deletes that look up the
+    // System's Conditions and Harness processes by subselect are planned on what
+    // the tables hold now, not on statistics from a bulk insert (HMD-296).
+    await refreshStatistics(tx, [
+      'conditions',
+      'harness_processes',
+      'harness_process_samples',
+      'harness_process_rollups',
+    ]);
     let deleted = await deleteAll(tx, HISTORY, [system]);
     if (transcripts) {
-      // As a transcript delete does, so the deletes that look up the System's
-      // generations are planned on what the tables hold now.
+      // Likewise for the deletes that look up the System's generations.
       await refreshStatistics(tx, [
         'transcript_generations',
         'transcript_chunks',

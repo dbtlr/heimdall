@@ -413,6 +413,75 @@ test('purge system --transcripts removes many generations in seconds when statis
   expect(purged.kind === 'purged' && purged.transcripts?.generations).toBe(many);
 }, 30_000);
 
+// The same statistics leave a purge's history deletes, which look up the
+// System's Conditions and Harness processes by subselect, planned on tables
+// that look empty (HMD-296).
+test('purge system removes many Harness processes and Conditions in seconds when statistics count almost none of them', async () => {
+  await using db = await migratedDatabase({ fresh: true });
+  const many = 30_000;
+  const tables = [
+    'conditions',
+    'condition_transitions',
+    'load_episode_samples',
+    'harness_processes',
+    'harness_process_samples',
+    'harness_process_rollups',
+  ];
+  for (const table of tables) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+    await db.sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
+  }
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', ${AT})`;
+  const analyzer = new SQL(db.url.href, { max: 1 });
+  try {
+    await db.sql.begin(async (tx) => {
+      await tx`
+        INSERT INTO conditions (
+          id, system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n, 'laptop-1', 'cpu_load', 'subject-' || n, ${AT}, 'busy', ${AT}, 'busy', 'alert'
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO condition_transitions (condition, action, level, at, reason)
+        SELECT n, 'raised', 'alert', ${AT}, 'busy' FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO load_episode_samples (condition, sample_from, sample_until)
+        SELECT n, ${AT}, ${AT} FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_processes (
+          id, system, harness, pid, started_at, peak_rss_bytes, last_seen_at, sent_at
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n, 'laptop-1', 'claude-code', n, ${AT}, 1, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
+        SELECT n, ${AT}, 1, 1 FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_process_rollups (
+          process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max
+        )
+        SELECT n, ${AT}, 1, 1, 1, 1, 1, 1 FROM generate_series(1, ${many}::int) AS n
+      `;
+      await analyzer`ANALYZE`;
+    });
+  } finally {
+    await analyzer.close();
+  }
+
+  const started = performance.now();
+  const purged = await purgeSystem(db.sql, { system: 'laptop-1', transcripts: false });
+
+  expect(purged.kind).toBe('purged');
+  expect(performance.now() - started).toBeLessThan(20_000);
+}, 120_000);
+
 test('purge system refuses a paired System, deletes nothing, and exits 1', async () => {
   await using s = await setup();
   const before = await countRows(s.db.sql, 'laptop-1');
