@@ -241,7 +241,7 @@ const readNewestSampleAt = async (
 // One Condition occurrence of a System, with its history of transitions, the
 // evidence and next steps while it is open, the limits the Hub judges by now,
 // the readings around it, and for high memory the processes holding the most. Undefined when the System has no such occurrence.
-// Read-only. Call it inside a snapshot.
+// Read-only.
 export const readConditionDetail = async (
   sql: SQL,
   { id, name, now }: { id: string; name: string; now: number },
