@@ -4,7 +4,7 @@ import { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
 import { issueCode } from './pairing.ts';
-import { purgeSystem } from './purge.ts';
+import { purgeService, purgeSystem } from './purge.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
 import { waitersOnLocks } from './testing/lock-waiters.ts';
@@ -413,6 +413,132 @@ test('purge system --transcripts removes many generations in seconds when statis
   expect(purged.kind === 'purged' && purged.transcripts?.generations).toBe(many);
 }, 30_000);
 
+// The same statistics leave a purge's history deletes, which look up the
+// System's Conditions and Harness processes by subselect, planned on tables
+// that look empty (HMD-296).
+test('purge system removes many Harness processes and Conditions in seconds when statistics count almost none of them', async () => {
+  await using db = await migratedDatabase({ fresh: true });
+  const many = 30_000;
+  const tables = [
+    'conditions',
+    'condition_transitions',
+    'load_episode_samples',
+    'harness_processes',
+    'harness_process_samples',
+    'harness_process_rollups',
+  ];
+  for (const table of tables) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+    await db.sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
+  }
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', ${AT})`;
+  const analyzer = new SQL(db.url.href, { max: 1 });
+  try {
+    await db.sql.begin(async (tx) => {
+      await tx`
+        INSERT INTO conditions (
+          id, system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n, 'laptop-1', 'cpu_load', 'subject-' || n, ${AT}, 'busy', ${AT}, 'busy', 'alert'
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO condition_transitions (condition, action, level, at, reason)
+        SELECT n, 'raised', 'alert', ${AT}, 'busy' FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO load_episode_samples (condition, sample_from, sample_until)
+        SELECT n, ${AT}, ${AT} FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_processes (
+          id, system, harness, pid, started_at, peak_rss_bytes, last_seen_at, sent_at
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n, 'laptop-1', 'claude-code', n, ${AT}, 1, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_process_samples (process, t, cpu_micros, rss_bytes)
+        SELECT n, ${AT}, 1, 1 FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO harness_process_rollups (
+          process, bucket, samples, cpu_micros_min, cpu_micros_max, rss_min, rss_sum, rss_max
+        )
+        SELECT n, ${AT}, 1, 1, 1, 1, 1, 1 FROM generate_series(1, ${many}::int) AS n
+      `;
+      await analyzer`ANALYZE`;
+    });
+  } finally {
+    await analyzer.close();
+  }
+
+  const started = performance.now();
+  const purged = await purgeSystem(db.sql, { system: 'laptop-1', transcripts: false });
+
+  expect(purged.kind).toBe('purged');
+  expect(performance.now() - started).toBeLessThan(20_000);
+}, 120_000);
+
+// A Service purge looks up the Service's Conditions by subselect the same way.
+test('purge service removes many Conditions in seconds when statistics count almost none of them', async () => {
+  await using db = await migratedDatabase({ fresh: true });
+  const many = 60_000;
+  for (const table of ['conditions', 'condition_transitions', 'deliveries', 'service_stops']) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+    await db.sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
+  }
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', ${AT}), ('server-1', ${AT})`;
+  const analyzer = new SQL(db.url.href, { max: 1 });
+  try {
+    await db.sql.begin(async (tx) => {
+      // Cleared Conditions spread over both Systems, both kinds, and two subjects.
+      await tx`
+        INSERT INTO conditions (
+          id, system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level, cleared_at
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n,
+               CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               CASE WHEN n / 2 % 2 = 0 THEN 'service_down' ELSE 'service_restarted' END,
+               CASE WHEN n / 4 % 2 = 0 THEN 'svc' ELSE 'other' END,
+               ${AT}, 'down', ${AT}, 'down', 'alert', ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO condition_transitions (condition, action, level, at, reason)
+        SELECT n, action, 'alert', ${AT}, 'down'
+        FROM generate_series(1, ${many}::int) AS n, unnest(ARRAY['raised', 'cleared']) AS action
+      `;
+      await tx`
+        INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at)
+        SELECT CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               'service_down', 'subject-' || n, ${AT}, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO service_stops (
+          system, service, stopped_at, started_at, ongoing, restarts, sent_at, received_at
+        )
+        SELECT CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               'service-' || n, ${AT}, ${AT}, false, 0, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await analyzer`ANALYZE`;
+    });
+  } finally {
+    await analyzer.close();
+  }
+
+  const started = performance.now();
+  const purged = await purgeService(db.sql, { service: 'svc', system: 'laptop-1' });
+
+  expect(purged.kind).toBe('purged');
+  expect(performance.now() - started).toBeLessThan(20_000);
+}, 150_000);
+
 test('purge system refuses a paired System, deletes nothing, and exits 1', async () => {
   await using s = await setup();
   const before = await countRows(s.db.sql, 'laptop-1');
@@ -725,6 +851,65 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
     expect.objectContaining({ kind: 'service_down', subject: 'old-web', system: 'laptop-1' }),
   );
   expect(code).toBe(0);
+});
+
+test('purge service leaves the delivery lock free while its statistics refresh waits', async () => {
+  await using s = await setupServices();
+  // Stands in for a System purge or a VACUUM holding the lock ANALYZE needs.
+  const vacuum = await s.db.sql.reserve();
+  await vacuum.unsafe('BEGIN');
+  await vacuum.unsafe('LOCK TABLE conditions IN SHARE UPDATE EXCLUSIVE MODE');
+
+  const purged = invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
+  let row: { locked: boolean } | undefined;
+  try {
+    await waitersOnLocks(s.db.sql, 1);
+    const pass = await s.db.sql.reserve();
+    try {
+      [row] = await pass`SELECT pg_try_advisory_lock(hashtext(${DELIVERY_LOCK})) AS locked`;
+    } finally {
+      await pass`SELECT pg_advisory_unlock_all()`;
+      await pass.release();
+    }
+  } finally {
+    // Released whatever happened, so the purge finishes and the database drops.
+    await vacuum.unsafe('ROLLBACK');
+    await vacuum.release();
+  }
+  const { code } = await purged;
+
+  expect(row?.locked).toBe(true);
+  expect(code).toBe(0);
+});
+
+test("purge service's statistics refresh waits past the pool's statement timeout", async () => {
+  await using s = await setupServices();
+  // A pool whose statement timeout is shorter than the wait, as the CLI's
+  // 30 s one is shorter than a long System purge.
+  const pool = new SQL({ connection: { statement_timeout: 1000 }, url: s.db.url.href });
+  const vacuum = await s.db.sql.reserve();
+  await vacuum.unsafe('BEGIN');
+  await vacuum.unsafe('LOCK TABLE conditions IN SHARE UPDATE EXCLUSIVE MODE');
+  const purge = async (): Promise<string> => {
+    try {
+      return (await purgeService(pool, { service: 'old-web', system: 'laptop-1' })).kind;
+    } catch (error) {
+      return String(error);
+    }
+  };
+  let purged: Promise<string> | undefined;
+  try {
+    purged = purge();
+    await waitersOnLocks(s.db.sql, 1);
+    await Bun.sleep(2000);
+  } finally {
+    await vacuum.unsafe('ROLLBACK');
+    await vacuum.release();
+  }
+  const kind = await purged;
+  await pool.close();
+
+  expect(kind).toBe('purged');
 });
 
 test('purge service succeeds when only Service stops, a restarted note, or version history is held', async () => {
