@@ -10,8 +10,8 @@ import {
   timeline,
 } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
-import { processSubject } from '@heimdall/schema';
-import type { PendingUpdate } from '@heimdall/schema';
+import { processSubject, updateSourceSubject } from '@heimdall/schema';
+import type { PendingUpdate, UpdateManager } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
 import { parseConditionDetailInput, readConditionDetail } from './condition-detail.ts';
@@ -463,6 +463,20 @@ const addPackage = (
               ${new Date(NOW)}, ${JSON.stringify({ ...update, name })}::text::jsonb)
   `;
 
+// The name and label of each package the open pending_update Condition of `system`'s APT
+// `installation` lists, in the page's order.
+const labelsOf = async (h: Hub, installation: string) => {
+  const id = await addCondition(h.db.sql, {
+    kind: 'pending_update',
+    level: 'note',
+    raisedAt: -HOUR,
+    subject: updateSourceSubject({ installation, manager: 'apt' }),
+    system: 'server-1',
+  });
+  const detail = await read(h, { id, name: 'server-1' });
+  return detail?.packages?.map(({ label, name }) => [name, label]);
+};
+
 describe('a package source with pending updates', () => {
   const source = JSON.stringify(['apt', '/usr/bin/apt']);
   test('lists the packages pending in that source, security updates first', async () => {
@@ -540,6 +554,91 @@ describe('a package source with pending updates', () => {
       ['tzdata:all', 'tzdata'],
       ['wget', 'wget'],
     ]);
+  });
+
+  describe("the System's own architecture", () => {
+    const PASS_AT = NOW - 20 * 60_000;
+    // A pass before PASS_AT, which a later Report's pass retires sources from.
+    const EARLIER_PASS_AT = NOW - 30 * 60_000;
+
+    // An APT installation's Report entry from the pass at `passAt`: `pending`
+    // names awaiting update and, when given, the census of `installed` names.
+    const aptManager = (
+      installation: string,
+      pending: string[],
+      installed?: string[],
+      passAt = PASS_AT,
+    ) =>
+      ({
+        installation,
+        ...(installed && { installed: { names: installed, observedAt: passAt } }),
+        manager: 'apt',
+        observedAt: passAt,
+        result: {
+          kind: 'available',
+          metadataAt: NOW - 2 * HOUR * 1000,
+          updates: pending.map((name) => ({
+            available: '2',
+            installed: '1',
+            name,
+            security: false,
+          })),
+        },
+      }) as UpdateManager;
+
+    // Sends one Report from `system` whose Collector runs on `arch` and whose
+    // update pass found `managers`.
+    const hearManagers = async (
+      h: Hub,
+      arch: string,
+      managers: UpdateManager[],
+      passAt = PASS_AT,
+    ) => {
+      h.clock.now = NOW;
+      const response = await push(
+        h.hub,
+        {
+          ...report('server-1', [NOW]),
+          collector: { arch, platform: 'linux', version: '0.1.0' },
+          updates: { managers, reboot: { kind: 'available', observedAt: passAt, required: false } },
+        },
+        { token: 'server-token' },
+      );
+      expect(response.status).toBe(200);
+    };
+
+    test("the census of another source decides over the Collector's architecture", async () => {
+      await using h = await startHub();
+      // The Collector says x64; the census of the `system` source says arm64.
+      await hearManagers(h, 'x64', [
+        aptManager('system', [], ['bash:arm64', 'cu:arm64', 'z:amd64']),
+        aptManager('/opt/apt', ['libq:arm64', 'libr:amd64']),
+      ]);
+
+      expect(await labelsOf(h, '/opt/apt')).toEqual([
+        ['libq:arm64', 'libq'],
+        ['libr:amd64', 'libr:amd64'],
+      ]);
+    });
+
+    test('the census of a source the next Report retired no longer counts', async () => {
+      await using h = await startHub();
+      await hearManagers(
+        h,
+        'x64',
+        [
+          aptManager('system', ['libfoo:amd64', 'libfoo:i386'], ['a:amd64'], EARLIER_PASS_AT),
+          aptManager('/old', [], ['x:i386', 'y:i386', 'z:i386'], EARLIER_PASS_AT),
+        ],
+        EARLIER_PASS_AT,
+      );
+      await hearManagers(h, 'x64', [aptManager('system', ['libfoo:amd64', 'libfoo:i386'])]);
+
+      expect(await labelsOf(h, 'system')).toEqual([
+        ['libfoo:amd64', 'libfoo'],
+        ['libfoo:i386', 'libfoo:i386'],
+      ]);
+    });
   });
 
   test('lists only its own System and manager', async () => {

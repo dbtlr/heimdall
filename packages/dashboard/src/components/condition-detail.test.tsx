@@ -194,6 +194,22 @@ const updateView: ConditionDetailView = {
       security: 'no',
       versions: 'unknown → 2.0',
     },
+    {
+      cask: false,
+      label: 'libfoo',
+      name: 'libfoo:arm64',
+      pending: undefined,
+      security: 'no',
+      versions: '1 → 2',
+    },
+    {
+      cask: true,
+      label: 'firefox',
+      name: 'cask:firefox',
+      pending: undefined,
+      security: 'no',
+      versions: '1 → 2',
+    },
   ],
   rate: undefined,
   title: 'Pending update APT (/usr/bin/apt)',
@@ -206,6 +222,14 @@ test('lists the packages of a pending update with versions, security, and how lo
     expect(page).toContain(text);
   }
   expect(page).toContain('apt upgrade');
+});
+
+test('a package reads by its short label, keeps its full name as a title, and a cask is marked', () => {
+  const page = html(updateView);
+  expect(page).toMatch(/title="libfoo:arm64">libfoo<\/td>/u);
+  expect(page).toMatch(/title="cask:firefox">firefox<span[^>]*>cask<\/span>/u);
+  expect(page).toMatch(/title="openssl">openssl<\/td>/u);
+  expect(page.match(/>cask</gu)).toHaveLength(1);
 });
 
 test('says when a source has no update pending, and draws no table for other Conditions', () => {
