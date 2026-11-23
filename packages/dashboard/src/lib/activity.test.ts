@@ -370,7 +370,12 @@ test('an alert merged into a line dates a recovery a week or more later', () => 
   const late = Date.UTC(2026, 10, 12, 23, 50);
   const [line] = groupActivity([
     stop({ at: late }),
-    alert({ at: late + MIN, open: false, recoveredAt: late + 8 * 24 * 60 * MIN, subject: 'backup' }),
+    alert({
+      at: late + MIN,
+      open: false,
+      recoveredAt: late + 8 * 24 * 60 * MIN,
+      subject: 'backup',
+    }),
   ]);
   expect(phraseText(lineWords(line!).detail, 'UTC')).toBe(
     'Alert sent for Service down backup, recovery at Fri 20 Nov 23:50',
