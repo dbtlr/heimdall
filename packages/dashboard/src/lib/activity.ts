@@ -14,7 +14,7 @@ import type {
 } from '../server/activity-types.ts';
 import { pinFromSearch } from './activity-moment.ts';
 import { knownValues, stringList } from './filter-search.ts';
-import { clockAt, joinPhrases } from './phrase.ts';
+import { aheadAt, joinPhrases } from './phrase.ts';
 import type { Phrase } from './phrase.ts';
 import { stopWords } from './stop-words.ts';
 import { formatSpan } from './time.ts';
@@ -259,7 +259,7 @@ const phrase = (event: ActivityEvent): Phrase => {
   if (event.kind === 'alert') {
     return event.recoveredAt === undefined
       ? [`Alert sent for ${named}`]
-      : [`Alert sent for ${named}, recovery at `, clockAt(event.recoveredAt)];
+      : [`Alert sent for ${named}, recovery at `, aheadAt(event.recoveredAt, event.at)];
   }
   const change = changeOf(event);
   const state = [change === '' ? event.level : change, isOpen(event) ? 'open' : '']

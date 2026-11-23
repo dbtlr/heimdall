@@ -14,6 +14,10 @@ export const clockSecondsAt = (at: number): Moment => ({ at, format: 'clockSecon
 
 export const whenAt = (at: number, now: number): Moment => ({ at, format: 'when', now });
 
+// A time at or after `now`: the clock time on its day, a weekday within the
+// coming week, else a date too.
+export const aheadAt = (at: number, now: number): Moment => ({ at, format: 'ahead', now });
+
 // "14:05 to 15:40", or "14:05 to now" when `end` is undefined.
 export const clockSpan = (start: number, end: number | undefined): Phrase => [
   clockAt(start),

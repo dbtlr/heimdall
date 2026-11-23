@@ -135,3 +135,46 @@ test('an alert merged into a stop line says when its recovery went out, with its
   // 12:05 UTC is 17:35 in Kolkata.
   expect(html).toContain('Alert sent for Service down backup, recovery at 17:35');
 });
+
+const alertRecovering = (at: number, recoveredAt: number): ActivityEvent => ({
+  at,
+  condition: 'service_down',
+  kind: 'alert',
+  open: false,
+  recoveredAt,
+  subject: 'caddy',
+  system: 'server-1',
+});
+
+const renderAlert = (event: ActivityEvent) =>
+  renderRouted(
+    <ActivityListBody
+      lines={groupActivity([event])}
+      now={NOW}
+      timeZone="UTC"
+      unpaired={new Set()}
+    />,
+    { routePaths: ['/systems/$name', '/systems/$name/conditions/$id'] },
+  );
+
+test('a recovery on a later local day than its alert names the day', async () => {
+  const pushed = Date.UTC(2026, 10, 12, 23, 50);
+  const html = await renderAlert(alertRecovering(pushed, pushed + 20 * MIN));
+  expect(html).toContain('Alert pushed at 23:50, recovery at Fri 00:10');
+});
+
+test('a recovery on the same local day as its alert shows only the time', async () => {
+  const pushed = Date.UTC(2026, 10, 12, 22, 30);
+  const html = await renderAlert(alertRecovering(pushed, pushed + 20 * MIN));
+  expect(html).toContain('Alert pushed at 22:30, recovery at 22:50');
+});
+
+test.each([
+  [6, 'Wed 23:50'],
+  [7, 'Thu 19 Nov 23:50'],
+  [10, 'Sun 22 Nov 23:50'],
+])('a recovery %d days after its alert names its day as %s', async (days, text) => {
+  const pushed = Date.UTC(2026, 10, 12, 23, 50);
+  const html = await renderAlert(alertRecovering(pushed, pushed + days * 24 * 60 * MIN));
+  expect(html).toContain(`recovery at ${text}`);
+});
