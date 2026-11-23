@@ -10,6 +10,55 @@ From the release after v0.10.1, sections group entries as Breaking Changes, Feat
 
 This file holds released sections only. Pending entries live in [`.changes/`](.changes/README.md) until a release cut compiles them ([Releasing](docs/releasing.md)).
 
+## v0.17.0 - 2026-11-23
+
+### Breaking Changes
+
+- **A mistyped configuration key stops the binary** (HMD-298). A key that `hub.toml`, `collector.toml`, or `dashboard.toml` does not declare, a value its schema rejects, or a file that is not valid TOML now stops the Hub, Collector, or dashboard with exit code 2 and a message that names the key or the line, in every command, instead of running on the default or, for an unparseable file, with a warning and no file. A value only an option refuses, such as `port = "eighty"`, stops every command that takes that option. A Service whose file holds one does not start until the file is corrected, and `service status` exits 2 instead of 0, so Fleet stops on that System with the key named.
+
+### Migration
+
+**Affected surface.** A `hub.toml`, `collector.toml`, or `dashboard.toml` that holds a key the binary does not declare, such as a misspelling or a key from an older release, a value of the wrong type or one an option refuses, or a file that is not valid TOML. A binary also exits 2 on a key a newer Heimdall adds, so a provisioner must not render a new key before the binary that declares it is installed.
+
+**Why.** A mistyped setting used to be dropped silently, so the binary ran on a default the operator never chose.
+
+**Before and after.**
+
+```text
+heimdall-collector service status    # before: exit 0, state_dir ignored
+heimdall-collector: Unknown key state_dir in .config/heimdall/collector.toml. Check its spelling, or remove it.
+                                     # after: exit 2
+```
+
+**Steps.**
+
+1. After updating, run `service status` for each binary on each System, from the home directory, where each Service runs. Run from a project, the lookup can find a `.config/heimdall/` file there first and check that file instead.
+2. Where it exits 2, correct or remove the key it names, or fix the TOML at the line it names, in the provisioner's template when a provisioner renders the file, then render the file onto the System.
+3. Restart each Service, whether or not its file changed: the install scripts replace a binary without restarting its Service, so the old binary keeps running until then.
+
+**Validation.** `service status` exits 0 for each binary, and each Service starts. `status` checks the file's keys and the settings it reads itself, but not what only `serve` or `run` checks: a key or value inside the Hub's `[conditions]` or `[delivery]` section or the Collector's `[sessions]` or `[updates]` section, or a value such as `[prices] source`. A Service that does not start names its reason in its log.
+
+### Features
+
+- **`-v` names the configuration file the binary read** (HMD-297). At `-v`, each start now writes `› Read configuration from <file>.` to the Service log, so the log shows which `hub.toml`, `collector.toml`, or `dashboard.toml` a Service used.
+- **Heimdall runs on Loom 0.20** (HMD-297). The binaries read the same TOML and JSON files as before. A run that reads a YAML file named by `--config` now fails with code 2, where 0.18 read it. Words after a bare `--` now fill a command's arguments, so `heimdall-collector forget application -- demo` forgets `demo`; they used to be dropped, and a word with no argument left to fill now fails with code 2.
+
+### Fixes
+
+- **Activity lines say what each change was when it happened** (HMD-295). An earlier change to a Condition that is still open no longer reads as open, so a note raised before the Condition rose to alert stops looking like an open note; only the Condition's latest change carries the open marker. A line that merges several changes now shows, and sorts by, the time of the change its sentence leads with, instead of the newest change it holds.
+
+- **The Hub drops a job run that finishes more than 5 minutes past its clock** (HMD-291). A run whose `finished` time was far in the future, such as year 9999, used to be stored in the run history as sent, with a vast duration. The Hub now drops it from the run history on arrival, as it already did a run that starts that far ahead. The latest run Jobs shows for a job is not bounded yet.
+
+- **The Agents page counts a Session that ran up to midnight as running** (HMD-290). In the 5 minutes after local midnight, a Session whose last request came just before midnight was missing from Running on the Today range, because it belonged to yesterday's period. Running now reads Sessions by their last request, as Home does, so it no longer depends on the range.
+
+- **An alert's recovery on a later day now names the day** (HMD-292). An Activity line for an alert pushed late in the evening and recovered after midnight read "recovery at 00:10", as if it were the same day. The recovery now carries its weekday, as in "recovery at Fri 00:10", and its date too when it is a week or more later, as in "recovery at Thu 19 Nov 23:55". This holds for the alert's own line and for an alert merged into another change's line; a recovery on the alert's own day still shows only the time.
+
+- **Activity's time axis no longer pushes the page down when it appears on a phone** (HMD-294). The room held for the axis while the page loads counted the legend as one line, so on a phone, where the legend wraps onto several, the page grew by about 68 px when the axis replaced it. The held room now ends in the legend itself, which wraps as the axis's does at any width.
+
+- **The Pending update page names packages as Maintenance does** (HMD-293). Before, a package row on a Condition page showed the manager's full identity, so an APT package on the System's own architecture read `libfoo:amd64` and a Homebrew formula read `formula:git`. Now the row shows the short name, `libfoo` or `git`, with the full identity as its tooltip and a `cask` mark on casks, as Maintenance does.
+
+- **A System or Service purge no longer stalls on a large history of Conditions and Harness processes** (HMD-296). When PostgreSQL's statistics counted almost none of those rows, as an `ANALYZE` during a bulk insert leaves them, the purge's history deletes could run for minutes or hit the statement timeout and delete nothing. A System purge now refreshes the statistics on its Conditions and Harness processes, and a Service purge on its Conditions, before it deletes from them.
+
 ## v0.16.0 - 2026-11-20
 
 ### Features
