@@ -112,7 +112,10 @@ function PackageTable({ packages }: { packages: NonNullable<ConditionDetailView[
           <tbody>
             {packages.map((item) => (
               <tr className="border-b align-top" key={item.name}>
-                <td className="py-1 pr-2 wrap-anywhere">{item.name}</td>
+                <td className="py-1 pr-2 wrap-anywhere" title={item.name}>
+                  {item.label}
+                  {item.cask && <span className="ml-1.5 text-xs text-muted-foreground">cask</span>}
+                </td>
                 <td className="py-1 pr-2 wrap-anywhere">{item.versions}</td>
                 <td className="py-1 pr-2">{item.security}</td>
                 <td className="py-1 pr-2">{item.pending ?? ''}</td>

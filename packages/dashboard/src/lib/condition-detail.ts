@@ -8,6 +8,7 @@ import type { ConditionLevel, ConditionLimitSet, ConditionTransition } from '@he
 import type {
   ConditionDetail,
   ConditionSeries,
+  LabelledPackage,
   PendingPackage,
 } from '../server/condition-detail-types.ts';
 import type { VitalsWindow } from '../server/vitals-window-types.ts';
@@ -64,6 +65,10 @@ export type HistoryRow = {
 
 // One package of a pending_update Condition's source.
 export type PackageRow = {
+  // Whether the package is a Homebrew cask.
+  cask: boolean;
+  // The short name shown; `name` is the manager's full identity, for a title.
+  label: string;
   name: string;
   // How long a security update has waited since the Hub confirmed it.
   pending: string | undefined;
@@ -446,7 +451,9 @@ const securityWord = (item: PendingPackage) => {
   return item.security === null ? 'unknown' : 'no';
 };
 
-const packageRow = (item: PendingPackage, now: number): PackageRow => ({
+const packageRow = (item: LabelledPackage, now: number): PackageRow => ({
+  cask: item.cask,
+  label: item.label,
   name: item.name,
   pending: item.securitySince === null ? undefined : formatSpan(now - item.securitySince),
   security: securityWord(item),

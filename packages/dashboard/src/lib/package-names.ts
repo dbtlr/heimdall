@@ -46,6 +46,15 @@ export const dpkgArchitecture = (collectorArch: string | null | undefined): stri
     ? undefined
     : DPKG_ARCHITECTURES[collectorArch];
 
+// The System's own dpkg architecture. The installed census decides when there
+// is one; without it, the architecture the Collector reports. With neither,
+// undefined, and no suffix is hidden.
+export const systemArchitecture = (
+  census: readonly string[],
+  collectorArch: string | null | undefined,
+): string | undefined =>
+  census.length > 0 ? ownArchitecture(census) : dpkgArchitecture(collectorArch);
+
 // The short name of a package from `manager`, and whether it is a Homebrew
 // cask. Homebrew drops its kind prefix; APT drops the architecture when it is
 // the System's own or `all`; any other manager's name reads as it is. The

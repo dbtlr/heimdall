@@ -496,12 +496,49 @@ describe('a package source with pending updates', () => {
     expect(detail?.packages).toEqual([
       {
         available: '3.0',
+        cask: false,
         installed: null,
+        label: 'openssl',
         name: 'openssl',
         security: true,
         securitySince: NOW - 2 * DAY * 1000,
       },
-      { available: '2.0', installed: '1.0', name: 'wget', security: false, securitySince: null },
+      {
+        available: '2.0',
+        cask: false,
+        installed: '1.0',
+        label: 'wget',
+        name: 'wget',
+        security: false,
+        securitySince: null,
+      },
+    ]);
+  });
+
+  test("labels each package as Maintenance does: the System's own architecture and `all` drop their suffix", async () => {
+    await using h = await startHub();
+    await hear(h, 'server-1');
+    // The Hub's fixture Collector reports arm64, so that is the System's own.
+    await Promise.all(
+      ['libfoo:arm64', 'libbar:i386', 'tzdata:all', 'wget'].map((name) =>
+        addPackage(h, { available: '2', installed: '1', name, security: false }),
+      ),
+    );
+    const id = await addCondition(h.db.sql, {
+      kind: 'pending_update',
+      level: 'note',
+      raisedAt: -HOUR,
+      subject: source,
+      system: 'server-1',
+    });
+
+    const detail = await read(h, { id, name: 'server-1' });
+
+    expect(detail?.packages?.map(({ label, name }) => [name, label])).toEqual([
+      ['libbar:i386', 'libbar:i386'],
+      ['libfoo:arm64', 'libfoo'],
+      ['tzdata:all', 'tzdata'],
+      ['wget', 'wget'],
     ]);
   });
 
@@ -553,8 +590,24 @@ describe('a package source with pending updates', () => {
     const detail = await read(h, { id, name: 'server-1' });
 
     expect(detail?.packages).toEqual([
-      { available: null, installed: null, name: 'curl', security: null, securitySince: null },
-      { available: '2.0', installed: '1.0', name: 'wget', security: false, securitySince: null },
+      {
+        available: null,
+        cask: false,
+        installed: null,
+        label: 'curl',
+        name: 'curl',
+        security: null,
+        securitySince: null,
+      },
+      {
+        available: '2.0',
+        cask: false,
+        installed: '1.0',
+        label: 'wget',
+        name: 'wget',
+        security: false,
+        securitySince: null,
+      },
     ]);
   });
 

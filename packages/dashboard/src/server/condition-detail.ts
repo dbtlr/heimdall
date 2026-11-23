@@ -2,16 +2,21 @@ import { ConditionLevelSchema, parseProcessSubject, parseUpdateSubject } from '@
 import type { ConditionKind } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
+import { packageLabel, systemArchitecture } from '../lib/package-names.ts';
 import { aroundSpan } from '../lib/vitals-window.ts';
 import { readAttention } from './attention.ts';
-import type { ConditionDetail, ConditionSeries, PendingPackage } from './condition-detail-types.ts';
+import type {
+  ConditionDetail,
+  ConditionSeries,
+  LabelledPackage,
+} from './condition-detail-types.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
 import { readDiskTrends } from './disk-trends.ts';
 import { bucketStart } from './fleet-overview.ts';
 import { conditionKind, field } from './hub-rows.ts';
 import { readMemoryHoldersAsOf } from './memory-holders.ts';
-import { pendingPackageOf } from './update-observations.ts';
+import { parseUpdateObservations, pendingPackageOf } from './update-observations.ts';
 import { readPlatform, readVitalsWindow } from './vitals-window.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -170,17 +175,39 @@ const SERIES_READERS: Partial<
 const readPackages = async (
   sql: SQL,
   { subject, system }: { subject: string; system: string },
-): Promise<PendingPackage[]> => {
+): Promise<LabelledPackage[]> => {
   const source = parseUpdateSubject(subject);
   if (source === undefined) {
     return [];
   }
-  const rows: { name: string; pending_update: unknown; security_since: Date | null }[] = await sql`
-    SELECT name, pending_update, security_since FROM update_subjects
-    WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
-    ORDER BY security_since IS NULL, name
-  `;
-  return rows.map(pendingPackageOf);
+  const [rows, own]: [
+    { name: string; pending_update: unknown; security_since: Date | null }[],
+    string | undefined,
+  ] = await Promise.all([
+    sql`
+      SELECT name, pending_update, security_since FROM update_subjects
+      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+      ORDER BY security_since IS NULL, name
+    `,
+    readOwnArchitecture(sql, system),
+  ]);
+  return rows.map((row) =>
+    Object.assign(pendingPackageOf(row), packageLabel(row.name, source.manager, own)),
+  );
+};
+
+// The System's own dpkg architecture, decided as Maintenance does: by the
+// installed census of its APT sources, else by what its Collector reports.
+const readOwnArchitecture = async (sql: SQL, system: string): Promise<string | undefined> => {
+  const [sources, [row]]: [{ observation: unknown }[], { collector_arch: string | null }[]] =
+    await Promise.all([
+      sql`SELECT observation FROM update_managers WHERE system = ${system} AND NOT withdrawn`,
+      sql`SELECT collector_arch FROM systems WHERE name = ${system}`,
+    ]);
+  const census = parseUpdateObservations(sources.map(({ observation }) => observation)).flatMap(
+    (observation) => (observation.manager === 'apt' ? (observation.installed?.names ?? []) : []),
+  );
+  return systemArchitecture(census, row?.collector_arch);
 };
 
 // The open occurrence's attention item, the way the System page builds it.

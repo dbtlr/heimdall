@@ -12,7 +12,7 @@ import type { UpdateManager } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { orderMaintenance, withoutServicePackages } from '../lib/maintenance.ts';
-import { dpkgArchitecture, ownArchitecture, packageLabel } from '../lib/package-names.ts';
+import { packageLabel, systemArchitecture } from '../lib/package-names.ts';
 import { inSnapshot } from './fleet-overview.ts';
 import { bySystem } from './hub-rows.ts';
 import type {
@@ -144,13 +144,10 @@ const readMaintenanceSnapshot = async (sql: SQL, now: number): Promise<Maintenan
       systems.map((row): MaintenanceSystem => {
         const checked = (sourcesOf.get(row.system) ?? []).map(sourceOf);
         const heldRows = packagesOf.get(row.system) ?? [];
-        // The installed census decides when there is one; without it, the
-        // architecture the Collector reports. With neither, no suffix is hidden.
         const census = checked.flatMap(({ observation }) =>
           observation?.manager === 'apt' ? (observation.installed?.names ?? []) : [],
         );
-        const own =
-          census.length > 0 ? ownArchitecture(census) : dpkgArchitecture(row.collector_arch);
+        const own = systemArchitecture(census, row.collector_arch);
         const held = heldRows.map((pkg) => toPackage(pkg, own));
         return withoutServicePackages({
           check: systemCheck(checked, now),
