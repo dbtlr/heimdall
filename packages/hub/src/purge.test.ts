@@ -882,6 +882,36 @@ test('purge service leaves the delivery lock free while its statistics refresh w
   expect(code).toBe(0);
 });
 
+test("purge service's statistics refresh waits past the pool's statement timeout", async () => {
+  await using s = await setupServices();
+  // A pool whose statement timeout is shorter than the wait, as the CLI's
+  // 30 s one is shorter than a long System purge.
+  const pool = new SQL({ connection: { statement_timeout: 1000 }, url: s.db.url.href });
+  const vacuum = await s.db.sql.reserve();
+  await vacuum.unsafe('BEGIN');
+  await vacuum.unsafe('LOCK TABLE conditions IN SHARE UPDATE EXCLUSIVE MODE');
+  const purge = async (): Promise<string> => {
+    try {
+      return (await purgeService(pool, { service: 'old-web', system: 'laptop-1' })).kind;
+    } catch (error) {
+      return String(error);
+    }
+  };
+  let purged: Promise<string> | undefined;
+  try {
+    purged = purge();
+    await waitersOnLocks(s.db.sql, 1);
+    await Bun.sleep(2000);
+  } finally {
+    await vacuum.unsafe('ROLLBACK');
+    await vacuum.release();
+  }
+  const kind = await purged;
+  await pool.close();
+
+  expect(kind).toBe('purged');
+});
+
 test('purge service succeeds when only Service stops, a restarted note, or version history is held', async () => {
   await using s = await setupServices();
   await s.db.sql`

@@ -19,6 +19,10 @@ export type Purged =
 // A purge of years of Vitals can outlast the usual statement timeout.
 const PURGE_TIMEOUT = '10min';
 
+// How long a Service purge waits on each of its steps: a delivery pass, or a
+// statistics refresh queued behind another purge or a VACUUM.
+const SERVICE_PURGE_TIMEOUT = '2min';
+
 // What a System's Reports left, children before the rows they reference and
 // the System's row last. Vitals go before Harness process readings, the order
 // the Vitals prune deletes them in, so the two cannot deadlock. Each statement
@@ -202,13 +206,17 @@ export const purgeService = async (
 ): Promise<PurgedService> => {
   // So the delete of Condition transitions, which looks up the Service's
   // Conditions by subselect, is planned on what the table holds now (HMD-296).
-  // It runs before the purge's transaction, so a refresh that waits behind
-  // another purge or a VACUUM never holds the delivery lock and stalls alerts.
-  await refreshStatistics(sql, ['conditions']);
+  // It runs in its own transaction before the purge's, so a refresh that waits
+  // behind another purge or a VACUUM never holds the delivery lock and stalls
+  // alerts, and it waits as long as the purge would, not the pool's timeout.
+  await sql.begin(async (tx) => {
+    await tx.unsafe(`SET LOCAL statement_timeout = '${SERVICE_PURGE_TIMEOUT}'`);
+    await refreshStatistics(tx, ['conditions']);
+  });
   return sql.begin(async (tx) => {
     // A pass can outlast the pool's statement timeout. Its lock comes before
     // the System's row, which a pass's delivery insert waits on.
-    await tx.unsafe(`SET LOCAL statement_timeout = '2min'`);
+    await tx.unsafe(`SET LOCAL statement_timeout = '${SERVICE_PURGE_TIMEOUT}'`);
     await tx`SELECT pg_advisory_xact_lock(hashtext(${DELIVERY_LOCK}))`;
     const held: unknown[] = await tx`SELECT 1 FROM systems WHERE name = ${system} FOR UPDATE`;
     if (held.length === 0) {
