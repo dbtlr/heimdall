@@ -188,19 +188,24 @@ const SERVICE_HISTORY = [
 ] as const;
 
 // Deletes the stops, installed versions, and Service Conditions held for
-// `service` on `system`, with their Timeline and deliveries, under the System's
-// row lock, so it orders with Reports and Service evaluations (ADR-0005).
-// It refuses while the Hub mirrors a record of the Service; an unreadable
-// service record does not hold it back, since the operator names a Service
-// they know is gone. An open Service down goes too, and its delivery with it,
-// so no recovered message follows. It waits out a delivery pass in progress,
-// as a silence does, so the pass cannot record a delivery for a Condition it
-// deletes, which nothing would close.
-export const purgeService = (
+// `service` on `system`, with their transitions and deliveries, under the
+// System's row lock, so it orders with Reports and Service evaluations
+// (ADR-0005). It refuses while the Hub mirrors a record of the Service; an
+// unreadable service record does not hold it back, since the operator names a
+// Service they know is gone. An open Service down goes too, and its delivery
+// with it, so no recovered message follows. It waits out a delivery pass in
+// progress, as a silence does, so the pass cannot record a delivery for a
+// Condition it deletes, which nothing would close.
+export const purgeService = async (
   sql: SQL,
   { service, system }: { service: string; system: string },
-): Promise<PurgedService> =>
-  sql.begin(async (tx) => {
+): Promise<PurgedService> => {
+  // So the delete of Condition transitions, which looks up the Service's
+  // Conditions by subselect, is planned on what the table holds now (HMD-296).
+  // It runs before the purge's transaction, so a refresh that waits behind
+  // another purge or a VACUUM never holds the delivery lock and stalls alerts.
+  await refreshStatistics(sql, ['conditions']);
+  return sql.begin(async (tx) => {
     // A pass can outlast the pool's statement timeout. Its lock comes before
     // the System's row, which a pass's delivery insert waits on.
     await tx.unsafe(`SET LOCAL statement_timeout = '2min'`);
@@ -216,9 +221,7 @@ export const purgeService = (
     if (recorded.length > 0) {
       return { kind: 'recorded' };
     }
-    // So the delete of Condition transitions, which looks up the Service's
-    // Conditions by subselect, is planned on what the table holds now (HMD-296).
-    await refreshStatistics(tx, ['conditions']);
     const deleted = await deleteAll(tx, SERVICE_HISTORY, [system, service]);
     return { kind: deleted === 0 ? 'nothing' : 'purged' };
   });
+};

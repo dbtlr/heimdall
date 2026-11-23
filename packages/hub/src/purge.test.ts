@@ -853,6 +853,29 @@ test('purge service waits out a delivery pass in progress, so that pass cannot r
   expect(code).toBe(0);
 });
 
+test('purge service leaves the delivery lock free while its statistics refresh waits', async () => {
+  await using s = await setupServices();
+  // Stands in for a System purge or a VACUUM holding the lock ANALYZE needs.
+  const vacuum = await s.db.sql.reserve();
+  await vacuum.unsafe('BEGIN');
+  await vacuum.unsafe('LOCK TABLE conditions IN SHARE UPDATE EXCLUSIVE MODE');
+
+  const purged = invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
+  await waitersOnLocks(s.db.sql, 1);
+  const pass = await s.db.sql.reserve();
+  const [row]: { locked: boolean }[] = await pass`
+    SELECT pg_try_advisory_lock(hashtext(${DELIVERY_LOCK})) AS locked
+  `;
+  await pass`SELECT pg_advisory_unlock_all()`;
+  await pass.release();
+  await vacuum.unsafe('COMMIT');
+  await vacuum.release();
+  const { code } = await purged;
+
+  expect(row?.locked).toBe(true);
+  expect(code).toBe(0);
+});
+
 test('purge service succeeds when only Service stops, a restarted note, or version history is held', async () => {
   await using s = await setupServices();
   await s.db.sql`
