@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { groupByDay } from '../lib/activity-days.ts';
 import { lineWords } from '../lib/activity.ts';
 import type { ActivityLine } from '../lib/activity.ts';
-import { clockAt, joinPhrases, phraseText } from '../lib/phrase.ts';
+import { clockAt, joinPhrases, phraseText, whenAt } from '../lib/phrase.ts';
 import { formatClock } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
@@ -119,7 +119,8 @@ function Line({
               clockAt(words.alert.at),
               ...(words.alert.recoveredAt === undefined
                 ? []
-                : [', recovery at ', clockAt(words.alert.recoveredAt)]),
+                : // Dated against the alert, so a recovery on a later day names its day.
+                  [', recovery at ', whenAt(words.alert.recoveredAt, words.alert.at)]),
             ],
       ],
       ' · ',
