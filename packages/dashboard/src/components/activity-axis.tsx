@@ -21,7 +21,8 @@ import { TIME_AXIS_HEIGHT, TimeAxis } from './time-axis.tsx';
 
 // The sizes of the axis's parts, in pixels. Each element takes its size from
 // these, and the placeholder that holds the axis's room until the time zone is
-// known adds them up, so the page does not shift when the zone arrives.
+// known adds them up above the legend, so the page does not shift when the zone
+// arrives.
 // A lane, top to bottom: its border, padding, marks strip, plot, and stretches
 // strip, then padding. Every lane but the first of its group has the border.
 const LANE_BORDER = 1;
@@ -56,17 +57,16 @@ const groupHeight = (count: number, phone: boolean): number =>
           (phone ? LANE_LABEL_LINE + LANE_LABEL_GAP : 0)) +
       (count - 1) * LANE_BORDER;
 
-// The height of the axis over `lanes`, on a phone when `phone`: the paired
-// lanes, the divider and the unpaired lanes when there are any, the time axis,
-// and one line of the legend. A legend that wraps to more lines is taller.
-const axisHeight = (lanes: readonly AxisLane[], phone: boolean): number => {
+// The height of the axis over `lanes` above its legend, on a phone when
+// `phone`: the paired lanes, the divider and the unpaired lanes when there are
+// any, and the time axis. The legend wraps to as many lines as the width takes,
+// so the placeholder shows the legend itself rather than adding up its lines.
+const heightAboveLegend = (lanes: readonly AxisLane[], phone: boolean): number => {
   const unpaired = lanes.filter((lane) => lane.unpaired).length;
   return (
     groupHeight(lanes.length - unpaired, phone) +
     (unpaired === 0 ? 0 : DIVIDER_MARGIN + NOTE_LINE + groupHeight(unpaired, phone)) +
-    TIME_AXIS_HEIGHT +
-    LEGEND_PADDING +
-    NOTE_LINE
+    TIME_AXIS_HEIGHT
   );
 };
 
@@ -442,14 +442,15 @@ export function ActivityAxisBody({
 
 // A lane for each System on one time axis over the range that ends now: CPU
 // busy, the Sessions running, and a mark for each change. A pinned moment is
-// the line across every lane. Until the zone is known it holds the axis's room,
-// all but the legend's lines past the first.
+// the line across every lane. Until the zone is known it holds the axis's room
+// above the legend and shows the legend, which needs no zone.
 export function ActivityAxis(props: AxisProps) {
   const timeZone = useTimeZone();
   return timeZone === undefined ? (
     <>
-      <div className="max-sm:hidden" style={{ height: axisHeight(props.lanes, false) }} />
-      <div className="sm:hidden" style={{ height: axisHeight(props.lanes, true) }} />
+      <div className="max-sm:hidden" style={{ height: heightAboveLegend(props.lanes, false) }} />
+      <div className="sm:hidden" style={{ height: heightAboveLegend(props.lanes, true) }} />
+      <AxisLegend />
     </>
   ) : (
     <ActivityAxisBody {...props} timeZone={timeZone} />

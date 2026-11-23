@@ -137,11 +137,11 @@ const px = (style: Record<string, number>, name: string): number => {
   return value ?? Number.NaN;
 };
 
-// The height the rendered axis takes on a phone and from sm up, added up from
-// the sizes its own markup gives each part: every lane's border, padding,
-// marks strip, plot, and stretches strip, the phone's stacked label and the
-// gap under it, the divider when it shows, the time axis, and the legend's first line.
-const renderedHeight = (html: string) => {
+// The height the rendered axis takes above its legend on a phone and from sm
+// up, added up from the sizes its own markup gives each part: every lane's
+// border, padding, marks strip, plot, and stretches strip, the phone's stacked
+// label and the gap under it, the divider when it shows, and the time axis.
+const heightAboveLegend = (html: string) => {
   const lanes = stylesOf(html, 'data-lane="true"');
   const marks = stylesOf(html, 'data-marks-strip="true"');
   const plots = stylesOf(html, 'class="relative w-full"');
@@ -170,17 +170,19 @@ const renderedHeight = (html: string) => {
   );
   const axis = one(html, 'data-time-axis="true"');
   const ticks = one(html, 'data-time-axis-ticks="true"');
-  const legend = one(html, 'data-axis-legend="true"');
-  const below =
-    px(axis, 'padding-top') +
-    px(ticks, 'height') +
-    px(legend, 'padding-top') +
-    px(legend, 'line-height');
+  const below = px(axis, 'padding-top') + px(ticks, 'height');
   return { phone: wide + phoneLabels + dividers + below, wide: wide + dividers + below };
 };
 
-const placeholderHeight = async (lanes: readonly AxisLane[]) => {
-  const html = await renderRouted(
+// The legend's markup: the one legend `html` holds.
+const legendOf = (html: string): string => {
+  const found = html.match(/<p [^>]*data-axis-legend="true"[^>]*>.*?<\/p>/gu) ?? [];
+  expect(found).toHaveLength(1);
+  return found[0] ?? '';
+};
+
+const renderPlaceholder = (lanes: readonly AxisLane[]) =>
+  renderRouted(
     <ActivityAxis
       bucketMs={10 * 60_000}
       lanes={lanes}
@@ -191,6 +193,10 @@ const placeholderHeight = async (lanes: readonly AxisLane[]) => {
     />,
     { path: '/activity', routePaths: ['/activity', '/systems/$name'] },
   );
+
+// The room the placeholder holds above its legend, on a phone and from sm up.
+const placeholderHeight = async (lanes: readonly AxisLane[]) => {
+  const html = await renderPlaceholder(lanes);
   return {
     phone: px(one(html, 'class="sm:hidden"'), 'height'),
     wide: px(one(html, 'class="max-sm:hidden"'), 'height'),
@@ -208,11 +214,23 @@ describe('the placeholder before the time zone is known', () => {
     ['no lanes', []],
   ];
   for (const [what, lanes] of cases) {
-    test(`holds the room the axis takes with ${what}, on a phone and from sm up`, async () => {
-      const rendered = renderedHeight(await renderAxis(lanes));
+    test(`holds the room the axis takes above its legend with ${what}, on a phone and from sm up`, async () => {
+      const rendered = heightAboveLegend(await renderAxis(lanes));
       expect(await placeholderHeight(lanes)).toEqual(rendered);
     });
   }
+
+  // A phone wraps the legend onto several lines; the placeholder's own copy
+  // wraps the same way at any width, so the page does not grow when the axis
+  // replaces it.
+  test("ends in the axis's own legend, so it wraps as the axis's does", async () => {
+    const lanes = [lane('server-1', false), lane('old-1', true)];
+    const placeholder = await renderPlaceholder(lanes);
+    expect(legendOf(placeholder)).toBe(legendOf(await renderAxis(lanes)));
+    expect(placeholder.indexOf('data-axis-legend')).toBeGreaterThan(
+      placeholder.indexOf('class="sm:hidden"'),
+    );
+  });
 
   test('a lane has a border only below another lane of its group', async () => {
     const html = await renderAxis([

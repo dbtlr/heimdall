@@ -1,0 +1,1 @@
+- **Activity's time axis no longer pushes the page down when it appears on a phone** (HMD-294). The room held for the axis while the page loads counted the legend as one line, so on a phone, where the legend wraps onto several, the page grew by about 68 px when the axis replaced it. The held room now ends in the legend itself, which wraps as the axis's does at any width.
