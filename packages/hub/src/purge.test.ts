@@ -861,15 +861,21 @@ test('purge service leaves the delivery lock free while its statistics refresh w
   await vacuum.unsafe('LOCK TABLE conditions IN SHARE UPDATE EXCLUSIVE MODE');
 
   const purged = invoke(['purge', 'service', 'laptop-1', 'old-web', ...s.args]);
-  await waitersOnLocks(s.db.sql, 1);
-  const pass = await s.db.sql.reserve();
-  const [row]: { locked: boolean }[] = await pass`
-    SELECT pg_try_advisory_lock(hashtext(${DELIVERY_LOCK})) AS locked
-  `;
-  await pass`SELECT pg_advisory_unlock_all()`;
-  await pass.release();
-  await vacuum.unsafe('COMMIT');
-  await vacuum.release();
+  let row: { locked: boolean } | undefined;
+  try {
+    await waitersOnLocks(s.db.sql, 1);
+    const pass = await s.db.sql.reserve();
+    try {
+      [row] = await pass`SELECT pg_try_advisory_lock(hashtext(${DELIVERY_LOCK})) AS locked`;
+    } finally {
+      await pass`SELECT pg_advisory_unlock_all()`;
+      await pass.release();
+    }
+  } finally {
+    // Released whatever happened, so the purge finishes and the database drops.
+    await vacuum.unsafe('ROLLBACK');
+    await vacuum.release();
+  }
   const { code } = await purged;
 
   expect(row?.locked).toBe(true);
