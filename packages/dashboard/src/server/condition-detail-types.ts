@@ -33,6 +33,10 @@ export type PendingPackage = {
   securitySince: number | null;
 };
 
+// A pending package with the short name people know it by, as Maintenance shows
+// it, and whether it is a Homebrew cask.
+export type LabelledPackage = PendingPackage & { cask: boolean; label: string };
+
 export type ConditionDetail = {
   // The open item's evidence and next steps, as the System page builds them;
   // undefined once the occurrence has cleared.
@@ -61,7 +65,7 @@ export type ConditionDetail = {
   memoryHolders: MemoryHolders | undefined;
   // The packages an open pending_update Condition's source has pending, security
   // updates first; undefined for any other Condition and once cleared.
-  packages: PendingPackage[] | undefined;
+  packages: LabelledPackage[] | undefined;
   // The System Collector's platform, such as linux or darwin; undefined
   // before a Collector reports one. It says how the Hub judges memory.
   platform: string | undefined;
