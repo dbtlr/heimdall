@@ -4,7 +4,7 @@ import { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
 import { issueCode } from './pairing.ts';
-import { purgeSystem } from './purge.ts';
+import { purgeService, purgeSystem } from './purge.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { configArgs, hubConfig, invoke } from './testing/cli.ts';
 import { waitersOnLocks } from './testing/lock-waiters.ts';
@@ -481,6 +481,63 @@ test('purge system removes many Harness processes and Conditions in seconds when
   expect(purged.kind).toBe('purged');
   expect(performance.now() - started).toBeLessThan(20_000);
 }, 120_000);
+
+// A Service purge looks up the Service's Conditions by subselect the same way.
+test('purge service removes many Conditions in seconds when statistics count almost none of them', async () => {
+  await using db = await migratedDatabase({ fresh: true });
+  const many = 60_000;
+  for (const table of ['conditions', 'condition_transitions', 'deliveries', 'service_stops']) {
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time.
+    await db.sql.unsafe(`ALTER TABLE ${table} SET (autovacuum_enabled = false)`);
+  }
+  await db.sql`INSERT INTO systems (name, last_seen_at) VALUES ('laptop-1', ${AT}), ('server-1', ${AT})`;
+  const analyzer = new SQL(db.url.href, { max: 1 });
+  try {
+    await db.sql.begin(async (tx) => {
+      // Cleared Conditions spread over both Systems, both kinds, and two subjects.
+      await tx`
+        INSERT INTO conditions (
+          id, system, kind, subject, raised_at, raised_reason, latest_at, latest_reason, level, cleared_at
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT n,
+               CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               CASE WHEN n / 2 % 2 = 0 THEN 'service_down' ELSE 'service_restarted' END,
+               CASE WHEN n / 4 % 2 = 0 THEN 'svc' ELSE 'other' END,
+               ${AT}, 'down', ${AT}, 'down', 'alert', ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO condition_transitions (condition, action, level, at, reason)
+        SELECT n, action, 'alert', ${AT}, 'down'
+        FROM generate_series(1, ${many}::int) AS n, unnest(ARRAY['raised', 'cleared']) AS action
+      `;
+      await tx`
+        INSERT INTO deliveries (system, kind, subject, alert_since, pushed_at, closed_at)
+        SELECT CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               'service_down', 'subject-' || n, ${AT}, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await tx`
+        INSERT INTO service_stops (
+          system, service, stopped_at, started_at, ongoing, restarts, sent_at, received_at
+        )
+        SELECT CASE WHEN n % 2 = 0 THEN 'laptop-1' ELSE 'server-1' END,
+               'service-' || n, ${AT}, ${AT}, false, 0, ${AT}, ${AT}
+        FROM generate_series(1, ${many}::int) AS n
+      `;
+      await analyzer`ANALYZE`;
+    });
+  } finally {
+    await analyzer.close();
+  }
+
+  const started = performance.now();
+  const purged = await purgeService(db.sql, { service: 'svc', system: 'laptop-1' });
+
+  expect(purged.kind).toBe('purged');
+  expect(performance.now() - started).toBeLessThan(20_000);
+}, 150_000);
 
 test('purge system refuses a paired System, deletes nothing, and exits 1', async () => {
   await using s = await setup();
