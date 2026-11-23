@@ -216,8 +216,8 @@ export const purgeService = (
     if (recorded.length > 0) {
       return { kind: 'recorded' };
     }
-    // So the Timeline delete that looks up the Service's Conditions by subselect
-    // is planned on what the table holds now (HMD-296).
+    // So the delete of Condition transitions, which looks up the Service's
+    // Conditions by subselect, is planned on what the table holds now (HMD-296).
     await refreshStatistics(tx, ['conditions']);
     const deleted = await deleteAll(tx, SERVICE_HISTORY, [system, service]);
     return { kind: deleted === 0 ? 'nothing' : 'purged' };
