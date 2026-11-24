@@ -2510,6 +2510,22 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 48,
   },
+  {
+    // Orders price fetches by when they started, with no clock: each fetch
+    // takes the sequence's next number before it waits on the network, and the
+    // table keeps the number of the latest fetch whose list was applied. A
+    // fetch with a lower number that applies later is skipped instead of
+    // replacing a newer list (ADR-0024). One row, once a fetch has applied. A
+    // write marks no totals stale: it changes no price.
+    sql: `
+      CREATE SEQUENCE fetched_price_fetches;
+      CREATE TABLE fetched_price_applies (
+        only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
+        last_fetch bigint NOT NULL
+      );
+    `,
+    version: 49,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

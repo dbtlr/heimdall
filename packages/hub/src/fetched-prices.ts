@@ -211,16 +211,44 @@ const inForceOf = (row: InForceRow): InForce => ({
   rank: row.rank,
 });
 
+// Where a fetch falls in the order fetches started: the next number of a
+// database sequence `serve` and `prices update` share, taken as text since it
+// is a bigint. It needs no clock, so a clock that steps leaves the order right.
+export type FetchStart = { number: string };
+
+export const startFetch = async (sql: SQL): Promise<FetchStart> => {
+  const [row]: { number: string }[] =
+    await sql`SELECT nextval('fetched_price_fetches')::text AS number`;
+  if (row === undefined) {
+    throw new Error('The fetched price sequence gave no number.');
+  }
+  return { number: row.number };
+};
+
 // Adds the entries `models`, read from the price list, call for, in one
 // transaction that holds the lock migrations and price loads take, and says
 // what it added and which models it skipped as likely unit errors. "Today" is
 // the UTC day on the database's clock once the lock is held, so a fetch that
 // waited for the lock past midnight dates its entries the day it reads the
-// prices in force, not the day it started. It writes nothing when it adds
-// nothing, so a fetch that changes no price marks no totals stale.
-export const applyFetchedPrices = (sql: SQL, models: readonly ListedModel[]) =>
+// prices in force, not the day it started. When it adds nothing it writes no
+// price, so a fetch that changes no price marks no totals stale.
+// `start` is what `startFetch` gave the fetch of `models` before it waited on
+// the network. Under the lock, a fetch that started before the last applied one
+// applies nothing, so overlapping fetches that apply out of order never leave
+// an older list standing over a newer one.
+export const applyFetchedPrices = (sql: SQL, models: readonly ListedModel[], start: FetchStart) =>
   sql.begin(async (tx): Promise<AppliedPrices> => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
+    const [last]: { superseded: boolean }[] = await tx`
+      SELECT last_fetch > ${start.number}::bigint AS superseded FROM fetched_price_applies
+    `;
+    if (last?.superseded === true) {
+      return { added: [], skipped: [] };
+    }
+    await tx`
+      INSERT INTO fetched_price_applies (last_fetch) VALUES (${start.number}::bigint)
+      ON CONFLICT (only_row) DO UPDATE SET last_fetch = EXCLUDED.last_fetch
+    `;
     const [clock]: { today: string }[] =
       await tx`SELECT to_char((clock_timestamp() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS today`;
     const today = clock?.today ?? '';
@@ -302,8 +330,9 @@ export const applyFetchedPrices = (sql: SQL, models: readonly ListedModel[]) =>
   });
 
 // Fetches the list at `source` and adds the entries it calls for. What it
-// skipped includes the models the list gives that do not fit the table.
-// Throws when the fetch fails, having changed nothing.
+// skipped includes the models the list gives that do not fit the table. A
+// fetch that started before one already applied applies nothing: the newer
+// list stands. Throws when the fetch fails, having changed nothing.
 export const updateFetchedPrices = async ({
   fetch,
   signal,
@@ -315,8 +344,10 @@ export const updateFetchedPrices = async ({
   source: URL;
   sql: SQL;
 }): Promise<AppliedPrices> => {
+  // Taken before the network wait, outside the lock, and compared under it.
+  const start = await startFetch(sql);
   const list = await fetchPriceList({ fetch, source, ...(signal === undefined ? {} : { signal }) });
-  const { added, skipped } = await applyFetchedPrices(sql, list.models);
+  const { added, skipped } = await applyFetchedPrices(sql, list.models, start);
   return { added, skipped: [...list.skipped, ...skipped] };
 };
 

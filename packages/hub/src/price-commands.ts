@@ -14,8 +14,10 @@ import { count } from './transcript-commands.ts';
 // `serve` does when it starts, then fetches the price list and adds the
 // entries it calls for (ADR-0024). It prints a line for each model it adds
 // entries for, or that prices are up to date, then how many models it
-// skipped. A failed fetch prints why and exits 1, leaving the loaded prices
-// loaded. With the source off, it only loads.
+// skipped. A fetch that started before one already applied, such as an
+// overlapping `serve` pass's, applies nothing, and prices are up to date. A
+// failed fetch prints why and exits 1, leaving the loaded prices loaded. With
+// the source off, it only loads.
 export const pricesUpdateAction: ActionHandler<typeof pricesUpdate> = async ({
   host,
   options,
