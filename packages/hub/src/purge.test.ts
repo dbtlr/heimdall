@@ -19,6 +19,7 @@ const FLEET_TABLES = new Set([
   'current_parsers',
   'delivery_status',
   'fetched_model_prices',
+  'fetched_price_applies',
   'hub_listening',
   'hub_status',
   'model_prices',

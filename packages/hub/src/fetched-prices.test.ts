@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import type { SQL } from 'bun';
+import { SQL } from 'bun';
 
-import { applyFetchedPrices } from './fetched-prices.ts';
+import { applyFetchedPrices, startFetch, updateFetchedPrices } from './fetched-prices.ts';
 import { MIGRATION_LOCK } from './migrations.ts';
 import type { ListedEntry, ListedModel } from './price-list.ts';
 import { syncPrices } from './price-table.ts';
@@ -60,6 +60,10 @@ const prepared = async (prices: { bundled?: PriceEntry[]; configured?: PriceEntr
   return db;
 };
 
+// Applies `models` as a fetch that starts now and answers at once.
+const appliedNow = async (sql: SQL, models: readonly ListedModel[]) =>
+  applyFetchedPrices(sql, models, await startFetch(sql));
+
 const fetchedRows = async (sql: SQL) => {
   const rows: {
     model: string;
@@ -104,9 +108,7 @@ describe('a model the table has never priced', () => {
       await db.sql`SELECT cost_usd FROM insight.session_totals`;
     expect(before?.cost_usd).toBeNull();
 
-    const applied = await applyFetchedPrices(db.sql, [
-      listed({}, { input: 6, promptOver: 200_000 }),
-    ]);
+    const applied = await appliedNow(db.sql, [listed({}, { input: 6, promptOver: 200_000 })]);
 
     expect(applied).toEqual({
       added: [{ from: '2020-01-01', model: MODEL, tiers: [0, 200_000] }],
@@ -132,7 +134,7 @@ describe('a model the table already prices', () => {
       { at: `${today}T00:00:00Z`, id: 'b-today', input: 1_000_000 },
     ]);
 
-    const applied = await applyFetchedPrices(db.sql, [listed({})]);
+    const applied = await appliedNow(db.sql, [listed({})]);
 
     expect(applied.added).toEqual([{ from: today, model: MODEL, tiers: [0] }]);
     expect(await fetchedRows(db.sql)).toEqual([
@@ -144,7 +146,7 @@ describe('a model the table already prices', () => {
   test('an unchanged list writes nothing and marks no totals', async () => {
     await using db = await prepared({ bundled: [TABLED] });
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ contextWindow: 5 })]);
+    const applied = await appliedNow(db.sql, [listed({ contextWindow: 5 })]);
 
     expect(applied).toEqual({ added: [], skipped: [] });
     expect(await fetchedRows(db.sql)).toEqual([]);
@@ -155,9 +157,7 @@ describe('a model the table already prices', () => {
     const { cacheRead: _absent, ...withoutCacheRead } = LISTED;
     await using db = await prepared({ bundled: [TABLED] });
 
-    const applied = await applyFetchedPrices(db.sql, [
-      { entries: [withoutCacheRead], model: MODEL },
-    ]);
+    const applied = await appliedNow(db.sql, [{ entries: [withoutCacheRead], model: MODEL }]);
 
     expect(applied.added.map((a) => a.model)).toEqual([MODEL]);
   });
@@ -167,10 +167,10 @@ describe('a model the table already prices', () => {
       bundled: [TABLED, { ...TABLED, input: 6, promptOver: 100_000 }],
     });
     const list = [listed({ input: 2 }), listed({ model: 'new-model' })];
-    expect((await applyFetchedPrices(db.sql, list)).added).toHaveLength(2);
+    expect((await appliedNow(db.sql, list)).added).toHaveLength(2);
     await db.sql`DELETE FROM stale_ranges`;
 
-    expect(await applyFetchedPrices(db.sql, list)).toEqual({ added: [], skipped: [] });
+    expect(await appliedNow(db.sql, list)).toEqual({ added: [], skipped: [] });
     expect(await staleMarks(db.sql)).toBe(0);
   });
 
@@ -178,8 +178,8 @@ describe('a model the table already prices', () => {
     await using db = await prepared({ bundled: [{ ...TABLED, input: 4 }] });
     const { today } = await days(db.sql);
 
-    await applyFetchedPrices(db.sql, [listed({ input: 3 })]);
-    await applyFetchedPrices(db.sql, [listed({ input: 2 })]);
+    await appliedNow(db.sql, [listed({ input: 3 })]);
+    await appliedNow(db.sql, [listed({ input: 2 })]);
 
     expect(await fetchedRows(db.sql)).toEqual([
       `test-model ${today} over -1: 2/15/0.3 window 200000`,
@@ -190,7 +190,7 @@ describe('a model the table already prices', () => {
     await using db = await prepared({ bundled: [TABLED] });
     const { today } = await days(db.sql);
 
-    await applyFetchedPrices(db.sql, [listed({}, { input: 6, promptOver: 272_000 })]);
+    await appliedNow(db.sql, [listed({}, { input: 6, promptOver: 272_000 })]);
 
     expect(await fetchedRows(db.sql)).toEqual([
       `test-model ${today} over 272000: 6/15/0.3 window 200000`,
@@ -201,7 +201,7 @@ describe('a model the table already prices', () => {
     await using db = await prepared({ bundled: [TABLED] });
     const { today } = await days(db.sql);
 
-    await applyFetchedPrices(db.sql, [listed({}, { promptOver: 100_000 })]);
+    await appliedNow(db.sql, [listed({}, { promptOver: 100_000 })]);
 
     expect(await fetchedRows(db.sql)).toEqual([
       `test-model ${today} over 100000: 3/15/0.3 window 200000`,
@@ -215,7 +215,7 @@ describe('a model the table already prices', () => {
     await using db = await prepared({ bundled: [{ ...TABLED, cacheWrite1h: 6 }] });
     const { today } = await days(db.sql);
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ cacheWrite1h: 6, ...change })]);
+    const applied = await appliedNow(db.sql, [listed({ cacheWrite1h: 6, ...change })]);
 
     expect(applied.added).toEqual([{ from: today, model: MODEL, tiers: [0] }]);
   });
@@ -224,7 +224,7 @@ describe('a model the table already prices', () => {
     await using db = await prepared({ bundled: [{ ...TABLED, validFrom: '2999-01-01' }] });
     const { today } = await days(db.sql);
 
-    await applyFetchedPrices(db.sql, [listed({})]);
+    await appliedNow(db.sql, [listed({})]);
 
     expect(await fetchedRows(db.sql)).toEqual([
       `test-model ${today} over -1: 3/15/0.3 window 1000000`,
@@ -233,9 +233,9 @@ describe('a model the table already prices', () => {
 
   test('keeps the entries of a model the list drops', async () => {
     await using db = await prepared();
-    await applyFetchedPrices(db.sql, [listed({}), listed({ model: 'other-model' })]);
+    await appliedNow(db.sql, [listed({}), listed({ model: 'other-model' })]);
 
-    await applyFetchedPrices(db.sql, [listed({ model: 'other-model' })]);
+    await appliedNow(db.sql, [listed({ model: 'other-model' })]);
 
     expect(await fetchedRows(db.sql)).toHaveLength(2);
   });
@@ -248,7 +248,7 @@ describe('the entry a tier is compared with is the one the views price it by', (
       configured: [{ ...TABLED, input: 5, validFrom: '2026-01-01' }],
     });
 
-    expect(await applyFetchedPrices(db.sql, [listed({ input: 2 })])).toEqual({
+    expect(await appliedNow(db.sql, [listed({ input: 2 })])).toEqual({
       added: [],
       skipped: [],
     });
@@ -256,21 +256,21 @@ describe('the entry a tier is compared with is the one the views price it by', (
 
   test('an older fetched entry wins over a newer bundled one', async () => {
     await using db = await prepared();
-    await applyFetchedPrices(db.sql, [listed({})]);
+    await appliedNow(db.sql, [listed({})]);
     await syncPrices(db.sql, {
       bundled: [{ ...TABLED, input: 4, validFrom: '2026-06-01' }],
       configured: [],
     });
 
-    expect(await applyFetchedPrices(db.sql, [listed({})])).toEqual({ added: [], skipped: [] });
+    expect(await appliedNow(db.sql, [listed({})])).toEqual({ added: [], skipped: [] });
   });
 
   test('of two fetched entries, the newer wins', async () => {
     await using db = await prepared();
-    await applyFetchedPrices(db.sql, [listed({})]);
-    await applyFetchedPrices(db.sql, [listed({ input: 4 })]);
+    await appliedNow(db.sql, [listed({})]);
+    await appliedNow(db.sql, [listed({ input: 4 })]);
 
-    expect(await applyFetchedPrices(db.sql, [listed({ input: 4 })])).toEqual({
+    expect(await appliedNow(db.sql, [listed({ input: 4 })])).toEqual({
       added: [],
       skipped: [],
     });
@@ -288,7 +288,7 @@ describe('a tier the list no longer gives stops applying from the fetch day', ()
       { at: `${today}T00:00:00Z`, id: 'b-today', input: 200_000 },
     ]);
 
-    const applied = await applyFetchedPrices(db.sql, [listed({})]);
+    const applied = await appliedNow(db.sql, [listed({})]);
 
     expect(applied.added).toEqual([{ from: today, model: MODEL, tiers: [100_000] }]);
     expect(await costs(db.sql)).toEqual({ 'a-yesterday': 1.2, 'b-today': 0.6 });
@@ -304,7 +304,7 @@ describe('a tier the list no longer gives stops applying from the fetch day', ()
       { at: `${today}T00:00:00Z`, id: 'b-over', input: 250_000 },
     ]);
 
-    await applyFetchedPrices(db.sql, [listed({}, { input: 10, promptOver: 200_000 })]);
+    await appliedNow(db.sql, [listed({}, { input: 10, promptOver: 200_000 })]);
 
     expect(await costs(db.sql)).toEqual({ 'a-between': 0.45, 'b-over': 2.5 });
   });
@@ -318,7 +318,7 @@ describe('a configured entry belongs to the operator', () => {
     });
     const { today } = await days(db.sql);
 
-    const applied = await applyFetchedPrices(db.sql, [
+    const applied = await appliedNow(db.sql, [
       listed({ input: 2 }, { input: 7, promptOver: 100_000 }),
     ]);
 
@@ -332,7 +332,7 @@ describe('a configured entry belongs to the operator', () => {
     await using db = await prepared({ configured: [{ ...TABLED, input: 5 }] });
     await seedRequests(db.sql, [{ at: '2026-06-01T00:00:00Z', id: 'r', input: 1_000_000 }]);
 
-    await applyFetchedPrices(db.sql, [listed({ input: 2 })]);
+    await appliedNow(db.sql, [listed({ input: 2 })]);
 
     expect(await costs(db.sql)).toEqual({ r: 5 });
   });
@@ -345,10 +345,7 @@ describe('a price that looks like a unit error', () => {
   ])('a price %s the one in force skips the model, and says so', async (_name, input) => {
     await using db = await prepared({ bundled: [TABLED] });
 
-    const applied = await applyFetchedPrices(db.sql, [
-      listed({ input }),
-      listed({ model: 'other' }),
-    ]);
+    const applied = await appliedNow(db.sql, [listed({ input }), listed({ model: 'other' })]);
 
     expect(applied.added.map((a) => a.model)).toEqual(['other']);
     expect(applied.skipped).toEqual([
@@ -366,7 +363,7 @@ describe('a price that looks like a unit error', () => {
   ])('a price %s', async (_name, inForce, input, skipped) => {
     await using db = await prepared({ bundled: [{ ...TABLED, input: inForce }] });
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ input })]);
+    const applied = await appliedNow(db.sql, [listed({ input })]);
 
     expect(applied.skipped.map((s) => s.model)).toEqual(skipped);
   });
@@ -374,9 +371,7 @@ describe('a price that looks like a unit error', () => {
   test('is judged against the price a request in the tier gets today, from a lower tier when the table has none there', async () => {
     await using db = await prepared({ bundled: [TABLED] });
 
-    const applied = await applyFetchedPrices(db.sql, [
-      listed({}, { input: 3000, promptOver: 100_000 }),
-    ]);
+    const applied = await appliedNow(db.sql, [listed({}, { input: 3000, promptOver: 100_000 })]);
 
     expect(applied.skipped.map((s) => s.model)).toEqual([MODEL]);
   });
@@ -388,9 +383,7 @@ describe('a price that looks like a unit error', () => {
     });
     const { today } = await days(db.sql);
 
-    const applied = await applyFetchedPrices(db.sql, [
-      listed({}, { input: 7, promptOver: 100_000 }),
-    ]);
+    const applied = await appliedNow(db.sql, [listed({}, { input: 7, promptOver: 100_000 })]);
 
     expect(applied).toEqual({
       added: [{ from: today, model: MODEL, tiers: [100_000] }],
@@ -404,7 +397,7 @@ describe('a price that looks like a unit error', () => {
   test('only a tier configured at exactly its threshold escapes the 100 times check', async () => {
     await using db = await prepared({ bundled: [TABLED], configured: [{ ...TABLED, input: 3 }] });
 
-    const applied = await applyFetchedPrices(db.sql, [
+    const applied = await appliedNow(db.sql, [
       listed({ input: 3 }, { input: 600, promptOver: 100_000 }),
     ]);
 
@@ -416,7 +409,7 @@ describe('a price that looks like a unit error', () => {
     const { cacheRead: _absent, ...withoutCacheRead } = TABLED;
     await using db = await prepared({ bundled: [{ ...withoutCacheRead, output: 0 }] });
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ cacheRead: 300, output: 3000 })]);
+    const applied = await appliedNow(db.sql, [listed({ cacheRead: 300, output: 3000 })]);
 
     expect(applied.skipped).toEqual([]);
     expect(applied.added.map((a) => a.model)).toEqual([MODEL]);
@@ -427,7 +420,7 @@ describe('a price over $10,000 per million tokens is implausible', () => {
   test('skips a model the table has never priced, so a corrected list later prices its history', async () => {
     await using db = await prepared();
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ input: 2_000_000 })]);
+    const applied = await appliedNow(db.sql, [listed({ input: 2_000_000 })]);
 
     expect(applied).toEqual({
       added: [],
@@ -441,7 +434,7 @@ describe('a price over $10,000 per million tokens is implausible', () => {
       ],
     });
     expect(await fetchedRows(db.sql)).toEqual([]);
-    expect((await applyFetchedPrices(db.sql, [listed({ input: 2 })])).added).toEqual([
+    expect((await appliedNow(db.sql, [listed({ input: 2 })])).added).toEqual([
       { from: '2020-01-01', model: MODEL, tiers: [0] },
     ]);
   });
@@ -449,7 +442,7 @@ describe('a price over $10,000 per million tokens is implausible', () => {
   test('skips a model the table prices, in any tier and kind, even within 100 times of the price in force', async () => {
     await using db = await prepared({ bundled: [{ ...TABLED, cacheWrite5m: 200 }] });
 
-    const applied = await applyFetchedPrices(db.sql, [
+    const applied = await appliedNow(db.sql, [
       listed({ cacheWrite5m: 200 }, { cacheWrite5m: 10_001, promptOver: 100_000 }),
     ]);
 
@@ -467,7 +460,7 @@ describe('a price over $10,000 per million tokens is implausible', () => {
   test('takes a price of exactly $10,000 per million tokens', async () => {
     await using db = await prepared();
 
-    const applied = await applyFetchedPrices(db.sql, [listed({ output: 10_000 })]);
+    const applied = await appliedNow(db.sql, [listed({ output: 10_000 })]);
 
     expect(applied.skipped).toEqual([]);
     expect(applied.added.map((a) => a.model)).toEqual([MODEL]);
@@ -482,7 +475,7 @@ test('waits for the lock migrations and price loads take', async () => {
     await holder`SELECT pg_advisory_xact_lock(hashtext(${MIGRATION_LOCK}))`;
     let done = false;
     const applying = (async () => {
-      await applyFetchedPrices(db.sql, [listed({})]);
+      await appliedNow(db.sql, [listed({})]);
       done = true;
     })();
     await Bun.sleep(200);
@@ -497,11 +490,53 @@ test('waits for the lock migrations and price loads take', async () => {
 
 test('loading the bundled and configured prices again leaves the fetched entries alone', async () => {
   await using db = await prepared({ bundled: [{ ...TABLED, input: 4 }] });
-  await applyFetchedPrices(db.sql, [listed({}), listed({ model: 'new-model' })]);
+  await appliedNow(db.sql, [listed({}), listed({ model: 'new-model' })]);
   const fetched = await fetchedRows(db.sql);
 
   await syncPrices(db.sql, { bundled: [], configured: [{ ...TABLED, input: 9 }] });
 
   expect(await fetchedRows(db.sql)).toEqual(fetched);
   expect(fetched).toHaveLength(2);
+});
+
+// A price list serving MODEL at `input` dollars per million input tokens and
+// otherwise the table's prices and window.
+const servedList = (input: number) =>
+  Response.json({
+    [MODEL]: {
+      cache_read_input_token_cost: 0.3e-6,
+      input_cost_per_token: input / 1e6,
+      litellm_provider: 'anthropic',
+      max_input_tokens: 200_000,
+      mode: 'chat',
+      output_cost_per_token: 15e-6,
+    },
+  });
+
+test('of two overlapping fetches, the one that started later keeps its list when the other answers last', async () => {
+  await using db = await prepared({ bundled: [TABLED] });
+  const source = new URL('https://prices.example/prices.json');
+  await updateFetchedPrices({ fetch: async () => servedList(5), source, sql: db.sql });
+  await using earlierSql = new SQL({ max: 1, url: db.url.href });
+  await using laterSql = new SQL({ max: 1, url: db.url.href });
+  const asked = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+
+  const earlier = updateFetchedPrices({
+    fetch: async () => {
+      asked.resolve();
+      await gate.promise;
+      return servedList(2);
+    },
+    source,
+    sql: earlierSql,
+  });
+  await asked.promise;
+  await updateFetchedPrices({ fetch: async () => servedList(4), source, sql: laterSql });
+  gate.resolve();
+
+  expect(await earlier).toEqual({ added: [], skipped: [] });
+  expect(await fetchedRows(db.sql)).toEqual([
+    `${MODEL} ${(await days(db.sql)).today} over -1: 4/15/0.3 window 200000`,
+  ]);
 });

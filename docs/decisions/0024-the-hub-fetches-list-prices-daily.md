@@ -1,10 +1,10 @@
 ---
 type: adr
 title: ADR-0024 - The Hub fetches list prices daily and adds dated entries, never repricing an earlier day
-description: "The Hub's price table has three sources: configured overrides, entries fetched from LiteLLM's public price list, and bundled prices. A request takes the highest prompt tier its prompt reaches, and within that tier the first source with an entry in force, configured first, then fetched, then bundled, whatever their dates. The Hub fetches the list when serve starts and again once a day, and `heimdall-hub prices update` fetches it on demand. A model the table has never priced gets fetched entries from 2020-01-01. A tier whose price changed gets a fetched entry from the day the change was found. A tier with a configured entry in force is left alone, and so is an unchanged price. No fetch changes or deletes an entry from an earlier day, and a failed fetch leaves the fetched entries unchanged. This supersedes ADR-0014's prices compiled into the Hub."
+description: "The Hub's price table has three sources: configured overrides, entries fetched from LiteLLM's public price list, and bundled prices. A request takes the highest prompt tier its prompt reaches, and within that tier the first source with an entry in force, configured first, then fetched, then bundled, whatever their dates. The Hub fetches the list when serve starts and again once a day, and `heimdall-hub prices update` fetches it on demand. A model the table has never priced gets fetched entries from 2020-01-01. A tier whose price changed gets a fetched entry from the day the change was found. A tier with a configured entry in force is left alone, and so is an unchanged price. No fetch changes or deletes an entry from an earlier day, a failed fetch leaves the fetched entries unchanged, and a fetch that started before the last applied one applies nothing, so overlapping fetches never leave an older list over a newer one (2026-11-24). This supersedes ADR-0014's prices compiled into the Hub."
 status: accepted
 created: 2026-11-20
-modified: 2026-11-20
+modified: 2026-11-24
 ---
 
 # The Hub fetches list prices daily and adds dated entries, never repricing an earlier day
@@ -131,3 +131,7 @@ The command prints why and exits 1. The bundled and configured entries it loaded
 - An overrides file takes effect at the next start of `serve` or the next `heimdall-hub prices update`.
 - The Hub makes an outbound HTTPS request when `serve` starts, about once a day while it runs, and whenever the command runs. Like the upstream checks, the request carries no credentials.
 - This decision supersedes ADR-0014's compiled price table and its rejection of fetching prices at runtime. ADR-0014's other decisions stand.
+
+## Changelog
+
+- 2026-11-24: Amendment. A fetch that started before the last applied fetch applies nothing, so two overlapping fetches, such as a `serve` pass and `heimdall-hub prices update`, never leave the older list standing over the newer one. Each fetch takes the next number of a database sequence before it requests the list, and the fetch that applies records its number; under the lock, a fetch whose number is lower than the recorded one is skipped and reports nothing added. The order needs no clock, so a clock that steps does not skip a newer fetch or apply an older one. Where the Decision says a fetch does nothing or writes nothing when it adds no entry, it means it writes no price and marks no totals for recalculation; a fetch that applies records its number even when it adds no entry.

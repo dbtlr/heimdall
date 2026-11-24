@@ -939,7 +939,7 @@ A key that ends in `-YYYYMMDD` stands for the model without that suffix, unless 
 
 A new entry for a model the table already prices keeps a context window from the table. It takes the window of the entry in force today for its tier, or else of the model's base entry in force today, or else the list's window. A fetch never changes or deletes an entry from an earlier day. A later fetch on the same day replaces that day's fetched entry for the tier. A model the list drops keeps its entries.
 
-A fetch takes the migrations' lock before it reads the prices in force. It reads them and writes its entries in one transaction, or does nothing. When it adds no entry, it writes nothing, so it marks no totals for recalculation.
+A fetch takes the next number of the database sequence `fetched_price_fetches` before it requests the list, and takes the migrations' lock before it reads the prices in force. It reads them and writes its entries in one transaction, or does nothing. Under the lock, a fetch whose number is lower than that of the last fetch that applied applies nothing, so two overlapping fetches, such as a `serve` pass and `heimdall-hub prices update`, never leave the older list standing over the newer one. The order needs no clock, so a clock that steps does not skip a newer fetch or apply an older one. A fetch that applies records its number, even when it adds no entry. When it adds no entry, it writes no price, so it marks no totals for recalculation.
 
 **When a fetch fails.** A fetch fails, and leaves `fetched_model_prices` unchanged, in any of these cases:
 
@@ -952,7 +952,7 @@ A fetch takes the migrations' lock before it reads the prices in force. It reads
 
 A skipped model does not fail it. In `serve`, a failed fetch is a failed run of the `prices` pass: it logs a warning, `serve` keeps running, and the next run comes an hour later. `serve` logs an info line for each model a fetch adds entries for, naming the date the entries start from. It logs a warning for each model skipped as a possible unit error.
 
-**The command's output.** `heimdall-hub prices update` applies pending migrations like every command. It prints the same line for each model it adds entries for, or `Prices are up to date.` when there are none. It then prints a count of skipped models and exits 0. When the source is `off`, it loads the bundled and configured entries, says that fetching is off, and exits 0. When the fetch fails, it prints why and exits 1, and the bundled and configured entries it loaded first stay loaded.
+**The command's output.** `heimdall-hub prices update` applies pending migrations like every command. It prints the same line for each model it adds entries for, or `Prices are up to date.` when there are none, as when its fetch started before the last applied one and applies nothing. It then prints a count of skipped models and exits 0. When the source is `off`, it loads the bundled and configured entries, says that fetching is off, and exits 0. When the fetch fails, it prints why and exits 1, and the bundled and configured entries it loaded first stay loaded.
 
 **What each token kind costs.**
 
