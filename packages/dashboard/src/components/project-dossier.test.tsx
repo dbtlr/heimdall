@@ -88,6 +88,18 @@ const view = (overrides: Partial<ProjectView> = {}): ProjectView => ({
   overview: overview(),
   peakRssBytes: 3 * 1024 ** 3,
   repository: true,
+  // Sums to the cost figure's $14.00.
+  roleSplit: {
+    classes: {
+      delegated: { pricedCostUsd: 3, requests: 6, unpricedRequests: 0 },
+      main: { pricedCostUsd: 6, requests: 16, unpricedRequests: 0 },
+      review: { pricedCostUsd: 5, requests: 10, unpricedRequests: 0 },
+    },
+    seats: [
+      { pricedCostUsd: 2, requests: 4, seat: 'verifier', unpricedRequests: 0 },
+      { pricedCostUsd: 3, requests: 6, seat: 'breaker', unpricedRequests: 0 },
+    ],
+  },
   subagents: 12,
   systems: ['devbox-1', 'laptop-1', 'server-1'],
   tail: SESSIONS.slice(0, 5).map((row, index) => ({ session: row, subagents: index })),
@@ -174,8 +186,22 @@ test('phone tiles carry short labels and notes', async () => {
   }
 });
 
-test('the chart key sits with its bars, ahead of the System lanes', async () => {
+test('the cost by role card sits under the figure tiles, scoped to the period, with no missed-tag line', async () => {
   const html = await dossier(view());
+  const card = html.indexOf('Cost by role');
+  expect(card).toBeGreaterThan(html.indexOf('aria-label="Project totals"'));
+  expect(card).toBeLessThan(html.indexOf('aria-label="Keys of the chart"'));
+  expect(text(html)).toContain('Cost by role7 days, at list price');
+  expect(text(html)).toContain('Main$6.0043%');
+  expect(text(html)).toContain('breaker$3.00verifier$2.00');
+  expect(text(html)).not.toContain('T3-delegated');
+  expect(text(html)).not.toContain('session tag');
+});
+
+test('the chart key sits with its bars, ahead of the System lanes', async () => {
+  // The chart alone: the cost by role card above it draws its own strip.
+  const dossierHtml = await dossier(view());
+  const html = dossierHtml.slice(dossierHtml.indexOf('aria-labelledby="agents-chart-heading"'));
   const key = html.indexOf('aria-label="Keys of the chart"');
   expect(key).toBeGreaterThan(-1);
   expect(key).toBeLessThan(html.indexOf('role="img"'));

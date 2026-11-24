@@ -23,6 +23,7 @@ import {
   sessionParams,
   Started,
 } from './agents-sessions.tsx';
+import { CostByRole } from './cost-by-role.tsx';
 import { MoreItems } from './more-items.tsx';
 
 // How many rows a ranked list shows before the rest fold into "N more".
@@ -589,14 +590,19 @@ function ProjectSessions({ view }: { view: ProjectView }) {
   );
 }
 
-// The dossier below the header: totals, cost per day over a lane per
-// System, models, tools and skills, branches, and the newest Sessions. It
-// shares the Agents chart and breakdown calculations.
+// The dossier below the header: totals, their cost by role, cost per day
+// over a lane per System, models, tools and skills, branches, and the newest
+// Sessions. It shares the Agents chart, breakdown, and cost by role card; the
+// card leaves out the Agents page's missed-tag line.
 export function ProjectDossier({ view }: { view: ProjectView }) {
   const { overview } = view;
   return (
     <>
       <ProjectFigures view={view} />
+      <CostByRole
+        periodName={overview.range === 'today' ? 'Today' : rangeName(overview.range)}
+        split={view.roleSplit}
+      />
       <AgentsChart
         belowPlot={<ProjectLanes view={view} />}
         by="harness"
