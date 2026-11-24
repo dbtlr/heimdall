@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  isRecord,
   MAX_LINE_BYTES,
   isShaped,
   optionalOf,
@@ -12,13 +13,12 @@ import {
   UnreadableLineError,
 } from './session-insight.ts';
 import type { Batch, HarnessParser, Moment, Owner, Request, ToolCall } from './session-insight.ts';
+import { messageTexts, openingReader, progressOf } from './session-tags.ts';
+import type { OpeningProgress } from './session-tags.ts';
 
 // Reads Codex rollouts into the same facts as Claude Code. Identity comes
 // from the first record, which must be session_meta, never a copied header.
-export const CODEX_PARSER_VERSION = 3;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+export const CODEX_PARSER_VERSION = 4;
 
 // Codex records response_id on token_usage_record. Ordinary response_item and
 // item_completed lines identify items or turns, so those cannot be associated
@@ -44,6 +44,7 @@ type State = {
   headerSeen: boolean;
   historyStart: number;
   moment: Moment | null;
+  opening: OpeningProgress;
   owner: Owner | null;
   turns: { contextWindow: number | null; id: string; model: string | null }[];
 };
@@ -66,6 +67,7 @@ const stateOf = (value: unknown): State => {
             version: optionalOf(moment.version, 'version'),
           }
         : null,
+    opening: progressOf(state.opening),
     owner: sessionId === null ? null : { agentId: optionalOf(owner.agentId, 'id'), sessionId },
     turns: (Array.isArray(state.turns) ? state.turns : []).flatMap((t) => {
       if (!isRecord(t)) {
@@ -235,14 +237,11 @@ const skillsOf = (
   if (payload.type !== 'message' || payload.role !== 'user' || !Array.isArray(payload.content)) {
     return [];
   }
-  const names = payload.content.flatMap((block) => {
-    if (!isRecord(block) || typeof block.text !== 'string') {
-      return [];
-    }
-    return [...block.text.matchAll(/<skill>\s*<name>(?<name>[^<]*)<\/name>/gu)].flatMap((m) =>
+  const names = messageTexts(payload.content).flatMap((text) =>
+    [...text.matchAll(/<skill>\s*<name>(?<name>[^<]*)<\/name>/gu)].flatMap((m) =>
       m.groups?.name !== undefined && isShaped(m.groups.name, 'command') ? [m.groups.name] : [],
-    );
-  });
+    ),
+  );
   return [...new Set(names)].map((skill): ToolCall => ({
     at,
     callId: factId(thread, 'skill-message', `${String(at)}:${skill}`),
@@ -256,6 +255,14 @@ const skillsOf = (
     skillInferred: true,
   }));
 };
+
+// Whether a response_item is one the model produced, which ends a
+// conversation's opening: reasoning, a call of any kind, or an assistant
+// message. A developer message, a tool list, and any other item do not.
+const isResponse = (payload: Record<string, unknown>): boolean =>
+  payload.type === 'reasoning' ||
+  (typeof payload.type === 'string' && payload.type.endsWith('_call')) ||
+  (payload.type === 'message' && payload.role === 'assistant');
 
 // A trailing partial line waits for the next upload, as in the Claude Code
 // parser. Lines past the cap are skipped without decoding them.
@@ -312,6 +319,9 @@ export const codexParser: HarnessParser = {
     }
     const requests = new Map<string, Request>();
     const calls = new Map<string, ToolCall>();
+    // A Session's opening (ADR-0025). A subagent's brief is encrypted, so a
+    // subagent's is never read.
+    const opening = openingReader(state.opening);
     for (const line of linesOf(content, offset, complete)) {
       if (requests.size + calls.size >= factLimit) {
         batch.atFactLimit = true;
@@ -405,6 +415,19 @@ export const codexParser: HarnessParser = {
             }
           }
         }
+        let misshapenTag = false;
+        if (
+          value.type === 'response_item' &&
+          batch.owner !== null &&
+          batch.owner.agentId === null
+        ) {
+          const { payload } = value;
+          if (payload.type === 'message' && payload.role === 'user') {
+            misshapenTag = at !== undefined && opening.message(at, messageTexts(payload.content));
+          } else if (isResponse(payload)) {
+            opening.respond();
+          }
+        }
         if (value.type === 'turn_context') {
           const id = optionalOf(value.payload.turn_id, 'id');
           const model = optionalOf(value.payload.model, 'name');
@@ -457,6 +480,9 @@ export const codexParser: HarnessParser = {
                   last: at >= span.last.at ? current : span.last,
                 };
         }
+        if (misshapenTag) {
+          batch.unreadableLines += 1;
+        }
       } catch (error) {
         if (!(error instanceof UnreadableLineError)) {
           throw error;
@@ -466,6 +492,8 @@ export const codexParser: HarnessParser = {
     }
     batch.requests = [...requests.values()];
     batch.toolCalls = [...calls.values()];
+    batch.opening = opening.reported;
+    state.opening = opening.progress;
     batch.state = state;
     return batch;
   },

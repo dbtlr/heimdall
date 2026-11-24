@@ -73,7 +73,7 @@ The reader can query every view in the `insight` schema:
 
 `insight.session_totals`, `insight.session_model_totals`, and `insight.session_stretches` read what the Hub stored at its last refresh, so they can lag new data by about 15 seconds. The other views compute what they show when read.
 
-The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. A few columns are text as the Harness or the Collector wrote it:
+The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. That includes what a conversation's opening messages say about it: `insight.sessions` and `insight.subagents` carry its `role`, `seat`, `launching_session_id`, and `role_source`, read from a session tag or T3 Code's preamble, as shaped names and an id, and nothing else from the prompt. See [Session tags](spec.md#session-tags). A few columns are text as the Harness or the Collector wrote it:
 
 - `first_cwd` and `last_cwd`, the working directories, `repository`, the repository they belong to, and `first_git_branch` and `last_git_branch`, in `insight.sessions`.
 - `cwd`, a Harness process's working directory, and `repository`, the repository it belongs to, in `insight.harness_processes` and `insight.vitals_processes`.

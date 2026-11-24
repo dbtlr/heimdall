@@ -518,7 +518,7 @@ describe('a Claude Code Session', () => {
         first_harness_version: '2.1.290',
         last_cwd: '/w/end',
         last_harness_version: '2.1.291',
-        parser_version: 1,
+        parser_version: claudeCodeParser.version,
         path: mainPath(),
         session_id: SESSION,
         started_at: new Date(at(0)),
@@ -1218,7 +1218,9 @@ describe('a generation the projection cannot read', () => {
     };
     await projectAll(h, { parsers: [failing] });
 
-    await projectAll(h, { parsers: [{ ...claudeCodeParser, version: 2 }] });
+    await projectAll(h, {
+      parsers: [{ ...claudeCodeParser, version: claudeCodeParser.version + 1 }],
+    });
 
     expect(await settled(h.db.sql)).toEqual({
       requests: ['msg_main'],
@@ -1869,14 +1871,16 @@ describe('a parser version change', () => {
 
     expect(first.pending).toBeGreaterThan(0);
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([1]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([
+      claudeCodeParser.version,
+    ]);
 
     await projectAll(h, budget);
 
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
     const [left] = await h.db.sql`
-      SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = 1
+      SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = ${claudeCodeParser.version}
     `;
     expect(left?.n).toBe(0);
   });
@@ -1896,16 +1900,18 @@ describe('a parser version change', () => {
 
     expect(older).toEqual({
       failed: [],
-      outdated: [{ current: 2, harness: 'claude-code', version: 1 }],
+      outdated: [
+        { current: nextVersion.version, harness: 'claude-code', version: claudeCodeParser.version },
+      ],
       pending: 0,
       switched: [],
     });
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
     const versions = await h.db.sql`
       SELECT DISTINCT parser_version FROM parse_progress ORDER BY parser_version
     `;
-    expect([...versions]).toEqual([{ parser_version: 2 }]);
+    expect([...versions]).toEqual([{ parser_version: nextVersion.version }]);
   });
 
   // The Hub that rebuilds parses only its own version, so the current set
@@ -1934,9 +1940,12 @@ describe('a parser version change', () => {
 
     expect(outcomes.every((outcome) => outcome.pending > 0)).toBe(true);
     expect(outcomes.flatMap((outcome) => outcome.switched)).toEqual([
-      { harness: 'claude-code', version: 2 },
+      { harness: 'claude-code', version: nextVersion.version },
     ]);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2, 2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([
+      nextVersion.version,
+      nextVersion.version,
+    ]);
   });
 
   // A file opened during the rebuild is one the current version has not read
@@ -1959,7 +1968,7 @@ describe('a parser version change', () => {
 
     const outcome = await projectTranscripts(sql, { parsers: [nextVersion] });
 
-    expect(outcome.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(outcome.switched).toEqual([{ harness: 'claude-code', version: nextVersion.version }]);
     expect(outcome.pending).toBe(1);
   });
 
@@ -1981,7 +1990,7 @@ describe('a parser version change', () => {
       for (const table of tables) {
         // oxlint-disable-next-line no-await-in-loop -- one table at a time.
         const [row]: { n: number }[] = await h.db.sql.unsafe(
-          `SELECT count(*)::int AS n FROM ${table} WHERE parser_version = 1`,
+          `SELECT count(*)::int AS n FROM ${table} WHERE parser_version = ${claudeCodeParser.version}`,
         );
         counts.push(row?.n ?? 0);
       }
@@ -1999,7 +2008,7 @@ describe('a parser version change', () => {
       after.push(await earlier());
     }
 
-    expect(switching.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(switching.switched).toEqual([{ harness: 'claude-code', version: nextVersion.version }]);
     expect(sumOf(after[0] ?? [])).toBeGreaterThan(0);
     expect(sumOf(after.at(-1) ?? [])).toBe(0);
     // No run deletes more than `cleanupRows` from any table, and progress
@@ -2032,7 +2041,7 @@ describe('a parser version change', () => {
     const older = await projectTranscripts(sql);
 
     expect(older.switched).toEqual([]);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
   });
 
   // Versions 3 and 4 both build while a Hub with version 1 is mid-run, and
@@ -2047,8 +2056,8 @@ describe('a parser version change', () => {
       content: jsonl([assistant({ at: at(2), id: 'msg_2' })]),
       offset: Buffer.byteLength(first),
     });
-    const third = { ...claudeCodeParser, version: 3 };
-    const fourth = { ...claudeCodeParser, version: 4 };
+    const third = { ...claudeCodeParser, version: claudeCodeParser.version + 2 };
+    const fourth = { ...claudeCodeParser, version: claudeCodeParser.version + 3 };
     let overtaken = false;
     const sql = beforeEachTransaction(h.db.sql, async () => {
       if (!overtaken) {
@@ -2059,7 +2068,7 @@ describe('a parser version change', () => {
     });
     const thirds = async () => {
       const [row]: { n: number }[] = await h.db.sql`
-        SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = 3
+        SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = ${third.version}
       `;
       return row?.n;
     };
@@ -2070,7 +2079,7 @@ describe('a parser version change', () => {
 
     expect(afterBehind).toBe(2);
     expect(await thirds()).toBe(0);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([4]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([fourth.version]);
   });
 });
 
@@ -2231,12 +2240,12 @@ describe('the insight views', () => {
       // oxlint-disable-next-line no-await-in-loop -- one table at a time.
       await h.db.sql.unsafe(`
         CREATE TEMPORARY TABLE copied AS SELECT * FROM ${table};
-        UPDATE copied SET parser_version = 2;
+        UPDATE copied SET parser_version = 99;
         INSERT INTO ${table} SELECT * FROM copied;
         DROP TABLE copied;
       `);
     }
-    await h.db.sql`UPDATE projected_subagents SET parent_agent_id = NULL WHERE parser_version = 2`;
+    await h.db.sql`UPDATE projected_subagents SET parent_agent_id = NULL WHERE parser_version = 99`;
 
     expect(await shown()).toEqual(before);
   });
@@ -2308,5 +2317,334 @@ describe('what serve logs of a run', () => {
       },
     ]);
     expect(second).toEqual([]);
+  });
+});
+
+// A session tag line naming `role`, followed by `extra` pairs.
+const tagged = (role: string, extra = '') => `session-tag: role=${role}${extra}`;
+
+// Each Session's and subagent's role, seat, and launching Session as the views show them.
+const roles = async (sql: SQL) => {
+  const rows: Record<string, unknown>[] = await sql`
+    SELECT NULL AS agent_id, session_id, role, seat, launching_session_id, role_source
+    FROM insight.sessions
+    UNION ALL
+    SELECT agent_id, session_id, role, seat, launching_session_id, role_source
+    FROM insight.subagents
+    ORDER BY session_id, agent_id NULLS FIRST
+  `;
+  return rows;
+};
+
+const mainRole = async (sql: SQL) => (await roles(sql)).find((r) => r.agent_id === null);
+
+// A Codex rollout's header, for a subagent when `parent` is given.
+const codexHeader = (id: string, parent?: string) => ({
+  payload: {
+    cli_version: '0.162.1',
+    cwd: '/w',
+    id,
+    ...(parent === undefined ? {} : { parent_thread_id: parent }),
+    timestamp: at(0),
+  },
+  timestamp: at(0),
+  type: 'session_meta',
+});
+
+// A Codex user message.
+const codexSaid = (text: string, second: number) => ({
+  payload: { content: [{ text, type: 'input_text' }], role: 'user', type: 'message' },
+  timestamp: at(second),
+  type: 'response_item',
+});
+
+// Codex records as a rollout holds them.
+const codexLines = (records: Record<string, unknown>[]) =>
+  `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+
+// A conversation's role, seat, and launching Session are parsed facts on its
+// Session or subagent row, from its opening messages (ADR-0025).
+describe('session tags', () => {
+  const PARENT = '0b1c2d3e-0000-4000-8000-0000000000aa';
+
+  test("a Session's and a subagent's roles reach the views", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([
+        user({
+          at: at(0),
+          content: `[T3 Code: delegated]\nAct as the implementation sub-agent for this task.\n${tagged('implementation', ` parent=${PARENT}`)}`,
+        }),
+        assistant({ at: at(1), id: 'msg_main' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ agent: 'a1', at: at(2), content: tagged('review', ' seat=breaker') }),
+        assistant({ agent: 'a1', at: at(3), id: 'msg_a1' }),
+      ]),
+      path: agentPath('a1'),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ agent: 'a2', at: at(4), content: 'Explore the code.' }),
+        assistant({ agent: 'a2', at: at(5), id: 'msg_a2' }),
+      ]),
+      path: agentPath('a2'),
+    });
+
+    await projectAll(h);
+
+    expect(await roles(h.db.sql)).toEqual([
+      {
+        agent_id: null,
+        launching_session_id: PARENT,
+        role: 'implementation',
+        role_source: 'tag',
+        seat: null,
+        session_id: SESSION,
+      },
+      {
+        agent_id: 'a1',
+        launching_session_id: null,
+        role: 'review',
+        role_source: 'tag',
+        seat: 'breaker',
+        session_id: SESSION,
+      },
+      {
+        agent_id: 'a2',
+        launching_session_id: null,
+        role: null,
+        role_source: null,
+        seat: null,
+        session_id: SESSION,
+      },
+    ]);
+  });
+
+  test('an opening a later batch extends replaces what the earlier batch gave, and one it does not read stays', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([
+      user({ at: at(0), content: 'Act as the review sub-agent for this task.' }),
+    ]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: 'review', role_source: 'preamble' }),
+    );
+
+    // Still no response: the opening stays open while the tag arrives.
+    const rest = jsonl([user({ at: at(1), content: tagged('review', ' seat=verifier') })]);
+    const through = await append(h, generation, {
+      content: rest,
+      offset: Buffer.byteLength(first),
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role_source: 'tag', seat: 'verifier' }),
+    );
+
+    await append(h, generation, {
+      content: jsonl([
+        assistant({ at: at(2), id: 'msg_1' }),
+        user({ at: at(3), content: tagged('design') }),
+        assistant({ at: at(4), id: 'msg_2' }),
+      ]),
+      offset: through,
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: 'review', seat: 'verifier' }),
+    );
+  });
+
+  test("the earliest generation's opening wins, whether or not it held a tag", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(5), content: tagged('review') }),
+        assistant({ at: at(6), id: 'msg_late' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: 'No tag here.' }),
+        assistant({ at: at(1), id: 'msg_early' }),
+      ]),
+      path: mainPath(),
+    });
+
+    await projectAll(h);
+
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: null, role_source: null }),
+    );
+  });
+
+  // Generation ids are random, so the loop runs until the cut-off copy has
+  // had the lower id at least once: only then does losing the tie rest on the
+  // response having arrived rather than on the id.
+  test('a copy cut off before the brief loses a tie to a copy whose response arrived', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    let cutOffWasLower = false;
+    for (let pair = 0; pair < 40 && !cutOffWasLower; pair += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(pair).padStart(12, '0')}`;
+      // oxlint-disable-next-line no-await-in-loop -- one pair at a time.
+      const cutOff = await upload(h, {
+        content: jsonl([user({ at: at(0), content: 'Injected context.', session })]),
+        path: mainPath(session),
+      });
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const whole = await upload(h, {
+        content: jsonl([
+          user({ at: at(0), content: 'Injected context.', session }),
+          user({ at: at(1), content: tagged('review'), session }),
+          assistant({ at: at(2), id: `msg_${String(pair)}`, session }),
+        ]),
+        path: mainPath(session),
+      });
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      cutOffWasLower = BigInt(cutOff) < BigInt(whole);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const [row]: { role: string | null; role_source: string | null }[] = await h.db.sql`
+        SELECT role, role_source FROM insight.sessions WHERE session_id = ${session}
+      `;
+      expect(row).toEqual({ role: 'review', role_source: 'tag' });
+    }
+    expect(cutOffWasLower).toBe(true);
+  });
+
+  test('an opening whose response arrives in a later batch is stored closed', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([user({ at: at(0), content: tagged('design') })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    await append(h, generation, {
+      content: jsonl([assistant({ at: at(1), id: 'msg_1' })]),
+      offset: Buffer.byteLength(first),
+    });
+    await projectAll(h);
+
+    const [row]: { opening_closed: boolean | null }[] = await h.db.sql`
+      SELECT opening_closed FROM projected_sessions WHERE session_id = ${SESSION}
+    `;
+    expect(row?.opening_closed).toBe(true);
+  });
+
+  // Generation ids are random, so each pair of tied, closed copies below gets
+  // one ordering by chance; the loop runs until both orderings were seen, so
+  // a rule that keeps the first or the last parsed copy fails either way.
+  test('of tied openings that both got their response, the lower generation id wins in either parse order', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const seen = new Set<string>();
+    for (let pair = 0; pair < 40 && seen.size < 2; pair += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(pair).padStart(12, '0')}`;
+      const copy = (role: string) =>
+        upload(h, {
+          content: jsonl([
+            user({ at: at(0), content: tagged(role), session }),
+            assistant({ at: at(1), id: `msg_${role}_${String(pair)}`, session }),
+          ]),
+          path: mainPath(session),
+        });
+      // oxlint-disable-next-line no-await-in-loop -- each copy is parsed before the next lands.
+      const first = await copy('review');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const second = await copy('design');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      const firstIsLower = BigInt(first) < BigInt(second);
+      seen.add(firstIsLower ? 'first lower' : 'second lower');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const [row]: { role: string }[] = await h.db.sql`
+        SELECT role FROM insight.sessions WHERE session_id = ${session}
+      `;
+      expect(row?.role).toBe(firstIsLower ? 'review' : 'design');
+    }
+    expect(seen.size).toBe(2);
+  });
+
+  test('a delete re-derives the role from the generations that survive', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const old = await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: tagged('review') }),
+        assistant({ at: at(1), id: 'msg_1' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(5), content: tagged('design') }),
+        assistant({ at: at(6), id: 'msg_2' }),
+      ]),
+      path: mainPath(),
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'review' }));
+
+    await ageGeneration(h, old);
+    await deleteOld(h);
+    await projectAll(h);
+
+    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'design' }));
+  });
+
+  test("a Codex Session's role reaches the views, and a Codex subagent has none", async () => {
+    await using h = await startHub();
+    await nameSources(h, [{ harness: 'codex', name: 'codex' }]);
+    const SESSION_ID = '01990000-0000-7000-8000-000000000001';
+    const CHILD_ID = '01990000-0000-7000-8000-000000000002';
+    await upload(h, {
+      content: codexLines([
+        codexHeader(SESSION_ID),
+        codexSaid('<environment_context></environment_context>', 1),
+        codexSaid(tagged('review', ' seat=architect'), 2),
+      ]),
+      path: `sessions/2026/10/06/rollout-2026-10-06T12-00-00-${SESSION_ID}.jsonl`,
+      source: 'codex',
+    });
+    await upload(h, {
+      content: codexLines([
+        codexHeader(CHILD_ID, SESSION_ID),
+        codexSaid(tagged('implementation'), 3),
+      ]),
+      path: `sessions/2026/10/06/rollout-2026-10-06T12-00-03-${CHILD_ID}.jsonl`,
+      source: 'codex',
+    });
+
+    await projectAll(h);
+
+    expect(await roles(h.db.sql)).toEqual([
+      {
+        agent_id: null,
+        launching_session_id: null,
+        role: 'review',
+        role_source: 'tag',
+        seat: 'architect',
+        session_id: SESSION_ID,
+      },
+      {
+        agent_id: CHILD_ID,
+        launching_session_id: null,
+        role: null,
+        role_source: null,
+        seat: null,
+        session_id: SESSION_ID,
+      },
+    ]);
   });
 });

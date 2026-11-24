@@ -2526,6 +2526,72 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 49,
   },
+  {
+    // A conversation's role, review seat, and launching Session, parsed from
+    // its opening messages, and where its role came from (ADR-0025). The
+    // opening's time, whether its first response arrived, and its generation
+    // order the openings of a conversation's generations, so the earliest
+    // wins. Both parsers' versions move with this, so the rebuild fills them.
+    // `CREATE OR REPLACE VIEW` appends the columns and keeps the views built on
+    // these; it resets a view's options, so the barrier is set again.
+    sql: `
+      ALTER TABLE projected_sessions
+        ADD COLUMN role text,
+        ADD COLUMN seat text,
+        ADD COLUMN launching_session_id text,
+        ADD COLUMN role_source text CHECK (role_source IN ('tag', 'preamble')),
+        ADD COLUMN opening_at timestamptz,
+        ADD COLUMN opening_closed boolean,
+        ADD COLUMN opening_generation bigint;
+      ALTER TABLE projected_subagents
+        ADD COLUMN role text,
+        ADD COLUMN seat text,
+        ADD COLUMN launching_session_id text,
+        ADD COLUMN role_source text CHECK (role_source IN ('tag', 'preamble')),
+        ADD COLUMN opening_at timestamptz,
+        ADD COLUMN opening_closed boolean,
+        ADD COLUMN opening_generation bigint;
+
+      CREATE OR REPLACE VIEW insight.sessions WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.path, s.started_at, s.ended_at,
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+             s.first_harness_version, s.last_harness_version, s.parser_version,
+             (
+               -- md5(cwd) is what lets harness_processes_by_cwd serve the lookup.
+               SELECT p.repository FROM harness_processes p
+               WHERE p.system = s.system AND md5(p.cwd) = md5(COALESCE(s.last_cwd, s.first_cwd))
+                 AND p.cwd = COALESCE(s.last_cwd, s.first_cwd) AND p.repository IS NOT NULL
+               ORDER BY p.started_at DESC, p.id DESC
+               LIMIT 1
+             ) AS repository,
+             s.role, s.seat, s.launching_session_id, s.role_source
+      FROM projected_sessions s
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = s.harness AND x.system = s.system AND x.source = s.source
+          AND x.session_id = s.session_id
+      );
+
+      CREATE OR REPLACE VIEW insight.subagents WITH (security_barrier = true) AS
+      SELECT a.harness, a.system, a.source, a.session_id, a.agent_id,
+             COALESCE(a.parent_agent_id, spawn.agent_id) AS parent_agent_id,
+             a.agent_type, a.depth, a.tool_use_id, a.workflow_run, a.workflow_phase,
+             a.path, a.started_at, a.ended_at, a.parser_version,
+             a.role, a.seat, a.launching_session_id, a.role_source
+      FROM projected_subagents a
+      JOIN current_parsers c ON c.harness = a.harness AND c.version = a.parser_version
+      LEFT JOIN projected_tool_calls spawn
+        ON spawn.harness = a.harness AND spawn.parser_version = a.parser_version
+       AND spawn.system = a.system AND spawn.source = a.source AND spawn.call_id = a.tool_use_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = a.harness AND x.system = a.system AND x.source = a.source
+          AND x.session_id = a.session_id
+      );
+    `,
+    version: 50,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

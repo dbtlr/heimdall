@@ -221,3 +221,23 @@ export const INTERRUPTED = jsonl([
   },
   tokenCount(3),
 ]);
+
+// A `response_item` message from `role` with one text block, as Codex
+// persists a user, developer, or assistant message.
+export const message = (role: string, text: string, second = 1) => ({
+  payload: {
+    content: [{ text, type: role === 'assistant' ? 'output_text' : 'input_text' }],
+    role,
+    type: 'message',
+  },
+  timestamp: at(second),
+  type: 'response_item',
+});
+
+// A `response_item` of `type` the model produced, such as `reasoning` or a
+// `function_call`.
+export const produced = (type: string, second = 2) => ({
+  payload: { id: `item-${type}`, type },
+  timestamp: at(second),
+  type: 'response_item',
+});

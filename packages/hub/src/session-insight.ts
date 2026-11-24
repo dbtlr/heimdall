@@ -1,3 +1,4 @@
+import type { Opening } from './session-tags.ts';
 import { storable } from './storable.ts';
 
 // The Session insight every Harness's parser derives from transcripts, the
@@ -90,6 +91,11 @@ export type Batch = {
   toolCalls: ToolCall[];
   transcript: boolean;
   unreadableLines: number;
+  // The conversation's opening as this batch leaves it, when the batch read or
+  // closed it: its role, seat, and launching Session (ADR-0025). Absent or
+  // null when the batch read none of it. Only a batch of the owner's own
+  // transcript carries one.
+  opening?: Opening | null;
   // Opaque, content-free continuation state, committed with byte progress.
   state?: unknown;
 };
@@ -141,6 +147,13 @@ export const MAX_TEXT_LENGTH = 4096;
 export const MAX_TOKENS = 1_000_000_000;
 const EARLIEST = Date.parse('0001-01-01T00:00:00.000Z');
 const LATEST = Date.parse('9999-12-31T23:59:59.999Z');
+
+// Whether `at`, in epoch milliseconds, is a time a line may hold.
+export const isStorableTime = (at: number): boolean => at >= EARLIEST && at <= LATEST;
+
+// Whether a value parsed from JSON is an object, as a record or a field of one.
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // Thrown by the readers below for a value a line cannot hold, which makes the
 // line unreadable. A parser catches it per line.

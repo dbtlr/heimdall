@@ -133,18 +133,21 @@ export const assistant = ({
   uuid: crypto.randomUUID(),
 });
 
-// One user line: a prompt, or a slash command such as `/review` when `command` is given.
+// One user line: a prompt, `content` as given, or a slash command such as
+// `/review` when `command` is given.
 export const user = ({
   command,
+  content,
   uuid = crypto.randomUUID(),
   ...context
-}: Context & { command?: string; uuid?: string }) => ({
+}: Context & { command?: string; content?: unknown; uuid?: string }) => ({
   ...envelope(context),
   message: {
     content:
-      command === undefined
+      content ??
+      (command === undefined
         ? 'Synthetic prompt.'
-        : `<command-message>${command.slice(1)}</command-message>\n<command-name>${command}</command-name>`,
+        : `<command-message>${command.slice(1)}</command-message>\n<command-name>${command}</command-name>`),
     role: 'user',
   },
   type: 'user',
