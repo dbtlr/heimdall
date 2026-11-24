@@ -82,10 +82,22 @@ export const readCells = async (
   `;
 };
 
+// `bucket` read on to `to`, the period's last instant, when it holds `now`. A
+// request stamped ahead of `now` but within the period can fall past the end
+// of the bucket holding now, and counts in it, so the bars still sum to the
+// period's total. A bucket that ends by `now` is read as it is.
+export const throughPeriodEnd = <Bucket extends { end: number }>(
+  bucket: Bucket,
+  now: number,
+  to: Date,
+): Bucket =>
+  bucket.end > now ? { ...bucket, end: Math.max(bucket.end, to.getTime() + 1) } : bucket;
+
 // The cost chart of `period`: its bars, a local hour each for Today and a
 // local day for the longer ranges, and the cost in each by every key. Cells
 // that fall on the same project merge, as projects are named from the
-// repository or the directory.
+// repository or the directory. The last bar holds `now` and reads to the
+// period's end (see throughPeriodEnd).
 export const readCostChart = async (
   sql: SQL,
   {
@@ -96,8 +108,9 @@ export const readCostChart = async (
   }: { now: number; period: Period; range: AgentsRange; timeZone: string },
 ): Promise<CostChart> => {
   const { buckets, unit } = chartBuckets(range, period.from.getTime(), now, timeZone);
+  const windows = buckets.map((bucket) => throughPeriodEnd(bucket, now, period.to));
   const merged = new Map<string, CostCell>();
-  for (const row of await readCells(sql, period, buckets)) {
+  for (const row of await readCells(sql, period, windows)) {
     const cell: CostCell = {
       bucket: row.bucket,
       harness: row.harness,

@@ -36,7 +36,7 @@ const agentsOf = async (h: Hub, timeZone: string) => {
   return agents;
 };
 
-test("today's cost is the Agents page's Today total in the same zone, unpriced requests counted", async () => {
+test("today's cost is the Agents page's Today total in the same zone, on every range, unpriced and slightly ahead requests counted", async () => {
   await using h = await start();
   // Berlin's 6 October starts at 22:00 UTC the day before, 50,400 s before NOW.
   await addSession(h.db.sql, {
@@ -49,7 +49,8 @@ test("today's cost is the Agents page's Today total in the same zone, unpriced r
   await addSession(h.db.sql, {
     ...dollar,
     id: 'unpriced',
-    requests: [-HOUR_S, { at: -HOUR_S + 60, model: 'unknown' }],
+    // The last from a clock running a minute ahead.
+    requests: [-HOUR_S, { at: -HOUR_S + 60, model: 'unknown' }, 60],
     system: 'laptop-1',
   });
 
@@ -59,10 +60,16 @@ test("today's cost is the Agents page's Today total in the same zone, unpriced r
     range: 'today',
     timeZone: 'Europe/Berlin',
   });
+  const week = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: '7d',
+    timeZone: 'Europe/Berlin',
+  });
 
   expect(agents.today).toEqual(overview.totals);
-  expect(agents.today).toEqual({ pricedCostUsd: 4, requests: 5, unpricedRequests: 1 });
-  expect(agents.days.at(-1)).toMatchObject({ pricedCostUsd: 4, unpricedRequests: 1 });
+  expect(agents.today).toEqual(week.today);
+  expect(agents.today).toEqual({ pricedCostUsd: 5, requests: 6, unpricedRequests: 1 });
+  expect(agents.days.at(-1)).toMatchObject({ pricedCostUsd: 5, unpricedRequests: 1 });
 });
 
 test('running Sessions have a request in the last 5 minutes, the latest first, each priced over all its requests', async () => {
@@ -139,7 +146,9 @@ test('the bars hold the 6 days before today and today, and usually by now is the
     ['oct-3', [75]],
     ['sep-29', [170, 169, 168.5, 168]],
     ['sep-28', [200]],
-    ['today', [1]],
+    // Its request a day ahead is past the clock tolerance, so the latest
+    // request is the one an hour ago.
+    ['today', [1, -24]],
   ];
   for (const [id, hours] of days) {
     // oxlint-disable-next-line no-await-in-loop -- a handful of fixture Sessions.
