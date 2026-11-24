@@ -9,7 +9,7 @@ import type { Hub } from '@heimdall/hub/testing';
 
 import { localDays } from '../lib/home-agents.ts';
 import { readCostChart } from './agents-costs.ts';
-import { agentsPeriod } from './agents-overview.ts';
+import { agentsPeriod, sessionsPeriod } from './agents-overview.ts';
 import { readDayCosts } from './day-costs.ts';
 import { parseBucketInput, readBucket, readSystemDetail } from './system-detail.ts';
 
@@ -288,11 +288,11 @@ describe('the System page over 30 d and 1 y', () => {
 const offset = (t: number) => (t - NOW) / 1000;
 
 // What Agents' cost chart puts on `system` per bar over its 30 days, by the
-// bar's start.
-const agentsCosts = async (h: Hub, timeZone: string, system = 'server-1') => {
+// bar's start, read over the period the Agents page reads.
+const agentsCosts = async (h: Hub, timeZone: string, system = 'server-1', now = NOW) => {
   const chart = await readCostChart(h.db.sql, {
-    now: NOW,
-    period: agentsPeriod({ now: NOW, range: '30d', timeZone }),
+    now,
+    period: sessionsPeriod(agentsPeriod({ now, range: '30d', timeZone }), now),
     range: '30d',
     timeZone,
   });
@@ -440,6 +440,35 @@ describe("the long ranges in the viewer's zone", () => {
       sessions: 2,
       t: BERLIN_20,
     });
+  });
+
+  test("a request stamped a minute ahead, past the last day's end, counts in the last bar, as in Agents' and the inspector's", async () => {
+    await using h = await startHub();
+    await hear(h);
+    await price(h);
+    // Read 30 s before midnight UTC, a request a minute later falls in the next
+    // day, within the clock tolerance of the read.
+    const now = TODAY + DAY - 30 * SECOND;
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: 'priced-model',
+      requests: [offset(now + MINUTE)],
+      system: 'server-1',
+    });
+
+    const found = await detail(h, '1y', { now });
+
+    expect(barTotals(found.long?.costs ?? [])).toEqual(new Map([[TODAY, 5]]));
+    expect(found.long?.sessions).toBe(1);
+    expect((await agentsCosts(h, 'UTC', 'server-1', now)).get(TODAY)).toBe(5);
+    const day = await readBucket(h.db.sql, {
+      at: now,
+      name: 'server-1',
+      now,
+      range: '1y',
+      timeZone: 'UTC',
+    });
+    expect(day).toMatchObject({ costUsd: 5, t: TODAY });
   });
 
   test('a year in Los Angeles gives the day the clocks went back its 25 hours, and a Session at 00:30 the day it began', async () => {

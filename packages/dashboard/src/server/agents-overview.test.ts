@@ -3,7 +3,13 @@ import { beforeAll, expect, test } from 'bun:test';
 import { NOW, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import { agentsPeriod, readAgentsOverview, readPeriodSessions } from './agents-overview.ts';
+import { isRunning } from '../lib/home-agents.ts';
+import {
+  agentsPeriod,
+  readAgentsOverview,
+  readPeriodSessions,
+  sessionsPeriod,
+} from './agents-overview.ts';
 
 beforeAll(async () => {
   await using _h = await startHub();
@@ -25,10 +31,40 @@ const start = async () => {
 // Sessions it sums, which leave the server only as sums and a page.
 const read = async (h: Hub, input: Parameters<typeof readAgentsOverview>[1]) => {
   const overview = await readAgentsOverview(h.db.sql, input);
-  const { sessions } = await h.db.sql.begin((tx) => readPeriodSessions(tx, agentsPeriod(input)));
+  const { sessions } = await h.db.sql.begin((tx) =>
+    readPeriodSessions(tx, sessionsPeriod(agentsPeriod(input), input.now)),
+  );
   const models = overview.breakdown.model.map(({ key, ...totals }) => ({ model: key, ...totals }));
   return { ...overview, models, sessions };
 };
+
+test('Running and the table mark the same Sessions running: a request up to 5 minutes ahead counts in both, one a day ahead in neither', async () => {
+  await using h = await start();
+  const sessions = [
+    { id: 'ahead', requests: [-600, 60] },
+    { id: 'at-tolerance', requests: [-600, 300] },
+    { id: 'only-future', requests: [60] },
+    { id: 'day-ahead', requests: [-600, 86_400] },
+  ];
+  for (const { id, requests } of sessions) {
+    // oxlint-disable-next-line no-await-in-loop -- one at a time, since each takes the next id.
+    await addSession(h.db.sql, { id, requests, system: 'server-1' });
+  }
+
+  const { running, table } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+
+  const counted = running.map(({ sessionId }) => sessionId).toSorted();
+  const marked = table.sessions
+    .filter(({ lastRequestAt }) => isRunning(lastRequestAt, NOW))
+    .map(({ sessionId }) => sessionId)
+    .toSorted();
+  expect(counted).toEqual(['ahead', 'at-tolerance', 'only-future']);
+  expect(marked).toEqual(counted);
+});
 
 const view = (h: Hub) => read(h, { now: NOW, range: '7d', timeZone: 'UTC' });
 
@@ -92,19 +128,19 @@ test('whole Sessions retain priced lower bounds, include unpaired history, and k
   ]);
 });
 
-test('boundary pricing excludes earlier unpriced and future requests, and omits gaps with no requests', async () => {
+test('boundary pricing excludes earlier unpriced requests and those past the clock tolerance, and omits gaps with no requests', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
     id: 'boundary',
     inputTokens: 1_000_000,
     model: 'test-model',
     outputTokens: 0,
-    requests: [{ at: -604_801, model: 'unknown' }, -604_800, 0, { at: 1, model: 'unknown' }],
+    requests: [{ at: -604_801, model: 'unknown' }, -604_800, 0, { at: 301, model: 'unknown' }],
     system: 'server-1',
   });
   await addSession(h.db.sql, {
     id: 'gap',
-    requests: [-604_801, 1],
+    requests: [-604_801, 301],
     system: 'server-1',
   });
   const result = await view(h);

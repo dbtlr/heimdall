@@ -1,3 +1,4 @@
+import { FUTURE_SAMPLE_TOLERANCE_MS } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
 import { breakdownTotals } from '../lib/agents-breakdown.ts';
@@ -186,13 +187,24 @@ export const readPeriodSessions = async (
   return { models, sessions };
 };
 
-// The bound past every request a running Session can have: a Collector's
-// clock running ahead stamps a request after the dashboard's now, and that
-// request is no older than RUNNING_MS too.
-const NO_LATER = new Date('9999-12-31T00:00:00Z');
+// The latest a request can be stamped and still count at `now`: a Collector's
+// clock running ahead stamps a request after the dashboard's now. The Hub
+// stores any timestamp; the dashboard ignores a request stamped later than
+// this, as the Conditions ignore a later sample, so Running, the sessions
+// table, the totals, and the chart read the same requests.
+export const periodEnd = (now: number): Date => new Date(now + FUTURE_SAMPLE_TOLERANCE_MS);
+
+// The period the Agents page's table, totals, and chart read: it ends at
+// `periodEnd`, not at `now`, so a request stamped slightly ahead counts in
+// them as it does in Running.
+export const sessionsPeriod = (period: Period, now: number): Period => ({
+  ...period,
+  to: periodEnd(now),
+});
 
 // The Sessions running at `now`, of one project when given, each priced over
-// all its requests, even one stamped after `now`. Read apart from any
+// all its requests up to `periodEnd`, so one stamped slightly after `now`
+// counts and one stamped later does not. Read apart from any
 // period, since a Session can have run up to just before the period began.
 // Call it inside a snapshot.
 export const readRunningSessions = async (
@@ -203,7 +215,7 @@ export const readRunningSessions = async (
     from: new Date(0),
     lastRequestFrom: new Date(now - RUNNING_MS),
     project,
-    to: NO_LATER,
+    to: periodEnd(now),
   });
   return sessions.filter(({ lastRequestAt }) => isRunning(lastRequestAt, now));
 };
@@ -227,6 +239,10 @@ export const todayPeriod = (now: number, timeZone: string): Period => {
   const [today] = localDays(now, timeZone, 1);
   return { from: new Date(today?.start ?? now), to: new Date(now) };
 };
+
+// Today's period as the table and Running read it, past `now` by the clock tolerance.
+export const todaySessionsPeriod = (now: number, timeZone: string): Period =>
+  sessionsPeriod(todayPeriod(now, timeZone), now);
 
 // The Agents page's period: Today from local midnight, else a trailing 7 or 30 days.
 export const agentsPeriod = ({
@@ -262,11 +278,14 @@ export const readPeriodOverview = async (
     timeZone: string;
   },
 ): Promise<PeriodOverview> => {
+  // A project's dossier reads the rest of its figures up to `now`, so its table
+  // and chart stay at the period's own end to agree with them.
   const period = { ...agentsPeriod({ now, range, timeZone }), project };
+  const listed = project === undefined ? sessionsPeriod(period, now) : period;
   const [{ models, sessions }, running, chart, earlier] = await Promise.all([
-    readPeriodSessions(sql, period),
+    readPeriodSessions(sql, listed),
     readRunningSessions(sql, { now, project }),
-    readCostChart(sql, { now, period, range, timeZone }),
+    readCostChart(sql, { now, period: listed, range, timeZone }),
     project === undefined
       ? readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1))
       : [],
@@ -296,7 +315,7 @@ const readAgentsSnapshot = async (
   const { now, range, timeZone } = input;
   const [overview, todays] = await Promise.all([
     readPeriodOverview(sql, input),
-    range === 'today' ? undefined : readPeriodSessions(sql, todayPeriod(now, timeZone)),
+    range === 'today' ? undefined : readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
   ]);
   return {
     ...overview,

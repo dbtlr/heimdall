@@ -136,8 +136,8 @@ test('the longer ranges report Today from local midnight, not their own total', 
 test('the chart counts only requests inside the period, as the total does', async () => {
   await using h = await start();
   // The 7d period starts at 12:00 on 29 September, the first bar's day: the
-  // request at 11:00 that day is before it. The request 10 minutes after now,
-  // from a clock running ahead, is after it.
+  // request at 11:00 that day is before it. The request a minute after now,
+  // from a clock running ahead, is within the clock tolerance, so it counts.
   await addSession(h.db.sql, {
     ...dollar,
     id: 'started-before',
@@ -147,7 +147,7 @@ test('the chart counts only requests inside the period, as the total does', asyn
   await addSession(h.db.sql, {
     ...dollar,
     id: 'clock-ahead',
-    requests: [-HOUR_S, 600],
+    requests: [-HOUR_S, 60],
     system: 'server-1',
   });
 
@@ -157,13 +157,35 @@ test('the chart counts only requests inside the period, as the total does', asyn
     timeZone: 'UTC',
   });
 
-  expect(totals.pricedCostUsd).toBe(2);
+  expect(totals.pricedCostUsd).toBe(3);
   const costOf = (bucket: number) =>
     chart.cells
       .filter((cell) => cell.bucket === bucket)
       .reduce((sum, cell) => sum + cell.pricedCostUsd, 0);
   expect(costOf(0)).toBe(1);
-  expect(costOf(7)).toBe(1);
+  expect(costOf(7)).toBe(2);
+});
+
+test("a request stamped ahead past the last bar's end is charted in the last bar, as the total counts it", async () => {
+  await using h = await start();
+  // Read 30 s before 12:00, the last bar is 11:00's, and the requests a
+  // minute after 12:00 and at exactly the clock tolerance of the read count.
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'ahead',
+    requests: [-HOUR_S, 60, 270],
+    system: 'server-1',
+  });
+
+  const { chart, totals } = await readAgentsOverview(h.db.sql, {
+    now: NOW - 30_000,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+
+  expect(chart.buckets.at(-1)?.end).toBe(NOW);
+  expect(totals.pricedCostUsd).toBe(3);
+  expect(chart.cells).toEqual([expect.objectContaining({ bucket: 11, pricedCostUsd: 3 })]);
 });
 
 test('cells merge working directories that name one project, and keep Systems apart', async () => {

@@ -2,10 +2,11 @@ import type { SQL } from 'bun';
 
 import { localDays, shownRunning, usualByNow } from '../lib/home-agents.ts';
 import {
+  periodEnd,
   periodTotals,
   readPeriodSessions,
   readRunningSessions,
-  todayPeriod,
+  todaySessionsPeriod,
 } from './agents-overview.ts';
 import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import type { HomeAgents } from './home-types.ts';
@@ -13,20 +14,36 @@ import type { HomeAgents } from './home-types.ts';
 // How many local days the bars show, today among them.
 const BAR_DAYS = 7;
 
-// The newest request of any Session, by its stored stretches. The planner
-// cannot read the view in the order of its index, so the newest stored end,
-// the index's last entry, bounds what the view reads. A Session being derived
-// again has no stored stretches, so that end is the view's; should the view
-// hide it anyway, every stretch is read, as before.
-const readLatestRequestAt = async (sql: SQL): Promise<number | undefined> => {
+// The newest request of any Session stamped no later than `periodEnd(now)`,
+// so it ignores a request Running ignores. A stretch ending by then gives its
+// end: the planner cannot read the view in the order of its index, so the
+// newest stored end, the index's last entry by then, bounds what the view
+// reads. A Session being derived again has no stored stretches, so that end
+// is the view's; should the view hide it anyway, every stretch ending by then
+// is read. A stretch ending later, of which there are few, gives its latest
+// request by then, read through its key and time.
+const readLatestRequestAt = async (sql: SQL, now: number): Promise<number | undefined> => {
+  const to = periodEnd(now);
   const [row]: { at: Date | null }[] = await sql`
-    SELECT coalesce(
-      (SELECT v.at
-       FROM (SELECT max(ended_at) AS newest FROM stored_session_stretches) b
+    SELECT greatest(
+      coalesce(
+        (SELECT v.at
+         FROM (SELECT max(ended_at) AS newest FROM stored_session_stretches WHERE ended_at <= ${to}) b
+         CROSS JOIN LATERAL (
+           SELECT max(x.ended_at) AS at FROM insight.session_stretches x
+           WHERE x.ended_at >= b.newest AND x.ended_at <= ${to}
+         ) v),
+        (SELECT max(ended_at) FROM insight.session_stretches WHERE ended_at <= ${to})
+      ),
+      (SELECT max(r.at)
+       FROM insight.session_stretches x
        CROSS JOIN LATERAL (
-         SELECT max(x.ended_at) AS at FROM insight.session_stretches x WHERE x.ended_at >= b.newest
-       ) v),
-      (SELECT max(ended_at) FROM insight.session_stretches)
+         SELECT max(y.at) AS at FROM insight.requests y
+         WHERE (y.harness, y.system, y.source, y.session_id)
+             = (x.harness, x.system, x.source, x.session_id)
+           AND y.at >= x.started_at AND y.at <= ${to}
+       ) r
+       WHERE x.ended_at > ${to} AND x.started_at <= ${to})
     ) AS at
   `;
   return row?.at?.getTime();
@@ -34,10 +51,9 @@ const readLatestRequestAt = async (sql: SQL): Promise<number | undefined> => {
 
 // Agent work at `now` in `timeZone`, for Home's Agents card: today's cost as
 // the Agents page totals it, the days before for the bars and what is usually
-// spent by now, and the running Sessions, each priced over all its requests,
-// even one stamped after `now`. Today's cost, like the Agents page's, counts
-// requests up to `now`. A fixed number of statements however many Sessions or
-// Systems there are.
+// spent by now, and the running Sessions. Today's cost and the running
+// Sessions, like the Agents page's, count requests up to `periodEnd(now)`. A
+// fixed number of statements however many Sessions or Systems there are.
 // Call it inside a snapshot.
 export const readHomeAgents = async (
   sql: SQL,
@@ -47,7 +63,7 @@ export const readHomeAgents = async (
   const today = days.at(-1);
   const earlier = days.slice(0, -1);
   const [todays, runningSessions, earlierCosts] = await Promise.all([
-    readPeriodSessions(sql, todayPeriod(now, timeZone)),
+    readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
     readRunningSessions(sql, { now }),
     readDayCosts(sql, earlier),
   ]);
@@ -61,7 +77,7 @@ export const readHomeAgents = async (
   });
   return {
     days: [...bars, { ...totals, start: today?.start ?? now }],
-    latestRequestAt: running.length === 0 ? await readLatestRequestAt(sql) : undefined,
+    latestRequestAt: running.length === 0 ? await readLatestRequestAt(sql, now) : undefined,
     running,
     timeZone,
     today: totals,

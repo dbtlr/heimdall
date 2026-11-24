@@ -9,7 +9,8 @@ import { foldQuietProcesses } from '../lib/long-history.ts';
 import { laneConditions, levelHeldIn } from '../lib/system-events.ts';
 import { SYSTEM_ACTIVITY_RANGE } from './activity-types.ts';
 import { readActivitySnapshot } from './activity.ts';
-import { readCells } from './agents-costs.ts';
+import { readCells, throughPeriodEnd } from './agents-costs.ts';
+import { periodEnd } from './agents-overview.ts';
 import { readAttention } from './attention.ts';
 import { readConditionLimits } from './condition-limits.ts';
 import { readConditionTransitions } from './condition-transitions.ts';
@@ -289,17 +290,19 @@ const readReboots = async (
   return rows.map(({ bucket }) => bucket.getTime());
 };
 
-// The list-price cost of System `name`'s requests up to `now` in each bucket
-// of `edges`, per Harness, priced as the Agents chart prices a bar (see
-// readCells), so a bar here and Agents' bar for the System on that day agree.
+// The list-price cost of System `name`'s requests up to `periodEnd(now)` in
+// each bucket of `edges`, per Harness, read and priced as the Agents chart
+// reads and prices a bar (see readCells and throughPeriodEnd), so a bar here
+// and Agents' bar for the System on that day agree.
 const readCostBuckets = async (
   sql: SQL,
   { edges, name, now }: { edges: readonly number[]; name: string; now: number },
 ): Promise<CostBucket[]> => {
   const spans = edgeSpans(edges);
-  const period = { from: new Date(edges[0] ?? now), to: new Date(now) };
+  const period = { from: new Date(edges[0] ?? now), to: periodEnd(now) };
+  const windows = spans.map((span) => throughPeriodEnd(span, now, period.to));
   const costs = new Map<string, CostBucket>();
-  for (const row of await readCells(sql, period, spans, name)) {
+  for (const row of await readCells(sql, period, windows, name)) {
     const t = spans[row.bucket]?.start ?? 0;
     const key = JSON.stringify([t, row.harness]);
     const cost = costs.get(key) ?? { costUsd: 0, harness: row.harness, t, unpriced: 0 };
@@ -332,7 +335,7 @@ const readLongHistory = async (
 ): Promise<LongHistory> => {
   const [costs, sessions, reboots] = await Promise.all([
     readCostBuckets(sql, { edges: edges.days, name, now }),
-    countSessions(sql, { from: edges.days[0] ?? now, name, to: now }),
+    countSessions(sql, { from: edges.days[0] ?? now, name, to: periodEnd(now).getTime() }),
     readReboots(sql, { from: edges.buckets[0] ?? now, name, to: now }),
   ]);
   return { changeEdges: edges.changes, costs, dayEdges: edges.days, reboots, sessions };
@@ -955,7 +958,7 @@ export const readBucket = (
     const dayOf = () =>
       drawn === undefined ? holding(edges?.days ?? []) : dayHolding(t, timeZone);
     const day = range === '30d' ? dayOf() : undefined;
-    const [startAt, endAt] = [new Date(t), new Date(end)];
+    const [startAt, endAt, costsTo] = [new Date(t), new Date(end), periodEnd(now)];
     const [vitals, reboots, costs, sessions, processes, marks]: [
       BucketVitalsRow[],
       number[],
@@ -978,11 +981,13 @@ export const readBucket = (
         WHERE system = ${name} AND bucket >= ${startAt} AND bucket < ${endAt}
       `,
       readReboots(tx, { from: t, name, to: end }),
-      // The bucket's cost, then its day's.
+      // The bucket's cost, then its day's, read as the cost bars read them.
       readCells(
         tx,
-        { from: new Date(day?.start ?? t), to: new Date(now) },
-        [{ end, start: t }, ...(day === undefined ? [] : [day])],
+        { from: new Date(day?.start ?? t), to: costsTo },
+        [{ end, start: t }, ...(day === undefined ? [] : [day])].map((window) =>
+          throughPeriodEnd(window, now, costsTo),
+        ),
         name,
       ),
       countSessions(tx, { from: t, name, to: end }),
