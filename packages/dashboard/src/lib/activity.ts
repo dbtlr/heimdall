@@ -249,7 +249,7 @@ const sentence = (event: ActivityEvent): { detail: string; title: string } => {
 // stand alone, with its subject, a Condition's level and, on its Condition's
 // latest change, whether it is still open, and when an alert's recovery went
 // out.
-const phrase = (event: ActivityEvent): Phrase => {
+const phrase = (event: ActivityEvent, lineAt: number): Phrase => {
   if (event.kind === 'version' || event.kind === 'stop') {
     return [sentence(event).title];
   }
@@ -259,7 +259,7 @@ const phrase = (event: ActivityEvent): Phrase => {
   if (event.kind === 'alert') {
     return event.recoveredAt === undefined
       ? [`Alert sent for ${named}`]
-      : [`Alert sent for ${named}, recovery at `, aheadAt(event.recoveredAt, event.at)];
+      : [`Alert sent for ${named}, recovery at `, aheadAt(event.recoveredAt, lineAt)];
   }
   const change = changeOf(event);
   const state = [change === '' ? event.level : change, isOpen(event) ? 'open' : '']
@@ -274,6 +274,18 @@ const alertFor = (alert: AlertActivity, lead: ActivityEvent) =>
   ((lead.kind === 'condition' || lead.kind === 'drift') &&
     alert.condition === lead.condition &&
     alert.subject === lead.subject);
+
+// The line's alert-sent note, "Alert pushed at 23:59, recovery at Fri 00:20".
+// Its times are dated against the line's own time, the one its day heading
+// comes from, so a time on another day, later or (for an alert pushed just
+// before the line's lead) earlier, names its day.
+export const alertNote = (alert: NonNullable<LineWords['alert']>, lineAt: number): Phrase => [
+  'Alert pushed at ',
+  aheadAt(alert.at, lineAt),
+  ...(alert.recoveredAt === undefined
+    ? []
+    : [', recovery at ', aheadAt(alert.recoveredAt, lineAt)]),
+];
 
 // A line's sentence: its lead change's, then the detail of the lead and each
 // other change it holds in words of its own. An alert sent for the lead's
@@ -293,7 +305,7 @@ export const lineWords = (line: ActivityLine): LineWords => {
   return {
     alert: alert === undefined ? undefined : { at: alert.at, recoveredAt: alert.recoveredAt },
     change: isCondition ? changeOf(lead) : '',
-    detail: joinPhrases([[detail], ...others.map(phrase)], ' · '),
+    detail: joinPhrases([[detail], ...others.map((event) => phrase(event, line.at))], ' · '),
     level: isCondition ? lead.level : undefined,
     open: isOpen(lead),
     subject: isCondition || lead.kind === 'alert' ? subjectOf(lead) : '',

@@ -163,6 +163,37 @@ test('a recovery on a later local day than its alert names the day', async () =>
   expect(html).toContain('Alert pushed at 23:50, recovery at Fri 00:10');
 });
 
+test("a line's alert note is dated against the line's day heading", async () => {
+  const raised = Date.UTC(2026, 10, 12, 23, 59);
+  const html = await renderRouted(
+    <ActivityListBody
+      lines={groupActivity([
+        {
+          action: 'raised',
+          at: raised,
+          condition: 'service_down',
+          conditionId: '7',
+          kind: 'condition',
+          level: 'alert',
+          open: false,
+          previousLevel: undefined,
+          raisedAt: raised,
+          reason: 'Exited with status 1.',
+          subject: 'caddy',
+          system: 'server-1',
+        },
+        alertRecovering(raised + MIN, raised + 21 * MIN),
+      ])}
+      now={NOW}
+      timeZone="UTC"
+      unpaired={new Set()}
+    />,
+    { routePaths: ['/systems/$name', '/systems/$name/conditions/$id'] },
+  );
+  // Under Thursday's heading, both Friday times name their day.
+  expect(html).toContain('Alert pushed at Fri 00:00, recovery at Fri 00:20');
+});
+
 test('a recovery on the same local day as its alert shows only the time', async () => {
   const pushed = Date.UTC(2026, 10, 12, 22, 30);
   const html = await renderAlert(alertRecovering(pushed, pushed + 20 * MIN));

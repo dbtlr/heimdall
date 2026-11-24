@@ -9,6 +9,7 @@ import type {
 } from '../server/activity-types.ts';
 import {
   activityCounts,
+  alertNote,
   activitySearch,
   filterActivity,
   groupActivity,
@@ -379,5 +380,34 @@ test('an alert merged into a line dates a recovery a week or more later', () => 
   ]);
   expect(phraseText(lineWords(line!).detail, 'UTC')).toBe(
     'Alert sent for Service down backup, recovery at Fri 20 Nov 23:50',
+  );
+});
+
+// Thu 12 Nov 23:59, so the line sits under Thursday's heading.
+const THU_LATE = Date.UTC(2026, 10, 12, 23, 59);
+
+test("a line's alert note dates its times against the line's day, not the alert's", () => {
+  const [line] = groupActivity([
+    condition({ at: THU_LATE }),
+    alert({ at: THU_LATE + 90_000, open: false, recoveredAt: THU_LATE + 21 * MIN }),
+  ]);
+  const { alert: sent } = lineWords(line!);
+  expect(phraseText(alertNote(sent!, line!.at), 'UTC')).toBe(
+    'Alert pushed at Fri 00:00, recovery at Fri 00:20',
+  );
+});
+
+test("a merged alert dates its recovery against the line's day, not the alert's", () => {
+  const [line] = groupActivity([
+    stop({ at: THU_LATE }),
+    alert({
+      at: THU_LATE + 90_000,
+      open: false,
+      recoveredAt: THU_LATE + 21 * MIN,
+      subject: 'backup',
+    }),
+  ]);
+  expect(phraseText(lineWords(line!).detail, 'UTC')).toBe(
+    'Alert sent for Service down backup, recovery at Fri 00:20',
   );
 });
