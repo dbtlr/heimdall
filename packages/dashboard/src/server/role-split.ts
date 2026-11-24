@@ -1,5 +1,6 @@
 import type { SQL } from 'bun';
 
+import { roleClassOf } from '../lib/cost-roles.ts';
 import type { CostClass } from '../lib/cost-roles.ts';
 import type { PeriodTotals } from './agents-overview-types.ts';
 import type { MissedTags, RoleSplit, SeatTotals } from './role-split-types.ts';
@@ -16,7 +17,7 @@ export type RoleSplitScope = {
 type SplitRow = {
   priced_cost_usd: number;
   requests: number;
-  role_class: CostClass;
+  role_class: string;
   seat: string | null;
   unpriced_requests: number;
 };
@@ -29,54 +30,75 @@ type SplitRow = {
 // conversation's, the subagent's, or for a subagent the Hub does not hold, the
 // main conversation's role read as a subagent's.
 const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise<SplitRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })})
-  SELECT t.role_class, t.seat,
-         sum(t.requests)::float8 AS requests,
-         coalesce(sum(t.priced_cost_usd), 0)::float8 AS priced_cost_usd,
-         sum(t.unpriced_requests)::float8 AS unpriced_requests
-  FROM spans k
-  CROSS JOIN LATERAL (
-    SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
-    FROM insight.session_role_totals x
-    WHERE (x.harness, x.system, x.source, x.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-      AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
-      -- Only a Session the headline lists, so the classes sum to its total.
-      AND EXISTS (
-        SELECT 1 FROM insight.sessions s
-        WHERE (s.harness, s.system, s.source, s.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-      )
-    UNION ALL
-    SELECT c.role_class, c.seat, g.requests, g.priced_cost_usd, g.unpriced_requests
-    FROM (
+  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })}),
+  -- Each crossing Session's subagents, read once per Session by its key: the
+  -- Hub walks a Session's subagents to find their effective roles. OFFSET 0
+  -- keeps the read per Session rather than over every Session's subagents.
+  crossing_subagents AS MATERIALIZED (
+    SELECT a.harness, a.system, a.source, a.session_id, a.agent_id, a.role_class, a.effective_seat
+    FROM spans k
+    CROSS JOIN LATERAL (
+      SELECT * FROM insight.subagents a
+      WHERE (a.harness, a.system, a.source, a.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+      OFFSET 0
+    ) a
+    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
+  ),
+  -- Each crossing Session's requests inside the period, by conversation.
+  crossing_groups AS (
+    SELECT k.harness, k.system, k.source, k.session_id, g.agent_id, g.requests,
+           g.priced_cost_usd, g.unpriced_requests
+    FROM spans k
+    CROSS JOIN LATERAL (
       SELECT r.agent_id, count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
              count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests
       FROM insight.requests r
       WHERE (r.harness, r.system, r.source, r.session_id)
           = (k.harness, k.system, k.source, k.session_id)
-        AND NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
         AND r.at >= ${from} AND r.at <= ${to}
       GROUP BY r.agent_id
     ) g
+    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
+  )
+  SELECT t.role_class, t.seat,
+         sum(t.requests)::float8 AS requests,
+         coalesce(sum(t.priced_cost_usd), 0)::float8 AS priced_cost_usd,
+         sum(t.unpriced_requests)::float8 AS unpriced_requests
+  FROM (
+    SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
+    FROM spans k
     CROSS JOIN LATERAL (
-      SELECT CASE WHEN g.agent_id IS NULL THEN s.role_class
-                  WHEN a.agent_id IS NOT NULL THEN a.role_class
-                  WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END AS role_class,
-             CASE WHEN a.agent_id IS NOT NULL THEN a.effective_seat
-                  ELSE s.effective_seat END AS seat
-      FROM insight.sessions s
-      LEFT JOIN LATERAL (
-        -- Resolve only this conversation, by key, rather than every subagent.
-        SELECT a.agent_id, a.role_class, a.effective_seat
-        FROM insight.subagents a
-        WHERE (a.harness, a.system, a.source, a.session_id, a.agent_id)
-            = (k.harness, k.system, k.source, k.session_id, g.agent_id)
-        LIMIT 1
-      ) a ON true
-      WHERE (s.harness, s.system, s.source, s.session_id)
+      SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
+      FROM insight.session_role_totals x
+      WHERE (x.harness, x.system, x.source, x.session_id)
           = (k.harness, k.system, k.source, k.session_id)
-    ) c
+        AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
+        -- Only a Session the headline lists, so the classes sum to its total.
+        AND EXISTS (
+          SELECT 1 FROM insight.sessions s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (k.harness, k.system, k.source, k.session_id)
+        )
+    ) x
+    UNION ALL
+    -- Joined to the subagents outside any per-Session read, so the planner
+    -- hashes them once instead of scanning them for every group.
+    SELECT CASE WHEN g.agent_id IS NULL THEN s.role_class
+                WHEN a.agent_id IS NOT NULL THEN a.role_class
+                WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END,
+           CASE WHEN a.agent_id IS NOT NULL THEN a.effective_seat ELSE s.effective_seat END,
+           g.requests, g.priced_cost_usd, g.unpriced_requests
+    FROM crossing_groups g
+    CROSS JOIN LATERAL (
+      SELECT s.role_class, s.effective_role, s.effective_seat FROM insight.sessions s
+      WHERE (s.harness, s.system, s.source, s.session_id)
+          = (g.harness, g.system, g.source, g.session_id)
+      OFFSET 0
+    ) s
+    LEFT JOIN crossing_subagents a
+      ON (a.harness, a.system, a.source, a.session_id, a.agent_id)
+       = (g.harness, g.system, g.source, g.session_id, g.agent_id)
   ) t
   GROUP BY t.role_class, t.seat
 `;
@@ -104,8 +126,9 @@ const splitOf = (rows: readonly SplitRow[]): RoleSplit => {
   };
   const seats: SeatTotals[] = [];
   for (const row of rows) {
-    classes[row.role_class] = add(classes[row.role_class], totalsOf(row));
-    if (row.role_class === 'review') {
+    const roleClass = roleClassOf(row.role_class);
+    classes[roleClass] = add(classes[roleClass], totalsOf(row));
+    if (roleClass === 'review') {
       seats.push({ seat: row.seat, ...totalsOf(row) });
     }
   }
@@ -114,9 +137,13 @@ const splitOf = (rows: readonly SplitRow[]): RoleSplit => {
 
 // The scope's list-price cost by role class and review seat, counting the
 // same Sessions and requests as the Agents page's totals, so the classes sum
-// to them. Call it inside a snapshot.
-export const readRoleSplit = async (sql: SQL, scope: RoleSplitScope): Promise<RoleSplit> =>
-  splitOf(await readSplitRows(sql, scope));
+// to them. Call it inside a snapshot. JIT compiling the split's lateral reads
+// costs more than running them, so it turns JIT off for the rest of the
+// transaction, as migration 51's tree functions do for themselves.
+export const readRoleSplit = async (sql: SQL, scope: RoleSplitScope): Promise<RoleSplit> => {
+  await sql`SET LOCAL jit = off`;
+  return splitOf(await readSplitRows(sql, scope));
+};
 
 // How many of the scope's Sessions took their role from a session tag or T3's
 // preamble, and how many of those from the preamble. A Session counts when it

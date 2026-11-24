@@ -31,8 +31,8 @@ describe('CostByRole', () => {
     expect(html).toContain('aria-label="Main $512.30, Review $182.00, Delegated $373.55"');
     expect([...html.matchAll(/title="(?<label>[^"]+)"/gu)].map((m) => m.groups?.label)).toEqual([
       'Main',
-      'Review · breaker',
-      'Review · seat unknown',
+      'review · breaker',
+      'review · seat unknown',
       'Delegated',
       'breaker',
       'seat unknown',

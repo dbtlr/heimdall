@@ -4,9 +4,11 @@ import { useMemo } from 'react';
 
 import { SessionCost } from '../components/session-cost.tsx';
 import { SessionHeader } from '../components/session-header.tsx';
+import { SessionLaunchCard } from '../components/session-launch.tsx';
 import { SessionTabs } from '../components/session-tabs.tsx';
 import { SessionTimeline } from '../components/session-timeline.tsx';
 import { SessionTrace } from '../components/session-trace.tsx';
+import { showsLaunch } from '../lib/launch-tree.ts';
 import { contentFrame } from '../lib/layout.ts';
 import { sessionSearch } from '../lib/session-search.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
@@ -60,6 +62,9 @@ function SessionPage() {
     <>
       <main className={`${contentFrame('wide')} pb-8`}>
         <SessionHeader lanes={lanes} now={now} view={view} />
+        {showsLaunch(view.launch) && (
+          <SessionLaunchCard launch={view.launch} now={now} totals={view.totals} />
+        )}
         <SessionTabs current={search.tab} />
         {search.tab === 'timeline' && (
           <SessionTimeline go={go} lanes={lanes} search={search} view={view} />

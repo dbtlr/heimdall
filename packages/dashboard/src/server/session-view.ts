@@ -1,17 +1,25 @@
 import type { SQL } from 'bun';
 
 import { bucketFor } from '../lib/bucket-width.ts';
+import { roleClassOf } from '../lib/cost-roles.ts';
 import type { CpuBucket } from './fleet-overview-types.ts';
 import { BUCKET_MS, projectOf, toBucket } from './fleet-overview.ts';
 import type { BucketRow } from './fleet-overview.ts';
 import type {
+  EffectiveRole,
+  LaunchTree,
+  RoleSource,
   SessionAgent,
   SessionKey,
+  SessionLaunch,
+  SessionLauncher,
+  SessionPlace,
   SessionRequest,
   SessionStretch,
   SessionToolCall,
   SessionTotals,
   SessionView,
+  TreeMember,
 } from './session-view-types.ts';
 import type { ProcessSeries } from './system-detail-types.ts';
 import { linkOf, toProcesses } from './system-detail.ts';
@@ -40,7 +48,17 @@ export const parseSessionInput = (input: unknown): SessionKey => ({
 // the page's grid does, which is the Hub's 5-minute alignment too.
 const bucketAt = (t: number, widthMs: number) => Math.floor(t / widthMs) * widthMs;
 
-type SessionRow = {
+// A conversation's effective role as the insight views give it.
+type RoleColumns = {
+  effective_role: string | null;
+  effective_seat: string | null;
+  role_class: string;
+};
+
+type SessionRow = RoleColumns & {
+  role: string | null;
+  role_source: string | null;
+  seat: string | null;
   ended_at: Date | null;
   first_cwd: string | null;
   first_git_branch: string | null;
@@ -52,7 +70,7 @@ type SessionRow = {
   started_at: Date | null;
 };
 
-type AgentRow = {
+type AgentRow = RoleColumns & {
   agent_id: string;
   agent_type: string | null;
   depth: number | null;
@@ -116,7 +134,24 @@ type TotalsRow = {
 
 const optional = <T>(value: T | null): T | undefined => value ?? undefined;
 
+const toEffectiveRole = (row: RoleColumns): EffectiveRole => ({
+  effectiveRole: optional(row.effective_role),
+  effectiveSeat: optional(row.effective_seat),
+  roleClass: roleClassOf(row.role_class),
+});
+
+const roleSourceOf = (value: string | null): RoleSource | undefined => {
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== 'tag' && value !== 'preamble') {
+    throw new Error(`The Hub holds a role source ${value}, which the dashboard does not know.`);
+  }
+  return value;
+};
+
 const toAgent = (row: AgentRow, span: { endedAt: number; startedAt: number }): SessionAgent => ({
+  ...toEffectiveRole(row),
   agentId: row.agent_id,
   agentType: optional(row.agent_type),
   // Codex does not know a subagent's depth until it links it to its parent.
@@ -317,15 +352,181 @@ const readProcesses = async (
   return toProcesses(rows.flat());
 };
 
+// Where a Session ran and what it worked on, as another Session's page names it.
+type PlaceRow = {
+  ended_at: Date | null;
+  first_cwd: string | null;
+  first_git_branch: string | null;
+  harness: string;
+  last_cwd: string | null;
+  last_git_branch: string | null;
+  repository: string | null;
+  session_id: string;
+  source: string;
+  started_at: Date | null;
+  system: string;
+};
+
+// A parent resolves only to a Session insight.sessions holds, so a resolved
+// launcher's place is always joined; while unresolved, it is all null.
+type LauncherRow = { launching_session_id: string } & (
+  | (PlaceRow & { parent_state: 'resolved' })
+  | ({ parent_state: 'ambiguous' | 'self' | 'unmatched' } & { [Column in keyof PlaceRow]: null })
+);
+
+type MemberRow = PlaceRow & {
+  cost_usd: number | null;
+  parent_harness: string | null;
+  parent_session_id: string | null;
+  parent_source: string | null;
+  parent_system: string | null;
+  priced_cost_usd: number | null;
+  role: string | null;
+  role_class: string;
+  seat: string | null;
+  totaled: boolean;
+  unpriced_requests: number | null;
+};
+
+type TreeTotalRow = {
+  cost_usd: number | null;
+  missing_sessions: number;
+  priced_cost_usd: number | null;
+  requests: number;
+  sessions: number;
+  unpriced_requests: number;
+};
+
+const toPlace = (row: PlaceRow): SessionPlace => ({
+  branch: optional(row.last_git_branch ?? row.first_git_branch),
+  endedAt: row.ended_at?.getTime(),
+  harness: row.harness,
+  project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
+  sessionId: row.session_id,
+  source: row.source,
+  startedAt: row.started_at?.getTime(),
+  system: row.system,
+});
+
+const toLauncher = (row: LauncherRow | undefined): SessionLauncher | undefined => {
+  if (row === undefined) {
+    return undefined;
+  }
+  if (row.parent_state === 'resolved') {
+    return { session: toPlace(row), state: row.parent_state };
+  }
+  // Read as text, so a state the Hub adds later fails loudly.
+  const state: string = row.parent_state;
+  if (state !== 'unmatched' && state !== 'ambiguous' && state !== 'self') {
+    throw new Error(`The Hub holds a parent state ${state}, which the dashboard does not know.`);
+  }
+  return { id: row.launching_session_id, state };
+};
+
+// The root's parent columns are null, as session_tree gives them.
+const toMember = (row: MemberRow): TreeMember => {
+  const place = toPlace(row);
+  const { parent_harness: harness, parent_session_id: id, parent_source, parent_system } = row;
+  const parent =
+    harness === null || id === null || parent_source === null || parent_system === null
+      ? undefined
+      : { harness, sessionId: id, source: parent_source, system: parent_system };
+  return {
+    ...place,
+    costUsd: optional(row.cost_usd),
+    parent,
+    pricedCostUsd: row.priced_cost_usd ?? 0,
+    role: optional(row.role),
+    roleClass: roleClassOf(row.role_class),
+    seat: optional(row.seat),
+    totaled: row.totaled,
+    unpricedRequests: row.unpriced_requests ?? 0,
+  };
+};
+
+const toTree = (
+  rows: readonly MemberRow[],
+  total: TreeTotalRow | undefined,
+): LaunchTree | undefined => {
+  // A Session that launched nothing is a tree of one: no tree to show.
+  if (rows.length < 2 || total === undefined) {
+    return undefined;
+  }
+  return {
+    // The members query orders the root first, then the rest oldest first.
+    members: rows.map(toMember),
+    total: {
+      costUsd: optional(total.cost_usd),
+      missingSessions: total.missing_sessions,
+      pricedCostUsd: total.priced_cost_usd ?? 0,
+      requests: total.requests,
+      sessions: total.sessions,
+      unpricedRequests: total.unpriced_requests,
+    },
+  };
+};
+
+type Launched = Pick<SessionLaunch, 'launcher' | 'tree'>;
+
+// The Session's launcher and the tree of Sessions it launched, with the
+// tree's total: every read of another Session this page makes, kept in one
+// place so the shape of the Hub's tree read stays local to it.
+export const readLaunched = async (sql: SQL, key: SessionKey): Promise<Launched> => {
+  const { harness, sessionId, source, system } = key;
+  const [launchers, members, totals]: [LauncherRow[], MemberRow[], TreeTotalRow[]] =
+    await Promise.all([
+      sql`
+        SELECT p.launching_session_id, p.parent_state, s.harness, s.system, s.source,
+               s.session_id, s.started_at, s.ended_at, s.repository, s.first_cwd, s.last_cwd,
+               s.first_git_branch, s.last_git_branch
+        FROM insight.session_parents p
+        LEFT JOIN insight.sessions s
+          ON (s.harness, s.system, s.source, s.session_id)
+           = (p.parent_harness, p.parent_system, p.parent_source, p.parent_session_id)
+        WHERE p.harness = ${harness} AND p.system = ${system} AND p.source = ${source}
+          AND p.session_id = ${sessionId}
+      `,
+      sql`
+        SELECT m.harness, m.system, m.source, m.session_id, m.parent_harness, m.parent_system,
+               m.parent_source, m.parent_session_id, s.started_at, s.ended_at, s.repository,
+               s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.role, s.seat,
+               s.role_class, t.cost_usd::float8 AS cost_usd,
+               t.priced_cost_usd::float8 AS priced_cost_usd,
+               t.unpriced_requests::int AS unpriced_requests, t.session_id IS NOT NULL AS totaled
+        FROM insight.session_tree(${harness}, ${system}, ${source}, ${sessionId}) m
+        JOIN insight.sessions s
+          ON (s.harness, s.system, s.source, s.session_id)
+           = (m.harness, m.system, m.source, m.session_id)
+        LEFT JOIN insight.session_totals t
+          ON (t.harness, t.system, t.source, t.session_id)
+           = (m.harness, m.system, m.source, m.session_id)
+        ORDER BY m.depth > 0, s.started_at, m.session_id
+      `,
+      sql`
+        SELECT sessions::int AS sessions, missing_sessions::int AS missing_sessions,
+               requests::int AS requests, cost_usd::float8 AS cost_usd,
+               priced_cost_usd::float8 AS priced_cost_usd,
+               unpriced_requests::int AS unpriced_requests
+        FROM insight.session_tree_total(${harness}, ${system}, ${source}, ${sessionId})
+      `,
+    ]);
+  return { launcher: toLauncher(launchers[0]), tree: toTree(members, totals[0]) };
+};
+
 // One agent Session as its requests, subagents, tool calls, and stretches, with
 // the Vitals of its System and the cores of the processes it ran on over its
-// span. Undefined for a Session the Hub does not hold. Every query looks the
-// Session up by its key, and reads no transcript content. Read-only.
-export const readSessionView = async (
+// span, read in one snapshot, so its own totals and its tree's agree.
+// Undefined for a Session the Hub does not hold. Every query looks the Session
+// up by its key, and reads no transcript content.
+export const readSessionView = (sql: SQL, key: SessionKey): Promise<SessionView | undefined> =>
+  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readSessionViewSnapshot(tx, key));
+
+const readSessionViewSnapshot = async (
   sql: SQL,
   { harness, sessionId, source, system }: SessionKey,
 ): Promise<SessionView | undefined> => {
-  const [sessions, agents, requests, toolCalls, stretches, totals, main]: [
+  const key = { harness, sessionId, source, system };
+  const [sessions, agents, requests, toolCalls, stretches, totals, main, launched]: [
     SessionRow[],
     AgentRow[],
     RequestRow[],
@@ -333,17 +534,19 @@ export const readSessionView = async (
     StretchRow[],
     TotalsRow[],
     { requests: number }[],
+    Launched,
   ] = await Promise.all([
     sql`
       SELECT started_at, ended_at, first_cwd, last_cwd, first_git_branch, last_git_branch,
-             first_harness_version, last_harness_version, repository
+             first_harness_version, last_harness_version, repository, role, seat, role_source,
+             effective_role, effective_seat, role_class
       FROM insight.sessions
       WHERE harness = ${harness} AND system = ${system} AND source = ${source}
         AND session_id = ${sessionId}
     `,
     sql`
       SELECT agent_id, parent_agent_id, agent_type, depth, workflow_run, workflow_phase,
-             started_at, ended_at
+             started_at, ended_at, effective_role, effective_seat, role_class
       FROM insight.subagents
       WHERE harness = ${harness} AND system = ${system} AND source = ${source}
         AND session_id = ${sessionId}
@@ -393,6 +596,7 @@ export const readSessionView = async (
       WHERE harness = ${harness} AND system = ${system} AND source = ${source}
         AND session_id = ${sessionId}
     `,
+    readLaunched(sql, key),
   ]);
   const session = sessions[0];
   if (session === undefined) {
@@ -422,6 +626,13 @@ export const readSessionView = async (
     endedAt: span.endedAt,
     harness,
     harnessVersion: optional(session.last_harness_version ?? session.first_harness_version),
+    launch: {
+      ...toEffectiveRole(session),
+      ...launched,
+      role: optional(session.role),
+      roleSource: roleSourceOf(session.role_source),
+      seat: optional(session.seat),
+    },
     processes: await readProcesses(sql, linked, {
       from: span.startedAt,
       raw,

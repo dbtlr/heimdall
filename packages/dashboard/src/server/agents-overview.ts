@@ -262,7 +262,9 @@ export const agentsPeriod = ({
 // The period's Sessions, of one project when given, are read whole, since the
 // totals, the breakdown, and the running count cover all of them, and leave
 // as sums and one page of the table. `table` is the table's query, the page's
-// default unless given. Call it inside a snapshot.
+// default unless given. It answers the period it read too, so the reads that
+// must count the same requests take it rather than work it out again. Call it
+// inside a snapshot.
 export const readPeriodOverview = async (
   sql: SQL,
   {
@@ -278,7 +280,7 @@ export const readPeriodOverview = async (
     table?: SessionsQuery;
     timeZone: string;
   },
-): Promise<PeriodOverview> => {
+): Promise<{ overview: PeriodOverview; period: Period }> => {
   // A project's dossier reads the rest of its figures up to `now`, so its table
   // and chart stay at the period's own end to agree with them.
   const period = { ...agentsPeriod({ now, range, timeZone }), project };
@@ -291,7 +293,7 @@ export const readPeriodOverview = async (
       ? readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1))
       : [],
   ]);
-  return {
+  const overview: PeriodOverview = {
     breakdown: breakdownTotals(sessions, models),
     chart,
     from: period.from.getTime(),
@@ -305,6 +307,7 @@ export const readPeriodOverview = async (
     totals: periodTotals(sessions),
     usualByNow: usualByNow(earlier),
   };
+  return { overview, period: listed };
 };
 
 // The Agents page's snapshot: the fleet's period, its cost by role over the
@@ -315,12 +318,13 @@ const readAgentsSnapshot = async (
   input: { now: number; range: AgentsRange; table?: SessionsQuery; timeZone: string },
 ): Promise<AgentsOverview> => {
   const { now, range, timeZone } = input;
-  const listed = sessionsPeriod(agentsPeriod({ now, range, timeZone }), now);
-  const [overview, todays, roleSplit, missedTags] = await Promise.all([
+  const [{ overview, period }, todays] = await Promise.all([
     readPeriodOverview(sql, input),
     range === 'today' ? undefined : readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
-    readRoleSplit(sql, listed),
-    readMissedTags(sql, listed),
+  ]);
+  const [roleSplit, missedTags] = await Promise.all([
+    readRoleSplit(sql, period),
+    readMissedTags(sql, period),
   ]);
   return {
     ...overview,

@@ -227,6 +227,18 @@ test('a period with no review cost has no seats', async () => {
   });
 });
 
+test('reads the split with JIT off for the rest of its transaction', async () => {
+  await using h = await start();
+
+  const jit = await h.db.sql.begin(async (tx) => {
+    await readRoleSplit(tx, week);
+    const [row]: { jit: string }[] = await tx`SHOW jit`;
+    return row?.jit;
+  });
+
+  expect(jit).toBe('off');
+});
+
 test('a project’s split counts only its Sessions', async () => {
   await using h = await start();
   await addSession(h.db.sql, {

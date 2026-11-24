@@ -1,6 +1,6 @@
 import type { PeriodTotals } from '../server/agents-overview-types.ts';
 import type { MissedTags, RoleSplit } from '../server/role-split-types.ts';
-import { costClassColor, costClassLabel, shadeSeats } from './cost-roles.ts';
+import { costClassColor, costClassLabel, listSeats, roleText } from './cost-roles.ts';
 import type { CostClass } from './cost-roles.ts';
 
 /** One review seat's row in the Review column, in the strip's order. */
@@ -35,49 +35,16 @@ export type CostByRoleView = {
   unpricedRequests: number;
 };
 
-/** Past this many known seats, the list keeps one fewer and rolls the rest into one row. */
-export const SEATS_LISTED = 6;
-
 const CLASSES: CostClass[] = ['main', 'review', 'delegated'];
 
 const plural = (count: number, one: string, many: string) =>
   `${String(count)} ${count === 1 ? one : many}`;
 
-// The seats in the order shadeSeats gives them. Past SEATS_LISTED known seats,
-// the costliest SEATS_LISTED - 1 stay and the rest share one "n more seats" row
-// in the shared shade, so the list never ends in a row for a single seat; the
-// unknown seat stays last.
-const seatRows = (seats: RoleSplit['seats']): SeatRow[] => {
-  const shaded = shadeSeats(seats.map((seat) => ({ cost: seat.pricedCostUsd, seat: seat.seat })));
-  const known = shaded.filter((row) => row.seat !== null);
-  const unknown = shaded.filter((row) => row.seat === null);
-  const kept = known.length > SEATS_LISTED ? known.slice(0, SEATS_LISTED - 1) : known;
-  const rolled = known.slice(kept.length);
-  return [
-    ...kept.map((row) => ({
-      costUsd: row.cost,
-      key: `seat:${row.seat ?? ''}`,
-      name: row.seat ?? '',
-      shade: row.shade,
-    })),
-    ...(rolled.length === 0
-      ? []
-      : [
-          {
-            costUsd: rolled.reduce((sum, row) => sum + row.cost, 0),
-            key: 'more',
-            name: `${String(rolled.length)} more seats`,
-            shade: 'var(--review-other)',
-          },
-        ]),
-    ...unknown.map((row) => ({
-      costUsd: row.cost,
-      key: 'unknown',
-      name: 'seat unknown',
-      shade: row.shade,
-    })),
-  ];
-};
+// The seats as the strip and its list draw them.
+const seatRows = (seats: RoleSplit['seats']): SeatRow[] =>
+  listSeats(seats.map((seat) => ({ cost: seat.pricedCostUsd, seat: seat.seat }))).map(
+    ({ cost, key, name, shade }) => ({ costUsd: cost, key, name, shade }),
+  );
 
 const sum = (totals: readonly PeriodTotals[]) =>
   totals.reduce((all, { pricedCostUsd }) => all + pricedCostUsd, 0);
@@ -110,7 +77,7 @@ export function costByRole(split: RoleSplit): CostByRoleView {
     ...seats.map((seat) => ({
       color: seat.shade,
       key: seat.key,
-      label: `Review · ${seat.name}`,
+      label: roleText('review', seat.name),
       widthPercent: share(seat.costUsd),
     })),
     {

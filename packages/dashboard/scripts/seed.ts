@@ -26,6 +26,7 @@ import type { SentServiceStop } from '@heimdall/schema';
 import { SQL } from 'bun';
 
 import { readFleetGlance } from '../src/server/fleet-overview.ts';
+import { seedLaunchTree } from './seed-launch-tree.ts';
 import { seedRoleSplit } from './seed-role-split.ts';
 
 const SECOND = 1000;
@@ -1540,6 +1541,7 @@ const fill = async (sql: SQL) => {
   await seedWorkSession(sql, now);
   await seedRecentSessions(sql, now);
   await seedRoleSplit(sql, now);
+  await seedLaunchTree(sql, now);
   await unpair(sql, UNPAIRED_SYSTEM);
   // Stores the seeded Sessions' stretches and totals, as a running Hub would.
   await refreshSessionInsight(sql, { budgetMs: Number.POSITIVE_INFINITY });
