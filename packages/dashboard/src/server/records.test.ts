@@ -59,8 +59,9 @@ const run = (started: string, exitStatus = 0): RunRecord => ({
   started,
 });
 
-const FAILED = run('2026-10-06T03:30:00Z', 1);
-const SUCCEEDED = run('2026-10-07T03:30:00Z');
+// Both before the Reports' arrival, since the Hub drops a run stamped past its clock.
+const FAILED = run('2026-10-05T03:30:00Z', 1);
+const SUCCEEDED = run('2026-10-06T03:30:00Z');
 
 type SentRuns = { job: string; latestRun: object; latestSuccess: object | null };
 

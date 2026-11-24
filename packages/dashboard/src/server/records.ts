@@ -158,7 +158,8 @@ const entryOf = (
 });
 
 // Every paired System, by name, with the records, latest runs, and latest checks
-// its Collector last sent, and its time zone; with `includeUnpaired`, the
+// its Collector last sent (a job counted unreadable keeps the runs the Hub held),
+// and its time zone; with `includeUnpaired`, the
 // Systems that were unpaired too. One read-only snapshot keeps each System's
 // records and runs consistent with their sets. Systems come in the order the
 // dashboard lists them.
