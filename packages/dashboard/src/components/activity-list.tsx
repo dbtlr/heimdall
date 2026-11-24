@@ -1,9 +1,9 @@
 import { Link } from '@tanstack/react-router';
 
 import { groupByDay } from '../lib/activity-days.ts';
-import { lineWords } from '../lib/activity.ts';
+import { alertNote, lineWords } from '../lib/activity.ts';
 import type { ActivityLine } from '../lib/activity.ts';
-import { aheadAt, clockAt, joinPhrases, phraseText } from '../lib/phrase.ts';
+import { joinPhrases, phraseText } from '../lib/phrase.ts';
 import { formatClock } from '../lib/time.ts';
 import { cn } from '../lib/utils.ts';
 import type { ActivityEvent } from '../server/activity-types.ts';
@@ -110,19 +110,7 @@ function Line({
   const words = lineWords(line);
   const note = phraseText(
     joinPhrases(
-      [
-        words.detail,
-        words.alert === undefined
-          ? []
-          : [
-              'Alert pushed at ',
-              clockAt(words.alert.at),
-              ...(words.alert.recoveredAt === undefined
-                ? []
-                : // Dated against the alert, so a recovery on a later day names its day.
-                  [', recovery at ', aheadAt(words.alert.recoveredAt, words.alert.at)]),
-            ],
-      ],
+      [words.detail, words.alert === undefined ? [] : alertNote(words.alert, line.at)],
       ' · ',
     ),
     timeZone,

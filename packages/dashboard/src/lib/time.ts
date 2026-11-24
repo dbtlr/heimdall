@@ -141,8 +141,8 @@ export const formatPast = (t: number, now: number, timeZone: string): string => 
   return `${days === 1 ? 'Yesterday' : formatDate(t, timeZone)} ${formatClock(t, timeZone)}`;
 };
 
-// A time ahead of `now`: "HH:MM" on the same local day, "Mon 14:02" within the
-// coming week, else "Tue 20 Oct 14:02".
+// A time near or after `now`: "HH:MM" on the same local day, "Mon 14:02" on
+// another day within a week, else "Tue 20 Oct 14:02".
 export const formatAhead = (t: number, now: number, timeZone: string): string =>
   formatDaysAway(t, localDayNumber(t, timeZone) - localDayNumber(now, timeZone), timeZone);
 
