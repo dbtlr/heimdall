@@ -2,17 +2,11 @@ import type { ReactNode } from 'react';
 import { Area, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from 'recharts';
 
 import { clockSpan } from '../lib/phrase.ts';
+import { roleRunningCost, roleSplitNote } from '../lib/running-cost-by-role.ts';
 import { formatTokens, modelColor, modelName } from '../lib/session-format.ts';
 import { MAIN } from '../lib/session-search.ts';
 import type { SessionSearch } from '../lib/session-search.ts';
-import {
-  commandMarks,
-  contextFill,
-  costBy,
-  costByKind,
-  runningCost,
-  toolCounts,
-} from '../lib/session.ts';
+import { commandMarks, contextFill, costBy, costByKind, toolCounts } from '../lib/session.ts';
 import type { AgentLane, TokenKind } from '../lib/session.ts';
 import { formatCost } from '../lib/time.ts';
 import type { SessionView } from '../server/session-view-types.ts';
@@ -23,8 +17,13 @@ import { SpanLabels } from './span-labels.tsx';
 import { ChartContainer } from './ui/chart.tsx';
 
 const NO_MARGIN = { bottom: 0, left: 0, right: 0, top: 0 };
-const MAIN_COLOR = 'var(--plot)';
-const SUBAGENT_COLOR = 'var(--series-1)';
+
+// An unknown review seat is hatched. SVG cannot fill with the CSS gradient
+// that draws it elsewhere, so the chart draws the same stripes as a pattern.
+const UNKNOWN_SEAT = 'var(--review-unknown)';
+const UNKNOWN_SEAT_PATTERN = 'session-cost-seat-unknown';
+const areaFill = (color: string) =>
+  color === UNKNOWN_SEAT ? `url(#${UNKNOWN_SEAT_PATTERN})` : color;
 
 const KIND_STYLE: Record<TokenKind, { color: string; label: string }> = {
   cacheRead: { color: 'var(--dim)', label: 'read from cache' },
@@ -83,12 +82,13 @@ function PaidFor({ view }: { view: SessionView }) {
   );
 }
 
-// The running list-price cost, main conversation under subagents, flagged
-// where a subagent started from the main conversation and at slash commands;
-// then the main conversation's context fill, and the process link.
+// The running list-price cost, the main conversation under its subagents split
+// by effective role, flagged where a subagent started from the main
+// conversation and at slash commands; then the main conversation's context
+// fill, and the process link.
 function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: SessionView }) {
   const window = sessionWindow(view);
-  const points = runningCost(view.requests);
+  const { points, series } = roleRunningCost(view.requests, view.agents, view.launch);
   const context = contextFill(view.requests);
   const commands = commandMarks(view.requests, view.toolCalls);
   const compactions = commands.filter((command) => command.after !== undefined);
@@ -102,19 +102,17 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
   const domain = [window.from, window.to];
   return (
     <Card>
-      <div className="mb-1.5 flex flex-wrap items-center gap-x-4 text-[13.5px] text-muted-foreground">
-        <span>Running list-price cost</span>
-        <span className="inline-flex items-center gap-[5px] text-[12.5px]">
-          <i className="inline-block h-2 w-3.5 rounded-[2px]" style={{ background: MAIN_COLOR }} />
-          main conversation
-        </span>
-        <span className="inline-flex items-center gap-[5px] text-[12.5px]">
-          <i
-            className="inline-block h-2 w-3.5 rounded-[2px]"
-            style={{ background: SUBAGENT_COLOR }}
-          />
-          subagents
-        </span>
+      <div className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] text-muted-foreground">
+        <span className="w-full sm:w-auto">Running list-price cost</span>
+        {series.map((part) => (
+          <span className="inline-flex items-center gap-[5px] text-[12.5px]" key={part.key}>
+            <i
+              className="inline-block h-2 w-3.5 flex-none rounded-[2px]"
+              style={{ background: part.color }}
+            />
+            {part.label}
+          </span>
+        ))}
       </div>
       <ChartContainer
         aria-label="Running list-price cost"
@@ -125,6 +123,18 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
         style={{ height: 190 }}
       >
         <ComposedChart data={points} margin={{ ...NO_MARGIN, top: 28 }}>
+          <defs>
+            <pattern
+              height={5}
+              id={UNKNOWN_SEAT_PATTERN}
+              patternTransform="rotate(45)"
+              patternUnits="userSpaceOnUse"
+              width={5}
+            >
+              <rect fill="#4a2f45" height={5} width={5} />
+              <rect fill="#e07bc0" height={5} width={2} />
+            </pattern>
+          </defs>
           <XAxis allowDataOverflow dataKey="t" domain={domain} hide type="number" />
           <YAxis
             axisLine={false}
@@ -152,27 +162,22 @@ function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: Sessi
               x={flag.at}
             />
           ))}
-          <Area
-            dataKey="main"
-            fill={MAIN_COLOR}
-            fillOpacity={0.85}
-            isAnimationActive={false}
-            stackId="cost"
-            stroke="none"
-            type="stepAfter"
-          />
-          <Area
-            dataKey="subagents"
-            fill={SUBAGENT_COLOR}
-            fillOpacity={0.85}
-            isAnimationActive={false}
-            stackId="cost"
-            stroke="none"
-            type="stepAfter"
-          />
+          {series.map((part) => (
+            <Area
+              dataKey={part.key}
+              fill={areaFill(part.color)}
+              fillOpacity={0.85}
+              isAnimationActive={false}
+              key={part.key}
+              stackId="cost"
+              stroke="none"
+              type="stepAfter"
+            />
+          ))}
         </ComposedChart>
       </ChartContainer>
       <SpanLabels window={window} />
+      <p className="mt-2 text-[13px] text-muted-foreground">{roleSplitNote(view.launch)}</p>
       <p className="mt-3 mb-1 text-[13.5px] text-muted-foreground">
         Main conversation context
         {contextWindow === undefined ? '' : `, of a ${formatTokens(contextWindow)} window`}

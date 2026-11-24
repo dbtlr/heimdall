@@ -37,8 +37,6 @@ export type TokenKind = 'cacheRead' | 'cacheWrite' | 'input' | 'output';
 
 export type KindCost = { costUsd: number; kind: TokenKind; tokens: number };
 
-export type RunningCostPoint = { main: number; subagents: number; t: number };
-
 export type ContextPoint = { t: number; tokens: number; window: number | undefined };
 
 // A slash command, with the main conversation's context before and after it
@@ -256,21 +254,6 @@ export const costByKind = (requests: readonly SessionRequest[]): KindCost[] => {
     kind,
     tokens: sum(priced.map((request) => KIND_FIELDS[kind].tokens(request))),
   })).toSorted((a, b) => b.costUsd - a.costUsd);
-};
-
-// The running list-price cost at each request, split between the main
-// conversation and subagents; unpriced requests add nothing.
-export const runningCost = (requests: readonly SessionRequest[]): RunningCostPoint[] => {
-  let main = 0;
-  let subagents = 0;
-  return requests.toSorted(byTime).map((request) => {
-    if (isMain(request)) {
-      main += request.costUsd ?? 0;
-    } else {
-      subagents += request.costUsd ?? 0;
-    }
-    return { main, subagents, t: request.at };
-  });
 };
 
 // The main conversation's context at each of its requests.

@@ -4,7 +4,7 @@ import type { SQL } from 'bun';
 import { RUNNING_MS } from '../lib/home-agents.ts';
 import { unionMs } from '../lib/project-activity.ts';
 import type { AgentsRange, AgentsSession } from './agents-overview-types.ts';
-import { agentsPeriod, readPeriodOverview } from './agents-overview.ts';
+import { readPeriodOverview } from './agents-overview.ts';
 import { projectNameSql, sessionProjectSql } from './project-sql.ts';
 import { readRoleSplit } from './role-split.ts';
 import { sessionSpans } from './session-spans.ts';
@@ -92,7 +92,8 @@ export const readProjectView = (
     if (place === undefined) {
       return undefined;
     }
-    const { from, to } = agentsPeriod(input);
+    const { overview, period } = await readPeriodOverview(tx, { ...input, project: name });
+    const { from, to } = period;
     // The project's Sessions with a request in the period. Each Session probes
     // for its first such request through the view's session index, and LIMIT
     // keeps the probe per Session: as a plain EXISTS, the planner joins the
@@ -106,8 +107,7 @@ export const readProjectView = (
         LIMIT 1
       ) e
     `;
-    const [overview, split, windows, branches, tools, subagents, processes] = await Promise.all([
-      readPeriodOverview(tx, { ...input, project: name }),
+    const [split, windows, branches, tools, subagents, processes] = await Promise.all([
       readRoleSplit(tx, { from, project: name, to }),
       // Each Session's requests in the period, merged into runs whose requests
       // are at most 5 minutes apart.

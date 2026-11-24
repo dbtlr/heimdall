@@ -9,6 +9,7 @@ import type { AgentLane } from '../lib/session.ts';
 import { formatCost, formatSpan } from '../lib/time.ts';
 import type { SessionView } from '../server/session-view-types.ts';
 import { PhraseText } from './date-time.tsx';
+import { RolePill } from './role-pill.tsx';
 
 // "Claude Code 2.1.40 in ~/src/heimdall. 13:30 to 15:42, 2 h 12 min. Session 7f3c9a2e."
 function PlaceLine({ now, view }: { now: number; view: SessionView }) {
@@ -100,10 +101,12 @@ const totals = (view: SessionView, lanes: readonly AgentLane[]) => {
 };
 
 // "Agents / server-1 / heimdall on main": the Session's place under the Agents
-// section, its System, and what it worked on.
+// section, its System, and what it worked on, then its role when it has one.
 export function SessionTitle({
+  role,
   view,
 }: {
+  role?: { role: string | undefined; seat: string | undefined };
   view: Pick<SessionView, 'branch' | 'harness' | 'project' | 'system'>;
 }) {
   return (
@@ -126,6 +129,9 @@ export function SessionTitle({
       {view.branch !== undefined && (
         <span className="font-medium text-muted-foreground"> on {view.branch}</span>
       )}
+      {role?.role !== undefined && (
+        <RolePill className="relative -top-0.5 ml-2.5" role={role.role} seat={role.seat} />
+      )}
     </h1>
   );
 }
@@ -143,7 +149,7 @@ export function SessionHeader({
   return (
     <>
       <div className="pt-3.5 pb-2.5 sm:pt-[18px]">
-        <SessionTitle view={view} />
+        <SessionTitle role={view.launch} view={view} />
         <p className="text-muted-foreground">
           <PlaceLine now={now} view={view} />
         </p>

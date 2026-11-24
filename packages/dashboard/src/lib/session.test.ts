@@ -18,7 +18,6 @@ import {
   density,
   descendantLanes,
   filterTrace,
-  runningCost,
   stretchAt,
   toolCounts,
   traceEntries,
@@ -66,8 +65,11 @@ const agent = (agentId: string, overrides: Partial<SessionAgent> = {}): SessionA
   agentId,
   agentType: undefined,
   depth: 1,
+  effectiveRole: undefined,
+  effectiveSeat: undefined,
   endedAt: at(60),
   parentAgentId: undefined,
+  roleClass: 'delegated',
   startedAt: at(0),
   workflowPhase: undefined,
   workflowRun: undefined,
@@ -108,6 +110,16 @@ const view = (overrides: Partial<SessionView> = {}): SessionView => ({
   endedAt: at(60),
   harness: 'claude-code',
   harnessVersion: undefined,
+  launch: {
+    effectiveRole: undefined,
+    effectiveSeat: undefined,
+    launcher: undefined,
+    role: undefined,
+    roleClass: 'main',
+    roleSource: undefined,
+    seat: undefined,
+    tree: undefined,
+  },
   processes: [],
   project: undefined,
   requests: [],
@@ -469,37 +481,6 @@ describe('costByKind', () => {
       'output',
     ]);
     expect(kinds.every((entry) => entry.costUsd === 0 && entry.tokens === 0)).toBe(true);
-  });
-});
-
-describe('runningCost', () => {
-  test('one cumulative point per request, split between main and subagents', () => {
-    const points = runningCost([
-      requestAt(0, { costUsd: 1 }),
-      requestAt(1, { agentId: 'a', costUsd: 2 }),
-      requestAt(2, { costUsd: 4 }),
-    ]);
-    expect(points).toEqual([
-      { main: 1, subagents: 0, t: at(0) },
-      { main: 1, subagents: 2, t: at(1) },
-      { main: 5, subagents: 2, t: at(2) },
-    ]);
-  });
-
-  test('an unpriced request adds nothing but still has a point', () => {
-    const points = runningCost([
-      requestAt(0, { costUsd: 1 }),
-      requestAt(1, { costUsd: undefined }),
-    ]);
-    expect(points.map((point) => point.main)).toEqual([1, 1]);
-  });
-
-  test('points follow time, not input order', () => {
-    const points = runningCost([requestAt(5, { costUsd: 2 }), requestAt(1, { costUsd: 1 })]);
-    expect(points).toEqual([
-      { main: 1, subagents: 0, t: at(1) },
-      { main: 3, subagents: 0, t: at(5) },
-    ]);
   });
 });
 
