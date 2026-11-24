@@ -1,0 +1,1 @@
+- **The Pending update page reads its packages and their labels in one statement** (HMD-317). A Report landing mid-read can no longer let one pass's package census label another pass's packages.
