@@ -37,3 +37,4 @@ Architecture decision records (ADRs). Each decision's frontmatter `status` says 
 - [ADR-0022 — Each Service shows its installed version, and the Hub checks its upstream for newer releases](0022-services-show-their-version-and-the-hub-checks-upstreams.md)
 - [ADR-0023 — The Collector holds each job run until the Hub takes it, and the Hub keeps each job's run history](0023-the-collector-holds-each-job-run-until-the-hub-takes-it.md)
 - [ADR-0024 — The Hub fetches list prices daily and adds dated entries, never repricing an earlier day](0024-the-hub-fetches-list-prices-daily.md)
+- [ADR-0025 — Session tags name a started conversation's role, review seat, and launching Session](0025-session-tags-name-a-started-conversations-role-seat-and-launcher.md)
