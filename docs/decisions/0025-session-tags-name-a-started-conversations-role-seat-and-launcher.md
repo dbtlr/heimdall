@@ -37,7 +37,7 @@ Measured on one System's transcripts in November 2026:
 ## Decision
 
 - **The tag and the preamble are read from a conversation's opening messages.** These are its user messages before its first response:
-  - On Claude Code, the text of its `user` records before its first `assistant` record. `attachment`, `queue-operation`, and other record types are not read.
+  - On Claude Code, the text of its `user` records before its first `assistant` record from the model. A `<synthetic>` record, which Claude Code writes itself, does not end the opening. `attachment`, `queue-operation`, and other record types are not read.
   - On Codex, the text of its `response_item` messages with role `user` before the first `response_item` the model produced, such as a reasoning item, a function call, or an assistant message. `developer` messages are not read. On a fork, only its own messages count, never those it replays from its parent.
 
   Nothing after the first response is read for them, nor any `last-prompt` record or thread title.
@@ -73,6 +73,7 @@ Measured on one System's transcripts in November 2026:
 - **A launching Session gets a tree.** Its tree is the Session and every Session whose parent resolves to it, transitively, stopping at any Session already counted.
   - Its tree total sums the members' totals beside the Session's own total, which, subagents included, stays as it is.
   - Like `insight.session_totals`, the tree total has a list-price cost only when every request in the tree is priced. Otherwise it gives a lower bound and a count of unpriced requests.
+  - A member whose totals the refresh has not stored yet makes the tree total incomplete. The tree total then has no list-price cost, only the lower bound over the members it holds, and it counts the members it is missing.
   - The tree's members are readable, so the split over a tree is the sum of its members' splits.
 - **Storage follows the projection's rules.**
   - **Parsed facts.** The role, seat, parent, and the role's source are parsed facts on the Session and subagent rows. Both parsers' versions move forward, so the rebuild reads every tag and preamble the archive already holds.
