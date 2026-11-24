@@ -1,4 +1,5 @@
 import { storable } from './storable.ts';
+import type { Opening } from './session-tags.ts';
 
 // The Session insight every Harness's parser derives from transcripts, the
 // shape of a parser, and the bounds every parser holds a line to, so the
@@ -90,6 +91,10 @@ export type Batch = {
   toolCalls: ToolCall[];
   transcript: boolean;
   unreadableLines: number;
+  // The conversation's opening as this batch leaves it, when the batch read or
+  // closed it: its role, seat, and launching Session (ADR-0025). Absent or
+  // null when the batch read none of it.
+  opening?: Opening | null;
   // Opaque, content-free continuation state, committed with byte progress.
   state?: unknown;
 };

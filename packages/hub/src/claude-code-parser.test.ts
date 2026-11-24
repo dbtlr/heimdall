@@ -753,3 +753,186 @@ describe('claudeCodeParser.requestIdOf', () => {
     ]);
   });
 });
+
+// A started conversation's role, seat, and launching Session come from its
+// opening messages: its user records before the model's first response
+// (ADR-0025; spec, Session tags).
+describe('the opening', () => {
+  const PARENT = '0b1c2d3e-0000-4000-8000-0000000000aa';
+  const tagged = `session-tag: role=review seat=breaker parent=${PARENT}`;
+  const openingOf = (lines: readonly unknown[], options: { complete?: boolean } = {}) =>
+    parse(jsonl(lines), options).opening;
+
+  test("a built-in subagent's tag on its brief's first line", () => {
+    const opening = openingOf([
+      user({ agent: 'a1', at: T0, content: `${tagged}\nReview the change.` }),
+      assistant({ agent: 'a1', at: T1, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual({
+      at: Date.parse(T0),
+      closed: true,
+      launchingSessionId: PARENT,
+      role: 'review',
+      roleSource: 'tag',
+      seat: 'breaker',
+    });
+  });
+
+  test("a workflow agent's indented tag after its header line", () => {
+    const opening = openingOf([
+      user({ at: T0, content: [{ text: 'Workflow header\n  session-tag: role=implementation', type: 'text' }] }),
+      assistant({ at: T1, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ role: 'implementation', roleSource: 'tag' }));
+  });
+
+  test("a T3 Session: the header, then the preamble, then the tag", () => {
+    const opening = openingOf([
+      user({
+        at: T0,
+        content: `[T3 Code: delegated]\nAct as the review sub-agent for this task.\n${tagged}\nBrief.`,
+      }),
+      assistant({ at: T1, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ roleSource: 'tag', seat: 'breaker' }));
+  });
+
+  test('a preamble with no tag', () => {
+    const opening = openingOf([
+      user({ at: T0, content: '[T3 Code: delegated]\nAct as the review sub-agent for this task.' }),
+      assistant({ at: T1, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual(
+      expect.objectContaining({ launchingSessionId: null, role: 'review', roleSource: 'preamble', seat: null }),
+    );
+  });
+
+  test('the template quoted mid-sentence gives nothing and is not unreadable', () => {
+    const parsed = parse(
+      jsonl([
+        user({ at: T0, content: 'Open each brief with `session-tag: role=<role> parent=<session id>`.' }),
+        assistant({ at: T1, id: 'msg_1' }),
+      ]),
+    );
+
+    expect(parsed.unreadableLines).toBe(0);
+    expect(parsed.opening).toEqual(expect.objectContaining({ role: null, roleSource: null }));
+  });
+
+  test('a misshapen tag counts its record unreadable once, and keeps its commands', () => {
+    const parsed = parse(
+      jsonl([
+        user({
+          at: T0,
+          content: 'session-tag: role=<role>\nsession-tag: role=Review\n<command-name>/review</command-name>',
+          uuid: 'u-1',
+        }),
+        user({ at: T1, content: 'session-tag: role=review' }),
+        assistant({ at: T2, id: 'msg_1' }),
+      ]),
+    );
+
+    expect(parsed.unreadableLines).toBe(1);
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ kind: 'command', name: '/review' })]);
+    expect(parsed.opening).toEqual(expect.objectContaining({ at: Date.parse(T0), role: 'review' }));
+  });
+
+  test('a review tag without a seat, and a seat on another role, keep no seat', () => {
+    expect(
+      openingOf([user({ at: T0, content: 'session-tag: role=review' }), assistant({ at: T1, id: 'msg_1' })]),
+    ).toEqual(expect.objectContaining({ role: 'review', seat: null }));
+    expect(
+      openingOf([
+        user({ at: T0, content: 'session-tag: role=implementation seat=breaker' }),
+        assistant({ at: T1, id: 'msg_1' }),
+      ]),
+    ).toEqual(expect.objectContaining({ role: 'implementation', seat: null }));
+  });
+
+  test('a synthetic record does not end the opening; the first response does', () => {
+    const opening = openingOf([
+      user({ at: T0, content: 'hello' }),
+      assistant({ at: T1, id: 'msg_s', model: '<synthetic>' }),
+      user({ at: T2, content: 'session-tag: role=review' }),
+      assistant({ at: T3, id: 'msg_1' }),
+      user({ at: T3, content: 'session-tag: role=design' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ closed: true, role: 'review' }));
+  });
+
+  test('nothing after the first response is read', () => {
+    const opening = openingOf([
+      user({ at: T0, content: 'hello' }),
+      assistant({ at: T1, id: 'msg_1' }),
+      user({ at: T2, content: 'session-tag: role=review' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ closed: true, role: null, roleSource: null }));
+  });
+
+  test('a last-prompt record and other record types are not read', () => {
+    const opening = openingOf([
+      { lastPrompt: 'session-tag: role=review', sessionId: SESSION, type: 'last-prompt' },
+      { attachment: { content: 'session-tag: role=review' }, timestamp: T0, type: 'attachment' },
+      user({ at: T1, content: 'hello' }),
+      assistant({ at: T2, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ at: Date.parse(T1), role: null }));
+  });
+
+  test('a user record with no time is not part of the opening', () => {
+    const { timestamp: _, ...untimed } = user({ at: T0, content: 'session-tag: role=review' });
+    const opening = openingOf([untimed, user({ at: T1, content: 'hello' }), assistant({ at: T2, id: 'msg_1' })]);
+
+    expect(opening).toEqual(expect.objectContaining({ at: Date.parse(T1), role: null }));
+  });
+
+  test('a brief longer than the bound on stored text is read whole', () => {
+    const opening = openingOf([
+      user({ at: T0, content: `${tagged}\n${'x'.repeat(10_000)}` }),
+      assistant({ at: T1, id: 'msg_1' }),
+    ]);
+
+    expect(opening).toEqual(expect.objectContaining({ role: 'review' }));
+  });
+
+  test('an opening still waiting on its first response counts as far as it is read', () => {
+    expect(openingOf([user({ at: T0, content: tagged })])).toEqual(
+      expect.objectContaining({ closed: false, role: 'review' }),
+    );
+  });
+
+  test('a conversation that starts with a response has no opening', () => {
+    expect(openingOf([assistant({ at: T0, id: 'msg_1' }), user({ at: T1, content: tagged })])).toBeNull();
+  });
+
+  test('carries across batches, and a batch that reads none of it reports none', () => {
+    const first = jsonl([user({ at: T0, content: 'hello' })]);
+    const rest = jsonl([user({ at: T1, content: tagged }), assistant({ at: T2, id: 'msg_1' })]);
+    const after = jsonl([user({ at: T3, content: 'more' }), assistant({ at: T3, id: 'msg_2' })]);
+    const run = (content: string, offset: number, state: unknown) =>
+      claudeCodeParser.parse({
+        complete: true,
+        content: bytes(content),
+        factLimit: Number.POSITIVE_INFINITY,
+        offset,
+        path: mainPath(),
+        state,
+      });
+
+    const one = run(first, 0, undefined);
+    expect(one.opening).toEqual(expect.objectContaining({ closed: false, role: null }));
+    const two = run(rest, first.length, one.state);
+    expect(two.opening).toEqual(
+      expect.objectContaining({ at: Date.parse(T0), closed: true, role: 'review', seat: 'breaker' }),
+    );
+    const three = run(after, first.length + rest.length, two.state);
+    expect(three.opening).toBeNull();
+  });
+});

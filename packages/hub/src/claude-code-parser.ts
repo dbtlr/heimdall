@@ -11,6 +11,8 @@ import {
   tokensOf,
   UnreadableLineError,
 } from './session-insight.ts';
+import { openingReader, progressOf } from './session-tags.ts';
+import type { OpeningProgress } from './session-tags.ts';
 import type {
   AgentMeta,
   Batch,
@@ -46,7 +48,7 @@ import type {
 // misnamed, yields nothing, and is counted.
 
 // Bumping it rebuilds every Claude Code row from the archive (ADR-0014).
-export const CLAUDE_CODE_PARSER_VERSION = 1;
+export const CLAUDE_CODE_PARSER_VERSION = 2;
 
 export type ClaudeCodeFile =
   | { kind: 'agent-meta'; owner: Owner & { agentId: string }; workflowRun: string | null }
@@ -87,7 +89,7 @@ export const classifyClaudeCodePath = (path: string): ClaudeCodeFile => {
 export type Conversation = Pick<
   Batch,
   'atFactLimit' | 'parsedThrough' | 'requests' | 'span' | 'toolCalls' | 'unreadableLines'
->;
+> & { opening: NonNullable<Batch['opening']> | null; progress: OpeningProgress };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -244,25 +246,53 @@ const commandId = (uuid: string, index: number) => {
     : `${createHash('sha256').update(uuid).digest('hex')}#${String(index)}`;
 };
 
+// The text of a user line's message: its string content, or each text block's.
+const textsOf = (line: Record<string, unknown>): string[] => {
+  const message = isRecord(line.message) ? line.message : {};
+  if (typeof message.content === 'string') {
+    return [message.content];
+  }
+  return (Array.isArray(message.content) ? message.content : []).flatMap((block) =>
+    isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
+  );
+};
+
+// Feeds one line to the conversation's opening (ADR-0025): a response from
+// the model ends it, a `<synthetic>` one does not, and a timed user line is
+// one of its messages. Answers whether the line counts unreadable for a
+// misshapen tag. No other kind of line is read for it.
+const readOpening = (reader: ReturnType<typeof openingReader>, value: unknown): boolean => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === 'assistant') {
+    if (!isRecord(value.message) || value.message.model !== '<synthetic>') {
+      reader.respond();
+    }
+    return false;
+  }
+  if (value.type !== 'user') {
+    return false;
+  }
+  let at: number | undefined;
+  try {
+    at = timeOf(value.timestamp);
+  } catch {
+    return false;
+  }
+  return at !== undefined && reader.message(at, textsOf(value));
+};
+
 // The slash commands a user line carries, each a call of its own. A command
 // names no skill: a built-in such as `/doctor` is none. A command not shaped
 // like one is left out, and so is every command of a line whose uuid is not
 // shaped like an id.
 const commandsOf = (line: Record<string, unknown>, at: number, offset: number) => {
   const uuid = shapedOf(line.uuid, 'id');
-  const message = isRecord(line.message) ? line.message : {};
   if (uuid.kind === 'absent') {
     return { calls: [], dropped: false };
   }
-  const texts =
-    typeof message.content === 'string'
-      ? [message.content]
-      : (Array.isArray(message.content) ? message.content : []).flatMap((block) =>
-          isRecord(block) && block.type === 'text' && typeof block.text === 'string'
-            ? [block.text]
-            : [],
-        );
-  const found = texts.flatMap((t) => [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''));
+  const found = textsOf(line).flatMap((t) => [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''));
   if (uuid.kind === 'misshapen') {
     return { calls: [], dropped: found.length > 0 };
   }
@@ -323,15 +353,17 @@ const replaces = (later: Request, kept: Request) =>
 // split. Within this content a response counts once, from its last final
 // line; a tool call from its first line; and the commands under a line's id
 // from the first line with any. The caller keeps those rules across batches
-// and generations.
+// and generations. `progress` is what earlier batches read of the opening.
 export const parseConversation = (
   content: Uint8Array,
   {
     complete,
     factLimit = Number.POSITIVE_INFINITY,
     offset,
-  }: { complete: boolean; factLimit?: number; offset: number },
+    progress = { answered: false, opening: null },
+  }: { complete: boolean; factLimit?: number; offset: number; progress?: OpeningProgress },
 ): Conversation => {
+  const opening = openingReader(progress);
   const requests = new Map<string, Request>();
   const toolCalls = new Map<string, ToolCall>();
   // The lines whose commands are kept, by id: the first with a command under each.
@@ -350,6 +382,7 @@ export const parseConversation = (
       unreadableLines += line.kind === 'unreadable' ? 1 : 0;
       continue;
     }
+    const misshapenTag = readOpening(opening, line.value);
     let facts: LineFacts;
     try {
       facts = readLine(line.value, line.offset);
@@ -361,7 +394,7 @@ export const parseConversation = (
       continue;
     }
     const { moment, request } = facts;
-    if (facts.dropped) {
+    if (facts.dropped || misshapenTag) {
       unreadableLines += 1;
     }
     if (moment !== undefined) {
@@ -392,7 +425,9 @@ export const parseConversation = (
   }
   return {
     atFactLimit,
+    opening: opening.reported,
     parsedThrough,
+    progress: opening.progress,
     requests: [...requests.values()],
     span,
     toolCalls: [...toolCalls.values()],
@@ -439,7 +474,7 @@ export const claudeCodeParser: HarnessParser = {
     const { kind } = classifyClaudeCodePath(path);
     return kind === 'other' || kind === 'misnamed' ? kind : 'facts';
   },
-  parse: ({ complete, content, factLimit, offset, path }) => {
+  parse: ({ complete, content, factLimit, offset, path, state }) => {
     const file = classifyClaudeCodePath(path);
     const nothing = {
       agent: null,
@@ -451,10 +486,17 @@ export const claudeCodeParser: HarnessParser = {
     };
     switch (file.kind) {
       case 'conversation': {
+        const { progress, ...conversation } = parseConversation(content, {
+          complete,
+          factLimit,
+          offset,
+          progress: progressOf(isRecord(state) ? state.opening : undefined),
+        });
         return {
-          ...parseConversation(content, { complete, factLimit, offset }),
+          ...conversation,
           agent: null,
           owner: file.owner,
+          state: { opening: progress },
           transcript: true,
         };
       }
