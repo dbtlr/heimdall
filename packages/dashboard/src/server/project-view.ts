@@ -6,6 +6,7 @@ import { unionMs } from '../lib/project-activity.ts';
 import type { AgentsRange, AgentsSession } from './agents-overview-types.ts';
 import { agentsPeriod, readPeriodOverview } from './agents-overview.ts';
 import { projectNameSql, sessionProjectSql } from './project-sql.ts';
+import { readRoleSplit } from './role-split.ts';
 import { sessionSpans } from './session-spans.ts';
 
 // One stretch of a Session's request activity on the dossier's lanes.
@@ -52,6 +53,10 @@ const rowKey = (row: Key) => JSON.stringify([row.system, row.harness, row.source
 // running), cut at the period's end, so overlapping Sessions count once and a
 // period never holds more active time than its length. The lanes draw the
 // same windows, one Session's at a time.
+//
+// The cost by role reads the period the cost figure reads, ending at `now`,
+// and picks the project's Sessions as the figure's totals do, so its classes
+// sum to the figure (ADR-0025).
 export const readProjectView = (
   sql: SQL,
   input: {
@@ -101,8 +106,9 @@ export const readProjectView = (
         LIMIT 1
       ) e
     `;
-    const [overview, windows, branches, tools, subagents, processes] = await Promise.all([
+    const [overview, split, windows, branches, tools, subagents, processes] = await Promise.all([
       readPeriodOverview(tx, { ...input, project: name }),
+      readRoleSplit(tx, { from, project: name, to }),
       // Each Session's requests in the period, merged into runs whose requests
       // are at most 5 minutes apart.
       tx`
@@ -224,6 +230,8 @@ export const readProjectView = (
       peakRssBytes: cpu?.peak ?? undefined,
       // Whether a repository, not only a folder, names the project.
       repository: place.repository || cpu?.repository === true,
+      // The period's cost by role, summing to `overview.totals`.
+      roleSplit: split,
       subagents: subagents.reduce((sum, row) => sum + row.n, 0),
       systems: place.systems,
       // The newest Sessions, running first, each with its subagents in the period.

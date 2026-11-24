@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from 'bun:test';
 
-import { NOW, startHub, timeline } from '@heimdall/hub/testing';
+import { NOW, refreshSessionInsight, startHub, timeline } from '@heimdall/hub/testing';
 
 import { agentsPeriod } from './agents-overview.ts';
 import { readProjectView } from './project-view.ts';
@@ -564,4 +564,80 @@ test('the repository flag reads true only when a Session or a process in the pro
     requests: [-30],
   });
   expect((await read(processOnly))?.repository).toBe(true);
+});
+
+// The totals of `n` requests that cost a dollar each.
+const dollars = (n: number) => ({ pricedCostUsd: n, requests: n, unpricedRequests: 0 });
+
+test("the project's cost by role covers exactly its Sessions in the page's period and sums to its cost", async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1'), ('server-1')`;
+  await h.db
+    .sql`INSERT INTO model_prices (model, valid_from, source, input_per_mtok, output_per_mtok, context_window)
+    VALUES ('test-model', '2020-01-01', 'bundled', 1, 2, 2000000)`;
+  const dollar = { inputTokens: 1_000_000, model: 'test-model', outputTokens: 0 };
+  // Wholly inside the period: its main conversation, a breaker, and a helper.
+  await addSession(h.db.sql, {
+    ...dollar,
+    firstCwd: '/repos/notes-app',
+    id: 'orchestrator',
+    requests: [-7200, -3600],
+    subagents: [
+      { agentId: 'breaker', requests: [-7000, -6900] },
+      { agentId: 'helper', requests: [-6000] },
+    ],
+  });
+  // Crossing the 7-day edge: only its request inside the period counts.
+  await addSession(h.db.sql, {
+    ...dollar,
+    firstCwd: '/repos/notes-app',
+    id: 'reviewer',
+    requests: [-8 * 86_400, -1800],
+    system: 'server-1',
+  });
+  // A request stamped after now, inside the clock tolerance the Agents page
+  // allows: the project page's period ends at now, so it counts in neither.
+  await addSession(h.db.sql, {
+    ...dollar,
+    firstCwd: '/repos/notes-app',
+    id: 'ahead',
+    requests: [-900, 60],
+  });
+  // Another project's reviewer, inside the period.
+  await addSession(h.db.sql, {
+    ...dollar,
+    firstCwd: '/repos/other',
+    id: 'elsewhere',
+    requests: [-600],
+  });
+  const role = (session: string, value: string, seat: string | null, agent?: string) =>
+    agent === undefined
+      ? h.db.sql`UPDATE projected_sessions SET role = ${value}, seat = ${seat}, role_source = 'tag'
+          WHERE session_id = ${session}`
+      : h.db.sql`UPDATE projected_subagents SET role = ${value}, seat = ${seat}, role_source = 'tag'
+          WHERE session_id = ${session} AND agent_id = ${agent}`;
+  await role('orchestrator', 'review', 'breaker', 'breaker');
+  await role('reviewer', 'review', 'verifier');
+  await role('elsewhere', 'review', 'architect');
+  await refreshSessionInsight(h.db.sql, { budgetMs: Number.POSITIVE_INFINITY });
+
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+
+  expect(view?.roleSplit.classes).toEqual({
+    delegated: dollars(1),
+    main: dollars(3),
+    review: dollars(3),
+  });
+  expect(
+    view?.roleSplit.seats.toSorted((a, b) => (a.seat ?? '').localeCompare(b.seat ?? '')),
+  ).toEqual([
+    { seat: 'breaker', ...dollars(2) },
+    { seat: 'verifier', ...dollars(1) },
+  ]);
+  expect(view?.overview.totals).toEqual(dollars(7));
 });

@@ -1,0 +1,1 @@
+- **A project page splits its cost by role** (HMD-307). Under the figure tiles, the Cost by role card from the Agents page shows the project's list-price cost for the page's period as main, review by seat, and delegated work. It counts the same Sessions and requests as the page's cost figure, so its classes sum to that figure.
