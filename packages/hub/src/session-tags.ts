@@ -84,15 +84,19 @@ export const preambleOf = (line: string): string | null => {
 
 const LINE_BREAK = /\r\n|\n|\r/u;
 
-// A message's text, as both Harnesses write it: its string content, or each
-// content block's `text`, in order. A block with no text, such as an image or
-// a tool result, adds none.
-export const messageTexts = (content: unknown): string[] => {
+// A message's text: its string content, or each content block's `text`, in
+// order, of only the blocks whose type is `blockType` when one is given. A
+// block with no text, such as an image, adds none.
+export const messageTexts = (content: unknown, blockType?: string): string[] => {
   if (typeof content === 'string') {
     return [content];
   }
   return (Array.isArray(content) ? content : []).flatMap((block) =>
-    isRecord(block) && typeof block.text === 'string' ? [block.text] : [],
+    isRecord(block) &&
+    typeof block.text === 'string' &&
+    (blockType === undefined || block.type === blockType)
+      ? [block.text]
+      : [],
   );
 };
 

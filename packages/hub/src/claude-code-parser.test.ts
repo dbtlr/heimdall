@@ -847,6 +847,29 @@ describe('the opening', () => {
     expect(parsed.opening).toEqual(expect.objectContaining({ role: null, roleSource: null }));
   });
 
+  test('only text blocks are read, for commands and for the opening alike', () => {
+    const parsed = parse(
+      jsonl([
+        user({
+          at: T0,
+          content: [
+            {
+              text: 'session-tag: role=design\n<command-name>/doctor</command-name>',
+              type: 'tool_result',
+            },
+            { text: '<command-name>/help</command-name>', type: 'text' },
+          ],
+          uuid: 'u-1',
+        }),
+        assistant({ at: T1, id: 'msg_1' }),
+      ]),
+    );
+
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ callId: 'u-1', name: '/help' })]);
+    expect(parsed.opening).toEqual(expect.objectContaining({ role: null }));
+    expect(parsed.unreadableLines).toBe(0);
+  });
+
   test('a misshapen tag counts its record unreadable once, and keeps its commands', () => {
     const parsed = parse(
       jsonl([

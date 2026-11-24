@@ -244,9 +244,10 @@ const commandId = (uuid: string, index: number) => {
     : `${createHash('sha256').update(uuid).digest('hex')}#${String(index)}`;
 };
 
-// The text of a user line's message.
+// The text of a user line's message: its string content, or its `text`
+// blocks, which are the only blocks Claude Code writes prose in.
 const textsOf = (line: Record<string, unknown>): string[] =>
-  messageTexts(isRecord(line.message) ? line.message.content : undefined);
+  messageTexts(isRecord(line.message) ? line.message.content : undefined, 'text');
 
 // Feeds one line to the conversation's opening (ADR-0025): a response from
 // the model ends it, a `<synthetic>` one does not, and a timed user line is

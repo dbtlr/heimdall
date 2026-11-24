@@ -317,4 +317,16 @@ describe("a message's text", () => {
     ).toEqual(['one', 'two']);
     expect(messageTexts(undefined)).toEqual([]);
   });
+
+  test('of only one type of block when one is named', () => {
+    expect(
+      messageTexts(
+        [
+          { text: 'one', type: 'text' },
+          { text: 'not prose', type: 'tool_result' },
+        ],
+        'text',
+      ),
+    ).toEqual(['one']);
+  });
 });
