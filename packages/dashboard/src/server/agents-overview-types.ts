@@ -1,3 +1,4 @@
+import type { MissedTags, RoleSplit } from './role-split-types.ts';
 import type { SessionKey } from './session-view-types.ts';
 
 export const AGENTS_RANGES = ['today', '7d', '30d'] as const;
@@ -117,6 +118,10 @@ export type PeriodOverview = {
 };
 
 export type AgentsOverview = PeriodOverview & {
+  // The period's Sessions with a role, and those that missed their session tag.
+  missedTags: MissedTags;
+  // The period's cost by role, summing to `totals`.
+  roleSplit: RoleSplit;
   // What requests since local midnight cost.
   today: PeriodTotals;
 };

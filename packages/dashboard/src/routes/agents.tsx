@@ -6,6 +6,7 @@ import { AgentsChart } from '../components/agents-chart.tsx';
 import { AgentsFigures, rangeName } from '../components/agents-headline.tsx';
 import { AgentsRangePicker } from '../components/agents-range-picker.tsx';
 import { AgentsSessions } from '../components/agents-sessions.tsx';
+import { CostByRole } from '../components/cost-by-role.tsx';
 import { breakdownRows, nameOf } from '../lib/agents-breakdown.ts';
 import { agentsSearch, sessionsQueryOf } from '../lib/agents-search.ts';
 import { contentFrame } from '../lib/layout.ts';
@@ -61,6 +62,10 @@ function Agents() {
     ? breakdownRows(overview, search.by).find((row) => row.key === search.pick)
     : undefined;
   const order = sessionsQueryOf(search);
+  const rangeText =
+    overview === undefined || overview.range === 'today'
+      ? 'today'
+      : `in ${rangeName(overview.range)}`;
   return (
     <main className={`${contentFrame('wide')} pb-8`}>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 pt-5 pb-4 sm:pt-6">
@@ -89,6 +94,11 @@ function Agents() {
         </p>
       ) : (
         <div className="space-y-6">
+          <CostByRole
+            missedTags={{ rangeText, tags: overview.missedTags }}
+            periodName={overview.range === 'today' ? 'Today' : rangeName(overview.range)}
+            split={overview.roleSplit}
+          />
           <AgentsChart by={search.by} overview={overview} pick={picked?.key} />
           <div>
             <AgentsSessions
@@ -100,7 +110,7 @@ function Agents() {
                   ? undefined
                   : (picked?.name ?? nameOf(search.by, search.pick))
               }
-              rangeText={overview.range === 'today' ? 'today' : `in ${rangeName(overview.range)}`}
+              rangeText={rangeText}
               sort={order.sort}
               table={overview.table}
               timeZone={overview.timeZone}

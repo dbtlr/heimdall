@@ -17,6 +17,7 @@ import type {
 } from './agents-overview-types.ts';
 import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import { projectOf } from './fleet-overview.ts';
+import { readMissedTags, readRoleSplit } from './role-split.ts';
 import { sessionSpans } from './session-spans.ts';
 
 // The period whose requests count, and the earliest latest request that
@@ -306,19 +307,25 @@ export const readPeriodOverview = async (
   };
 };
 
-// The Agents page's snapshot: the fleet's period, and Today's total, which is
-// the period's own on the Today range.
+// The Agents page's snapshot: the fleet's period, its cost by role over the
+// period the table reads, and Today's total, which is the period's own on the
+// Today range.
 const readAgentsSnapshot = async (
   sql: SQL,
   input: { now: number; range: AgentsRange; table?: SessionsQuery; timeZone: string },
 ): Promise<AgentsOverview> => {
   const { now, range, timeZone } = input;
-  const [overview, todays] = await Promise.all([
+  const listed = sessionsPeriod(agentsPeriod({ now, range, timeZone }), now);
+  const [overview, todays, roleSplit, missedTags] = await Promise.all([
     readPeriodOverview(sql, input),
     range === 'today' ? undefined : readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
+    readRoleSplit(sql, listed),
+    readMissedTags(sql, listed),
   ]);
   return {
     ...overview,
+    missedTags,
+    roleSplit,
     today: todays === undefined ? overview.totals : periodTotals(todays.sessions),
   };
 };
