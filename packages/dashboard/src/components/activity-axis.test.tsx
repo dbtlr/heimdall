@@ -137,11 +137,11 @@ const px = (style: Record<string, number>, name: string): number => {
   return value ?? Number.NaN;
 };
 
-// The height the rendered axis takes above its legend on a phone and from sm
-// up, added up from the sizes its own markup gives each part: every lane's
-// border, padding, marks strip, plot, and stretches strip, the phone's stacked
-// label and the gap under it, the divider when it shows, and the time axis.
-const heightAboveLegend = (html: string) => {
+// The height the lanes in `html` take on a phone and from sm up, added up from
+// the sizes their own markup gives each part: every lane's border, padding,
+// marks strip, plot, and stretches strip, and the phone's stacked label and the
+// gap under it.
+const lanesHeight = (html: string) => {
   const lanes = stylesOf(html, 'data-lane="true"');
   const marks = stylesOf(html, 'data-marks-strip="true"');
   const plots = stylesOf(html, 'class="relative w-full"');
@@ -164,15 +164,30 @@ const heightAboveLegend = (html: string) => {
     (total, style, index) => total + px(labels[index] ?? {}, 'line-height') + px(style, 'row-gap'),
     0,
   );
-  const dividers = stylesOf(html, 'data-unpaired-divider="true"').reduce(
-    (total, divider) => total + px(divider, 'margin-top') + px(divider, 'line-height'),
-    0,
-  );
+  return { phone: wide + phoneLabels, wide };
+};
+
+// The heights the rendered axis takes on a phone and from sm up above its
+// divider and between the divider and the legend: the paired lanes, then the
+// unpaired lanes and the time axis. With no divider, the paired lanes are all
+// above the time axis.
+const heightsAroundDivider = (html: string) => {
+  const cut = html.indexOf('data-unpaired-divider');
+  const end = html.indexOf('data-time-axis="true"');
+  const above = lanesHeight(html.slice(0, cut === -1 ? end : cut));
+  const below = lanesHeight(cut === -1 ? '' : html.slice(cut, end));
   const axis = one(html, 'data-time-axis="true"');
   const ticks = one(html, 'data-time-axis-ticks="true"');
-  const below = px(axis, 'padding-top') + px(ticks, 'height');
-  return { phone: wide + phoneLabels + dividers + below, wide: wide + dividers + below };
+  const timeAxis = px(axis, 'padding-top') + px(ticks, 'height');
+  return {
+    phone: [above.phone, below.phone + timeAxis],
+    wide: [above.wide, below.wide + timeAxis],
+  };
 };
+
+// The divider's markup: the ones `html` holds.
+const dividersOf = (html: string): string[] =>
+  html.match(/<h3 [^>]*data-unpaired-divider="true"[^>]*>.*?<\/h3>/gu) ?? [];
 
 // The legend's markup: the one legend `html` holds.
 const legendOf = (html: string): string => {
@@ -194,12 +209,12 @@ const renderPlaceholder = (lanes: readonly AxisLane[]) =>
     { path: '/activity', routePaths: ['/activity', '/systems/$name'] },
   );
 
-// The room the placeholder holds above its legend, on a phone and from sm up.
-const placeholderHeight = async (lanes: readonly AxisLane[]) => {
+// The room each of the placeholder's spacers holds, on a phone and from sm up.
+const placeholderHeights = async (lanes: readonly AxisLane[]) => {
   const html = await renderPlaceholder(lanes);
   return {
-    phone: px(one(html, 'class="sm:hidden"'), 'height'),
-    wide: px(one(html, 'class="max-sm:hidden"'), 'height'),
+    phone: stylesOf(html, 'class="sm:hidden"').map((style) => px(style, 'height')),
+    wide: stylesOf(html, 'class="max-sm:hidden"').map((style) => px(style, 'height')),
   };
 };
 
@@ -214,9 +229,9 @@ describe('the placeholder before the time zone is known', () => {
     ['no lanes', []],
   ];
   for (const [what, lanes] of cases) {
-    test(`holds the room the axis takes above its legend with ${what}, on a phone and from sm up`, async () => {
-      const rendered = heightAboveLegend(await renderAxis(lanes));
-      expect(await placeholderHeight(lanes)).toEqual(rendered);
+    test(`holds the room the axis's lanes and time axis take with ${what}, on a phone and from sm up`, async () => {
+      const rendered = heightsAroundDivider(await renderAxis(lanes));
+      expect(await placeholderHeights(lanes)).toEqual(rendered);
     });
   }
 
@@ -230,6 +245,26 @@ describe('the placeholder before the time zone is known', () => {
     expect(placeholder.indexOf('data-axis-legend')).toBeGreaterThan(
       placeholder.indexOf('class="sm:hidden"'),
     );
+  });
+
+  // A narrow phone wraps the divider onto two lines; the placeholder's own copy
+  // wraps the same way, so the page does not grow when the axis replaces it.
+  test("shows the axis's own divider between the paired and the unpaired lanes' room", async () => {
+    const lanes = [lane('server-1', false), lane('old-1', true)];
+    const placeholder = await renderPlaceholder(lanes);
+    const divider = dividersOf(await renderAxis(lanes));
+    expect(divider).toHaveLength(1);
+    expect(dividersOf(placeholder)).toEqual(divider);
+    const at = placeholder.indexOf('data-unpaired-divider');
+    const rooms = [...placeholder.matchAll(/class="sm:hidden"/gu)].map((found) => found.index);
+    expect(rooms).toHaveLength(2);
+    expect(rooms[0]).toBeLessThan(at);
+    expect(rooms[1]).toBeGreaterThan(at);
+  });
+
+  test('with every System paired the placeholder shows no divider', async () => {
+    const placeholder = await renderPlaceholder([lane('server-1', false)]);
+    expect(dividersOf(placeholder)).toEqual([]);
   });
 
   test('a lane has a border only below another lane of its group', async () => {
