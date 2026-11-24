@@ -4,7 +4,7 @@ title: ADR-0016 - Session stretches and totals are stored, and the Hub refreshes
 description: "The Hub stores each Session's stretches and totals, cost included, instead of computing them on every read. Triggers mark the Sessions a change can alter stale in the transaction that makes it, and the Hub's refresh stores what the rules compute for the stale Sessions every 15 seconds. The insight views read the stored rows, so they can lag a change by one refresh. This supersedes ADR-0014's rule that totals and cost are never stored; the rest of ADR-0014 holds."
 status: accepted
 created: 2026-10-14
-modified: 2026-10-18
+modified: 2026-11-24
 ---
 
 # Session stretches and totals are stored, and the Hub refreshes them
@@ -58,3 +58,4 @@ A missing trigger would leave a stored row behind the rules with nothing to show
 
 - 2026-10-14: Accepted with the change that builds it (HMD-97). On a copy of the live archive, after HMD-96, the 24-hour overview went from 6 seconds to about 0.1 and the 7-day overview from 13 seconds to about 0.4.
 - 2026-10-18: Addendum. Per-Session model totals are stored and refreshed with Session totals (HMD-143). The decision is unchanged.
+- 2026-11-24: Addendum. [ADR-0025](0025-session-tags-name-a-started-conversations-role-seat-and-launcher.md) stores each Session's list-price cost split by role and seat with its totals. That split reads the subagent rows, so a subagent row joins what a change marks a Session stale by key, beside its requests and its Session row. The decision is unchanged.
