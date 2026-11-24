@@ -841,7 +841,7 @@ const storeFacts = async (
 // since it read further into the same opening.
 const storeOpening = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
   const opening = batch.opening ?? null;
-  if (opening === null || !batch.transcript) {
+  if (opening === null) {
     return;
   }
   const set = tx`

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  isRecord,
   isShaped,
   MAX_ID_LENGTH,
   MAX_LINE_BYTES,
@@ -20,7 +21,7 @@ import type {
   Request,
   ToolCall,
 } from './session-insight.ts';
-import { openingReader, progressOf } from './session-tags.ts';
+import { messageTexts, openingReader, progressOf } from './session-tags.ts';
 import type { OpeningProgress } from './session-tags.ts';
 
 // Reads Claude Code transcripts into Session insight (ADR-0014). Pure: it sees
@@ -90,9 +91,6 @@ export type Conversation = Pick<
   Batch,
   'atFactLimit' | 'parsedThrough' | 'requests' | 'span' | 'toolCalls' | 'unreadableLines'
 > & { opening: NonNullable<Batch['opening']> | null; progress: OpeningProgress };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const NEWLINE = '\n'.charCodeAt(0);
 const decoder = new TextDecoder();
@@ -246,16 +244,9 @@ const commandId = (uuid: string, index: number) => {
     : `${createHash('sha256').update(uuid).digest('hex')}#${String(index)}`;
 };
 
-// The text of a user line's message: its string content, or each text block's.
-const textsOf = (line: Record<string, unknown>): string[] => {
-  const message = isRecord(line.message) ? line.message : {};
-  if (typeof message.content === 'string') {
-    return [message.content];
-  }
-  return (Array.isArray(message.content) ? message.content : []).flatMap((block) =>
-    isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
-  );
-};
+// The text of a user line's message.
+const textsOf = (line: Record<string, unknown>): string[] =>
+  messageTexts(isRecord(line.message) ? line.message.content : undefined);
 
 // Feeds one line to the conversation's opening (ADR-0025): a response from
 // the model ends it, a `<synthetic>` one does not, and a timed user line is

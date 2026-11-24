@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  isRecord,
   MAX_LINE_BYTES,
   isShaped,
   optionalOf,
@@ -12,15 +13,12 @@ import {
   UnreadableLineError,
 } from './session-insight.ts';
 import type { Batch, HarnessParser, Moment, Owner, Request, ToolCall } from './session-insight.ts';
-import { openingReader, progressOf } from './session-tags.ts';
+import { messageTexts, openingReader, progressOf } from './session-tags.ts';
 import type { OpeningProgress } from './session-tags.ts';
 
 // Reads Codex rollouts into the same facts as Claude Code. Identity comes
 // from the first record, which must be session_meta, never a copied header.
 export const CODEX_PARSER_VERSION = 4;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // Codex records response_id on token_usage_record. Ordinary response_item and
 // item_completed lines identify items or turns, so those cannot be associated
@@ -239,14 +237,11 @@ const skillsOf = (
   if (payload.type !== 'message' || payload.role !== 'user' || !Array.isArray(payload.content)) {
     return [];
   }
-  const names = payload.content.flatMap((block) => {
-    if (!isRecord(block) || typeof block.text !== 'string') {
-      return [];
-    }
-    return [...block.text.matchAll(/<skill>\s*<name>(?<name>[^<]*)<\/name>/gu)].flatMap((m) =>
+  const names = messageTexts(payload.content).flatMap((text) =>
+    [...text.matchAll(/<skill>\s*<name>(?<name>[^<]*)<\/name>/gu)].flatMap((m) =>
       m.groups?.name !== undefined && isShaped(m.groups.name, 'command') ? [m.groups.name] : [],
-    );
-  });
+    ),
+  );
   return [...new Set(names)].map((skill): ToolCall => ({
     at,
     callId: factId(thread, 'skill-message', `${String(at)}:${skill}`),
@@ -260,12 +255,6 @@ const skillsOf = (
     skillInferred: true,
   }));
 };
-
-// The text of a message: each content block's text, in order.
-const textsOf = (payload: Record<string, unknown>): string[] =>
-  (Array.isArray(payload.content) ? payload.content : []).flatMap((block) =>
-    isRecord(block) && typeof block.text === 'string' ? [block.text] : [],
-  );
 
 // Whether a response_item is one the model produced, which ends a
 // conversation's opening: reasoning, a call of any kind, or an assistant
@@ -434,7 +423,7 @@ export const codexParser: HarnessParser = {
         ) {
           const { payload } = value;
           if (payload.type === 'message' && payload.role === 'user') {
-            misshapenTag = at !== undefined && opening.message(at, textsOf(payload));
+            misshapenTag = at !== undefined && opening.message(at, messageTexts(payload.content));
           } else if (isResponse(payload)) {
             opening.respond();
           }

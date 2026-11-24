@@ -2487,7 +2487,7 @@ describe('session tags', () => {
     );
   });
 
-  test('of openings with the same time, one that got its response wins, then the earlier generation', async () => {
+  test('a copy cut off before the brief loses a tie to a copy whose response arrived', async () => {
     await using h = await startHub();
     await nameSources(h);
     // A copy cut off before the brief, then a whole copy that holds it.
@@ -2495,7 +2495,7 @@ describe('session tags', () => {
       content: jsonl([user({ at: at(0), content: 'Injected context.' })]),
       path: mainPath(),
     });
-    const review = await upload(h, {
+    await upload(h, {
       content: jsonl([
         user({ at: at(0), content: 'Injected context.' }),
         user({ at: at(1), content: tagged('review') }),
@@ -2503,26 +2503,62 @@ describe('session tags', () => {
       ]),
       path: mainPath(),
     });
-
     await projectAll(h);
-    expect(await mainRole(h.db.sql)).toEqual(
-      expect.objectContaining({ role: 'review', role_source: 'tag' }),
-    );
+    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'review' }));
+  });
 
-    // A third copy, closed and tied with the second: the lower generation id
-    // wins, however the parse orders them.
-    const design = await upload(h, {
-      content: jsonl([
-        user({ at: at(0), content: tagged('design') }),
-        assistant({ at: at(1), id: 'msg_1' }),
-      ]),
-      path: mainPath(),
+  test('an opening whose response arrives in a later batch is stored closed', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([user({ at: at(0), content: tagged('design') })]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    await append(h, generation, {
+      content: jsonl([assistant({ at: at(1), id: 'msg_1' })]),
+      offset: Buffer.byteLength(first),
     });
     await projectAll(h);
 
-    expect(await mainRole(h.db.sql)).toEqual(
-      expect.objectContaining({ role: BigInt(review) < BigInt(design) ? 'review' : 'design' }),
-    );
+    const [row]: { opening_closed: boolean | null }[] = await h.db.sql`
+      SELECT opening_closed FROM projected_sessions WHERE session_id = ${SESSION}
+    `;
+    expect(row?.opening_closed).toBe(true);
+  });
+
+  // Generation ids are random, so each pair of tied, closed copies below gets
+  // one ordering by chance; the loop runs until both orderings were seen, so
+  // a rule that keeps the first or the last parsed copy fails either way.
+  test('of tied openings that both got their response, the lower generation id wins in either parse order', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const seen = new Set<string>();
+    for (let pair = 0; pair < 40 && seen.size < 2; pair += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(pair).padStart(12, '0')}`;
+      const copy = (role: string) =>
+        upload(h, {
+          content: jsonl([
+            user({ at: at(0), content: tagged(role), session }),
+            assistant({ at: at(1), id: `msg_${role}_${String(pair)}`, session }),
+          ]),
+          path: mainPath(session),
+        });
+      // oxlint-disable-next-line no-await-in-loop -- each copy is parsed before the next lands.
+      const first = await copy('review');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const second = await copy('design');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      const firstIsLower = BigInt(first) < BigInt(second);
+      seen.add(firstIsLower ? 'first lower' : 'second lower');
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const [row]: { role: string }[] = await h.db.sql`
+        SELECT role FROM insight.sessions WHERE session_id = ${session}
+      `;
+      expect(row?.role).toBe(firstIsLower ? 'review' : 'design');
+    }
+    expect(seen.size).toBe(2);
   });
 
   test('a delete re-derives the role from the generations that survive', async () => {

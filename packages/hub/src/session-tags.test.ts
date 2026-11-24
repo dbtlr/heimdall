@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
-import { closeOpening, openingOf, preambleOf, readOpeningMessage, tagOf } from './session-tags.ts';
+import {
+  closeOpening,
+  messageTexts,
+  preambleOf,
+  progressOf,
+  readOpeningMessage,
+  tagOf,
+} from './session-tags.ts';
 import type { Opening } from './session-tags.ts';
 
 const PARENT = '0b1c2d3e-0000-4000-8000-0000000000aa';
@@ -216,34 +223,98 @@ describe('reading an opening', () => {
   });
 });
 
+// An opening read back as the database returns saved continuation state.
+const saved = (opening: Record<string, unknown>, answered = false) =>
+  progressOf(structuredClone({ answered, opening }));
+
 describe('an opening carried in continuation state', () => {
-  test('round-trips', () => {
-    const opening = read([`session-tag: role=review seat=breaker parent=${PARENT}`]).opening;
-    expect(openingOf(structuredClone(opening))).toEqual(opening);
+  test('round-trips, and is closed exactly when the first response arrived', () => {
+    const { opening } = read([`session-tag: role=review seat=breaker parent=${PARENT}`]);
+    expect(saved(opening)).toEqual({ answered: false, opening });
+    expect(saved({ ...opening, closed: false }, true)).toEqual({
+      answered: true,
+      opening: { ...opening, closed: true },
+    });
+    expect(saved({ ...opening, closed: true }, false).opening?.closed).toBe(false);
   });
 
-  test('is null when absent or not an opening', () => {
-    expect(openingOf(undefined)).toBeNull();
-    expect(openingOf({ at: 'soon' })).toBeNull();
+  test('holds no opening when absent, or when its time is not a storable time', () => {
+    expect(progressOf(undefined)).toEqual({ answered: false, opening: null });
+    expect(saved({ at: 'soon' }).opening).toBeNull();
+    expect(saved({ at: 1e20 }).opening).toBeNull();
+    expect(saved({ at: Date.parse('0001-01-01T00:00:00.000Z') - 1 }).opening).toBeNull();
   });
 
-  test('drops a fact not shaped as one', () => {
+  test('keeps the facts only together: all four are null unless the role and its source read back', () => {
+    const none = { launchingSessionId: null, role: null, roleSource: null, seat: null };
     expect(
-      openingOf({
-        at: T0,
-        closed: true,
-        launchingSessionId: 'a b',
-        role: 'Review',
-        roleSource: 'tag',
-        seat: null,
-      }),
+      saved({ at: T0, launchingSessionId: PARENT, role: 'Review', roleSource: 'tag', seat: 'x' })
+        .opening,
     ).toEqual({
       at: T0,
-      closed: true,
-      launchingSessionId: null,
-      role: null,
-      roleSource: null,
-      seat: null,
+      closed: false,
+      ...none,
     });
+    expect(
+      saved({ at: T0, launchingSessionId: PARENT, role: 'design', roleSource: 'bogus', seat: 'x' })
+        .opening,
+    ).toEqual({
+      at: T0,
+      closed: false,
+      ...none,
+    });
+  });
+
+  test('keeps a seat only for a tagged review, and a launching Session only from a tag', () => {
+    expect(
+      saved({
+        at: T0,
+        launchingSessionId: PARENT,
+        role: 'review',
+        roleSource: 'preamble',
+        seat: 'breaker',
+      }).opening,
+    ).toEqual(
+      expect.objectContaining({
+        launchingSessionId: null,
+        role: 'review',
+        roleSource: 'preamble',
+        seat: null,
+      }),
+    );
+    expect(
+      saved({
+        at: T0,
+        launchingSessionId: PARENT,
+        role: 'design',
+        roleSource: 'tag',
+        seat: 'breaker',
+      }).opening,
+    ).toEqual(expect.objectContaining({ launchingSessionId: PARENT, role: 'design', seat: null }));
+    expect(
+      saved({
+        at: T0,
+        launchingSessionId: 'a b',
+        role: 'review',
+        roleSource: 'tag',
+        seat: 'breaker',
+      }).opening,
+    ).toEqual(expect.objectContaining({ launchingSessionId: null, seat: 'breaker' }));
+  });
+});
+
+describe("a message's text", () => {
+  test("is its string content, or each content block's text in order", () => {
+    expect(messageTexts('hello')).toEqual(['hello']);
+    expect(
+      messageTexts([
+        { text: 'one', type: 'text' },
+        { text: 'two', type: 'input_text' },
+        { content: 'a tool result', type: 'tool_result' },
+        { source: {}, type: 'image' },
+        'stray',
+      ]),
+    ).toEqual(['one', 'two']);
+    expect(messageTexts(undefined)).toEqual([]);
   });
 });

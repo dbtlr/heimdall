@@ -878,6 +878,15 @@ describe('the opening of a Codex Session', () => {
     );
   });
 
+  test('a user message with no time is not part of the opening', () => {
+    const { timestamp: _, ...untimed } = message('user', tagged, 1);
+    const parsed = parse(
+      jsonl([meta(), untimed, message('user', 'hello', 2), produced('reasoning', 3)]),
+    );
+
+    expect(parsed.opening).toEqual(expect.objectContaining({ at: Date.parse(at(2)), role: null }));
+  });
+
   test('an event message that repeats the prompt is not read', () => {
     const parsed = parse(
       jsonl([

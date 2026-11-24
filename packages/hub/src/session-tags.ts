@@ -1,4 +1,4 @@
-import { isShaped, MAX_ID_LENGTH } from './session-insight.ts';
+import { isRecord, isShaped, isStorableTime, MAX_ID_LENGTH } from './session-insight.ts';
 
 // Reads a started conversation's role, review seat, and launching Session
 // from its opening messages: a session tag, or T3 Code's sub-agent preamble
@@ -30,9 +30,6 @@ const PREFIX = 'session-tag:';
 const NAME = /^[a-z][a-z0-9-]{0,62}$/u;
 const KEY = /^[A-Za-z][A-Za-z0-9_-]*$/u;
 const PREAMBLE = /^Act as the (?<role>\S+) sub-agent for this task\.$/u;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // A saved role or seat, or null when it is not shaped as one.
 const nameOf = (field: unknown) => (typeof field === 'string' && NAME.test(field) ? field : null);
@@ -87,6 +84,18 @@ export const preambleOf = (line: string): string | null => {
 
 const LINE_BREAK = /\r\n|\n|\r/u;
 
+// A message's text, as both Harnesses write it: its string content, or each
+// content block's `text`, in order. A block with no text, such as an image or
+// a tool result, adds none.
+export const messageTexts = (content: unknown): string[] => {
+  if (typeof content === 'string') {
+    return [content];
+  }
+  return (Array.isArray(content) ? content : []).flatMap((block) =>
+    isRecord(block) && typeof block.text === 'string' ? [block.text] : [],
+  );
+};
+
 // Reads one opening message, timed `at`, whose text is `texts`: its string
 // content or each content block's text, each split into lines on its own.
 // `unreadable` says the message held a misshapen tag line before the first
@@ -135,28 +144,33 @@ export const closeOpening = (opening: Opening | null): Opening | null =>
   opening === null ? null : { ...opening, closed: true };
 
 // An opening read back from continuation state, which the database returns as
-// JSON: null when it holds none, and any fact not shaped as one dropped.
-export const openingOf = (value: unknown): Opening | null => {
-  if (!isRecord(value)) {
+// JSON, closed when `answered` says its first response arrived. It is null
+// when it holds none or its time is not one a line may hold. Its facts come
+// back only together, as the parser kept them: all four are null unless its
+// role and the role's source read back, and its seat and launching Session
+// come only from a tag.
+const openingOf = (value: unknown, answered: boolean): Opening | null => {
+  if (!isRecord(value) || typeof value.at !== 'number' || !isStorableTime(value.at)) {
     return null;
   }
-  const saved = value;
-  if (typeof saved.at !== 'number' || !Number.isFinite(saved.at)) {
-    return null;
-  }
-  const role = nameOf(saved.role);
+  const role = nameOf(value.role);
   const source =
-    saved.roleSource === 'tag' || saved.roleSource === 'preamble' ? saved.roleSource : null;
+    role !== null && (value.roleSource === 'tag' || value.roleSource === 'preamble')
+      ? value.roleSource
+      : null;
+  const tagged = source === 'tag';
   return {
-    at: saved.at,
-    closed: saved.closed === true,
+    at: value.at,
+    closed: answered,
     launchingSessionId:
-      typeof saved.launchingSessionId === 'string' && isLaunchingId(saved.launchingSessionId)
-        ? saved.launchingSessionId
+      tagged &&
+      typeof value.launchingSessionId === 'string' &&
+      isLaunchingId(value.launchingSessionId)
+        ? value.launchingSessionId
         : null,
-    role,
-    roleSource: role === null ? null : source,
-    seat: role === 'review' ? nameOf(saved.seat) : null,
+    role: source === null ? null : role,
+    roleSource: source,
+    seat: tagged && role === 'review' ? nameOf(value.seat) : null,
   };
 };
 
@@ -167,7 +181,8 @@ export type OpeningProgress = { answered: boolean; opening: Opening | null };
 
 export const progressOf = (value: unknown): OpeningProgress => {
   const saved: Record<string, unknown> = isRecord(value) ? value : {};
-  return { answered: saved.answered === true, opening: openingOf(saved.opening) };
+  const answered = saved.answered === true;
+  return { answered, opening: openingOf(saved.opening, answered) };
 };
 
 // Reads a batch's share of an opening from `progress`. `message` reads an
