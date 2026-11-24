@@ -60,6 +60,14 @@
   --series-5: #c8a98a;
   /* The rest of a breakdown, past the five series: a neutral that is no series. */
   --chart-other: #5c6882;
+  /* Review seats in a cost split by role: the three costliest seats get their
+     own shade of one pink, the rest share the darkest, and an unknown seat is
+     hatched. Main is --plot and delegated is --series-1. */
+  --review-1: #e07bc0;
+  --review-2: #f4b3de;
+  --review-3: #b65a9b;
+  --review-other: #874275;
+  --review-unknown: repeating-linear-gradient(135deg, #e07bc0 0 2px, #4a2f45 2px 5px);
 
   /* Status, from good to critical: ok, note, warning, alert. */
   --status-good: #3ecf8e;
