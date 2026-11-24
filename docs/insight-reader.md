@@ -1,10 +1,10 @@
 ---
-description: "How a person or an agent queries Session insight through the insight reader, a read-only PostgreSQL role that reads the insight views and nothing else: what the provisioner sets up, how serve grants the role, what it can and cannot read, example queries, and how a locator leads to raw transcript lines."
+description: "How a person or an agent queries Session insight through the insight reader, a read-only PostgreSQL role that reads the insight views and functions and nothing else: what the provisioner sets up, how serve grants the role, what it can and cannot read, example queries, and how a locator leads to raw transcript lines."
 ---
 
 # Querying the insight views
 
-The `insight` views in the Hub's database are the one read model for Session insight ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The [spec](spec.md#the-insight-views) lists every view and column. This document describes how to query them through the insight reader: a read-only role that reads the views and nothing else.
+The `insight` views in the Hub's database are the one read model for Session insight ([ADR-0014](decisions/0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The [spec](spec.md#the-insight-views) lists every view and column. This document describes how to query them through the insight reader: a read-only role that reads the views and the `insight` functions, and nothing else.
 
 ## Set up the reader
 
@@ -30,6 +30,7 @@ Each time `serve` starts, after it applies the migrations, it grants the role:
 - `USAGE` on the `insight` schema.
 - `SELECT` on every view in the schema.
 - Default privileges that give the role `SELECT` on every view the Hub's role creates in the schema later.
+- `EXECUTE` on `insight.session_tree` and `insight.session_tree_total`, which read only the views.
 
 The views run with their owner's rights, so the role needs no access to the tables beneath them, and it has none. It cannot read transcripts, tokens, Pairing codes, or any table, it reads Vitals and Harness processes only as the views show them, and it cannot write to any table or view. Each view is a security barrier, so a filter the role writes runs only on rows the view shows, and no error or function in it can surface a row the view hides. Granting again changes nothing.
 
@@ -68,10 +69,10 @@ Only a superuser can take away the rest, so it remains unless the provisioner do
 
 The reader can query every view in the `insight` schema:
 
-- **Sessions:** `insight.sessions`, `insight.subagents`, `insight.requests`, `insight.tool_calls`, `insight.session_totals`, `insight.session_model_totals`, `insight.main_conversation_totals`, and `insight.parse_status`.
+- **Sessions:** `insight.sessions`, `insight.subagents`, `insight.requests`, `insight.tool_calls`, `insight.session_totals`, `insight.session_model_totals`, `insight.main_conversation_totals`, `insight.session_role_totals`, `insight.session_parents`, and `insight.parse_status`, and the functions `insight.session_tree` and `insight.session_tree_total`.
 - **Sessions beside Harness processes and Vitals:** `insight.request_links` and `insight.session_stretches`, which link each stretch of a Session to the Harness process that ran it when only one seen process could have; `insight.harness_processes`; and `insight.vitals`, `insight.vitals_processes`, `insight.vitals_sessions`, and `insight.vitals_requests`, which set each Vitals sample beside the processes, Sessions, and requests of its time. See [Linking Harness processes to Sessions](spec.md#linking-harness-processes-to-sessions).
 
-`insight.session_totals`, `insight.session_model_totals`, and `insight.session_stretches` read what the Hub stored at its last refresh, so they can lag new data by about 15 seconds. The other views compute what they show when read.
+`insight.session_totals`, `insight.session_model_totals`, `insight.session_role_totals`, and `insight.session_stretches` read what the Hub stored at its last refresh, so they can lag new data by about 15 seconds, and so do the tree totals, which sum stored totals. The other views, `insight.session_parents` among them, compute what they show when read.
 
 The views carry facts and locators, never transcript content: no prompt, response, thinking, tool input, or tool output. A name or an id is shaped as one, so prose cannot reach those columns. That includes what a conversation's opening messages say about it: `insight.sessions` and `insight.subagents` carry its `role`, `seat`, `launching_session_id`, and `role_source`, read from a session tag or T3 Code's preamble, as shaped names and an id, and nothing else from the prompt. See [Session tags](spec.md#session-tags). A few columns are text as the Harness or the Collector wrote it:
 

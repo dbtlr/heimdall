@@ -1972,6 +1972,36 @@ describe('a parser version change', () => {
     expect(outcome.pending).toBe(1);
   });
 
+  test('leaves the earlier version’s subagents for a later run while another write holds the spawning-links lock', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await uploadSession(h);
+    await projectAll(h);
+    const earlierSubagents = async () => {
+      const [row]: { n: number }[] = await h.db.sql`
+        SELECT count(*)::int AS n FROM projected_subagents
+        WHERE parser_version = ${claudeCodeParser.version}
+      `;
+      return row?.n ?? 0;
+    };
+    await projectTranscripts(h.db.sql, { cleanupRows: 0, parsers: [nextVersion] });
+    expect(await earlierSubagents()).toBeGreaterThan(0);
+    const holder = await h.db.sql.reserve();
+    try {
+      await holder`BEGIN`;
+      await holder`SELECT pg_advisory_xact_lock(hashtext('heimdall-spawning-links'))`;
+
+      await projectTranscripts(h.db.sql, { cleanupRows: 100_000, parsers: [nextVersion] });
+
+      expect(await earlierSubagents()).toBeGreaterThan(0);
+      await holder`COMMIT`;
+    } finally {
+      await holder.release();
+    }
+    await projectTranscripts(h.db.sql, { cleanupRows: 100_000, parsers: [nextVersion] });
+    expect(await earlierSubagents()).toBe(0);
+  });
+
   test('deletes the earlier version a bounded batch at a time, its progress last', async () => {
     await using h = await startHub();
     await nameSources(h);
@@ -2647,4 +2677,28 @@ describe('session tags', () => {
       },
     ]);
   });
+});
+
+// A batch that meets another write holding the spawning-links lock, such as
+// a long transcript delete, is left to the next run, like one that meets a
+// delete under way, so a busy lock never uses up a transcript's tries.
+test('a batch that finds the spawning-links lock held is left to the next run, not failed', async () => {
+  await using h = await startHub();
+  await nameSources(h);
+  await uploadSession(h);
+  const holder = await h.db.sql.reserve();
+  try {
+    await holder`BEGIN`;
+    await holder`SELECT pg_advisory_xact_lock(hashtext('heimdall-spawning-links'))`;
+
+    const run = await projectTranscripts(h.db.sql);
+
+    expect(run.failed).toEqual([]);
+    expect(await requests(h.db.sql)).toEqual([]);
+    await holder`COMMIT`;
+  } finally {
+    await holder.release();
+  }
+  await projectAll(h);
+  expect((await requests(h.db.sql)).length).toBeGreaterThan(0);
 });
