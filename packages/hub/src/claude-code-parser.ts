@@ -376,7 +376,6 @@ export const parseConversation = (
       unreadableLines += line.kind === 'unreadable' ? 1 : 0;
       continue;
     }
-    const misshapenTag = readOpening(opening, line.value);
     let facts: LineFacts;
     try {
       facts = readLine(line.value, line.offset);
@@ -387,6 +386,8 @@ export const parseConversation = (
       unreadableLines += 1;
       continue;
     }
+    // Only a line that yields its facts takes part in the opening.
+    const misshapenTag = readOpening(opening, line.value);
     const { moment, request } = facts;
     if (facts.dropped || misshapenTag) {
       unreadableLines += 1;

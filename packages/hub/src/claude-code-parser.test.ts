@@ -847,6 +847,28 @@ describe('the opening', () => {
     expect(parsed.opening).toEqual(expect.objectContaining({ role: null, roleSource: null }));
   });
 
+  test('a record that breaks a bound is no part of the opening, nor is a response on one', () => {
+    const tooLong = {
+      ...user({ at: T0, content: 'session-tag: role=design' }),
+      cwd: 'x'.repeat(5000),
+    };
+    const brokenResponse = { ...assistant({ at: T2, id: 'msg_0' }), timestamp: 'not a time' };
+    const parsed = parse(
+      jsonl([
+        tooLong,
+        user({ at: T1, content: 'hello' }),
+        brokenResponse,
+        user({ at: T2, content: 'session-tag: role=review' }),
+        assistant({ at: T3, id: 'msg_1' }),
+      ]),
+    );
+
+    expect(parsed.unreadableLines).toBe(2);
+    expect(parsed.opening).toEqual(
+      expect.objectContaining({ at: Date.parse(T1), closed: true, role: 'review' }),
+    );
+  });
+
   test('only text blocks are read, for commands and for the opening alike', () => {
     const parsed = parse(
       jsonl([

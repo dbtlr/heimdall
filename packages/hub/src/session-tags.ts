@@ -82,7 +82,20 @@ export const preambleOf = (line: string): string | null => {
   return role !== undefined && NAME.test(role) ? role : null;
 };
 
-const LINE_BREAK = /\r\n|\n|\r/u;
+const LINE_BREAKS = /\r\n|\n|\r/gu;
+
+// Each line of each string, in order and one at a time, so a reader that
+// stops early splits no more of a long message than it reads.
+function* linesOf(texts: readonly string[]): Generator<string> {
+  for (const text of texts) {
+    let start = 0;
+    for (const match of text.matchAll(LINE_BREAKS)) {
+      yield text.slice(start, match.index);
+      start = match.index + match[0].length;
+    }
+    yield text.slice(start);
+  }
+}
 
 // A message's text: its string content, or each content block's `text`, in
 // order, of only the blocks whose type is `blockType` when one is given. A
@@ -120,19 +133,17 @@ export const readOpeningMessage = (
           seat: null,
         }
       : { ...opening };
-  if (next.closed) {
-    return { opening: next, unreadable: false };
-  }
   let unreadable = false;
-  for (const line of texts.flatMap((text) => text.split(LINE_BREAK))) {
-    if (next.roleSource === 'tag') {
-      break;
-    }
+  if (next.closed || next.roleSource === 'tag') {
+    return { opening: next, unreadable };
+  }
+  for (const line of linesOf(texts)) {
     const tag = tagOf(line);
     if (tag === 'misshapen') {
       unreadable = true;
     } else if (tag !== null) {
       Object.assign(next, tag, { roleSource: 'tag' });
+      break;
     } else if (next.roleSource === null) {
       const role = preambleOf(line);
       if (role !== null) {
