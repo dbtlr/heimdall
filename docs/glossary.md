@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, package source, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, package source, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, session tag, role, review seat, launching Session, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -10,6 +10,7 @@ Delivery and silences follow [ADR-0020](decisions/0020-the-hub-delivers-alerts-t
 Service stops follow [ADR-0021](decisions/0021-the-collector-logs-service-stops-and-the-hub-raises-a-note.md).
 Installed versions, upstreams, and available updates follow [ADR-0022](decisions/0022-services-show-their-version-and-the-hub-checks-upstreams.md).
 Package sources follow [ADR-0018](decisions/0018-collector-checks-package-managers-on-a-schedule.md).
+Session tags, roles, and launching Sessions follow [ADR-0025](decisions/0025-session-tags-name-a-childs-role-review-seat-and-launching-session.md).
 
 ## Language
 
@@ -104,6 +105,22 @@ _Avoid_: repo, workspace
 **subagent**:
 A child conversation that a Session's agent starts inside the same Harness, with its own transcript, model, and agent type. It can start subagents of its own, and its usage counts toward its Session.
 _Avoid_: sidechain, child Session, worker
+
+**session tag**:
+A line an agent writes at the top of the prompt that starts a subagent or another Session, naming the started conversation's role, its review seat, and its launching Session ([ADR-0025](decisions/0025-session-tags-name-a-childs-role-review-seat-and-launching-session.md)).
+_Avoid_: tag line, brief header
+
+**role**:
+What a Session or subagent was started to do, such as `review` or `implementation`, named by its session tag, or by T3 Code's sub-agent preamble when it has none. A subagent with no role of its own takes the nearest one above it. List-price cost splits by role into main (a Session with no role), review, and delegated (every other role).
+_Avoid_: agent type (the Harness's own kind for a subagent), job
+
+**review seat**:
+The part a review conversation plays in a review panel, such as `breaker` or `verifier`, named by its session tag.
+_Avoid_: reviewer type, lens
+
+**launching Session**:
+The Session whose agent started another Session, as the started Session's session tag names it; the started Session is a launched Session. A Session's tree is the Session and every Session it launched, directly or through Sessions it launched.
+_Avoid_: parent Session (a subagent's parent is a conversation within its Session), child Session
 
 **transcript**:
 The file a Harness writes for a Session, holding its prompts, responses, and tool calls. The Hub keeps it as the durable record of the Session after the Harness deletes its own copy.
