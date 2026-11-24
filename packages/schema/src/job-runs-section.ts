@@ -59,6 +59,21 @@ const textOf = (value: unknown, key: string): string | undefined => {
 const reasonOf = (error: z.ZodError) =>
   error.issues.map(({ message, path }) => `${path.join('.') || 'run'}: ${message}`).join('; ');
 
+// Why the Hub will not hold a run that starts or finishes more than the samples'
+// tolerance after `arrival` (epoch milliseconds), or undefined when it will.
+export const runAheadOfClock = (
+  run: { finished: string; started: string },
+  arrival: number,
+): string | undefined => {
+  if (Date.parse(run.started) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
+    return "it starts more than 5 minutes after the Hub's clock";
+  }
+  if (Date.parse(run.finished) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
+    return "it finishes more than 5 minutes after the Hub's clock";
+  }
+  return undefined;
+};
+
 // Takes the entries of a Report's job runs section one at a time, in order, for
 // a Report that reached the Hub at `arrival` (epoch milliseconds). An entry is
 // dropped when it is not a valid run, when it repeats the key (job and
@@ -81,12 +96,11 @@ export const takeJobRuns = (
         ...(known.job === undefined ? {} : { job: known.job }),
         ...(known.started === undefined ? {} : { started: known.started }),
       });
+    const ahead = parsed.success ? runAheadOfClock(parsed.data, arrival) : undefined;
     if (!parsed.success) {
       drop(reasonOf(parsed.error));
-    } else if (Date.parse(parsed.data.started) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
-      drop("it starts more than 5 minutes after the Hub's clock");
-    } else if (Date.parse(parsed.data.finished) > arrival + FUTURE_SAMPLE_TOLERANCE_MS) {
-      drop("it finishes more than 5 minutes after the Hub's clock");
+    } else if (ahead !== undefined) {
+      drop(ahead);
     } else {
       const key = JSON.stringify([parsed.data.job, parsed.data.started]);
       if (keys.has(key)) {

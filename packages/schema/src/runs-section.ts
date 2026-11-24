@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { runAheadOfClock } from './job-runs-section.ts';
 import { RECORD_NAME, REPORTED_RUN_SCHEMA } from './records.ts';
 import type { RunRecord } from './records.ts';
 import { bytes } from './values.ts';
@@ -44,27 +45,40 @@ export type MirroredRuns =
   | { jobs: JobRuns[]; unreadable: string[] }
   | { overBudget: { bytes: number } };
 
-// One job's latest runs, or undefined when this Hub cannot read them.
-const mirrorJob = ({ job, latestRun, latestSuccess }: SentJobRuns): JobRuns | undefined => {
+// One job's latest runs, or undefined when this Hub cannot read them or one
+// starts or finishes past the tolerance after `arrival`, the same bound the job
+// runs section applies (HMD-310).
+const mirrorJob = (
+  { job, latestRun, latestSuccess }: SentJobRuns,
+  arrival: number,
+): JobRuns | undefined => {
   const run = REPORTED_RUN_SCHEMA.safeParse(latestRun);
   const success = latestSuccess === null ? undefined : REPORTED_RUN_SCHEMA.safeParse(latestSuccess);
   if (!run.success || success?.success === false) {
     return undefined;
   }
+  if (
+    runAheadOfClock(run.data, arrival) !== undefined ||
+    (success !== undefined && runAheadOfClock(success.data, arrival) !== undefined)
+  ) {
+    return undefined;
+  }
   return { job, latestRun: run.data, latestSuccess: success?.data ?? null };
 };
 
-// The latest runs a Hub mirrors from a runs section. A job whose runs this Hub
-// cannot read still ran, so it counts as unreadable rather than missing. A job
-// sent twice keeps the last, and one that is mirrored is not also unreadable.
-export const mirrorRuns = (section: RunsSection): MirroredRuns => {
+// The latest runs a Hub mirrors from a runs section that reached it at `arrival`
+// (epoch milliseconds). A job whose runs this Hub cannot read, or whose run
+// starts or finishes more than the samples' tolerance after `arrival`, still
+// ran, so it counts as unreadable rather than missing. A job sent twice keeps
+// the last, and one that is mirrored is not also unreadable.
+export const mirrorRuns = (section: RunsSection, arrival: number): MirroredRuns => {
   if ('overBudget' in section) {
     return { overBudget: section.overBudget };
   }
   const jobs = new Map<string, JobRuns>();
   const unreadable = new Set(section.unreadable);
   for (const entry of section.jobs) {
-    const mirrored = mirrorJob(entry);
+    const mirrored = mirrorJob(entry, arrival);
     if (mirrored === undefined) {
       jobs.delete(entry.job);
       unreadable.add(entry.job);

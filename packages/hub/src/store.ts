@@ -219,7 +219,12 @@ export const storeReport = async (
       await storeRecords(tx, { receivedAt: seenAt, report, section: report.records });
     }
     if (report.runs !== undefined) {
-      await storeRuns(tx, { receivedAt: seenAt, report, section: report.runs });
+      await storeRuns(tx, {
+        arrival: receivedAt,
+        receivedAt: seenAt,
+        report,
+        section: report.runs,
+      });
     }
     if (report.checks !== undefined) {
       await storeChecks(tx, { receivedAt: seenAt, report, section: report.checks });
@@ -390,14 +395,21 @@ const trackFirstMirrored = async (
 
 // Replaces the System's latest runs with a Report's, unless the Hub holds runs
 // from a Report sent later. Held runs that claim a time after `receivedAt` come
-// from a bad clock, and give way. Runs over budget leave no jobs, so none that
-// may have changed is served. The runs' row is locked until the transaction
-// ends, so concurrent Reports apply in order.
+// from a bad clock, and give way. A job whose latest run or success is stamped
+// more than 5 minutes past `arrival` is left out as unreadable. A job counted
+// unreadable keeps its held latest runs. Runs over budget leave no jobs, so
+// none that may have changed is served. The runs' row
+// is locked until the transaction ends, so concurrent Reports apply in order.
 const storeRuns = async (
   sql: SQL,
-  { receivedAt, report, section }: { receivedAt: Date; report: Report; section: RunsSection },
+  {
+    arrival,
+    receivedAt,
+    report,
+    section,
+  }: { arrival: number; receivedAt: Date; report: Report; section: RunsSection },
 ) => {
-  const mirrored = mirrorRuns(section);
+  const mirrored = mirrorRuns(section, arrival);
   const overBudget = 'overBudget' in mirrored ? mirrored.overBudget.bytes : null;
   const unreadable = 'unreadable' in mirrored ? mirrored.unreadable : [];
   const jobs = 'jobs' in mirrored ? mirrored.jobs : [];
@@ -417,7 +429,12 @@ const storeRuns = async (
   if (replaced.length === 0) {
     return;
   }
-  await sql`DELETE FROM mirrored_runs WHERE system = ${report.system}`;
+  // An unreadable job still ran, so its held latest runs stay.
+  await sql`
+    DELETE FROM mirrored_runs
+    WHERE system = ${report.system}
+      AND job NOT IN (SELECT jsonb_array_elements_text(${storableJson(unreadable)}::text::jsonb))
+  `;
   // A job with no success sends null, which `->` reads as a JSON null, not NULL.
   await sql`
     INSERT INTO mirrored_runs (system, job, latest_run, latest_success)

@@ -27,7 +27,9 @@ const report = (extra: { runs?: RunsSection; timeZone?: string } = {}) => ({
   ...extra,
 });
 
-const mirrored = (section: RunsSection) => mirrorRuns(RunsSectionSchema.parse(section));
+const ARRIVAL = Date.parse('2026-10-02T04:00:00Z');
+
+const mirrored = (section: RunsSection) => mirrorRuns(RunsSectionSchema.parse(section), ARRIVAL);
 
 describe('a Report', () => {
   test("carries each job's latest run and latest success", () => {
@@ -100,7 +102,13 @@ describe('the runs a Hub mirrors', () => {
 
     expect(
       mirrored({
-        jobs: [{ job: 'backup', latestRun: fromNewerCollector, latestSuccess: fromNewerCollector }],
+        jobs: [
+          {
+            job: 'backup',
+            latestRun: fromNewerCollector,
+            latestSuccess: fromNewerCollector,
+          },
+        ],
         unreadable: [],
       }),
     ).toEqual({
@@ -117,6 +125,66 @@ describe('the runs a Hub mirrors', () => {
     expect(mirrored({ jobs: [{ job: 'backup', ...runs }], unreadable: [] })).toEqual({
       jobs: [],
       unreadable: ['backup'],
+    });
+  });
+
+  // HMD-310: the same 5-minute bound the job runs section applies at arrival.
+  test.each([
+    [
+      'a latest run that starts',
+      { finished: '2026-10-02T04:05:02Z', started: '2026-10-02T04:05:01Z' },
+    ],
+    [
+      'a latest run that finishes',
+      { finished: '2026-10-02T04:05:01Z', started: '2026-10-02T03:59:00Z' },
+    ],
+  ])('count a job with %s past the tolerance as unreadable', (_case, times) => {
+    const latestRun = { exitStatus: 0, ...times };
+
+    expect(
+      mirrored({
+        jobs: [{ job: 'backup', latestRun, latestSuccess: null }],
+        unreadable: [],
+      }),
+    ).toEqual({
+      jobs: [],
+      unreadable: ['backup'],
+    });
+  });
+
+  test('count a job with a latest success past the tolerance as unreadable', () => {
+    const latestSuccess = {
+      exitStatus: 0,
+      finished: '2026-10-02T04:05:02Z',
+      started: '2026-10-02T04:05:01Z',
+    };
+
+    expect(
+      mirrored({
+        jobs: [{ job: 'backup', latestRun: FAILED, latestSuccess }],
+        unreadable: [],
+      }),
+    ).toEqual({
+      jobs: [],
+      unreadable: ['backup'],
+    });
+  });
+
+  test('keep a run that starts and finishes exactly at the tolerance', () => {
+    const latestRun = {
+      exitStatus: 0,
+      finished: '2026-10-02T04:05:00Z',
+      started: '2026-10-02T04:05:00Z',
+    };
+
+    expect(
+      mirrored({
+        jobs: [{ job: 'backup', latestRun, latestSuccess: latestRun }],
+        unreadable: [],
+      }),
+    ).toEqual({
+      jobs: [{ job: 'backup', latestRun, latestSuccess: latestRun }],
+      unreadable: [],
     });
   });
 

@@ -278,6 +278,55 @@ test('a run that starts before the Hub clock but finishes more than 5 minutes af
   expect(h.warnings).toHaveLength(1);
 });
 
+test('the runs mirror measures a latest run against the Hub clock at arrival, not the Report sentAt', async () => {
+  await using h = await startHub();
+  const ahead = NOW + 30 * MINUTE;
+
+  const response = await sendBody(
+    h,
+    { runs: [] },
+    {
+      runs: {
+        jobs: [{ job: 'backup', latestRun: jobRun(ahead), latestSuccess: null }],
+        unreadable: [],
+      },
+      sentAt: NOW + 60 * MINUTE,
+    },
+  );
+
+  expect(response.status).toBe(200);
+  expect(await h.db.sql`SELECT job FROM mirrored_runs`).toHaveLength(0);
+  const sets: { unreadable: string[] }[] = await h.db.sql`SELECT unreadable FROM run_sets`;
+  expect(sets.map((set) => set.unreadable)).toEqual([['backup']]);
+});
+
+// A job counted unreadable still ran, so the dashboard keeps showing its last
+// readable run rather than a job that never ran.
+test('a mirrored job whose next latest run is stamped ahead keeps its held runs and counts unreadable', async () => {
+  await using h = await startHub();
+  const eight = NOW - 4 * 3600_000;
+  const latest = (latestRun: SentJobRun, sentAt: number) =>
+    storeReport(h.db.sql, {
+      onWarn: (message) => h.warnings.push(message),
+      receivedAt: sentAt,
+      report: {
+        ...report('laptop-1', []),
+        runs: { jobs: [{ job: 'backup', latestRun, latestSuccess: latestRun }], unreadable: [] },
+        sentAt,
+      },
+    });
+  await latest(jobRun(eight), NOW);
+
+  await latest(jobRun(NOW + 11 * MINUTE), NOW + MINUTE);
+
+  const mirrored = await h.db.sql`
+    SELECT job, latest_run->>'started' AS run, latest_success->>'started' AS success FROM mirrored_runs
+  `;
+  expect(mirrored).toEqual([{ job: 'backup', run: whole(eight), success: whole(eight) }]);
+  const sets: { unreadable: string[] }[] = await h.db.sql`SELECT unreadable FROM run_sets`;
+  expect(sets.map((set) => set.unreadable)).toEqual([['backup']]);
+});
+
 test('a dropped replacement leaves the run stored earlier as it was', async () => {
   await using h = await startHub();
   const started = NOW - 3600_000;

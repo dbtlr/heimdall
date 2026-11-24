@@ -1,10 +1,10 @@
 ---
 type: adr
 title: ADR-0023 - The Collector holds each job run until the Hub takes it, and the Hub keeps each job's run history
-description: "A Report gains a job runs section that carries every run the Collector keeps and the Hub has not taken, oldest first, as Service stops ride Reports. The Hub stores each run by System, job, and start, and keeps 90 days of runs and each job's latest 14 however old as its run history. Job Conditions are still judged from the latest runs section, which is unchanged."
+description: "A Report gains a job runs section that carries every run the Collector keeps and the Hub has not taken, oldest first, as Service stops ride Reports. The Hub stores each run by System, job, and start, and keeps 90 days of runs and each job's latest 14 however old as its run history. Job Conditions are still judged from the latest runs section, whose mirror counts a job unreadable, and keeps its held latest runs, when its latest run or latest success is stamped more than 5 minutes past the Hub's clock (2026-11-24)."
 status: accepted
 created: 2026-11-14
-modified: 2026-11-14
+modified: 2026-11-24
 ---
 
 # The Collector holds each job run until the Hub takes it, and the Hub keeps each job's run history
@@ -43,7 +43,7 @@ It prunes runs that started more than 90 days before its own clock, except each 
 Runs are evidence for the dashboard, apart from the records ([ADR-0011](0011-collectors-hold-what-provisioners-record.md)).
 
 **The latest runs stay as they are.**
-The runs section, the Hub's mirror of it, the job Conditions judged from that mirror, and the records read are unchanged.
+The runs section, the Hub's mirror of it, the job Conditions judged from that mirror, and the records read are unchanged, except that the mirror leaves out the runs of a job whose latest run or latest success is stamped more than 5 minutes past the Hub's clock, counts the job unreadable, and keeps the latest runs it held for the job, so the records read can list a job both with runs and as unreadable (see Changelog, 2026-11-24).
 The mirror stays the source of each job's latest run and status; the history is the list of earlier runs, and the two can differ, as the spec describes.
 
 ## Considered options
@@ -62,9 +62,10 @@ The mirror stays the source of each job's latest run and status; the history is 
 - A Hub restored from a backup lacks the runs it took after that backup until the Collector is paired with it again; the latest runs come back with the next hourly runs section.
 - A job's latest 14 runs stay at the Hub after the job is forgotten, until its System is purged.
 - The history holds a run older than 90 days only once the Hub has taken it, so a monthly job shows the 3 or so runs its Collector keeps at first, and reaches 14 over the months that follow.
-- Run times are on the System's clock and pruning is on the Hub's, so a System whose clock runs behind loses its runs a little early, and one whose clock runs more than 5 minutes ahead loses the runs it starts or finishes that far ahead, which the Hub drops as they arrive.
+- Run times are on the System's clock and pruning is on the Hub's, so a System whose clock runs behind loses its runs a little early, and one whose clock runs more than 5 minutes ahead loses the runs it starts or finishes that far ahead, which the Hub drops as they arrive. The runs mirror also counts unreadable a job whose latest run or latest success is that far ahead and keeps the job's held latest runs, so the job's Conditions keep their state.
 
 ## Changelog
 
 - 2026-11-14: Amendment. The Hub no longer stores every time the section accepts. It takes runs one at a time and drops an entry that is not a valid run, a run that repeats the key of an earlier run that passes the run rules, and a run that starts more than 5 minutes after its own clock when the Report arrives: the same 5-minute tolerance it gives samples, measured once, at arrival, so a run from a clock that runs ahead never outlasts real runs in the 90 days and the latest 14. A bad run therefore never fails a Report ([ADR-0004](0004-report-grows-additively-samples-keyed-by-system-and-time.md)), and dropping a run leaves what the Hub already holds for its key unchanged. A delivered Report settles every run it carried, dropped ones included, which ends the automatic resending of a dropped run; recording it again, or pairing, holds it again.
 - 2026-11-22: Amendment. The Hub also drops a run whose `finished` is more than 5 minutes after its own clock when the Report arrives, under the same tolerance, so a run from a clock that runs ahead no longer enters the run history with a vast duration (HMD-291). Runs stored before then stay until they are pruned. The decision is unchanged.
+- 2026-11-24: Amendment. The Hub's mirror of the latest runs also drops a job's latest run or latest success that starts or finishes more than 5 minutes after the Hub's clock when the Report arrives, under the same tolerance. The job counts as unreadable: the mirror keeps the latest runs it held for the job, and now does so for every job a runs section counts unreadable, including one its Collector could not read, so the dashboard shows the job's last readable run, and its Conditions are not judged on that run and keep their state until a Report carries runs within the tolerance (HMD-310). The decision is otherwise unchanged.
