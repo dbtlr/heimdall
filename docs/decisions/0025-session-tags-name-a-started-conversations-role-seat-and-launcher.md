@@ -30,13 +30,17 @@ Measured on one System's transcripts in November 2026:
   - A T3-delegated Session's brief opens with a `[T3 Code: …]` header in its current form, then T3's preamble, `Act as the <role> sub-agent for this task.`, then the tag.
   - On Codex, the brief follows user messages that Codex injects itself, such as the `AGENTS.md` instructions, `<environment_context>`, and `<recommended_plugins>`. Their order varies, and nothing marks them as injected.
 - **Codex subagents.** A Codex subagent's brief is encrypted in both its own rollout and its parent's. A forked Codex subagent also replays its parent's messages before its own. No Codex subagent's tag is readable.
-- **How many carry it.** Of about 1,400 T3-delegated Claude Code Sessions, 238 carried a tag; of about 540 on Codex, 7 did. Every one carried the preamble, which names the role and nothing else. Those without a tag predate the convention.
+- **How many carry it.** Of about 1,400 T3-delegated Claude Code Sessions that carried the preamble, 238 also carried a tag; of about 540 on Codex, 7 did. The preamble names the role and nothing else. Those without a tag predate the convention. A few T3-delegated Sessions carried T3's header with no preamble.
 - **Seats in use.** They went beyond the adversarial-review panel: `design-rater`, `exitcritic`, and `design` appeared beside `architect`, `breaker`, and `verifier`.
 - **The template reaches every context.** The instructions that tell agents to write the tag quote its template mid-sentence, so that text reaches the context of nearly every Session. Claude Code's `last-prompt` records repeat a prompt with its line breaks collapsed, so there a tag runs into the prose after it.
 
 ## Decision
 
-- **The tag and the preamble are read from a conversation's opening messages.** These are its user messages before its first response. On a Codex fork, only its own messages count, never those it replays from its parent. Nothing after the first response is read for them, nor any `last-prompt` record or thread title.
+- **The tag and the preamble are read from a conversation's opening messages.** These are its user messages before its first response:
+  - On Claude Code, the text of its `user` records before its first `assistant` record. `attachment`, `queue-operation`, and other record types are not read.
+  - On Codex, the text of its `response_item` messages with role `user` before the first `response_item` the model produced, such as a reasoning item, a function call, or an assistant message. `developer` messages are not read. On a fork, only its own messages count, never those it replays from its parent.
+
+  Nothing after the first response is read for them, nor any `last-prompt` record or thread title.
   - When generations disagree, the opening messages with the earliest time win. These facts are re-derived from what survives a delete, like every other fact.
 - **A session tag is a line of the opening messages that is a well-formed tag.**
   - **Form.** With leading whitespace removed, the line starts with `session-tag:`, followed by space-separated `key=value` pairs and nothing else.
@@ -65,14 +69,14 @@ Measured on one System's transcripts in November 2026:
   - **Review**: any conversation whose role is `review`, split by seat.
   - **Delegated**: every other conversation, including a subagent with no role anywhere above it.
 
-  Each conversation's **effective role** is its own role when it has one. Otherwise it takes the effective role of the conversation above it: its parent subagent, then its Session's main conversation. A conversation with no effective role is main when it is a Session's main conversation, and delegated otherwise. A reviewer's own subagents therefore count as review under its seat.
+  Each conversation's **effective role** is its own role when it has one. Otherwise it takes the effective role of the conversation above it: its parent subagent, then its Session's main conversation. The walk goes straight to the main conversation at a parent subagent the Hub does not hold or has already passed. A conversation with no effective role is main when it is a Session's main conversation, and delegated otherwise. A reviewer's own subagents therefore count as review under its seat.
 - **A launching Session gets a tree.** Its tree is the Session and every Session whose parent resolves to it, transitively, stopping at any Session already counted.
   - Its tree total sums the members' totals beside the Session's own total, which, subagents included, stays as it is.
   - Like `insight.session_totals`, the tree total has a list-price cost only when every request in the tree is priced. Otherwise it gives a lower bound and a count of unpriced requests.
   - The tree's members are readable, so the split over a tree is the sum of its members' splits.
 - **Storage follows the projection's rules.**
   - **Parsed facts.** The role, seat, parent, and the role's source are parsed facts on the Session and subagent rows. Both parsers' versions move forward, so the rebuild reads every tag and preamble the archive already holds.
-  - **Stored split.** The per-Session split by effective role and seat is stored and refreshed with the Session's totals ([ADR-0016](0016-session-stretches-and-totals-are-stored-and-refreshed.md)). That split reads the subagent rows, so a change to a subagent row marks its Session stale, as a change to a Session row already does.
+  - **Stored split.** The per-Session split by effective role and seat is stored and refreshed with the Session's totals ([ADR-0016](0016-session-stretches-and-totals-are-stored-and-refreshed.md)). That split reads the subagent rows and, for a subagent's parent, the tool call that spawned it. A change to either therefore marks its Session stale, as a change to a Session row already does.
   - **Computed on read.** Each conversation's effective role and seat, parent resolution, and the tree are computed when read: the first two from the parsed facts, the tree from the stored totals. A reader that prices a period's requests, as the Agents page does for Sessions that cross the period's edge, splits them by the conversation's effective role. A Session that arrives later, or a delete, therefore changes these with no trigger.
   - **Views.** `insight.sessions` and `insight.subagents` gain the parsed facts and the effective role, and new `insight` views expose the split, parent resolution, and the tree. Their columns are documented in the spec as they land.
 - **The dashboard shows the split on the Agents page and the Session page.**
@@ -98,7 +102,10 @@ Measured on one System's transcripts in November 2026:
   - A misshapen tag counts as unreadable and leaves its conversation untagged.
   - A T3-delegated Session that has the preamble keeps its role but loses its seat and parent, so a regression in how briefs are written shows on the Agents page.
 - **Opening text can carry a tag by accident.** Every opening message is read, so instructions injected into one would be read as a tag if they held a well-formed tag line with real values. The template the instructions quote today is mid-sentence and names placeholders, so it is no tag.
+- **T3 Sessions without a preamble.** A Session T3 launches with neither a tag nor a preamble counts as main.
+- **Openings lost to a delete.** When the only generations of a conversation that survive a delete begin after its opening, their first user messages stand in for the opening. A tag is then read only if one appears there.
 - **Unresolved parents.**
+  - A tag whose `parent` is shaped as an id but names no Harness Session, such as a T3 thread id, stays unresolved for good.
   - A Session whose launcher the Hub does not hold shows a parent id that links nowhere. A launcher whose transcripts are deleted, through `heimdall-hub transcripts delete` or `purge system --transcripts`, leaves the Sessions it launched with an unresolved parent.
   - Two held Sessions with one id, as when two sources on a System capture the same directory, leave every Session naming that id unresolved, rather than guessing.
   - While a delete re-derives a Session, the views hide it ([ADR-0014](0014-session-insight-is-a-rebuildable-projection-read-through-insight-views.md)). The Sessions it launched then show their parent as unresolved, and trees that hold it leave it out, until it reappears.
