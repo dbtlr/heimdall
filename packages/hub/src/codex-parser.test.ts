@@ -798,6 +798,37 @@ describe('Codex projection', () => {
         .sql`SELECT DISTINCT session_id FROM insight.subagents WHERE harness = 'codex'`),
     ]).toEqual([{ session_id: SESSION }]);
   });
+
+  test('a hierarchy link deferred by a held spawning-links lock keeps the version unswitched until it links', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, NESTED_FILE, rolloutPath(NESTED));
+    await upload(h, FORK, rolloutPath(CHILD));
+    await upload(h, MAIN, rolloutPath());
+    await projectTranscripts(linkFailsOnce(h.db.sql)).catch(() => undefined);
+    const holder = await h.db.sql.reserve();
+    try {
+      await holder`BEGIN`;
+      await holder`SELECT pg_advisory_xact_lock(hashtext('heimdall-spawning-links'))`;
+
+      const deferred = await projectTranscripts(h.db.sql);
+
+      expect(deferred.switched).toEqual([]);
+      expect([
+        ...(await h.db.sql`SELECT * FROM insight.subagents WHERE harness = 'codex'`),
+      ]).toEqual([]);
+      await holder`COMMIT`;
+    } finally {
+      await holder.release();
+    }
+    expect((await projectTranscripts(h.db.sql)).switched).toEqual([
+      expect.objectContaining({ harness: 'codex' }),
+    ]);
+    expect([
+      ...(await h.db
+        .sql`SELECT DISTINCT session_id FROM insight.subagents WHERE harness = 'codex'`),
+    ]).toEqual([{ session_id: SESSION }]);
+  });
 });
 
 // Parses a batch of a rollout from `offset`, as the projection runs it.

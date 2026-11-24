@@ -1,7 +1,7 @@
 import type { SQL } from 'bun';
 
 import { DELIVERY_LOCK } from './delivery.ts';
-import { holdProjection } from './projection.ts';
+import { holdProjection, holdSpawningLinks } from './projection.ts';
 import { refreshStatistics } from './statistics.ts';
 import { retryOnDeadlock } from './transcripts.ts';
 import type { Removed } from './transcripts.ts';
@@ -59,13 +59,14 @@ const HISTORY = [
 ] as const;
 
 // A System's transcripts and every row derived from them (ADR-0014). The
-// stale marks come last, since deleting what they mark adds more.
+// stale marks come last, since deleting what they mark adds more. Subagents go
+// before tool calls, so deleting a spawning call updates no subagent about to go.
 const TRANSCRIPTS = [
   'DELETE FROM parse_progress WHERE generation IN (SELECT id FROM transcript_generations WHERE system = $1)',
   'DELETE FROM projected_holders WHERE system = $1',
   'DELETE FROM projected_requests WHERE system = $1',
-  'DELETE FROM projected_tool_calls WHERE system = $1',
   'DELETE FROM projected_subagents WHERE system = $1',
+  'DELETE FROM projected_tool_calls WHERE system = $1',
   'DELETE FROM projected_sessions WHERE system = $1',
   'DELETE FROM rederiving_sessions WHERE system = $1',
   'DELETE FROM stored_session_stretches WHERE system = $1',
@@ -118,6 +119,7 @@ const purgeOnce = (
     // generation this deletes.
     if (transcripts) {
       await holdProjection(tx);
+      await holdSpawningLinks(tx);
     }
     // The code row first, then the token, as unpair and redemption take them.
     const codes: unknown[] = await tx`

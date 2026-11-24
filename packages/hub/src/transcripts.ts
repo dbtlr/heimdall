@@ -1,7 +1,7 @@
 import type { OpenGeneration } from '@heimdall/schema';
 import type { SQL } from 'bun';
 
-import { forgetDeletedGenerations, holdProjection } from './projection.ts';
+import { forgetDeletedGenerations, holdProjection, holdSpawningLinks } from './projection.ts';
 import { refreshStatistics } from './statistics.ts';
 import { seeSystem } from './store.ts';
 
@@ -233,6 +233,7 @@ const deleteOnce = (
     // this delete commits, so nothing derived from a deleted generation is
     // stored behind its back (ADR-0014).
     await holdProjection(tx);
+    await holdSpawningLinks(tx);
     await refreshStatistics(tx, ['transcript_generations', 'transcript_chunks']);
     // Marking takes each generation's row lock, which an open at its path
     // waits for. Locks are taken in id order, as an open takes them, so the

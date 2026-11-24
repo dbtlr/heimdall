@@ -125,6 +125,29 @@ describe('grantInsightReader', () => {
     ]);
   });
 
+  test('lets the role call the tree functions, granted to it rather than to every role', async () => {
+    await using db = await testDatabase();
+    await migrate(db.sql);
+    await seedSession(db.sql);
+    await db.sql`
+      REVOKE EXECUTE ON FUNCTION insight.session_tree(text, text, text, text),
+        insight.session_tree_total(text, text, text, text) FROM PUBLIC
+    `;
+    await using reader = await testRole(db);
+    await grantInsightReader(db.sql, reader.name);
+
+    expect(
+      await rowsOf(
+        reader.sql`SELECT session_id, depth FROM insight.session_tree('claude-code', 'laptop-1', 'claude-code', 's-1')`,
+      ),
+    ).toEqual([{ depth: 0, session_id: 's-1' }]);
+    expect(
+      await rowsOf(
+        reader.sql`SELECT sessions::int, missing_sessions::int FROM insight.session_tree_total('claude-code', 'laptop-1', 'claude-code', 's-1')`,
+      ),
+    ).toEqual([{ missing_sessions: 1, sessions: 1 }]);
+  });
+
   test("lets the role read a request's list-price cost, which the views compute from the price table", async () => {
     // The views read `model_prices` with their owner's rights, and the
     // function that prices tokens reads no table, so the reader needs neither.

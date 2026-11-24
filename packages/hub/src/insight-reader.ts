@@ -22,8 +22,9 @@ export type ReaderGrant =
   | { kind: 'granted' }
   | { kind: 'refused'; reason: 'hub' | 'member' | 'readsAll' | 'superuser' };
 
-// Lets `role` read the `insight` views and nothing else: USAGE on the schema
-// and SELECT on every view in it. The views run with their owner's rights, so
+// Lets `role` read the `insight` views and functions and nothing else: USAGE
+// on the schema, SELECT on every view in it, and EXECUTE on the two tree
+// functions, which read only the views. The views run with their owner's rights, so
 // the role needs, and gets, no access to the tables beneath them, and each is
 // a security barrier, so the role's own filters see only the rows a view shows.
 //
@@ -75,6 +76,10 @@ export const grantInsightReader = (
       GRANT USAGE ON SCHEMA insight TO ${grantee};
       GRANT SELECT ON ALL TABLES IN SCHEMA insight TO ${grantee};
       ALTER DEFAULT PRIVILEGES IN SCHEMA insight GRANT SELECT ON TABLES TO ${grantee};
+      GRANT EXECUTE ON FUNCTION
+        insight.session_tree(text, text, text, text),
+        insight.session_tree_total(text, text, text, text)
+      TO ${grantee};
     `);
     return { kind: 'granted' };
   });

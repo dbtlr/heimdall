@@ -102,17 +102,26 @@ export const projectTranscripts = async (
       failed: projected.failed,
       parser,
     });
+    let linked = true;
     // oxlint-disable-next-line no-await-in-loop -- retries links for this Harness before switching it.
     if (parser.harness === 'codex' && (worked || (await needsCodexLinks(sql, parser.version)))) {
       // oxlint-disable-next-line no-await-in-loop -- links only the version just parsed.
-      await sql.begin(async (tx) => {
-        if (await shareProjection(tx)) {
-          await linkCodexSubagents(tx, parser.version);
+      linked = await sql.begin(async (tx) => {
+        // A lock held elsewhere leaves the links to the next run.
+        if (!(await shareProjection(tx)) || !(await trySpawningLinks(tx))) {
+          return false;
         }
+        await linkCodexSubagents(tx, parser.version);
+        return true;
       });
     }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     projected.pending += await pendingCount(sql, parser);
+    if (!linked) {
+      // Unlinked subagents would show under the wrong Session, so the version
+      // waits to switch, and re-derived Sessions stay hidden, until it links.
+      continue;
+    }
     // oxlint-disable-next-line no-await-in-loop -- one Harness at a time.
     if (current !== parser.version && (await switchVersion(sql, parser))) {
       projected.switched.push({ harness: parser.harness, version: parser.version });
@@ -605,14 +614,15 @@ type Generation = { held: number; id: number; path: string; source: string; syst
 // commits before a delete reads what the batch stored, or starts after the
 // delete commits and finds its generation gone or its progress reset.
 // Switching versions (`switchVersion`) and deleting an earlier version's rows
-// (`dropEarlierVersions`) take no lock, since neither writes a fact, the
+// (`dropEarlierVersions`) take no projection lock, since neither writes a fact, the
 // current version's progress, or which Sessions are hidden. Each statement
 // of theirs sees a delete whole or not at all. A switch changes only which
 // version the views read, and a Session a delete hid stays hidden until the
 // version then current has parsed it again; rows of an earlier version are
 // in no view, and deleting them restores nothing a delete removed. Since
-// cleanup takes no lock, it can deadlock with a delete over the rows of an
-// earlier version, and PostgreSQL aborts one of them (SQLSTATE 40P01). An
+// cleanup takes no projection lock, it can deadlock with a delete over the
+// rows of an earlier version in the tables the spawning-links lock does not
+// cover, and PostgreSQL aborts one of them (SQLSTATE 40P01). An
 // aborted cleanup loses nothing and is repeated by a later run; an aborted
 // delete tries its transaction again (`deleteTranscripts`). The name
 // is arbitrary; it only has to be the same for every Hub.
@@ -632,6 +642,29 @@ const shareProjection = async (tx: SQL): Promise<boolean> => {
 // under way has committed, as a delete does before it marks a generation.
 export const holdProjection = async (tx: SQL): Promise<void> => {
   await tx`SELECT pg_advisory_xact_lock(hashtext(${PROJECTION_LOCK}))`;
+};
+
+// Serializes every write of `projected_subagents` and `projected_tool_calls`,
+// so the triggers that copy a spawning call's conversation onto its subagent
+// read each other's rows (migration 52). A transaction takes it before any
+// row lock, after the projection's lock when it takes that, and holds it
+// until it ends, so projection writes run one at a time. The name is the one
+// migration 52's triggers take.
+const SPAWNING_LINKS_LOCK = 'heimdall-spawning-links';
+
+// Takes the spawning-links lock for `tx`'s transaction.
+export const holdSpawningLinks = async (tx: SQL): Promise<void> => {
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${SPAWNING_LINKS_LOCK}))`;
+};
+
+// Takes the spawning-links lock for `tx`'s transaction unless another write
+// holds it, and answers whether it did. A parse that finds it held leaves its
+// batch to the next run, so a long delete never uses up a transcript's tries.
+const trySpawningLinks = async (tx: SQL): Promise<boolean> => {
+  const [row]: { held: boolean }[] = await tx`
+    SELECT pg_try_advisory_xact_lock(hashtext(${SPAWNING_LINKS_LOCK})) AS held
+  `;
+  return row?.held === true;
 };
 
 // Stores a batch's facts with the generation's progress in one transaction.
@@ -663,7 +696,7 @@ const storeBatch = (
   },
 ): Promise<'busy' | 'stale' | 'stored'> =>
   sql.begin(async (tx) => {
-    if (!(await shareProjection(tx))) {
+    if (!(await shareProjection(tx)) || !(await trySpawningLinks(tx))) {
       return 'busy';
     }
     const batch = await linkedCodexBatch(tx, { batch: parsed, generation, parser });
@@ -1058,20 +1091,30 @@ const dropEarlierVersions = async (
   }
   for (const table of PROJECTED_TABLES) {
     // oxlint-disable-next-line no-await-in-loop -- one table at a time, progress last.
-    const deleted = await sql.unsafe(
-      `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${stale} LIMIT $3)`,
-      [parser.harness, parser.version, rows],
-    );
-    if (deleted.count >= rows) {
+    const deleted = await sql.begin(async (tx) => {
+      const linked = table === 'projected_subagents' || table === 'projected_tool_calls';
+      // A lock held elsewhere leaves the rest of the cleanup to a later run;
+      // progress goes last, so nothing is lost.
+      if (linked && !(await trySpawningLinks(tx))) {
+        return undefined;
+      }
+      return tx.unsafe(
+        `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${stale} LIMIT $3)`,
+        [parser.harness, parser.version, rows],
+      );
+    });
+    if (deleted === undefined || deleted.count >= rows) {
       return;
     }
   }
 };
 
+// Subagents go before tool calls, so deleting a spawning call updates no
+// subagent about to go.
 const PROJECTED_TABLES = [
   'projected_requests',
-  'projected_tool_calls',
   'projected_subagents',
+  'projected_tool_calls',
   'projected_sessions',
   'projected_holders',
   'parse_progress',

@@ -2606,7 +2606,9 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX projected_sessions_by_session_id ON projected_sessions (session_id);
       CREATE INDEX projected_sessions_by_launching_session
         ON projected_sessions (launching_session_id);
-      CREATE INDEX projected_subagents_by_agent_id ON projected_subagents (agent_id);
+      -- Only a Codex subagent's thread is a Session a launching id can name.
+      CREATE INDEX projected_subagents_by_agent_id ON projected_subagents (agent_id)
+        WHERE harness = 'codex';
 
       CREATE VIEW insight.session_parents WITH (security_barrier = true) AS
       SELECT s.harness, s.system, s.source, s.session_id, s.launching_session_id,
@@ -2747,6 +2749,425 @@ export const MIGRATIONS: readonly Migration[] = [
       $$;
     `,
     version: 51,
+  },
+  {
+    // Read the effective role through the conversation views and refresh the
+    // split in the same transaction as the other stored totals (ADR-0025).
+    // The views compute the role when read; each subagent row stores the
+    // conversation that spawned it, so the walk reads its parents with the
+    // rows. Every Session that has stored totals gets its split here, one
+    // Session at a time, as the refresh computes it; a Session
+    // without them gets its split at its first refresh. A Session already
+    // waiting on a refresh keeps its mark, and its split is computed from
+    // current facts, so it can differ from its stored totals until the next
+    // refresh makes them agree, as for the per-model totals in migration 31.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE OR REPLACE VIEW insight.sessions WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.path, s.started_at, s.ended_at,
+             s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch,
+             s.first_harness_version, s.last_harness_version, s.parser_version,
+             (
+               -- md5(cwd) is what lets harness_processes_by_cwd serve the lookup.
+               SELECT p.repository FROM harness_processes p
+               WHERE p.system = s.system AND md5(p.cwd) = md5(COALESCE(s.last_cwd, s.first_cwd))
+                 AND p.cwd = COALESCE(s.last_cwd, s.first_cwd) AND p.repository IS NOT NULL
+               ORDER BY p.started_at DESC, p.id DESC
+               LIMIT 1
+             ) AS repository,
+             s.role, s.seat, s.launching_session_id, s.role_source,
+             s.role AS effective_role,
+             CASE WHEN s.role = 'review' THEN s.seat END AS effective_seat,
+             CASE WHEN s.role IS NULL THEN 'main'
+                  WHEN s.role = 'review' THEN 'review' ELSE 'delegated' END AS role_class
+      FROM projected_sessions s
+      JOIN current_parsers c ON c.harness = s.harness AND c.version = s.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+
+      -- The conversation that made a subagent's spawning tool call, stored on
+      -- the subagent so its parent is read with the row instead of looked up
+      -- in the tool-call stream on every read. The two arrive in either
+      -- order, so a trigger on each side keeps it: a subagent row looks up
+      -- its call, and a call written, changed, or deleted sets it on the
+      -- subagents it spawned. Each side reads only committed rows of the
+      -- other, so two transactions writing a subagent and its call at once
+      -- would each miss the other's. Every transaction that writes either
+      -- table therefore takes one transaction-scoped advisory lock first,
+      -- before any row lock: the projection's batches, Codex links, version
+      -- cleanup, transcript deletes, purges, and this migration. Projection
+      -- writes run one at a time, and a later writer reads the earlier one's
+      -- rows. Since none waits for it while holding a row lock, it cannot
+      -- close a deadlock, and its single key holds one lock-table entry
+      -- however many Systems and sources a statement touches. The triggers
+      -- take it too, free in a transaction that holds it, as a backstop for
+      -- any other writer.
+      SELECT pg_advisory_xact_lock(hashtext('heimdall-spawning-links'));
+      ALTER TABLE projected_subagents ADD COLUMN spawning_agent_id text;
+
+      UPDATE projected_subagents a SET spawning_agent_id = c.agent_id
+      FROM projected_tool_calls c
+      WHERE (c.harness, c.parser_version, c.system, c.source, c.call_id)
+          = (a.harness, a.parser_version, a.system, a.source, a.tool_use_id)
+        AND c.agent_id IS NOT NULL;
+
+      CREATE FUNCTION lock_spawning_links() RETURNS void
+      LANGUAGE sql AS $$ SELECT pg_advisory_xact_lock(hashtext('heimdall-spawning-links')) $$;
+
+      CREATE FUNCTION set_subagent_spawning_agent() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.tool_use_id IS NOT NULL THEN
+          PERFORM lock_spawning_links();
+        END IF;
+        -- A statement after the lock reads the rows committed while it waited.
+        NEW.spawning_agent_id := (
+          SELECT c.agent_id FROM projected_tool_calls c
+          WHERE (c.harness, c.parser_version, c.system, c.source, c.call_id)
+              = (NEW.harness, NEW.parser_version, NEW.system, NEW.source, NEW.tool_use_id)
+        );
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER set_spawning_agent_on_subagent_insert BEFORE INSERT ON projected_subagents
+        FOR EACH ROW EXECUTE FUNCTION set_subagent_spawning_agent();
+      CREATE TRIGGER set_spawning_agent_on_subagent_update
+        BEFORE UPDATE OF harness, parser_version, system, source, tool_use_id ON projected_subagents
+        FOR EACH ROW EXECUTE FUNCTION set_subagent_spawning_agent();
+
+      -- Each subagent's effective role, computed when read by one walk per
+      -- Session down from the subagents that have a role of their own: a
+      -- subagent with no role takes its parent's, and every subagent the
+      -- walk does not reach takes the main conversation's. That reaches
+      -- each subagent at most once, so a read costs in proportion to the
+      -- Session's subagents however deep they nest, and a parent cycle with
+      -- no role in it is never entered. A parent comes from the subagent's
+      -- own parent id, else the conversation that spawned it. A read that
+      -- selects none of the effective columns skips the walk.
+      CREATE OR REPLACE VIEW insight.subagents WITH (security_barrier = true) AS
+      SELECT k.harness, k.system, k.source, k.session_id, a.agent_id, a.parent_agent_id,
+             a.agent_type, a.depth, a.tool_use_id, a.workflow_run, a.workflow_phase,
+             a.path, a.started_at, a.ended_at, k.parser_version,
+             a.role, a.seat, a.launching_session_id, a.role_source,
+             COALESCE(a.walked_role, s.role) AS effective_role,
+             CASE WHEN a.walked_role IS NOT NULL THEN a.walked_seat
+                  WHEN s.role = 'review' THEN s.seat END AS effective_seat,
+             CASE WHEN COALESCE(a.walked_role, s.role) = 'review' THEN 'review'
+                  ELSE 'delegated' END AS role_class
+      FROM (
+        -- The Session's key comes from here, so a filter on it picks the
+        -- Sessions before any walk runs.
+        SELECT DISTINCT p.harness, p.parser_version, p.system, p.source, p.session_id
+        FROM projected_subagents p
+        JOIN current_parsers c ON c.harness = p.harness AND c.version = p.parser_version
+      ) k
+      LEFT JOIN projected_sessions s
+        ON (s.harness, s.parser_version, s.system, s.source, s.session_id)
+         = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+      CROSS JOIN LATERAL (
+        WITH RECURSIVE conversations AS (
+          SELECT p.agent_id, COALESCE(p.parent_agent_id, p.spawning_agent_id) AS parent_agent_id,
+                 p.role, p.seat
+          FROM projected_subagents p
+          WHERE (p.harness, p.parser_version, p.system, p.source, p.session_id)
+              = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+        ), walk (agent_id, role, seat) AS (
+          -- Its seat can be unknown even when a review above it has a seat.
+          SELECT n.agent_id, n.role, CASE WHEN n.role = 'review' THEN n.seat END
+          FROM conversations n WHERE n.role IS NOT NULL
+          UNION ALL
+          SELECT n.agent_id, w.role, w.seat
+          FROM walk w JOIN conversations n ON n.parent_agent_id = w.agent_id
+          WHERE n.role IS NULL
+        )
+        SELECT p.agent_id, COALESCE(p.parent_agent_id, p.spawning_agent_id) AS parent_agent_id,
+               p.agent_type, p.depth, p.tool_use_id, p.workflow_run, p.workflow_phase,
+               p.path, p.started_at, p.ended_at,
+               p.role, p.seat, p.launching_session_id, p.role_source,
+               w.role AS walked_role, w.seat AS walked_seat
+        FROM projected_subagents p
+        -- The walk reaches each subagent once, so grouping changes no row; it
+        -- proves the join adds none, which lets the planner drop the join, and
+        -- with it the walk, from a read that selects no effective column.
+        LEFT JOIN (
+          SELECT w.agent_id, min(w.role) AS role, min(w.seat) AS seat
+          FROM walk w GROUP BY w.agent_id
+        ) w ON w.agent_id = p.agent_id
+        WHERE (p.harness, p.parser_version, p.system, p.source, p.session_id)
+            = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+      ) a
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (k.harness, k.system, k.source, k.session_id)
+      );
+
+      -- A launching id is looked up among a current parser's Codex subagent
+      -- rows by agent id, through projected_subagents_by_agent_id. The view
+      -- above picks its rows by Session, so through it every Codex Session
+      -- would be read for each lookup. The subagent's Session is read through
+      -- insight.sessions, which leaves out a re-deriving one.
+      CREATE OR REPLACE VIEW insight.session_parents WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.launching_session_id,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.harness END AS parent_harness,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.system END AS parent_system,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.source END AS parent_source,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.session_id END AS parent_session_id,
+             CASE
+               WHEN m.matches = 0 THEN 'unmatched'
+               WHEN m.matches > 1 THEN 'ambiguous'
+               WHEN m.is_self THEN 'self'
+               ELSE 'resolved'
+             END AS parent_state
+      FROM insight.sessions s
+      CROSS JOIN LATERAL (
+        SELECT count(*) AS matches,
+               COALESCE(bool_and((c.harness, c.system, c.source, c.session_id)
+                 = (s.harness, s.system, s.source, s.session_id)), false) AS is_self,
+               min(c.harness) AS harness, min(c.system) AS system, min(c.source) AS source,
+               min(c.session_id) AS session_id
+        FROM (
+          SELECT x.harness, x.system, x.source, x.session_id
+          FROM insight.sessions x WHERE x.session_id = s.launching_session_id
+          UNION
+          SELECT x.harness, x.system, x.source, x.session_id
+          FROM projected_subagents a
+          JOIN current_parsers p ON (p.harness, p.version) = (a.harness, a.parser_version)
+          -- OFFSET 0 keeps the planner from hash-joining every Session held
+          -- to the subagent; the subagent's own Session is read by its key.
+          CROSS JOIN LATERAL (
+            SELECT y.harness, y.system, y.source, y.session_id
+            FROM insight.sessions y
+            WHERE (y.harness, y.system, y.source, y.session_id)
+                = (a.harness, a.system, a.source, a.session_id)
+            OFFSET 0
+          ) x
+          WHERE a.harness = 'codex' AND a.agent_id = s.launching_session_id
+        ) c
+      ) m
+      WHERE s.launching_session_id IS NOT NULL;
+
+      -- One Session's split. Its subagents' effective roles are read once,
+      -- so the walk runs once however many conversations have requests.
+      CREATE FUNCTION computed_session_role_totals(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (
+        harness text, system text, source text, session_id text, role_class text, seat text,
+        requests bigint, cost_usd numeric, priced_cost_usd numeric, unpriced_requests bigint
+      )
+      LANGUAGE sql STABLE SET jit = off AS $$
+        WITH conversation_totals AS (
+          SELECT r.agent_id, count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
+                 count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests
+          FROM insight.requests r
+          WHERE (r.harness, r.system, r.source, r.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+          GROUP BY r.agent_id
+        ), subagents AS MATERIALIZED (
+          SELECT a.agent_id, a.role_class, a.effective_seat
+          FROM insight.subagents a
+          WHERE (a.harness, a.system, a.source, a.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+        ), classified AS (
+          SELECT t.*,
+                 CASE WHEN t.agent_id IS NULL THEN s.role_class
+                      WHEN a.agent_id IS NOT NULL THEN a.role_class
+                      WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END AS role_class,
+                 CASE WHEN a.agent_id IS NOT NULL THEN a.effective_seat
+                      ELSE s.effective_seat END AS seat
+          FROM conversation_totals t
+          JOIN insight.sessions s
+            ON (s.harness, s.system, s.source, s.session_id)
+             = (key_harness, key_system, key_source, key_session_id)
+          LEFT JOIN subagents a ON a.agent_id = t.agent_id
+        )
+        SELECT key_harness, key_system, key_source, key_session_id, c.role_class, c.seat,
+               sum(c.requests)::bigint,
+               CASE WHEN sum(c.unpriced_requests) = 0 THEN sum(c.priced_cost_usd) END,
+               sum(c.priced_cost_usd),
+               sum(c.unpriced_requests)::bigint
+        FROM classified c
+        GROUP BY c.role_class, c.seat
+      $$;
+
+      -- Replacing or forgetting a Session's stored total also removes every
+      -- bucket, including any seat the next refresh no longer counts.
+      CREATE TABLE stored_session_role_totals (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        role_class text NOT NULL CHECK (role_class IN ('main', 'review', 'delegated')),
+        seat text CHECK (role_class = 'review' OR seat IS NULL),
+        requests bigint NOT NULL,
+        cost_usd numeric,
+        priced_cost_usd numeric,
+        unpriced_requests bigint NOT NULL,
+        UNIQUE NULLS NOT DISTINCT (harness, system, source, session_id, role_class, seat),
+        FOREIGN KEY (harness, system, source, session_id)
+          REFERENCES stored_session_totals ON DELETE CASCADE
+      );
+
+      CREATE VIEW insight.session_role_totals WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.role_class, s.seat,
+             s.requests, s.cost_usd, s.priced_cost_usd, s.unpriced_requests
+      FROM stored_session_role_totals s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+
+      -- Only a current parser's rows show in the views; a parser switch marks
+      -- every Session of its Harness itself.
+      CREATE FUNCTION mark_changed_subagents_stale() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF TG_OP <> 'INSERT' THEN
+          PERFORM mark_sessions_stale(
+            array_agg(a.harness), array_agg(a.system), array_agg(a.source), array_agg(a.session_id),
+            false, true
+          ) FROM before_change a
+            JOIN current_parsers c ON c.harness = a.harness AND c.version = a.parser_version;
+        END IF;
+        IF TG_OP <> 'DELETE' THEN
+          PERFORM mark_sessions_stale(
+            array_agg(a.harness), array_agg(a.system), array_agg(a.source), array_agg(a.session_id),
+            false, true
+          ) FROM after_change a
+            JOIN current_parsers c ON c.harness = a.harness AND c.version = a.parser_version;
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER mark_stale_on_subagent_insert AFTER INSERT ON projected_subagents
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_subagents_stale();
+      CREATE TRIGGER mark_stale_on_subagent_update AFTER UPDATE ON projected_subagents
+        REFERENCING OLD TABLE AS before_change NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_subagents_stale();
+      CREATE TRIGGER mark_stale_on_subagent_delete AFTER DELETE ON projected_subagents
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION mark_changed_subagents_stale();
+
+      -- The tool-call stream is much larger than the set of calls that spawn
+      -- a subagent. Look up only the subagents a call names.
+      CREATE INDEX projected_subagents_by_spawning_call
+        ON projected_subagents (harness, parser_version, system, source, tool_use_id)
+        WHERE tool_use_id IS NOT NULL;
+
+      -- A call written, changed, or deleted sets the spawning conversation on
+      -- the subagents it names. A subagent whose value changes is updated, so
+      -- the subagent triggers above mark its Session stale.
+      CREATE FUNCTION set_spawned_subagents_spawning_agent() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM lock_spawning_links();
+        IF TG_OP <> 'DELETE' THEN
+          UPDATE projected_subagents a SET spawning_agent_id = c.agent_id
+          FROM after_change c
+          WHERE (a.harness, a.parser_version, a.system, a.source, a.tool_use_id)
+              = (c.harness, c.parser_version, c.system, c.source, c.call_id)
+            AND a.spawning_agent_id IS DISTINCT FROM c.agent_id;
+        END IF;
+        IF TG_OP <> 'INSERT' THEN
+          UPDATE projected_subagents a SET spawning_agent_id = NULL
+          FROM before_change c
+          WHERE (a.harness, a.parser_version, a.system, a.source, a.tool_use_id)
+              = (c.harness, c.parser_version, c.system, c.source, c.call_id)
+            AND a.spawning_agent_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM projected_tool_calls t
+              WHERE (t.harness, t.parser_version, t.system, t.source, t.call_id)
+                  = (c.harness, c.parser_version, c.system, c.source, c.call_id)
+            );
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+      CREATE TRIGGER set_spawning_agent_on_call_insert AFTER INSERT ON projected_tool_calls
+        REFERENCING NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION set_spawned_subagents_spawning_agent();
+      CREATE TRIGGER set_spawning_agent_on_call_update AFTER UPDATE ON projected_tool_calls
+        REFERENCING OLD TABLE AS before_change NEW TABLE AS after_change
+        FOR EACH STATEMENT EXECUTE FUNCTION set_spawned_subagents_spawning_agent();
+      CREATE TRIGGER set_spawning_agent_on_call_delete AFTER DELETE ON projected_tool_calls
+        REFERENCING OLD TABLE AS before_change
+        FOR EACH STATEMENT EXECUTE FUNCTION set_spawned_subagents_spawning_agent();
+
+      CREATE OR REPLACE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          DELETE FROM stored_session_model_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_model_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+                 c.priced_cost_usd, c.unpriced_requests
+          FROM computed_session_model_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          -- Each statement reads its own snapshot, so a parser switch between
+          -- the two can give a split to a Session the totals left out.
+          INSERT INTO stored_session_role_totals
+          SELECT c.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
+      END
+      $$;
+
+      INSERT INTO stored_session_role_totals
+      SELECT c.*
+      FROM stored_session_totals t
+      CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c;
+    `,
+    version: 52,
   },
 ];
 
