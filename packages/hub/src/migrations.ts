@@ -2592,6 +2592,162 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 50,
   },
+  {
+    // Resolves each launching Session id to the Session it names, and reads
+    // the tree of Sessions under one root and its total from the stored
+    // totals (ADR-0025). Computed on read: a parent that arrives later, or a
+    // delete, changes them with no trigger. The id matches a held Session on
+    // any Harness, System, or source, or a Codex subagent's thread, which
+    // belongs to its held Session. Anything but exactly one other Session
+    // leaves the parent unresolved, with the raw id kept. A tree is read for
+    // one root at a time, walking down by launching id, so its cost follows
+    // the tree, not the Sessions held.
+    sql: `
+      CREATE INDEX projected_sessions_by_session_id ON projected_sessions (session_id);
+      CREATE INDEX projected_sessions_by_launching_session
+        ON projected_sessions (launching_session_id);
+      CREATE INDEX projected_subagents_by_agent_id ON projected_subagents (agent_id);
+
+      CREATE VIEW insight.session_parents WITH (security_barrier = true) AS
+      SELECT s.harness, s.system, s.source, s.session_id, s.launching_session_id,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.harness END AS parent_harness,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.system END AS parent_system,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.source END AS parent_source,
+             CASE WHEN m.matches = 1 AND NOT m.is_self THEN m.session_id END AS parent_session_id,
+             CASE
+               WHEN m.matches = 0 THEN 'unmatched'
+               WHEN m.matches > 1 THEN 'ambiguous'
+               WHEN m.is_self THEN 'self'
+               ELSE 'resolved'
+             END AS parent_state
+      FROM insight.sessions s
+      CROSS JOIN LATERAL (
+        SELECT count(*) AS matches,
+               COALESCE(bool_and((c.harness, c.system, c.source, c.session_id)
+                 = (s.harness, s.system, s.source, s.session_id)), false) AS is_self,
+               min(c.harness) AS harness, min(c.system) AS system, min(c.source) AS source,
+               min(c.session_id) AS session_id
+        FROM (
+          SELECT x.harness, x.system, x.source, x.session_id
+          FROM insight.sessions x WHERE x.session_id = s.launching_session_id
+          UNION
+          SELECT x.harness, x.system, x.source, x.session_id
+          FROM insight.subagents a
+          -- OFFSET 0 keeps the planner from hash-joining every Session held
+          -- to the subagent; the subagent's own Session is read by its key.
+          CROSS JOIN LATERAL (
+            SELECT y.harness, y.system, y.source, y.session_id
+            FROM insight.sessions y
+            WHERE (y.harness, y.system, y.source, y.session_id)
+                = (a.harness, a.system, a.source, a.session_id)
+            OFFSET 0
+          ) x
+          WHERE a.harness = 'codex' AND a.agent_id = s.launching_session_id
+        ) c
+      ) m
+      WHERE s.launching_session_id IS NOT NULL;
+
+      -- The tree under one Session: the root first, then every Session whose
+      -- parent resolves to a member, with that member's key and its depth
+      -- below the root. A member's children are found by their launching id,
+      -- which names the member or one of its Codex subagents' threads. A
+      -- Session has one parent, so the walk reaches each member once; only
+      -- the root can come round again in a cycle, and it is not followed.
+      CREATE FUNCTION insight.session_tree(
+        root_harness text, root_system text, root_source text, root_session_id text
+      ) RETURNS TABLE (
+        harness text, system text, source text, session_id text,
+        parent_harness text, parent_system text, parent_source text, parent_session_id text,
+        depth integer
+      )
+      LANGUAGE sql STABLE SET jit = off AS $$
+        WITH RECURSIVE members AS (
+          SELECT s.harness, s.system, s.source, s.session_id,
+                 NULL::text AS parent_harness, NULL::text AS parent_system,
+                 NULL::text AS parent_source, NULL::text AS parent_session_id, 0 AS depth
+          FROM insight.sessions s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (root_harness, root_system, root_source, root_session_id)
+          UNION ALL
+          SELECT c.harness, c.system, c.source, c.session_id,
+                 m.harness, m.system, m.source, m.session_id, m.depth + 1
+          FROM members m
+          CROSS JOIN LATERAL (
+            SELECT x.harness, x.system, x.source, x.session_id
+            FROM insight.sessions x WHERE x.launching_session_id = m.session_id
+            UNION
+            SELECT x.harness, x.system, x.source, x.session_id
+            FROM insight.subagents a
+            -- OFFSET 0 keeps the planner from flattening this into a hash join
+            -- that scans every Session held; as a lateral lookup it reads
+            -- projected_sessions_by_launching_session once per subagent.
+            CROSS JOIN LATERAL (
+              SELECT y.harness, y.system, y.source, y.session_id
+              FROM insight.sessions y WHERE y.launching_session_id = a.agent_id
+              OFFSET 0
+            ) x
+            WHERE a.harness = 'codex'
+              AND (a.harness, a.system, a.source, a.session_id)
+                = (m.harness, m.system, m.source, m.session_id)
+          ) c
+          -- The limit keeps the planner from flattening the view into a join
+          -- that resolves every Session held, so it resolves the candidate alone.
+          CROSS JOIN LATERAL (
+            SELECT 1 FROM insight.session_parents p
+            WHERE (p.harness, p.system, p.source, p.session_id)
+                = (c.harness, c.system, c.source, c.session_id)
+              AND p.parent_state = 'resolved'
+              AND (p.parent_harness, p.parent_system, p.parent_source, p.parent_session_id)
+                = (m.harness, m.system, m.source, m.session_id)
+            LIMIT 1
+          ) p
+          WHERE (c.harness, c.system, c.source, c.session_id)
+             <> (root_harness, root_system, root_source, root_session_id)
+        )
+        SELECT * FROM members ORDER BY depth
+      $$;
+
+      -- One tree's total from its members' stored totals. A Session the Hub
+      -- does not hold has no tree and no row.
+      CREATE FUNCTION insight.session_tree_total(
+        root_harness text, root_system text, root_source text, root_session_id text
+      ) RETURNS TABLE (
+        sessions bigint, missing_sessions bigint, requests bigint, input_tokens bigint,
+        output_tokens bigint, reasoning_tokens bigint, cache_read_tokens bigint,
+        cache_write_tokens bigint, cost_usd numeric, priced_cost_usd numeric,
+        unpriced_requests bigint
+      )
+      LANGUAGE sql STABLE SET jit = off AS $$
+        SELECT count(*),
+               count(*) FILTER (WHERE t.session_id IS NULL),
+               COALESCE(sum(t.requests), 0)::bigint,
+               COALESCE(sum(t.input_tokens), 0)::bigint,
+               COALESCE(sum(t.output_tokens), 0)::bigint,
+               sum(t.reasoning_tokens)::bigint,
+               COALESCE(sum(t.cache_read_tokens), 0)::bigint,
+               COALESCE(sum(t.cache_write_tokens), 0)::bigint,
+               CASE
+                 WHEN count(*) FILTER (WHERE t.session_id IS NULL) = 0
+                  AND COALESCE(sum(t.unpriced_requests), 0) = 0
+                 THEN COALESCE(sum(t.priced_cost_usd), 0)
+               END,
+               sum(t.priced_cost_usd),
+               COALESCE(sum(t.unpriced_requests), 0)::bigint
+        FROM insight.session_tree(root_harness, root_system, root_source, root_session_id) m
+        -- A member has one totals row. The limit keeps the planner from
+        -- flattening this into a join against every Session's totals, so
+        -- each member's are read by its key.
+        LEFT JOIN LATERAL (
+          SELECT * FROM insight.session_totals t
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (m.harness, m.system, m.source, m.session_id)
+          LIMIT 1
+        ) t ON true
+        HAVING count(*) > 0
+      $$;
+    `,
+    version: 51,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
