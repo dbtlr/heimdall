@@ -3,6 +3,7 @@ import type { ConditionLevel, ConditionLimitSet } from '@heimdall/schema';
 import type { SQL } from 'bun';
 import { z } from 'zod';
 
+import { describeIssue } from './config-issue.ts';
 import { MIGRATION_LOCK } from './migrations.ts';
 import { RAW_RETENTION_MS } from './retention.ts';
 
@@ -132,7 +133,15 @@ const mergeBands = <T extends Bands>(defaults: T, override: PartialBands | undef
 });
 
 export const parseConditionLimits = (value: unknown) => {
-  const parsed = section.parse(value === undefined ? {} : value);
+  const result = section.safeParse(value === undefined ? {} : value);
+  if (!result.success) {
+    throw new Error(
+      result.error.issues
+        .map((issue) => describeIssue('conditions', issue, ({ message }) => message))
+        .join('; '),
+    );
+  }
+  const parsed = result.data;
   const resolve = (
     defaults: {
       clock: ClockLimits;

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { describeIssue } from './config-issue.ts';
+
 const httpUrl = z
   .url({ protocol: /^https?$/ })
   // A base address resolves links below its path only when the path ends in a slash.
@@ -25,28 +27,22 @@ const section = z.strictObject({
 // access token, and the dashboard's address for links (ADR-0020).
 export type DeliveryChannel = z.infer<typeof section>;
 
-// What is wrong with one setting, named by its key and never its value.
-const describeIssue = (issue: z.core.$ZodIssue): string => {
-  if (issue.code === 'unrecognized_keys') {
-    return issue.keys.map((key) => `delivery.${key}: not a setting`).join('; ');
-  }
-  const [setting] = issue.path;
-  switch (setting) {
-    case undefined: {
-      return 'delivery: expected a table';
-    }
+// What one setting should hold, given what is wrong with it; config-issue.ts
+// names the key, never the value.
+const expectation = (issue: z.core.$ZodIssue): string | undefined => {
+  switch (issue.path[0]) {
     case 'dashboard':
     case 'url': {
-      return `delivery.${setting}: expected an http or https address`;
+      return 'expected an http or https address';
     }
     case 'topic': {
-      return 'delivery.topic: expected 1 to 64 letters, digits, hyphens, or underscores';
+      return 'expected 1 to 64 letters, digits, hyphens, or underscores';
     }
     case 'token': {
-      return 'delivery.token: expected a non-empty string';
+      return 'expected a non-empty string';
     }
     default: {
-      return `delivery.${String(setting)}: invalid`;
+      return undefined;
     }
   }
 };
@@ -60,7 +56,9 @@ export const parseDeliveryChannel = (value: unknown): DeliveryChannel | undefine
   }
   const parsed = section.safeParse(value);
   if (!parsed.success) {
-    throw new Error(parsed.error.issues.map(describeIssue).join('; '));
+    throw new Error(
+      parsed.error.issues.map((issue) => describeIssue('delivery', issue, expectation)).join('; '),
+    );
   }
   return parsed.data;
 };

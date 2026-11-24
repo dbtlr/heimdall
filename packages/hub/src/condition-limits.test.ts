@@ -281,3 +281,14 @@ test('stored limits hold the fleet defaults and each overridden System, replaced
     { disk: { alert: 90, hysteresis: 5, note: 65, warning: 80 }, system: '' },
   ]);
 });
+
+test('a bad conditions value is refused with one sentence naming its full key', () => {
+  expect(() => parseConditionLimits({ disk: { noet: 1 } })).toThrow(
+    new Error('conditions.disk.noet: not a setting'),
+  );
+  expect(() => parseConditionLimits({ cpu: { percent: 'high' }, disk: { noet: 1 } })).toThrow(
+    new Error(
+      'conditions.cpu.percent: Invalid input: expected number, received string; conditions.disk.noet: not a setting',
+    ),
+  );
+});
