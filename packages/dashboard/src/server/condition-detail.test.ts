@@ -14,7 +14,11 @@ import { processSubject, updateSourceSubject } from '@heimdall/schema';
 import type { PendingUpdate, UpdateManager } from '@heimdall/schema';
 import { sample } from '@heimdall/schema/testing';
 
-import { parseConditionDetailInput, readConditionDetail } from './condition-detail.ts';
+import {
+  parseConditionDetailInput,
+  readConditionDetail,
+  readPackages,
+} from './condition-detail.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -618,6 +622,34 @@ describe('a package source with pending updates', () => {
       expect(await labelsOf(h, '/opt/apt')).toEqual([
         ['libq:arm64', 'libq'],
         ['libr:amd64', 'libr:amd64'],
+      ]);
+    });
+
+    // A Report landing between two statements could let one pass's census label
+    // another pass's packages, and that cannot be timed deterministically. One
+    // statement is one snapshot, so the test counts statements instead.
+    test('reads the packages and the census that labels them in one statement', async () => {
+      await using h = await startHub();
+      await hearManagers(h, 'x64', [
+        aptManager('system', ['libfoo:arm64', 'libfoo:amd64'], ['a:arm64']),
+      ]);
+      let statements = 0;
+      const counting = new Proxy(h.db.sql, {
+        apply: (target, thisArg, args) => {
+          statements += 1;
+          return Reflect.apply(target, thisArg, args);
+        },
+      });
+
+      const packages = await readPackages(counting, {
+        subject: updateSourceSubject({ installation: 'system', manager: 'apt' }),
+        system: 'server-1',
+      });
+
+      expect(statements).toBe(1);
+      expect(packages.map(({ label, name }) => [name, label])).toEqual([
+        ['libfoo:amd64', 'libfoo:amd64'],
+        ['libfoo:arm64', 'libfoo'],
       ]);
     });
 

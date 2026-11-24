@@ -172,7 +172,13 @@ const SERIES_READERS: Partial<
 
 // The packages the Hub holds as pending in the package source an open
 // pending_update Condition names, security updates first.
-const readPackages = async (
+//
+// One statement reads the packages and, for APT, what decides their labels: the
+// System's own dpkg architecture, by the installed census of its APT sources,
+// else by what its Collector reports (as Maintenance decides it). One statement
+// is one snapshot, so a Report landing mid-read cannot let one pass's census
+// label another pass's packages.
+export const readPackages = async (
   sql: SQL,
   { subject, system }: { subject: string; system: string },
 ): Promise<LabelledPackage[]> => {
@@ -180,35 +186,49 @@ const readPackages = async (
   if (source === undefined) {
     return [];
   }
-  const [rows, own]: [
-    { name: string; pending_update: unknown; security_since: Date | null }[],
-    string | undefined,
-  ] = await Promise.all([
-    sql`
-      SELECT name, pending_update, security_since FROM update_subjects
-      WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
-      ORDER BY security_since IS NULL, name
-    `,
-    // Only APT names carry an architecture to hide.
-    source.manager === 'apt' ? readOwnArchitecture(sql, system) : undefined,
-  ]);
-  return rows.map((row) =>
-    Object.assign(pendingPackageOf(row), packageLabel(row.name, source.manager, own)),
+  // Only APT names carry an architecture to hide.
+  const isApt = source.manager === 'apt';
+  const [read]: {
+    collector_arch: string | null;
+    packages: {
+      name: string;
+      pending_update: unknown;
+      security_since: string | null;
+    }[];
+    sources: unknown[];
+  }[] = await sql`
+    SELECT
+      (SELECT coalesce(
+         jsonb_agg(
+           jsonb_build_object(
+             'name', name, 'pending_update', pending_update, 'security_since', security_since
+           ) ORDER BY security_since IS NULL, name
+         ), '[]'::jsonb)
+       FROM update_subjects
+       WHERE system = ${system} AND manager = ${source.manager} AND installation = ${source.installation}
+      ) AS packages,
+      (SELECT coalesce(jsonb_agg(observation), '[]'::jsonb)
+       FROM update_managers WHERE ${isApt} AND system = ${system} AND NOT withdrawn
+      ) AS sources,
+      (SELECT collector_arch FROM systems WHERE ${isApt} AND name = ${system}) AS collector_arch
+  `;
+  // A SELECT with no FROM returns exactly one row; this only narrows the type.
+  if (read === undefined) {
+    return [];
+  }
+  const census = parseUpdateObservations(read.sources).flatMap((observation) =>
+    observation.manager === 'apt' ? (observation.installed?.names ?? []) : [],
   );
-};
-
-// The System's own dpkg architecture, decided as Maintenance does: by the
-// installed census of its APT sources, else by what its Collector reports.
-const readOwnArchitecture = async (sql: SQL, system: string): Promise<string | undefined> => {
-  const [sources, [row]]: [{ observation: unknown }[], { collector_arch: string | null }[]] =
-    await Promise.all([
-      sql`SELECT observation FROM update_managers WHERE system = ${system} AND NOT withdrawn`,
-      sql`SELECT collector_arch FROM systems WHERE name = ${system}`,
-    ]);
-  const census = parseUpdateObservations(sources.map(({ observation }) => observation)).flatMap(
-    (observation) => (observation.manager === 'apt' ? (observation.installed?.names ?? []) : []),
+  const own = systemArchitecture(census, read.collector_arch);
+  return read.packages.map((row) =>
+    Object.assign(
+      pendingPackageOf({
+        ...row,
+        security_since: row.security_since === null ? null : new Date(row.security_since),
+      }),
+      packageLabel(row.name, source.manager, own),
+    ),
   );
-  return systemArchitecture(census, row?.collector_arch);
 };
 
 // The open occurrence's attention item, the way the System page builds it.
