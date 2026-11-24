@@ -2,12 +2,14 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 
 import type { SQL } from 'bun';
 
+import { CLAUDE_CODE_PARSER_VERSION } from './claude-code-parser.ts';
 import { codexParser, requestIdOf } from './codex-parser.ts';
 import { syncPrices } from './price-table.ts';
 import { projectTranscripts } from './projection.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { assistant, jsonl as claudeJsonl, mainPath } from './testing/claude-code.ts';
 import {
+  at,
   CHILD,
   CACHE_WRITE,
   FINAL_USAGE,
@@ -20,6 +22,8 @@ import {
   NESTED,
   NESTED_FILE,
   meta,
+  message,
+  produced,
   rolloutPath,
   SESSION,
   skillMessage,
@@ -514,7 +518,7 @@ describe('Codex projection', () => {
   test('an empty archive activates Claude Code but waits for a source before activating Codex', async () => {
     await using h = await startHub();
     const projected = await projectTranscripts(h.db.sql);
-    expect(projected.switched).toEqual([{ harness: 'claude-code', version: 1 }]);
+    expect(projected.switched).toEqual([{ harness: 'claude-code', version: CLAUDE_CODE_PARSER_VERSION }]);
     expect([...(await h.db.sql`SELECT harness FROM current_parsers ORDER BY harness`)]).toEqual([
       { harness: 'claude-code' },
     ]);
@@ -791,5 +795,153 @@ describe('Codex projection', () => {
       ...(await h.db
         .sql`SELECT DISTINCT session_id FROM insight.subagents WHERE harness = 'codex'`),
     ]).toEqual([{ session_id: SESSION }]);
+  });
+});
+
+// A Codex Session's role, seat, and launching Session come from its user
+// messages before the model's first response_item (ADR-0025; spec, Session
+// tags). Codex injects user messages of its own first, in no fixed order.
+describe('the opening of a Codex Session', () => {
+  const PARENT = '0b1c2d3e-0000-4000-8000-0000000000aa';
+  const tagged = `session-tag: role=review seat=verifier parent=${PARENT}`;
+
+  test('reads past injected user messages, developer messages, and tool lists to the brief', () => {
+    const parsed = parse(
+      jsonl([
+        meta(),
+        { payload: { tools: [], type: 'additional_tools', role: 'developer' }, timestamp: at(1), type: 'response_item' },
+        message('developer', 'session-tag: role=developer-only', 1),
+        message('user', '# AGENTS.md instructions for /work/project\nMock instructions.', 1),
+        message('user', '<environment_context>\n<cwd>/work/project</cwd>\n</environment_context>', 2),
+        message('user', '<recommended_plugins>\nnone\n</recommended_plugins>', 2),
+        { payload: { type: 'configuration_update' }, timestamp: at(2), type: 'response_item' },
+        message('user', `[T3 Code: delegated]\nAct as the review sub-agent for this task.\n${tagged}\nBrief.`, 3),
+        produced('reasoning', 4),
+      ]),
+    );
+
+    expect(parsed.opening).toEqual({
+      at: Date.parse(at(1)),
+      closed: true,
+      launchingSessionId: PARENT,
+      role: 'review',
+      roleSource: 'tag',
+      seat: 'verifier',
+    });
+  });
+
+  test.each([
+    ['reasoning', produced('reasoning', 3)],
+    ['a function call', produced('function_call', 3)],
+    ['a custom tool call', produced('custom_tool_call', 3)],
+    ['an assistant message', message('assistant', 'Done.', 3)],
+  ])('ends at %s', (_, response) => {
+    const parsed = parse(
+      jsonl([meta(), message('user', 'hello', 1), response, message('user', tagged, 4)]),
+    );
+
+    expect(parsed.opening).toEqual(expect.objectContaining({ closed: true, role: null }));
+  });
+
+  test('a preamble with no tag gives the role alone', () => {
+    const parsed = parse(
+      jsonl([meta(), message('user', 'Act as the implementation sub-agent for this task.', 1)]),
+    );
+
+    expect(parsed.opening).toEqual(
+      expect.objectContaining({ closed: false, role: 'implementation', roleSource: 'preamble' }),
+    );
+  });
+
+  test('an event message that repeats the prompt is not read', () => {
+    const parsed = parse(
+      jsonl([
+        meta(),
+        { payload: { message: tagged, type: 'user_message' }, timestamp: at(1), type: 'event_msg' },
+        message('user', 'hello', 2),
+        produced('reasoning', 3),
+      ]),
+    );
+
+    expect(parsed.opening).toEqual(expect.objectContaining({ at: Date.parse(at(2)), role: null }));
+  });
+
+  test('a misshapen tag counts its record unreadable once and keeps the skill it names', () => {
+    const skill = skillMessage();
+    const parsed = parse(
+      jsonl([
+        meta(),
+        {
+          ...skill,
+          payload: {
+            ...skill.payload,
+            content: [
+              { text: 'session-tag: role=<role>\nsession-tag: role=Review', type: 'input_text' },
+              ...skill.payload.content,
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(parsed.unreadableLines).toBe(1);
+    expect(parsed.toolCalls).toEqual([expect.objectContaining({ skill: 'namespace:review' })]);
+    expect(parsed.opening).toEqual(expect.objectContaining({ role: null }));
+  });
+
+  test("a fork's replayed tag is not read; only its own messages are", () => {
+    const parsed = parse(
+      jsonl([
+        {
+          ...meta({ id: CHILD }),
+          payload: { ...meta({ id: CHILD }).payload, forked_from_id: SESSION, subagent_history_start_ordinal: 3 },
+        },
+        message('user', tagged, 1),
+        produced('reasoning', 1),
+        message('user', 'Act as the design sub-agent for this task.', 2),
+      ]),
+    );
+
+    expect(parsed.opening).toEqual(
+      expect.objectContaining({ at: Date.parse(at(2)), role: 'design', roleSource: 'preamble' }),
+    );
+  });
+
+  test('a Codex subagent has no opening of its own', () => {
+    const parsed = parse(
+      jsonl([
+        { ...meta({ id: CHILD }), payload: { ...meta({ id: CHILD }).payload, parent_thread_id: SESSION } },
+        message('user', tagged, 1),
+        produced('reasoning', 2),
+      ]),
+    );
+
+    expect(parsed.owner).toEqual({ agentId: CHILD, sessionId: SESSION });
+    expect(parsed.opening ?? null).toBeNull();
+  });
+
+  test('carries across batches, and a batch that reads none of it reports none', () => {
+    const first = jsonl([meta(), message('user', 'hello', 1)]);
+    const lines = jsonl([meta(), message('user', 'hello', 1), message('user', tagged, 2), produced('reasoning', 3), message('user', 'later', 4)]).split('\n');
+    const rest = `${lines.slice(2, 4).join('\n')}\n`;
+    const after = `${lines.slice(4, 5).join('\n')}\n`;
+    const run = (content: string, offset: number, state: unknown) =>
+      codexParser.parse({
+        complete: true,
+        content: new TextEncoder().encode(content),
+        factLimit: 100_000,
+        offset,
+        path: rolloutPath(),
+        state,
+      });
+
+    const one = run(first, 0, undefined);
+    expect(one.opening).toEqual(expect.objectContaining({ closed: false, role: null }));
+    const two = run(rest, first.length, one.state);
+    expect(two.opening).toEqual(
+      expect.objectContaining({ at: Date.parse(at(1)), closed: true, role: 'review', seat: 'verifier' }),
+    );
+    const three = run(after, first.length + rest.length, two.state);
+    expect(three.opening ?? null).toBeNull();
   });
 });

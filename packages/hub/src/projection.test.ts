@@ -518,7 +518,7 @@ describe('a Claude Code Session', () => {
         first_harness_version: '2.1.290',
         last_cwd: '/w/end',
         last_harness_version: '2.1.291',
-        parser_version: 1,
+        parser_version: claudeCodeParser.version,
         path: mainPath(),
         session_id: SESSION,
         started_at: new Date(at(0)),
@@ -1218,7 +1218,7 @@ describe('a generation the projection cannot read', () => {
     };
     await projectAll(h, { parsers: [failing] });
 
-    await projectAll(h, { parsers: [{ ...claudeCodeParser, version: 2 }] });
+    await projectAll(h, { parsers: [{ ...claudeCodeParser, version: claudeCodeParser.version + 1 }] });
 
     expect(await settled(h.db.sql)).toEqual({
       requests: ['msg_main'],
@@ -1869,14 +1869,14 @@ describe('a parser version change', () => {
 
     expect(first.pending).toBeGreaterThan(0);
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([1]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([claudeCodeParser.version]);
 
     await projectAll(h, budget);
 
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
     const [left] = await h.db.sql`
-      SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = 1
+      SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = ${claudeCodeParser.version}
     `;
     expect(left?.n).toBe(0);
   });
@@ -1896,16 +1896,16 @@ describe('a parser version change', () => {
 
     expect(older).toEqual({
       failed: [],
-      outdated: [{ current: 2, harness: 'claude-code', version: 1 }],
+      outdated: [{ current: nextVersion.version, harness: 'claude-code', version: claudeCodeParser.version }],
       pending: 0,
       switched: [],
     });
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
     const versions = await h.db.sql`
       SELECT DISTINCT parser_version FROM parse_progress ORDER BY parser_version
     `;
-    expect([...versions]).toEqual([{ parser_version: 2 }]);
+    expect([...versions]).toEqual([{ parser_version: nextVersion.version }]);
   });
 
   // The Hub that rebuilds parses only its own version, so the current set
@@ -1934,9 +1934,9 @@ describe('a parser version change', () => {
 
     expect(outcomes.every((outcome) => outcome.pending > 0)).toBe(true);
     expect(outcomes.flatMap((outcome) => outcome.switched)).toEqual([
-      { harness: 'claude-code', version: 2 },
+      { harness: 'claude-code', version: nextVersion.version },
     ]);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2, 2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version, nextVersion.version]);
   });
 
   // A file opened during the rebuild is one the current version has not read
@@ -1959,7 +1959,7 @@ describe('a parser version change', () => {
 
     const outcome = await projectTranscripts(sql, { parsers: [nextVersion] });
 
-    expect(outcome.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(outcome.switched).toEqual([{ harness: 'claude-code', version: nextVersion.version }]);
     expect(outcome.pending).toBe(1);
   });
 
@@ -1981,7 +1981,7 @@ describe('a parser version change', () => {
       for (const table of tables) {
         // oxlint-disable-next-line no-await-in-loop -- one table at a time.
         const [row]: { n: number }[] = await h.db.sql.unsafe(
-          `SELECT count(*)::int AS n FROM ${table} WHERE parser_version = 1`,
+          `SELECT count(*)::int AS n FROM ${table} WHERE parser_version = ${claudeCodeParser.version}`,
         );
         counts.push(row?.n ?? 0);
       }
@@ -1999,7 +1999,7 @@ describe('a parser version change', () => {
       after.push(await earlier());
     }
 
-    expect(switching.switched).toEqual([{ harness: 'claude-code', version: 2 }]);
+    expect(switching.switched).toEqual([{ harness: 'claude-code', version: nextVersion.version }]);
     expect(sumOf(after[0] ?? [])).toBeGreaterThan(0);
     expect(sumOf(after.at(-1) ?? [])).toBe(0);
     // No run deletes more than `cleanupRows` from any table, and progress
@@ -2032,7 +2032,7 @@ describe('a parser version change', () => {
     const older = await projectTranscripts(sql);
 
     expect(older.switched).toEqual([]);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([2]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version]);
   });
 
   // Versions 3 and 4 both build while a Hub with version 1 is mid-run, and
@@ -2047,8 +2047,8 @@ describe('a parser version change', () => {
       content: jsonl([assistant({ at: at(2), id: 'msg_2' })]),
       offset: Buffer.byteLength(first),
     });
-    const third = { ...claudeCodeParser, version: 3 };
-    const fourth = { ...claudeCodeParser, version: 4 };
+    const third = { ...claudeCodeParser, version: claudeCodeParser.version + 2 };
+    const fourth = { ...claudeCodeParser, version: claudeCodeParser.version + 3 };
     let overtaken = false;
     const sql = beforeEachTransaction(h.db.sql, async () => {
       if (!overtaken) {
@@ -2059,7 +2059,7 @@ describe('a parser version change', () => {
     });
     const thirds = async () => {
       const [row]: { n: number }[] = await h.db.sql`
-        SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = 3
+        SELECT count(*)::int AS n FROM projected_requests WHERE parser_version = ${third.version}
       `;
       return row?.n;
     };
@@ -2070,7 +2070,7 @@ describe('a parser version change', () => {
 
     expect(afterBehind).toBe(2);
     expect(await thirds()).toBe(0);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([4]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([fourth.version]);
   });
 });
 
@@ -2231,12 +2231,12 @@ describe('the insight views', () => {
       // oxlint-disable-next-line no-await-in-loop -- one table at a time.
       await h.db.sql.unsafe(`
         CREATE TEMPORARY TABLE copied AS SELECT * FROM ${table};
-        UPDATE copied SET parser_version = 2;
+        UPDATE copied SET parser_version = 99;
         INSERT INTO ${table} SELECT * FROM copied;
         DROP TABLE copied;
       `);
     }
-    await h.db.sql`UPDATE projected_subagents SET parent_agent_id = NULL WHERE parser_version = 2`;
+    await h.db.sql`UPDATE projected_subagents SET parent_agent_id = NULL WHERE parser_version = 99`;
 
     expect(await shown()).toEqual(before);
   });

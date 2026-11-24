@@ -12,10 +12,12 @@ import {
   UnreadableLineError,
 } from './session-insight.ts';
 import type { Batch, HarnessParser, Moment, Owner, Request, ToolCall } from './session-insight.ts';
+import { openingReader, progressOf } from './session-tags.ts';
+import type { OpeningProgress } from './session-tags.ts';
 
 // Reads Codex rollouts into the same facts as Claude Code. Identity comes
 // from the first record, which must be session_meta, never a copied header.
-export const CODEX_PARSER_VERSION = 3;
+export const CODEX_PARSER_VERSION = 4;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -44,6 +46,7 @@ type State = {
   headerSeen: boolean;
   historyStart: number;
   moment: Moment | null;
+  opening: OpeningProgress;
   owner: Owner | null;
   turns: { contextWindow: number | null; id: string; model: string | null }[];
 };
@@ -66,6 +69,7 @@ const stateOf = (value: unknown): State => {
             version: optionalOf(moment.version, 'version'),
           }
         : null,
+    opening: progressOf(state.opening),
     owner: sessionId === null ? null : { agentId: optionalOf(owner.agentId, 'id'), sessionId },
     turns: (Array.isArray(state.turns) ? state.turns : []).flatMap((t) => {
       if (!isRecord(t)) {
@@ -257,6 +261,20 @@ const skillsOf = (
   }));
 };
 
+// The text of a message: each content block's text, in order.
+const textsOf = (payload: Record<string, unknown>): string[] =>
+  (Array.isArray(payload.content) ? payload.content : []).flatMap((block) =>
+    isRecord(block) && typeof block.text === 'string' ? [block.text] : [],
+  );
+
+// Whether a response_item is one the model produced, which ends a
+// conversation's opening: reasoning, a call of any kind, or an assistant
+// message. A developer message, a tool list, and any other item do not.
+const isResponse = (payload: Record<string, unknown>): boolean =>
+  payload.type === 'reasoning' ||
+  (typeof payload.type === 'string' && payload.type.endsWith('_call')) ||
+  (payload.type === 'message' && payload.role === 'assistant');
+
 // A trailing partial line waits for the next upload, as in the Claude Code
 // parser. Lines past the cap are skipped without decoding them.
 function* linesOf(content: Uint8Array, offset: number, complete: boolean) {
@@ -312,6 +330,9 @@ export const codexParser: HarnessParser = {
     }
     const requests = new Map<string, Request>();
     const calls = new Map<string, ToolCall>();
+    // A Session's opening (ADR-0025). A subagent's brief is encrypted, so a
+    // subagent's is never read.
+    const opening = openingReader(state.opening);
     for (const line of linesOf(content, offset, complete)) {
       if (requests.size + calls.size >= factLimit) {
         batch.atFactLimit = true;
@@ -405,6 +426,15 @@ export const codexParser: HarnessParser = {
             }
           }
         }
+        let misshapenTag = false;
+        if (value.type === 'response_item' && batch.owner !== null && batch.owner.agentId === null) {
+          const { payload } = value;
+          if (payload.type === 'message' && payload.role === 'user') {
+            misshapenTag = at !== undefined && opening.message(at, textsOf(payload));
+          } else if (isResponse(payload)) {
+            opening.respond();
+          }
+        }
         if (value.type === 'turn_context') {
           const id = optionalOf(value.payload.turn_id, 'id');
           const model = optionalOf(value.payload.model, 'name');
@@ -457,6 +487,9 @@ export const codexParser: HarnessParser = {
                   last: at >= span.last.at ? current : span.last,
                 };
         }
+        if (misshapenTag) {
+          batch.unreadableLines += 1;
+        }
       } catch (error) {
         if (!(error instanceof UnreadableLineError)) {
           throw error;
@@ -466,6 +499,8 @@ export const codexParser: HarnessParser = {
     }
     batch.requests = [...requests.values()];
     batch.toolCalls = [...calls.values()];
+    batch.opening = opening.reported;
+    state.opening = opening.progress;
     batch.state = state;
     return batch;
   },
