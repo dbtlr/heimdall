@@ -1218,7 +1218,9 @@ describe('a generation the projection cannot read', () => {
     };
     await projectAll(h, { parsers: [failing] });
 
-    await projectAll(h, { parsers: [{ ...claudeCodeParser, version: claudeCodeParser.version + 1 }] });
+    await projectAll(h, {
+      parsers: [{ ...claudeCodeParser, version: claudeCodeParser.version + 1 }],
+    });
 
     expect(await settled(h.db.sql)).toEqual({
       requests: ['msg_main'],
@@ -1869,7 +1871,9 @@ describe('a parser version change', () => {
 
     expect(first.pending).toBeGreaterThan(0);
     expect(await totals(h.db.sql, 'session_totals')).toEqual(before);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([claudeCodeParser.version]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([
+      claudeCodeParser.version,
+    ]);
 
     await projectAll(h, budget);
 
@@ -1896,7 +1900,9 @@ describe('a parser version change', () => {
 
     expect(older).toEqual({
       failed: [],
-      outdated: [{ current: nextVersion.version, harness: 'claude-code', version: claudeCodeParser.version }],
+      outdated: [
+        { current: nextVersion.version, harness: 'claude-code', version: claudeCodeParser.version },
+      ],
       pending: 0,
       switched: [],
     });
@@ -1936,7 +1942,10 @@ describe('a parser version change', () => {
     expect(outcomes.flatMap((outcome) => outcome.switched)).toEqual([
       { harness: 'claude-code', version: nextVersion.version },
     ]);
-    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([nextVersion.version, nextVersion.version]);
+    expect((await sessions(h.db.sql)).map((s) => s.parser_version)).toEqual([
+      nextVersion.version,
+      nextVersion.version,
+    ]);
   });
 
   // A file opened during the rebuild is one the current version has not read
@@ -2308,5 +2317,283 @@ describe('what serve logs of a run', () => {
       },
     ]);
     expect(second).toEqual([]);
+  });
+});
+
+// A session tag line naming `role`, followed by `extra` pairs.
+const tagged = (role: string, extra = '') => `session-tag: role=${role}${extra}`;
+
+// Each Session's and subagent's role, seat, and launching Session as the views show them.
+const roles = async (sql: SQL) => {
+  const rows: Record<string, unknown>[] = await sql`
+    SELECT NULL AS agent_id, session_id, role, seat, launching_session_id, role_source
+    FROM insight.sessions
+    UNION ALL
+    SELECT agent_id, session_id, role, seat, launching_session_id, role_source
+    FROM insight.subagents
+    ORDER BY session_id, agent_id NULLS FIRST
+  `;
+  return rows;
+};
+
+const mainRole = async (sql: SQL) => (await roles(sql)).find((r) => r.agent_id === null);
+
+// A Codex rollout's header, for a subagent when `parent` is given.
+const codexHeader = (id: string, parent?: string) => ({
+  payload: {
+    cli_version: '0.162.1',
+    cwd: '/w',
+    id,
+    ...(parent === undefined ? {} : { parent_thread_id: parent }),
+    timestamp: at(0),
+  },
+  timestamp: at(0),
+  type: 'session_meta',
+});
+
+// A Codex user message.
+const codexSaid = (text: string, second: number) => ({
+  payload: { content: [{ text, type: 'input_text' }], role: 'user', type: 'message' },
+  timestamp: at(second),
+  type: 'response_item',
+});
+
+// Codex records as a rollout holds them.
+const codexLines = (records: Record<string, unknown>[]) =>
+  `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+
+// A conversation's role, seat, and launching Session are parsed facts on its
+// Session or subagent row, from its opening messages (ADR-0025).
+describe('session tags', () => {
+  const PARENT = '0b1c2d3e-0000-4000-8000-0000000000aa';
+
+  test("a Session's and a subagent's roles reach the views", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([
+        user({
+          at: at(0),
+          content: `[T3 Code: delegated]\nAct as the implementation sub-agent for this task.\n${tagged('implementation', ` parent=${PARENT}`)}`,
+        }),
+        assistant({ at: at(1), id: 'msg_main' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ agent: 'a1', at: at(2), content: tagged('review', ' seat=breaker') }),
+        assistant({ agent: 'a1', at: at(3), id: 'msg_a1' }),
+      ]),
+      path: agentPath('a1'),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ agent: 'a2', at: at(4), content: 'Explore the code.' }),
+        assistant({ agent: 'a2', at: at(5), id: 'msg_a2' }),
+      ]),
+      path: agentPath('a2'),
+    });
+
+    await projectAll(h);
+
+    expect(await roles(h.db.sql)).toEqual([
+      {
+        agent_id: null,
+        launching_session_id: PARENT,
+        role: 'implementation',
+        role_source: 'tag',
+        seat: null,
+        session_id: SESSION,
+      },
+      {
+        agent_id: 'a1',
+        launching_session_id: null,
+        role: 'review',
+        role_source: 'tag',
+        seat: 'breaker',
+        session_id: SESSION,
+      },
+      {
+        agent_id: 'a2',
+        launching_session_id: null,
+        role: null,
+        role_source: null,
+        seat: null,
+        session_id: SESSION,
+      },
+    ]);
+  });
+
+  test('an opening a later batch extends replaces what the earlier batch gave, and one it does not read stays', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const first = jsonl([
+      user({ at: at(0), content: 'Act as the review sub-agent for this task.' }),
+    ]);
+    const generation = await upload(h, { content: first, path: mainPath() });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: 'review', role_source: 'preamble' }),
+    );
+
+    // Still no response: the opening stays open while the tag arrives.
+    const rest = jsonl([user({ at: at(1), content: tagged('review', ' seat=verifier') })]);
+    const through = await append(h, generation, {
+      content: rest,
+      offset: Buffer.byteLength(first),
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role_source: 'tag', seat: 'verifier' }),
+    );
+
+    await append(h, generation, {
+      content: jsonl([
+        assistant({ at: at(2), id: 'msg_1' }),
+        user({ at: at(3), content: tagged('design') }),
+        assistant({ at: at(4), id: 'msg_2' }),
+      ]),
+      offset: through,
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: 'review', seat: 'verifier' }),
+    );
+  });
+
+  test("the earliest generation's opening wins, whether or not it held a tag", async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(5), content: tagged('review') }),
+        assistant({ at: at(6), id: 'msg_late' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: 'No tag here.' }),
+        assistant({ at: at(1), id: 'msg_early' }),
+      ]),
+      path: mainPath(),
+    });
+
+    await projectAll(h);
+
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: null, role_source: null }),
+    );
+  });
+
+  test('of openings with the same time, one that got its response wins, then the earlier generation', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    // A copy cut off before the brief, then a whole copy that holds it.
+    await upload(h, {
+      content: jsonl([user({ at: at(0), content: 'Injected context.' })]),
+      path: mainPath(),
+    });
+    const review = await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: 'Injected context.' }),
+        user({ at: at(1), content: tagged('review') }),
+        assistant({ at: at(2), id: 'msg_1' }),
+      ]),
+      path: mainPath(),
+    });
+
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: 'review', role_source: 'tag' }),
+    );
+
+    // A third copy, closed and tied with the second: the lower generation id
+    // wins, however the parse orders them.
+    const design = await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: tagged('design') }),
+        assistant({ at: at(1), id: 'msg_1' }),
+      ]),
+      path: mainPath(),
+    });
+    await projectAll(h);
+
+    expect(await mainRole(h.db.sql)).toEqual(
+      expect.objectContaining({ role: BigInt(review) < BigInt(design) ? 'review' : 'design' }),
+    );
+  });
+
+  test('a delete re-derives the role from the generations that survive', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    const old = await upload(h, {
+      content: jsonl([
+        user({ at: at(0), content: tagged('review') }),
+        assistant({ at: at(1), id: 'msg_1' }),
+      ]),
+      path: mainPath(),
+    });
+    await upload(h, {
+      content: jsonl([
+        user({ at: at(5), content: tagged('design') }),
+        assistant({ at: at(6), id: 'msg_2' }),
+      ]),
+      path: mainPath(),
+    });
+    await projectAll(h);
+    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'review' }));
+
+    await ageGeneration(h, old);
+    await deleteOld(h);
+    await projectAll(h);
+
+    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'design' }));
+  });
+
+  test("a Codex Session's role reaches the views, and a Codex subagent has none", async () => {
+    await using h = await startHub();
+    await nameSources(h, [{ harness: 'codex', name: 'codex' }]);
+    const SESSION_ID = '01990000-0000-7000-8000-000000000001';
+    const CHILD_ID = '01990000-0000-7000-8000-000000000002';
+    await upload(h, {
+      content: codexLines([
+        codexHeader(SESSION_ID),
+        codexSaid('<environment_context></environment_context>', 1),
+        codexSaid(tagged('review', ' seat=architect'), 2),
+      ]),
+      path: `sessions/2026/10/06/rollout-2026-10-06T12-00-00-${SESSION_ID}.jsonl`,
+      source: 'codex',
+    });
+    await upload(h, {
+      content: codexLines([
+        codexHeader(CHILD_ID, SESSION_ID),
+        codexSaid(tagged('implementation'), 3),
+      ]),
+      path: `sessions/2026/10/06/rollout-2026-10-06T12-00-03-${CHILD_ID}.jsonl`,
+      source: 'codex',
+    });
+
+    await projectAll(h);
+
+    expect(await roles(h.db.sql)).toEqual([
+      {
+        agent_id: null,
+        launching_session_id: null,
+        role: 'review',
+        role_source: 'tag',
+        seat: 'architect',
+        session_id: SESSION_ID,
+      },
+      {
+        agent_id: CHILD_ID,
+        launching_session_id: null,
+        role: null,
+        role_source: null,
+        seat: null,
+        session_id: SESSION_ID,
+      },
+    ]);
   });
 });

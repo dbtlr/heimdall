@@ -31,6 +31,12 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/u;
 const KEY = /^[A-Za-z][A-Za-z0-9_-]*$/u;
 const PREAMBLE = /^Act as the (?<role>\S+) sub-agent for this task\.$/u;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// A saved role or seat, or null when it is not shaped as one.
+const nameOf = (field: unknown) => (typeof field === 'string' && NAME.test(field) ? field : null);
+
 const isLaunchingId = (value: string) => value.length <= MAX_ID_LENGTH && isShaped(value, 'id');
 
 // The tag a line holds; `misshapen` for a line that starts with the prefix and
@@ -90,14 +96,17 @@ export const readOpeningMessage = (
   at: number,
   texts: readonly string[],
 ): { opening: Opening; unreadable: boolean } => {
-  const next: Opening = opening === null ? {
-    at,
-    closed: false,
-    launchingSessionId: null,
-    role: null,
-    roleSource: null,
-    seat: null,
-  } : { ...opening };
+  const next: Opening =
+    opening === null
+      ? {
+          at,
+          closed: false,
+          launchingSessionId: null,
+          role: null,
+          roleSource: null,
+          seat: null,
+        }
+      : { ...opening };
   if (next.closed) {
     return { opening: next, unreadable: false };
   }
@@ -128,16 +137,16 @@ export const closeOpening = (opening: Opening | null): Opening | null =>
 // An opening read back from continuation state, which the database returns as
 // JSON: null when it holds none, and any fact not shaped as one dropped.
 export const openingOf = (value: unknown): Opening | null => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return null;
   }
-  const saved = value as Record<string, unknown>;
+  const saved = value;
   if (typeof saved.at !== 'number' || !Number.isFinite(saved.at)) {
     return null;
   }
-  const name = (field: unknown) => (typeof field === 'string' && NAME.test(field) ? field : null);
-  const role = name(saved.role);
-  const source = saved.roleSource === 'tag' || saved.roleSource === 'preamble' ? saved.roleSource : null;
+  const role = nameOf(saved.role);
+  const source =
+    saved.roleSource === 'tag' || saved.roleSource === 'preamble' ? saved.roleSource : null;
   return {
     at: saved.at,
     closed: saved.closed === true,
@@ -147,7 +156,7 @@ export const openingOf = (value: unknown): Opening | null => {
         : null,
     role,
     roleSource: role === null ? null : source,
-    seat: role === 'review' ? name(saved.seat) : null,
+    seat: role === 'review' ? nameOf(saved.seat) : null,
   };
 };
 
@@ -157,10 +166,7 @@ export const openingOf = (value: unknown): Opening | null => {
 export type OpeningProgress = { answered: boolean; opening: Opening | null };
 
 export const progressOf = (value: unknown): OpeningProgress => {
-  const saved =
-    typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
+  const saved: Record<string, unknown> = isRecord(value) ? value : {};
   return { answered: saved.answered === true, opening: openingOf(saved.opening) };
 };
 

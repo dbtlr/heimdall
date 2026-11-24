@@ -518,7 +518,9 @@ describe('Codex projection', () => {
   test('an empty archive activates Claude Code but waits for a source before activating Codex', async () => {
     await using h = await startHub();
     const projected = await projectTranscripts(h.db.sql);
-    expect(projected.switched).toEqual([{ harness: 'claude-code', version: CLAUDE_CODE_PARSER_VERSION }]);
+    expect(projected.switched).toEqual([
+      { harness: 'claude-code', version: CLAUDE_CODE_PARSER_VERSION },
+    ]);
     expect([...(await h.db.sql`SELECT harness FROM current_parsers ORDER BY harness`)]).toEqual([
       { harness: 'claude-code' },
     ]);
@@ -798,6 +800,17 @@ describe('Codex projection', () => {
   });
 });
 
+// Parses a batch of a rollout from `offset`, as the projection runs it.
+const runBatch = (content: string, offset: number, state: unknown) =>
+  codexParser.parse({
+    complete: true,
+    content: new TextEncoder().encode(content),
+    factLimit: 100_000,
+    offset,
+    path: rolloutPath(),
+    state,
+  });
+
 // A Codex Session's role, seat, and launching Session come from its user
 // messages before the model's first response_item (ADR-0025; spec, Session
 // tags). Codex injects user messages of its own first, in no fixed order.
@@ -809,13 +822,25 @@ describe('the opening of a Codex Session', () => {
     const parsed = parse(
       jsonl([
         meta(),
-        { payload: { tools: [], type: 'additional_tools', role: 'developer' }, timestamp: at(1), type: 'response_item' },
+        {
+          payload: { role: 'developer', tools: [], type: 'additional_tools' },
+          timestamp: at(1),
+          type: 'response_item',
+        },
         message('developer', 'session-tag: role=developer-only', 1),
         message('user', '# AGENTS.md instructions for /work/project\nMock instructions.', 1),
-        message('user', '<environment_context>\n<cwd>/work/project</cwd>\n</environment_context>', 2),
+        message(
+          'user',
+          '<environment_context>\n<cwd>/work/project</cwd>\n</environment_context>',
+          2,
+        ),
         message('user', '<recommended_plugins>\nnone\n</recommended_plugins>', 2),
         { payload: { type: 'configuration_update' }, timestamp: at(2), type: 'response_item' },
-        message('user', `[T3 Code: delegated]\nAct as the review sub-agent for this task.\n${tagged}\nBrief.`, 3),
+        message(
+          'user',
+          `[T3 Code: delegated]\nAct as the review sub-agent for this task.\n${tagged}\nBrief.`,
+          3,
+        ),
         produced('reasoning', 4),
       ]),
     );
@@ -894,7 +919,11 @@ describe('the opening of a Codex Session', () => {
       jsonl([
         {
           ...meta({ id: CHILD }),
-          payload: { ...meta({ id: CHILD }).payload, forked_from_id: SESSION, subagent_history_start_ordinal: 3 },
+          payload: {
+            ...meta({ id: CHILD }).payload,
+            forked_from_id: SESSION,
+            subagent_history_start_ordinal: 3,
+          },
         },
         message('user', tagged, 1),
         produced('reasoning', 1),
@@ -910,7 +939,10 @@ describe('the opening of a Codex Session', () => {
   test('a Codex subagent has no opening of its own', () => {
     const parsed = parse(
       jsonl([
-        { ...meta({ id: CHILD }), payload: { ...meta({ id: CHILD }).payload, parent_thread_id: SESSION } },
+        {
+          ...meta({ id: CHILD }),
+          payload: { ...meta({ id: CHILD }).payload, parent_thread_id: SESSION },
+        },
         message('user', tagged, 1),
         produced('reasoning', 2),
       ]),
@@ -922,26 +954,28 @@ describe('the opening of a Codex Session', () => {
 
   test('carries across batches, and a batch that reads none of it reports none', () => {
     const first = jsonl([meta(), message('user', 'hello', 1)]);
-    const lines = jsonl([meta(), message('user', 'hello', 1), message('user', tagged, 2), produced('reasoning', 3), message('user', 'later', 4)]).split('\n');
+    const lines = jsonl([
+      meta(),
+      message('user', 'hello', 1),
+      message('user', tagged, 2),
+      produced('reasoning', 3),
+      message('user', 'later', 4),
+    ]).split('\n');
     const rest = `${lines.slice(2, 4).join('\n')}\n`;
     const after = `${lines.slice(4, 5).join('\n')}\n`;
-    const run = (content: string, offset: number, state: unknown) =>
-      codexParser.parse({
-        complete: true,
-        content: new TextEncoder().encode(content),
-        factLimit: 100_000,
-        offset,
-        path: rolloutPath(),
-        state,
-      });
 
-    const one = run(first, 0, undefined);
+    const one = runBatch(first, 0, undefined);
     expect(one.opening).toEqual(expect.objectContaining({ closed: false, role: null }));
-    const two = run(rest, first.length, one.state);
+    const two = runBatch(rest, first.length, one.state);
     expect(two.opening).toEqual(
-      expect.objectContaining({ at: Date.parse(at(1)), closed: true, role: 'review', seat: 'verifier' }),
+      expect.objectContaining({
+        at: Date.parse(at(1)),
+        closed: true,
+        role: 'review',
+        seat: 'verifier',
+      }),
     );
-    const three = run(after, first.length + rest.length, two.state);
+    const three = runBatch(after, first.length + rest.length, two.state);
     expect(three.opening ?? null).toBeNull();
   });
 });

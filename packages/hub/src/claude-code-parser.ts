@@ -11,8 +11,6 @@ import {
   tokensOf,
   UnreadableLineError,
 } from './session-insight.ts';
-import { openingReader, progressOf } from './session-tags.ts';
-import type { OpeningProgress } from './session-tags.ts';
 import type {
   AgentMeta,
   Batch,
@@ -22,6 +20,8 @@ import type {
   Request,
   ToolCall,
 } from './session-insight.ts';
+import { openingReader, progressOf } from './session-tags.ts';
+import type { OpeningProgress } from './session-tags.ts';
 
 // Reads Claude Code transcripts into Session insight (ADR-0014). Pure: it sees
 // bytes and paths, never the database. The facts it relies on:
@@ -292,7 +292,9 @@ const commandsOf = (line: Record<string, unknown>, at: number, offset: number) =
   if (uuid.kind === 'absent') {
     return { calls: [], dropped: false };
   }
-  const found = textsOf(line).flatMap((t) => [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''));
+  const found = textsOf(line).flatMap((t) =>
+    [...t.matchAll(COMMAND)].map((m) => m.groups?.name ?? ''),
+  );
   if (uuid.kind === 'misshapen') {
     return { calls: [], dropped: found.length > 0 };
   }

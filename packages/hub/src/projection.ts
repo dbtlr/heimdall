@@ -734,6 +734,7 @@ const linkedCodexBatch = async (
 
 const hasFacts = (batch: Batch) =>
   batch.span !== null ||
+  (batch.opening ?? null) !== null ||
   batch.agent !== null ||
   batch.requests.length > 0 ||
   batch.toolCalls.length > 0;
@@ -828,8 +829,44 @@ const storeFacts = async (
         ended_at = GREATEST(projected_subagents.ended_at, excluded.ended_at)
     `;
   }
+  await storeOpening(tx, { batch, generation, key, owner });
   await storeRequests(tx, { batch, generation, key, owner });
   await storeToolCalls(tx, { batch, generation, key, owner });
+};
+
+// Writes what a batch read of its conversation's opening: its role, seat, and
+// launching Session (ADR-0025). Of a conversation's generations, the earliest
+// opening wins, then one whose first response arrived, then the lower
+// generation; a later batch of the generation that holds the row replaces it,
+// since it read further into the same opening.
+const storeOpening = async (tx: SQL, { batch, generation, key, owner }: Facts) => {
+  const opening = batch.opening ?? null;
+  if (opening === null || !batch.transcript) {
+    return;
+  }
+  const set = tx`
+    role = ${opening.role}, seat = ${opening.seat},
+    launching_session_id = ${opening.launchingSessionId}, role_source = ${opening.roleSource},
+    opening_at = ${at(opening.at)}, opening_closed = ${opening.closed},
+    opening_generation = ${generation.id}::bigint
+  `;
+  const wins = tx`(
+    opening_generation IS NULL OR opening_generation = ${generation.id}::bigint
+    OR (opening_at, NOT opening_closed, opening_generation)
+       > (${at(opening.at)}::timestamptz, ${!opening.closed}, ${generation.id}::bigint)
+  )`;
+  await (owner.agentId === null
+    ? tx`
+        UPDATE projected_sessions SET ${set}
+        WHERE harness = ${key.harness} AND parser_version = ${key.version} AND system = ${key.system}
+          AND source = ${key.source} AND session_id = ${key.session} AND ${wins}
+      `
+    : tx`
+        UPDATE projected_subagents SET ${set}
+        WHERE harness = ${key.harness} AND parser_version = ${key.version} AND system = ${key.system}
+          AND source = ${key.source} AND session_id = ${key.session} AND agent_id = ${owner.agentId}
+          AND ${wins}
+      `);
 };
 
 type Key = { harness: string; session: string; source: string; system: string; version: number };

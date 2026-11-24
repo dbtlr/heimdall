@@ -427,7 +427,11 @@ export const codexParser: HarnessParser = {
           }
         }
         let misshapenTag = false;
-        if (value.type === 'response_item' && batch.owner !== null && batch.owner.agentId === null) {
+        if (
+          value.type === 'response_item' &&
+          batch.owner !== null &&
+          batch.owner.agentId === null
+        ) {
           const { payload } = value;
           if (payload.type === 'message' && payload.role === 'user') {
             misshapenTag = at !== undefined && opening.message(at, textsOf(payload));

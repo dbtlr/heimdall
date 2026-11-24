@@ -63,7 +63,10 @@ describe('a session tag line', () => {
   });
 
   test.each([
-    ['the template the instructions quote', 'session-tag: role=<role> seat=<seat> parent=<session id>'],
+    [
+      'the template the instructions quote',
+      'session-tag: role=<role> seat=<seat> parent=<session id>',
+    ],
     ['no role', 'session-tag: seat=breaker'],
     ['nothing after the prefix', 'session-tag:'],
     ['an empty value', 'session-tag: role=review seat='],
@@ -109,7 +112,9 @@ const read = (texts: string[], opening: Opening | null = null, at = T0) =>
 
 describe('reading an opening', () => {
   test('a built-in subagent: the tag on its first line', () => {
-    const { opening, unreadable } = read([`session-tag: role=review seat=architect parent=${PARENT}\nReview the diff.`]);
+    const { opening, unreadable } = read([
+      `session-tag: role=review seat=architect parent=${PARENT}\nReview the diff.`,
+    ]);
     expect(unreadable).toBe(false);
     expect(opening).toEqual({
       at: T0,
@@ -122,7 +127,9 @@ describe('reading an opening', () => {
   });
 
   test('a workflow agent: a header line, then an indented tag', () => {
-    const { opening } = read([`<harness header>\n    session-tag: role=implementation parent=${PARENT}\n    Do the work.`]);
+    const { opening } = read([
+      `<harness header>\n    session-tag: role=implementation parent=${PARENT}\n    Do the work.`,
+    ]);
     expect(opening?.role).toBe('implementation');
     expect(opening?.roleSource).toBe('tag');
   });
@@ -135,7 +142,9 @@ describe('reading an opening', () => {
   });
 
   test('a preamble with no tag gives the role, no seat, and no launching Session', () => {
-    const { opening } = read(['[T3 Code: delegated task]\nAct as the review sub-agent for this task.\nBrief.']);
+    const { opening } = read([
+      '[T3 Code: delegated task]\nAct as the review sub-agent for this task.\nBrief.',
+    ]);
     expect(opening).toMatchObject({
       launchingSessionId: null,
       role: 'review',
@@ -167,7 +176,9 @@ describe('reading an opening', () => {
   });
 
   test('the first well-formed tag ends the search, so later tag lines are not read', () => {
-    const { opening, unreadable } = read(['session-tag: role=review\nsession-tag: role=<late>\nsession-tag: role=design']);
+    const { opening, unreadable } = read([
+      'session-tag: role=review\nsession-tag: role=<late>\nsession-tag: role=design',
+    ]);
     expect(unreadable).toBe(false);
     expect(opening?.role).toBe('review');
     const later = read(['session-tag: role=<role>', 'session-tag: role=design'], opening, T1);
@@ -189,13 +200,17 @@ describe('reading an opening', () => {
     const first = read(['hello']).opening;
     const second = read(['session-tag: role=review'], first, T1).opening;
     expect(second?.at).toBe(T0);
-    expect(closeOpening(second)).toEqual({ ...second!, closed: true });
+    expect(closeOpening(second)).toEqual({ ...second, closed: true });
     expect(closeOpening(null)).toBeNull();
   });
 
   test('a closed opening reads nothing more', () => {
-    const closed = closeOpening(read(['hello']).opening);
-    const { opening, unreadable } = read(['session-tag: role=<role>', 'session-tag: role=review'], closed, T1);
+    const closed = { ...read(['hello']).opening, closed: true };
+    const { opening, unreadable } = read(
+      ['session-tag: role=<role>', 'session-tag: role=review'],
+      closed,
+      T1,
+    );
     expect(unreadable).toBe(false);
     expect(opening).toEqual(closed);
   });
@@ -204,7 +219,7 @@ describe('reading an opening', () => {
 describe('an opening carried in continuation state', () => {
   test('round-trips', () => {
     const opening = read([`session-tag: role=review seat=breaker parent=${PARENT}`]).opening;
-    expect(openingOf(JSON.parse(JSON.stringify(opening)))).toEqual(opening);
+    expect(openingOf(structuredClone(opening))).toEqual(opening);
   });
 
   test('is null when absent or not an opening', () => {
@@ -214,7 +229,21 @@ describe('an opening carried in continuation state', () => {
 
   test('drops a fact not shaped as one', () => {
     expect(
-      openingOf({ at: T0, closed: true, launchingSessionId: 'a b', role: 'Review', roleSource: 'tag', seat: null }),
-    ).toEqual({ at: T0, closed: true, launchingSessionId: null, role: null, roleSource: null, seat: null });
+      openingOf({
+        at: T0,
+        closed: true,
+        launchingSessionId: 'a b',
+        role: 'Review',
+        roleSource: 'tag',
+        seat: null,
+      }),
+    ).toEqual({
+      at: T0,
+      closed: true,
+      launchingSessionId: null,
+      role: null,
+      roleSource: null,
+      seat: null,
+    });
   });
 });

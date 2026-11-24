@@ -1,5 +1,5 @@
-import { storable } from './storable.ts';
 import type { Opening } from './session-tags.ts';
+import { storable } from './storable.ts';
 
 // The Session insight every Harness's parser derives from transcripts, the
 // shape of a parser, and the bounds every parser holds a line to, so the
