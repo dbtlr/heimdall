@@ -87,8 +87,17 @@ const overview: AgentsOverview = {
     unit: 'day',
   },
   from: NOW - 7 * DAY,
+  missedTags: { missed: 0, withRole: 0 },
   now: NOW,
   range: '7d',
+  roleSplit: {
+    classes: {
+      delegated: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
+      main: { pricedCostUsd: 16, requests: 4, unpricedRequests: 1 },
+      review: { pricedCostUsd: 0, requests: 0, unpricedRequests: 0 },
+    },
+    seats: [],
+  },
   running: SESSIONS.slice(0, 1),
   sessionCount: 2,
   systemCount: 1,
