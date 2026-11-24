@@ -2487,24 +2487,39 @@ describe('session tags', () => {
     );
   });
 
+  // Generation ids are random, so the loop runs until the cut-off copy has
+  // had the lower id at least once: only then does losing the tie rest on the
+  // response having arrived rather than on the id.
   test('a copy cut off before the brief loses a tie to a copy whose response arrived', async () => {
     await using h = await startHub();
     await nameSources(h);
-    // A copy cut off before the brief, then a whole copy that holds it.
-    await upload(h, {
-      content: jsonl([user({ at: at(0), content: 'Injected context.' })]),
-      path: mainPath(),
-    });
-    await upload(h, {
-      content: jsonl([
-        user({ at: at(0), content: 'Injected context.' }),
-        user({ at: at(1), content: tagged('review') }),
-        assistant({ at: at(2), id: 'msg_1' }),
-      ]),
-      path: mainPath(),
-    });
-    await projectAll(h);
-    expect(await mainRole(h.db.sql)).toEqual(expect.objectContaining({ role: 'review' }));
+    let cutOffWasLower = false;
+    for (let pair = 0; pair < 40 && !cutOffWasLower; pair += 1) {
+      const session = `0b1c2d3e-0000-4000-8000-${String(pair).padStart(12, '0')}`;
+      // oxlint-disable-next-line no-await-in-loop -- one pair at a time.
+      const cutOff = await upload(h, {
+        content: jsonl([user({ at: at(0), content: 'Injected context.', session })]),
+        path: mainPath(session),
+      });
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const whole = await upload(h, {
+        content: jsonl([
+          user({ at: at(0), content: 'Injected context.', session }),
+          user({ at: at(1), content: tagged('review'), session }),
+          assistant({ at: at(2), id: `msg_${String(pair)}`, session }),
+        ]),
+        path: mainPath(session),
+      });
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await projectAll(h);
+      cutOffWasLower = BigInt(cutOff) < BigInt(whole);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const [row]: { role: string | null; role_source: string | null }[] = await h.db.sql`
+        SELECT role, role_source FROM insight.sessions WHERE session_id = ${session}
+      `;
+      expect(row).toEqual({ role: 'review', role_source: 'tag' });
+    }
+    expect(cutOffWasLower).toBe(true);
   });
 
   test('an opening whose response arrives in a later batch is stored closed', async () => {
