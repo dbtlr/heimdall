@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from 'bun:test';
 
 import { NOW, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
+import { SQL } from 'bun';
 
 import { isRunning } from '../lib/home-agents.ts';
 import {
@@ -68,6 +69,74 @@ test('Running and the table mark the same Sessions running: a request up to 5 mi
 
 const view = (h: Hub) => read(h, { now: NOW, range: '7d', timeZone: 'UTC' });
 
+test('the parallel 30-day read keeps its snapshot when the second connection opens later', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'snapshot',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-3600],
+  });
+  const pool = new SQL(h.db.url, {
+    connection: { application_name: 'agents-snapshot-test' },
+    max: 3,
+  });
+  // One connection is busy elsewhere, and the read takes the last free one
+  // before it borrows its second.
+  const busy = await pool.reserve();
+  const reserved = await pool.reserve();
+  try {
+    const pending = Promise.allSettled([
+      readAgentsOverview(pool, { now: NOW, range: '30d', timeZone: 'UTC' }),
+    ]);
+    // A read that borrows waits for the reserved connection, so it cannot
+    // settle before the release; one that reads on one connection can.
+    let settledBeforeRelease = false;
+    let waitedForRelease = false;
+    const watching = (async () => {
+      await pending;
+      settledBeforeRelease = true;
+    })();
+    let snapshotTaken = false;
+    try {
+      const deadline = performance.now() + 2000;
+      while (!snapshotTaken && performance.now() < deadline) {
+        // oxlint-disable-next-line no-await-in-loop -- wait for the first connection to take its snapshot.
+        const [row]: { taken: boolean }[] = await h.db.sql`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'agents-snapshot-test'
+              AND backend_xmin IS NOT NULL
+          ) AS taken
+        `;
+        snapshotTaken = row?.taken ?? false;
+        // oxlint-disable-next-line no-await-in-loop -- bound how often the check runs.
+        await Bun.sleep(10);
+      }
+      await h.db.sql`
+        UPDATE stored_session_role_totals SET priced_cost_usd = 9 WHERE session_id = 'snapshot'
+      `;
+      await Bun.sleep(200);
+    } finally {
+      waitedForRelease = !settledBeforeRelease;
+      await reserved.release();
+    }
+    const [result] = await pending;
+    await watching;
+    expect(waitedForRelease).toBe(true);
+    expect(snapshotTaken).toBe(true);
+    if (result.status === 'rejected') {
+      throw result.reason;
+    }
+    expect(result.value.totals.pricedCostUsd).toBe(1);
+    expect(result.value.roleSplit.classes.main.pricedCostUsd).toBe(1);
+  } finally {
+    await busy.release();
+    await pool.close();
+  }
+});
+
 test('Today counts only requests since local midnight, including subagents of an older Session', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
@@ -125,6 +194,29 @@ test('whole Sessions retain priced lower bounds, include unpaired history, and k
   expect(result.sessions.map(({ pricedCostUsd, source }) => ({ pricedCostUsd, source }))).toEqual([
     { pricedCostUsd: 2, source: 'work' },
     { pricedCostUsd: 1, source: 'personal' },
+  ]);
+});
+
+test('a Session that began before Today counts its request at exactly the period end', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    id: 'edge',
+    inputTokens: 1_000_000,
+    model: 'test-model',
+    outputTokens: 0,
+    requests: [-3 * 86_400, -2 * 86_400, 300],
+    system: 'server-1',
+  });
+
+  const { table, totals } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+
+  expect(totals).toEqual({ pricedCostUsd: 1, requests: 1, unpricedRequests: 0 });
+  expect(table.sessions.map(({ lastRequestAt, sessionId }) => [sessionId, lastRequestAt])).toEqual([
+    ['edge', NOW + 300_000],
   ]);
 });
 

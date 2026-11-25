@@ -4,7 +4,8 @@ import { NOW, refreshSessionInsight, startHub, timeline } from '@heimdall/hub/te
 import type { SQL } from 'bun';
 
 import { readAgentsOverview } from './agents-overview.ts';
-import { readMissedTags, readRoleSplit } from './role-split.ts';
+import { readRoleSplit } from './role-split.ts';
+import { readSnapshot, settleBoth } from './snapshot.ts';
 
 beforeAll(async () => {
   await using _h = await startHub();
@@ -227,16 +228,21 @@ test('a period with no review cost has no seats', async () => {
   });
 });
 
-test('reads the split with JIT off for the rest of its transaction', async () => {
+test('the snapshot a page reads its split in has JIT off on both of its connections', async () => {
   await using h = await start();
 
-  const jit = await h.db.sql.begin(async (tx) => {
+  type Probe = { jit: string; pid: number }[];
+  const [first, second] = await readSnapshot(h.db.sql, true, async (tx, side) => {
     await readRoleSplit(tx, week);
-    const [row]: { jit: string }[] = await tx`SHOW jit`;
-    return row?.jit;
+    return settleBoth<Probe, Probe>(
+      tx`SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid`,
+      side`SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid`,
+    );
   });
 
-  expect(jit).toBe('off');
+  // Two connections, so the second one's setting is its own.
+  expect(first[0]?.pid).not.toBe(second[0]?.pid);
+  expect([first[0]?.jit, second[0]?.jit]).toEqual(['off', 'off']);
 });
 
 test('a project’s split counts only its Sessions', async () => {
@@ -280,7 +286,12 @@ test('the missed tags count the period’s Sessions whose role came from T3’s 
   await add('missed-earlier', -8 * 24 * HOUR_S, { role: 'implementation', source: 'preamble' });
   await refreshed(h.db.sql);
 
-  expect(await readMissedTags(h.db.sql, week)).toEqual({ missed: 1, withRole: 3 });
+  const { missedTags: weekMissedTags } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(weekMissedTags).toEqual({ missed: 1, withRole: 3 });
 
   const { missedTags } = await readAgentsOverview(h.db.sql, {
     now: NOW,
@@ -303,5 +314,10 @@ test('the missed tags leave out a Session with no stored requests and one whose 
   await refreshed(h.db.sql);
   await h.db.sql`UPDATE stored_session_totals SET requests = 0 WHERE session_id = 'empty'`;
 
-  expect(await readMissedTags(h.db.sql, week)).toEqual({ missed: 1, withRole: 1 });
+  const { missedTags } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(missedTags).toEqual({ missed: 1, withRole: 1 });
 });

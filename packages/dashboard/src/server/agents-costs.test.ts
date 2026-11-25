@@ -188,6 +188,24 @@ test("a request stamped ahead past the last bar's end is charted in the last bar
   expect(chart.cells).toEqual([expect.objectContaining({ bucket: 11, pricedCostUsd: 3 })]);
 });
 
+test('a Session that began before Today charts its request at exactly the period end', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'edge',
+    requests: [-3 * 24 * HOUR_S, -2 * 24 * HOUR_S, 300],
+    system: 'server-1',
+  });
+
+  const { chart } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: 'today',
+    timeZone: 'UTC',
+  });
+
+  expect(chart.cells).toEqual([expect.objectContaining({ pricedCostUsd: 1, unpricedRequests: 0 })]);
+});
+
 test('cells merge working directories that name one project, and keep Systems apart', async () => {
   await using h = await start();
   for (const [id, system, lastCwd] of [

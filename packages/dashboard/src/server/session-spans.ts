@@ -2,18 +2,10 @@ import type { SQL } from 'bun';
 
 import { sessionProjectSql } from './project-sql.ts';
 
-// The Sessions whose latest request is at or after `from` and whose first is
-// at or before `to`, each with those two times over all its stored stretches
-// (ADR-0016), as a fragment to nest in a statement. A Session's latest request
-// is at or after `from` exactly when one of its stretches ends then, so the
-// index on the stretches' end finds both the Sessions and their latest
-// request. Each Session's first request, though it began before `from`, is
-// the earliest start of its own stretches, read by key. Given `project`, only
-// that project's Sessions remain: each Session the stretches pick is looked up
-// by key and kept when its project name (project-sql.ts) matches, so the
-// filter too costs per picked Session, not per Session in the archive. With
-// `system`, only that System's Sessions. The cost follows the stretches ending
-// since `from` and those Sessions' stretches, not the whole archive.
+// The Sessions whose latest request is at or after `from` and whose first
+// request is at or before `to`, using the bounds of their stored stretches.
+// The end-time index supplies the recent Sessions. The optional project
+// filter reads their metadata by key.
 export const sessionSpans = (
   sql: SQL,
   {
@@ -23,20 +15,10 @@ export const sessionSpans = (
     to,
   }: { from: Date; project?: string | undefined; system?: string | undefined; to: Date },
 ) => sql`
-  SELECT k.harness, k.system, k.source, k.session_id, f.first_request_at, k.last_request_at
-  FROM (
-    SELECT harness, system, source, session_id, max(ended_at) AS last_request_at
-    FROM insight.session_stretches
-    WHERE ended_at >= ${from} ${system === undefined ? sql`` : sql`AND system = ${system}`}
-    GROUP BY harness, system, source, session_id
-  ) k
-  CROSS JOIN LATERAL (
-    SELECT min(x.started_at) AS first_request_at
-    FROM insight.session_stretches x
-    WHERE (x.harness, x.system, x.source, x.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-  ) f
-  WHERE f.first_request_at <= ${to}
+  SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at, k.last_request_at
+  FROM insight.session_spans k
+  WHERE k.last_request_at >= ${from} AND k.first_request_at <= ${to}
+    ${system === undefined ? sql`` : sql`AND k.system = ${system}`}
     ${
       project === undefined
         ? sql``

@@ -4,7 +4,7 @@ title: ADR-0016 - Session stretches and totals are stored, and the Hub refreshes
 description: "The Hub stores each Session's stretches and totals, cost included, instead of computing them on every read. Triggers mark the Sessions a change can alter stale in the transaction that makes it, and the Hub's refresh stores what the rules compute for the stale Sessions every 15 seconds. The insight views read the stored rows, so they can lag a change by one refresh. This supersedes ADR-0014's rule that totals and cost are never stored; the rest of ADR-0014 holds."
 status: accepted
 created: 2026-10-14
-modified: 2026-11-24
+modified: 2026-11-25
 ---
 
 # Session stretches and totals are stored, and the Hub refreshes them
@@ -59,3 +59,4 @@ A missing trigger would leave a stored row behind the rules with nothing to show
 - 2026-10-14: Accepted with the change that builds it (HMD-97). On a copy of the live archive, after HMD-96, the 24-hour overview went from 6 seconds to about 0.1 and the 7-day overview from 13 seconds to about 0.4.
 - 2026-10-18: Addendum. Per-Session model totals are stored and refreshed with Session totals (HMD-143). The decision is unchanged.
 - 2026-11-24: Addendum. [ADR-0025](0025-session-tags-name-a-started-conversations-role-seat-and-launcher.md) stores each Session's list-price cost split by role and seat with its totals. That split reads the subagent rows and the tool call that spawned each subagent, through a copy of the call's conversation that triggers keep on the subagent row, so both join what a change marks a Session stale by key, beside its requests and its Session row. The decision is unchanged.
+- 2026-11-25: Addendum. Each Session's cost is also stored in five-minute intervals per model, in `stored_session_request_buckets`, which the refresh replaces with the other totals (HMD-324). A read of part of a Session, such as a chart bar or a period that cuts it, takes the stored intervals wholly inside its window and prices only the requests in the partial intervals at its edges. It prices every request in the window instead while the Session's totals are stale, by key or by a range, so the window agrees with `insight.requests` until the refresh. Five minutes divides every time-zone offset in use, so local hours and days end on an interval's edge. Each Session's first and last request are kept in `stored_session_spans`, which a trigger keeps equal to the bounds of its stored stretches and `insight.session_spans` reads. On 10,000 synthetic Sessions of 1,000 requests each, the intervals hold about 46 rows a Session and add about 10 milliseconds to each Session's refresh, as much as its split by role. The decision is unchanged.
