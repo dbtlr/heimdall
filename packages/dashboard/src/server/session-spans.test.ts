@@ -55,11 +55,11 @@ test.each([
   // A year-old archive of one-stretch Sessions, stored as the refresh stores them.
   await h.db.sql`
     INSERT INTO stored_session_stretches (harness, system, source, session_id, started_at,
-                                          ended_at, requests, link, candidates)
+                                          ended_at, requests, link, candidates, session_key)
     SELECT 'claude-code', 'server-1', 'claude-code', 'old-' || n,
            ${new Date(NOW - 365 * DAY_MS)}::timestamptz + n * interval '1 hour',
            ${new Date(NOW - 365 * DAY_MS)}::timestamptz + n * interval '1 hour' + interval '10 minutes',
-           1, 'unmatched', 0
+           1, 'unmatched', 0, session_key('claude-code', 'server-1', 'claude-code', 'old-' || n)
     FROM generate_series(1, ${HISTORY}) n
   `;
   await h.db.sql`ANALYZE stored_session_stretches`;

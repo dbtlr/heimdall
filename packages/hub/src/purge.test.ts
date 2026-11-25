@@ -41,6 +41,7 @@ const TRANSCRIPT_TABLES = new Set([
   'projected_subagents',
   'projected_tool_calls',
   'rederiving_sessions',
+  'session_keys',
   'stale_ranges',
   'stale_sessions',
   'stored_session_model_totals',
@@ -255,9 +256,13 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
       system,
     })}
   `;
+  const [key]: { id: string }[] = await sql`
+    INSERT INTO session_keys ${sql(session)} RETURNING id
+  `;
+  const stored = { ...session, session_key: key?.id };
   await sql`
     INSERT INTO stored_session_stretches ${sql({
-      ...session,
+      ...stored,
       candidates: 1,
       ended_at: AT,
       link: 'linked',
@@ -267,7 +272,7 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   `;
   await sql`
     INSERT INTO stored_session_totals ${sql({
-      ...session,
+      ...stored,
       cache_read_tokens: 0,
       cache_write_tokens: 0,
       input_tokens: 1,
@@ -278,7 +283,7 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   `;
   await sql`
     INSERT INTO stored_session_model_totals ${sql({
-      ...session,
+      ...stored,
       model: 'claude-opus-5-5',
       requests: 1,
       unpriced_requests: 1,
@@ -286,7 +291,7 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   `;
   await sql`
     INSERT INTO stored_session_role_totals ${sql({
-      ...session,
+      ...stored,
       requests: 1,
       role_class: 'main',
       unpriced_requests: 1,
@@ -294,7 +299,7 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
   `;
   await sql`
     INSERT INTO stored_session_request_intervals ${sql({
-      ...session,
+      ...stored,
       interval_at: AT,
       last_request_at: AT,
       model: 'claude-opus-5-5',
@@ -303,11 +308,15 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
     })}
   `;
   await sql`
-    INSERT INTO stored_session_bursts ${sql({ ...session, ended_at: AT, started_at: AT })}
+    INSERT INTO stored_session_bursts ${sql({
+      ...stored,
+      ended_at: AT,
+      started_at: AT,
+    })}
   `;
   await sql`
     INSERT INTO stored_session_tool_totals ${sql({
-      ...session,
+      ...stored,
       calls: 1,
       first_call_at: AT,
       kind: 'tool',
@@ -363,6 +372,27 @@ test('purge system --transcripts leaves no row of the System, and every other Sy
       expect({ named: gone.get(table)?.named, table }).toEqual({ named: 0, table });
     }
   }
+});
+
+test('purge system --transcripts deletes its Sessions’ keys, and their stored rows with them', async () => {
+  await using s = await setup();
+  const keys = () => s.db.sql`SELECT id, system FROM session_keys ORDER BY id`;
+  const [old, kept] = await keys();
+  expect([old?.system, kept?.system]).toEqual(['old-1', 'laptop-1']);
+  const storedRows = async () => {
+    const [row]: { rows: number }[] = await s.db.sql`
+      SELECT (SELECT count(*) FROM stored_session_stretches WHERE session_key = ${old?.id})
+           + (SELECT count(*) FROM stored_session_totals WHERE session_key = ${old?.id})
+           + (SELECT count(*) FROM stored_session_bursts WHERE session_key = ${old?.id})::int AS rows
+    `;
+    return Number(row?.rows);
+  };
+  expect(await storedRows()).toBe(3);
+
+  await invoke(['purge', 'system', 'old-1', '--transcripts', ...s.args]);
+
+  expect(await keys()).toEqual([kept]);
+  expect(await storedRows()).toBe(0);
 });
 
 test('purge system keeps the transcripts and their Session insight, and deletes the rest', async () => {

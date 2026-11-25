@@ -731,6 +731,24 @@ describe('Codex projection', () => {
     expect(Number(total?.requests)).toBe(5);
   });
 
+  test('a thread that was a root Session before its parent arrived keeps no key once every transcript is deleted', async () => {
+    await using h = await startHub();
+    await nameSources(h);
+    await upload(h, NESTED_FILE, rolloutPath(NESTED));
+    await projectTranscripts(h.db.sql);
+    await refreshSessionInsight(h.db.sql);
+    await upload(h, FORK, rolloutPath(CHILD));
+    await upload(h, MAIN, rolloutPath());
+    await projectTranscripts(h.db.sql);
+    await refreshSessionInsight(h.db.sql);
+    await deleteTranscripts(h.db.sql, { now: NOW, source: 'coding' });
+    await projectTranscripts(h.db.sql);
+    await refreshSessionInsight(h.db.sql);
+    expect([
+      ...(await h.db.sql`SELECT session_id FROM session_keys WHERE harness = 'codex'`),
+    ]).toEqual([]);
+  });
+
   test('deleting a nested child hides the whole Session until surviving generations are rederived', async () => {
     await using h = await startHub();
     await nameSources(h);

@@ -9,6 +9,7 @@ import { pruneVitals, RAW_RETENTION_MS } from './retention.ts';
 import { refreshSessionInsight } from './stored-insight.ts';
 import { migratedDatabase, startTestServer, testDatabase } from './testing/postgres.ts';
 import { CWD, timeline } from './testing/timeline.ts';
+import { deleteTranscripts } from './transcripts.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(startTestServer, 60_000);
@@ -135,6 +136,44 @@ const burst = (agentId: string | null, start: number, end: number) => ({
   started_at: at(start),
 });
 
+// Every Session's key, in the order the keys were assigned.
+const keys = (sql: SQL): Promise<{ id: string; session_id: string }[]> => sql`
+  SELECT id, session_id FROM session_keys ORDER BY id
+`;
+
+// Each stored table holding rows of `session`, and whether every one of them
+// carries the Session's key.
+const keyedRows = (sql: SQL, session: string): Promise<{ keyed: boolean; table: string }[]> => sql`
+  SELECT x.table_name AS table, bool_and(x.session_key = k.id) AS keyed
+  FROM (
+    SELECT 'stored_session_stretches' AS table_name, session_id, session_key FROM stored_session_stretches
+    UNION ALL SELECT 'stored_session_spans', session_id, session_key FROM stored_session_spans
+    UNION ALL SELECT 'stored_session_totals', session_id, session_key FROM stored_session_totals
+    UNION ALL SELECT 'stored_session_model_totals', session_id, session_key FROM stored_session_model_totals
+    UNION ALL SELECT 'stored_session_role_totals', session_id, session_key FROM stored_session_role_totals
+    UNION ALL SELECT 'stored_session_request_intervals', session_id, session_key
+              FROM stored_session_request_intervals
+    UNION ALL SELECT 'stored_session_bursts', session_id, session_key FROM stored_session_bursts
+    UNION ALL SELECT 'stored_session_tool_totals', session_id, session_key FROM stored_session_tool_totals
+  ) x
+  LEFT JOIN session_keys k ON k.session_id = x.session_id
+  WHERE x.session_id = ${session}
+  GROUP BY x.table_name
+  ORDER BY x.table_name
+`;
+
+// What keyedRows gives for a Session with rows in every stored table.
+const EVERY_STORED_TABLE = [
+  'stored_session_bursts',
+  'stored_session_model_totals',
+  'stored_session_request_intervals',
+  'stored_session_role_totals',
+  'stored_session_spans',
+  'stored_session_stretches',
+  'stored_session_tool_totals',
+  'stored_session_totals',
+].map((table) => ({ keyed: true, table }));
+
 // A process that ran Session s1, and a second Session no process ran.
 const linkedSession = async (sql: SQL) => {
   await price(sql);
@@ -155,9 +194,9 @@ describe('refreshing', () => {
 
     await db.sql`
       INSERT INTO stored_session_stretches (harness, system, source, session_id, started_at,
-                                            ended_at, requests, link, candidates)
+                                            ended_at, requests, link, candidates, session_key)
       VALUES ('claude-code', 'laptop-1', 'claude-code', 's1', ${at(-120)}, ${at(-60)}, 1,
-              'unmatched', 0)
+              'unmatched', 0, session_key('claude-code', 'laptop-1', 'claude-code', 's1'))
     `;
     expect(await bounds()).toEqual([{ first_request_at: at(-120), last_request_at: at(120) }]);
     await db.sql`DELETE FROM stored_session_stretches WHERE session_id = 's1' AND started_at = ${at(-120)}`;
@@ -267,6 +306,158 @@ describe('refreshing', () => {
       burst(null, 3001, 3001),
       burst('a0', 314, 314),
       burst('a1', 88, 88),
+    ]);
+  });
+
+  test('a Session’s totals hold its subagent count and the bounds of their bursts and its tool calls, from the next refresh', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      subagents: [
+        { agentId: 'a1', requests: [100, 900] },
+        { agentId: 'a2', requests: [500] },
+      ],
+      toolCalls: [
+        { at: 50, name: 'Read' },
+        { at: 950, name: 'Edit' },
+      ],
+    });
+    await addSession(db.sql, { id: 's2', requests: [2000] });
+    const summary = async (session: string) => {
+      const [row]: Record<string, unknown>[] = await db.sql`
+        SELECT t.subagents, t.subagents_first_at, t.subagents_last_at, t.tools_first_at,
+               t.tools_last_at
+        FROM stored_session_totals t WHERE t.session_id = ${session}
+      `;
+      return row;
+    };
+    const first = {
+      subagents: 2,
+      subagents_first_at: at(100),
+      subagents_last_at: at(900),
+      tools_first_at: at(50),
+      tools_last_at: at(950),
+    };
+    expect(await summary('s1')).toEqual(first);
+    // A Session with no subagent or tool call has none to bound.
+    expect(await summary('s2')).toEqual({
+      subagents: 0,
+      subagents_first_at: null,
+      subagents_last_at: null,
+      tools_first_at: null,
+      tools_last_at: null,
+    });
+
+    // A later tool call waits for the refresh, which stores the totals again.
+    await db.sql`
+      INSERT INTO projected_tool_calls (harness, parser_version, system, source, session_id,
+                                        call_id, at, kind, name, generation, byte_offset)
+      SELECT harness, parser_version, system, source, session_id, 's1-call-late', ${at(1200)},
+             'tool', 'Grep', generation, 1
+      FROM projected_tool_calls WHERE call_id = 's1-call-0'
+    `;
+    await db.sql`UPDATE projected_sessions SET ended_at = ended_at WHERE session_id = 's1'`;
+    expect(await summary('s1')).toEqual(first);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await summary('s1')).toEqual({ ...first, tools_last_at: at(1200) });
+  });
+
+  test('a Session keeps its key through a refresh and a re-derivation, and every stored row carries it', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      subagents: [{ agentId: 'a1', requests: [100, 900] }],
+      toolCalls: [{ at: 50, name: 'Read' }],
+    });
+    await addSession(db.sql, { id: 's2', requests: [2000] });
+    const assigned = await keys(db.sql);
+    expect(assigned.map(({ session_id }) => session_id)).toEqual(['s1', 's2']);
+    expect(await keyedRows(db.sql, 's1')).toEqual(EVERY_STORED_TABLE);
+
+    await addRequest(db.sql, 's1', 's1-late', 1200);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await keys(db.sql)).toEqual(assigned);
+    expect(await keyedRows(db.sql, 's1')).toEqual(EVERY_STORED_TABLE);
+
+    // A re-derived Session loses its stored rows but not its key.
+    await db.sql`
+      INSERT INTO rederiving_sessions (harness, system, source, session_id)
+      VALUES ('claude-code', 'laptop-1', 'claude-code', 's1')
+    `;
+    expect(await keyedRows(db.sql, 's1')).toEqual([]);
+    expect(await keys(db.sql)).toEqual(assigned);
+    await db.sql`DELETE FROM rederiving_sessions`;
+    await refreshSessionInsight(db.sql);
+    expect(await keys(db.sql)).toEqual(assigned);
+    expect(await keyedRows(db.sql, 's1')).toEqual(EVERY_STORED_TABLE);
+  });
+
+  test('a transcript delete that leaves a Session no generation removes its key and stored rows, and a Session that keeps one keeps its key', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      toolCalls: [{ at: 50, name: 'Read' }],
+    });
+    await addSession(db.sql, { id: 's2', requests: [2000] });
+    // Each Session has the generation addSession stored for it; s1's is old.
+    await db.sql`
+      UPDATE transcript_generations SET last_upload_at = '2026-01-01' WHERE id = 1;
+      INSERT INTO parse_progress (harness, parser_version, generation, session_id, parsed_through, held_seen)
+      VALUES ('claude-code', 1, 1, 's1', 0, 0), ('claude-code', 1, 2, 's2', 0, 0)
+      ON CONFLICT DO NOTHING;
+    `.simple();
+    expect((await keys(db.sql)).map(({ session_id }) => session_id)).toEqual(['s1', 's2']);
+
+    await deleteTranscripts(db.sql, { before: Date.parse('2026-03-01T00:00:00Z'), now: T0 });
+    await refreshSessionInsight(db.sql);
+
+    expect((await keys(db.sql)).map(({ session_id }) => session_id)).toEqual(['s2']);
+    expect(await keyedRows(db.sql, 's1')).toEqual([]);
+    expect(await keyedRows(db.sql, 's2')).toEqual(
+      EVERY_STORED_TABLE.filter(({ table }) => table !== 'stored_session_tool_totals'),
+    );
+  });
+
+  test('the upgrade gives every stored Session a key, carried by each of its stored rows, and stores its subagent count and bounds', async () => {
+    await using db = await testDatabase();
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter(({ version }) => version < 59),
+    );
+    await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      subagents: [
+        { agentId: 'a1', requests: [100, 100] },
+        { agentId: 'a2', requests: [300, 800] },
+      ],
+      toolCalls: [{ at: 600, name: 'Read' }],
+    });
+    await addSession(db.sql, { id: 's2', requests: [2000] });
+    await migrate(db.sql);
+    expect((await keys(db.sql)).map(({ session_id }) => session_id)).toEqual(['s1', 's2']);
+    expect(await keyedRows(db.sql, 's1')).toEqual(EVERY_STORED_TABLE);
+    expect(await keyedRows(db.sql, 's2')).toEqual(
+      EVERY_STORED_TABLE.filter(({ table }) => table !== 'stored_session_tool_totals'),
+    );
+    expect(
+      await db.sql`
+        SELECT t.subagents, t.subagents_first_at, t.subagents_last_at, t.tools_first_at,
+               t.tools_last_at
+        FROM stored_session_totals t WHERE t.session_id = 's1'
+      `,
+    ).toEqual([
+      {
+        subagents: 2,
+        subagents_first_at: at(100),
+        subagents_last_at: at(800),
+        tools_first_at: at(600),
+        tools_last_at: at(600),
+      },
     ]);
   });
 

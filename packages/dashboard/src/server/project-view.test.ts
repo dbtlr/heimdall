@@ -945,68 +945,58 @@ test('a burst whose requests moved since the refresh draws no lane across the ed
   expect(view?.activeMs).toBe(0);
 });
 
-test('the 30-day read on two connections reads one snapshot when the second opens later', async () => {
+test('the 30-day read takes one connection, so it finishes while the pool lends no other', async () => {
   await using h = await startHub();
   await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
   await addSession(h.db.sql, {
     firstCwd: '/repos/notes-app',
-    id: 'snapshot',
+    id: 'one-connection',
     requests: [-3600],
     toolCalls: [{ at: -3600, name: 'Read' }],
   });
-  const pool = new SQL(h.db.url, {
-    connection: { application_name: 'project-snapshot-test' },
-    max: 3,
-  });
-  // One connection is busy elsewhere, and the read takes the last free one
-  // before it borrows its second.
+  const pool = new SQL(h.db.url, { max: 3 });
+  // Two of the pool's three connections are held elsewhere, so a read that
+  // borrowed a second would wait for one of them.
   const busy = await pool.reserve();
   const reserved = await pool.reserve();
   try {
-    const pending = Promise.allSettled([
+    const view = await Promise.race([
       readProjectView(pool, { name: 'notes-app', now: NOW, range: '30d', timeZone: 'UTC' }),
+      Bun.sleep(5000).then(() => 'waited' as const),
     ]);
-    // A read that borrows waits for the reserved connection, so it cannot
-    // settle before the release; one that reads on one connection can.
-    let settledBeforeRelease = false;
-    let waitedForRelease = false;
-    const watching = (async () => {
-      await pending;
-      settledBeforeRelease = true;
-    })();
-    let snapshotTaken = false;
-    try {
-      const deadline = performance.now() + 2000;
-      while (!snapshotTaken && performance.now() < deadline) {
-        // oxlint-disable-next-line no-await-in-loop -- wait for the first connection to take its snapshot.
-        const [row]: { taken: boolean }[] = await h.db.sql`
-          SELECT EXISTS (
-            SELECT 1 FROM pg_stat_activity
-            WHERE datname = current_database() AND application_name = 'project-snapshot-test'
-              AND backend_xmin IS NOT NULL
-          ) AS taken
-        `;
-        snapshotTaken = row?.taken ?? false;
-        // oxlint-disable-next-line no-await-in-loop -- bound how often the check runs.
-        await Bun.sleep(10);
-      }
-      // The tools are read on the second connection.
-      await h.db.sql`UPDATE stored_session_tool_totals SET calls = 9 WHERE session_id = 'snapshot'`;
-      await Bun.sleep(200);
-    } finally {
-      waitedForRelease = !settledBeforeRelease;
-      await reserved.release();
-    }
-    const [result] = await pending;
-    await watching;
-    expect(waitedForRelease).toBe(true);
-    expect(snapshotTaken).toBe(true);
-    if (result.status === 'rejected') {
-      throw result.reason;
-    }
-    expect(result.value?.tools.map(({ calls }) => calls)).toEqual([1]);
+    expect(view === 'waited' ? view : view?.tools.map(({ calls }) => calls)).toEqual([1]);
   } finally {
+    await reserved.release();
     await busy.release();
     await pool.close();
   }
+});
+
+test('a Session with stretches but no stored totals adds no branch and no tools, as the bursts give none', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const D = 86_400;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'main',
+    id: 'totaled',
+    requests: [-2 * D, -2 * D + 60],
+    toolCalls: [{ at: -2 * D, name: 'Totaled' }],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'untotaled-branch',
+    id: 'untotaled',
+    requests: [-4 * D, -4 * D + 60],
+    toolCalls: [{ at: -4 * D, name: 'Untotaled' }],
+  });
+  await h.db.sql`DELETE FROM stored_session_totals WHERE session_id = 'untotaled'`;
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.branches.map(({ name }) => name)).toEqual(['main']);
+  expect(view?.tools.map(({ name }) => name)).toEqual(['Totaled']);
 });

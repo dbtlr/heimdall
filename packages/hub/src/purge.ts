@@ -69,9 +69,8 @@ const TRANSCRIPTS = [
   'DELETE FROM projected_tool_calls WHERE system = $1',
   'DELETE FROM projected_sessions WHERE system = $1',
   'DELETE FROM rederiving_sessions WHERE system = $1',
-  'DELETE FROM stored_session_stretches WHERE system = $1',
-  'DELETE FROM stored_session_totals WHERE system = $1',
-  'DELETE FROM stored_session_model_totals WHERE system = $1',
+  // Every stored table of a Session references its key, so they go with it.
+  'DELETE FROM session_keys WHERE system = $1',
   'DELETE FROM transcript_chunks WHERE generation IN (SELECT id FROM transcript_generations WHERE system = $1)',
   'DELETE FROM transcript_generations WHERE system = $1',
   'DELETE FROM transcript_source_harnesses WHERE system = $1',
