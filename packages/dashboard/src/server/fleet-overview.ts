@@ -16,6 +16,7 @@ import type {
 } from './fleet-overview-types.ts';
 import { bySystem, conditionKind, field } from './hub-rows.ts';
 import { readSilencedUntil } from './silences.ts';
+import { readSnapshot } from './snapshot.ts';
 
 // What a glance request asks for: whether it wants the unpaired Systems too.
 export const parseGlanceInput = (input: unknown): { unpaired: boolean } => ({
@@ -356,10 +357,11 @@ export const readGlanceSnapshot = async (
 };
 
 // Each read sees one snapshot, so a System's status agrees with the attention
-// beside it, and current levels with their transitions.
+// beside it, and current levels with their transitions. It begins through
+// readSnapshot (snapshot.ts), with JIT off.
 export const inSnapshot =
   <I, O>(read: (sql: SQL, input: I) => Promise<O>) =>
   (sql: SQL, input: I) =>
-    sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => read(tx, input));
+    readSnapshot(sql, false, (tx) => read(tx, input));
 
 export const readFleetGlance = inSnapshot(readGlanceSnapshot);

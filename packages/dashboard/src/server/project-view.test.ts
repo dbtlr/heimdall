@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from 'bun:test';
 
 import { NOW, refreshSessionInsight, startHub, timeline } from '@heimdall/hub/testing';
+import { SQL } from 'bun';
 
 import { agentsPeriod } from './agents-overview.ts';
 import { readProjectView } from './project-view.ts';
@@ -379,6 +380,49 @@ test('tools with as many calls order by name in code unit order, whatever the da
   ]);
 });
 
+test("tool counts take a Session's stored counts, and its calls when a tool crosses the range's edge or it is stale", async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  const session = (id: string, requests: number[], toolCalls: { at: number; name: string }[]) =>
+    addSession(h.db.sql, { firstCwd: '/repos/notes-app', id, requests, toolCalls });
+  await session(
+    'inside',
+    [-3600, -1800],
+    [
+      { at: -3600, name: 'Read' },
+      { at: -1800, name: 'Read' },
+    ],
+  );
+  await session(
+    'crossing',
+    [-8 * 86_400, -600],
+    [
+      { at: -8 * 86_400, name: 'Edit' },
+      { at: -600, name: 'Edit' },
+    ],
+  );
+  await session('stale', [-1200], [{ at: -1200, name: 'Bash' }]);
+  // A stored count the read takes shows as altered here.
+  await h.db.sql`UPDATE stored_session_tool_totals SET calls = 9`;
+  await h.db.sql`
+    INSERT INTO stale_sessions (harness, system, source, session_id, stretches, totals)
+    SELECT harness, system, source, session_id, false, true FROM projected_sessions
+    WHERE session_id = 'stale'
+  `;
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.tools.map(({ calls, name }) => [name, calls])).toEqual([
+    ['Read', 9],
+    ['Bash', 1],
+    ['Edit', 1],
+  ]);
+  expect(view?.toolCount).toBe(3);
+});
+
 // Seconds from NOW, for fixtures placed relative to the start of a range.
 const secondsBeforeRange = (range: '7d' | 'today', seconds: number) =>
   (agentsPeriod({ now: NOW, range, timeZone: 'UTC' }).from.getTime() - NOW) / 1000 - seconds;
@@ -437,6 +481,39 @@ test('a subagent counts only with a request in the range, even in a Session that
   });
   expect(view?.overview.sessionCount).toBe(1);
   expect(view?.subagents).toBe(1);
+});
+
+test('requests around a period shorter than 5 minutes add only those inside it, for a lane, a subagent, and a Session', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Local midnight is NOW, so Today runs 2 minutes, to NOW + 120 seconds. The
+  // subagent's requests, 290 seconds apart, fall on either side of it, and so
+  // do the second Session's, 260 seconds apart.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'inside',
+    id: 'midnight',
+    requests: [-60, 60],
+    subagents: [{ agentId: 'around', requests: [-40, 250] }],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'around',
+    id: 'around',
+    requests: [-60, 200],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 120_000,
+    range: 'today',
+    timeZone: 'Etc/GMT-12',
+  });
+  expect(view?.lanes.map(({ start, end }) => [start - NOW, end - NOW])).toEqual([
+    [60_000, 120_000],
+  ]);
+  expect(view?.activeMs).toBe(60_000);
+  expect(view?.subagents).toBe(0);
+  expect(view?.branches).toEqual([{ name: 'inside', sessions: 1 }]);
 });
 
 test("process CPU is each process's own span over the buckets that overlap the range, summed", async () => {
@@ -640,4 +717,296 @@ test("the project's cost by role covers exactly its Sessions in the page's perio
     { seat: 'verifier', ...dollars(1) },
   ]);
   expect(view?.overview.totals).toEqual(dollars(7));
+});
+
+// A lane as seconds from NOW: its Session, start, and end.
+const laneSeconds = (lanes: { end: number; sessionId: string; start: number }[] = []) =>
+  lanes.map(({ end, sessionId, start }) => [sessionId, (start - NOW) / 1000, (end - NOW) / 1000]);
+
+test('a request exactly at either edge of the range counts, for a lane, a subagent, and a Session', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Seven days to NOW + 1000 seconds: the range runs from F + 1000 to 1000.
+  const F = -7 * 86_400;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'endsAtFrom',
+    id: 'e',
+    requests: [F + 900, F + 1000],
+    subagents: [{ agentId: 'x', requests: [F + 1000] }],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'crossesFrom',
+    id: 'c',
+    requests: [F + 900, F + 1000, F + 1100],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'startsAtTo',
+    id: 't',
+    requests: [1000],
+    subagents: [{ agentId: 'y', requests: [1000] }],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'crossesTo',
+    id: 'u',
+    requests: [900, 1000, 1100],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 1_000_000,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(laneSeconds(view?.lanes)).toEqual([
+    ['c', F + 1000, F + 1400],
+    ['e', F + 1000, F + 1300],
+    ['u', 900, 1000],
+    ['t', 1000, 1000],
+  ]);
+  expect(view?.activeMs).toBe(500_000);
+  expect(view?.subagents).toBe(2);
+  expect(view?.branches.map((branch) => branch.name).toSorted()).toEqual([
+    'crossesFrom',
+    'crossesTo',
+    'endsAtFrom',
+    'startsAtTo',
+  ]);
+});
+
+test('a burst reaching past the range draws its lane from its first request inside to the range end', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Seven days to NOW + 1000 seconds: the range ends at 1000.
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'p', requests: [940, 1120] });
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'q', requests: [1000, 1100] });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 1_000_000,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(laneSeconds(view?.lanes)).toEqual([
+    ['p', 940, 1000],
+    ['q', 1000, 1000],
+  ]);
+});
+
+test('requests exactly at the edges of a period shorter than 5 minutes count, for a Session and a subagent', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Local midnight is NOW, so Today runs 2 minutes, from NOW to NOW + 120
+  // seconds. Each burst crosses both edges with one request exactly on an edge.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'atFrom',
+    id: 'f',
+    requests: [-60, 0, 200],
+    subagents: [{ agentId: 'sf', requests: [-60, 0, 200] }],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    gitBranch: 'atTo',
+    id: 't',
+    requests: [-60, 120, 300],
+    subagents: [{ agentId: 'st', requests: [-60, 120, 300] }],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 120_000,
+    range: 'today',
+    timeZone: 'Etc/GMT-12',
+  });
+  expect(view?.branches.map((branch) => branch.name).toSorted()).toEqual(['atFrom', 'atTo']);
+  expect(view?.subagents).toBe(2);
+});
+
+test('a tool call exactly at either edge of the range counts, stored or read live', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Seven days to NOW + 1000 seconds: the range runs from F + 1000 to 1000.
+  const F = -7 * 86_400;
+  // Each Session's one tool crosses an edge, its call on the edge, so the
+  // Session's calls are counted live.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'crossesFrom',
+    requests: [F + 900, F + 1000],
+    toolCalls: [
+      { at: F + 900, name: 'Edit' },
+      { at: F + 1000, name: 'Edit' },
+    ],
+  });
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'crossesTo',
+    requests: [1000, 1100],
+    toolCalls: [
+      { at: 1000, name: 'Bash' },
+      { at: 1100, name: 'Bash' },
+    ],
+  });
+  // No tool crosses an edge, so the stored counts serve.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'inside',
+    requests: [F + 1000, 500, 1000],
+    toolCalls: [
+      { at: F + 1000, name: 'Read' },
+      { at: 500, name: 'Read' },
+      { at: 500, name: 'Grep' },
+      { at: 1000, name: 'Grep' },
+    ],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 1_000_000,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.tools.map(({ calls, name }) => [name, calls])).toEqual([
+    ['Grep', 2],
+    ['Read', 2],
+    ['Bash', 1],
+    ['Edit', 1],
+  ]);
+});
+
+test('tool counts read live while a stale range covers the System', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'ranged',
+    requests: [-1200],
+    toolCalls: [{ at: -1200, name: 'Read' }],
+  });
+  // A stored count the read takes shows as altered here.
+  await h.db.sql`UPDATE stored_session_tool_totals SET calls = 9`;
+  await h.db.sql`
+    INSERT INTO stale_ranges (system, harness, stretches, totals) VALUES ('laptop-1', NULL, false, true)
+  `;
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.tools.map(({ calls, name }) => [name, calls])).toEqual([['Read', 1]]);
+});
+
+test('a subagent whose requests fall before, inside, and after a period shorter than 5 minutes counts', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Local midnight is NOW, so Today runs 2 minutes, to NOW + 120 seconds.
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'm',
+    requests: [-60, 60, 200],
+    subagents: [{ agentId: 's', requests: [-60, 60, 200] }],
+  });
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 120_000,
+    range: 'today',
+    timeZone: 'Etc/GMT-12',
+  });
+  expect(laneSeconds(view?.lanes)).toEqual([['m', 60, 120]]);
+  expect(view?.activeMs).toBe(60_000);
+  expect(view?.subagents).toBe(1);
+});
+
+test('a burst whose requests moved since the refresh draws no lane across the edge it crosses', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  // Seven days to NOW + 1000 seconds: the range runs from F + 1000 to 1000.
+  const F = -7 * 86_400;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'early',
+    requests: [F + 900, F + 1010],
+  });
+  await addSession(h.db.sql, { firstCwd: '/repos/notes-app', id: 'late', requests: [990, 1100] });
+  // Each burst's only request inside the range moves elsewhere inside it, and
+  // the Sessions wait for their next refresh.
+  await h.db.sql`UPDATE projected_requests SET at = ${new Date(NOW + (F + 3000) * 1000)}
+    WHERE request_id = 'early-1'`;
+  await h.db.sql`UPDATE projected_requests SET at = ${new Date(NOW + 500_000)}
+    WHERE request_id = 'late-0'`;
+  const view = await readProjectView(h.db.sql, {
+    name: 'notes-app',
+    now: NOW + 1_000_000,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+  expect(view?.lanes).toEqual([]);
+  expect(view?.activeMs).toBe(0);
+});
+
+test('the 30-day read on two connections reads one snapshot when the second opens later', async () => {
+  await using h = await startHub();
+  await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+  await addSession(h.db.sql, {
+    firstCwd: '/repos/notes-app',
+    id: 'snapshot',
+    requests: [-3600],
+    toolCalls: [{ at: -3600, name: 'Read' }],
+  });
+  const pool = new SQL(h.db.url, {
+    connection: { application_name: 'project-snapshot-test' },
+    max: 3,
+  });
+  // One connection is busy elsewhere, and the read takes the last free one
+  // before it borrows its second.
+  const busy = await pool.reserve();
+  const reserved = await pool.reserve();
+  try {
+    const pending = Promise.allSettled([
+      readProjectView(pool, { name: 'notes-app', now: NOW, range: '30d', timeZone: 'UTC' }),
+    ]);
+    // A read that borrows waits for the reserved connection, so it cannot
+    // settle before the release; one that reads on one connection can.
+    let settledBeforeRelease = false;
+    let waitedForRelease = false;
+    const watching = (async () => {
+      await pending;
+      settledBeforeRelease = true;
+    })();
+    let snapshotTaken = false;
+    try {
+      const deadline = performance.now() + 2000;
+      while (!snapshotTaken && performance.now() < deadline) {
+        // oxlint-disable-next-line no-await-in-loop -- wait for the first connection to take its snapshot.
+        const [row]: { taken: boolean }[] = await h.db.sql`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'project-snapshot-test'
+              AND backend_xmin IS NOT NULL
+          ) AS taken
+        `;
+        snapshotTaken = row?.taken ?? false;
+        // oxlint-disable-next-line no-await-in-loop -- bound how often the check runs.
+        await Bun.sleep(10);
+      }
+      // The tools are read on the second connection.
+      await h.db.sql`UPDATE stored_session_tool_totals SET calls = 9 WHERE session_id = 'snapshot'`;
+      await Bun.sleep(200);
+    } finally {
+      waitedForRelease = !settledBeforeRelease;
+      await reserved.release();
+    }
+    const [result] = await pending;
+    await watching;
+    expect(waitedForRelease).toBe(true);
+    expect(snapshotTaken).toBe(true);
+    if (result.status === 'rejected') {
+      throw result.reason;
+    }
+    expect(result.value?.tools.map(({ calls }) => calls)).toEqual([1]);
+  } finally {
+    await busy.release();
+    await pool.close();
+  }
 });

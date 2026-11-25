@@ -91,6 +91,19 @@ const addRequest = (sql: SQL, session: string, requestId: string, seconds: numbe
   FROM projected_requests WHERE request_id = 's1-0'
 `;
 
+// Session s1's stored bursts, the main conversation's first.
+const bursts = (sql: SQL) => sql`
+  SELECT agent_id, started_at, ended_at FROM insight.session_bursts
+  WHERE session_id = 's1' ORDER BY agent_id NULLS FIRST, started_at
+`;
+
+// One of a Session's stored bursts, a subagent's when it names one.
+const burst = (agentId: string | null, start: number, end: number) => ({
+  agent_id: agentId,
+  ended_at: at(end),
+  started_at: at(start),
+});
+
 // A process that ran Session s1, and a second Session no process ran.
 const linkedSession = async (sql: SQL) => {
   await price(sql);
@@ -120,7 +133,170 @@ describe('refreshing', () => {
     expect(await bounds()).toEqual([{ first_request_at: at(60), last_request_at: at(120) }]);
   });
 
-  test('window model totals clip stored buckets and use current prices before the next refresh', async () => {
+  test('a Session’s stored bursts join requests at most 5 minutes apart, for it and each subagent, from the next refresh', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 200, 600, 1000],
+      subagents: [{ agentId: 'a1', requests: [100, 900] }],
+    });
+    // 600 follows 200 by more than 5 minutes; 900 follows 600 by exactly 5.
+    const before = [
+      burst(null, 0, 200),
+      burst(null, 600, 1000),
+      burst('a1', 100, 100),
+      burst('a1', 900, 900),
+    ];
+    expect(await bursts(db.sql)).toEqual(before);
+
+    await addRequest(db.sql, 's1', 's1-late', 400);
+    expect(await bursts(db.sql)).toEqual(before);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await bursts(db.sql)).toEqual([
+      burst(null, 0, 1000),
+      burst('a1', 100, 100),
+      burst('a1', 900, 900),
+    ]);
+  });
+
+  test('a conversation the Hub holds no subagent for has no bursts of its own, while its requests join the Session’s', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0],
+      subagents: [{ agentId: 'a1', requests: [100] }],
+    });
+    await db.sql`
+      INSERT INTO projected_requests (
+        harness, parser_version, system, source, session_id, agent_id, request_id, at, model,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, generation, byte_offset
+      )
+      SELECT harness, parser_version, system, source, session_id, 'unheld', 's1-unheld', ${at(200)},
+             model, 1, 1, 0, 0, generation, 0
+      FROM projected_requests WHERE request_id = 's1-0'
+    `;
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await bursts(db.sql)).toEqual([burst(null, 0, 200), burst('a1', 100, 100)]);
+
+    // Removing a subagent marks its Session stale, and the refresh drops its bursts.
+    await db.sql`DELETE FROM projected_subagents WHERE agent_id = 'a1'`;
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await bursts(db.sql)).toEqual([burst(null, 0, 200)]);
+  });
+
+  test('requests that share a time at the start of a burst share it', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [100, 100, 200],
+      subagents: [{ agentId: 'a1', requests: [100, 100, 150] }],
+    });
+    expect(await stale(db.sql)).toEqual([]);
+    expect(await bursts(db.sql)).toEqual([burst(null, 100, 200), burst('a1', 100, 150)]);
+  });
+
+  test('requests that share a time inside a Session share a burst, more than 5 minutes after the one before', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      subagents: [{ agentId: 'a1', requests: [10, 20, 1000, 1000, 1000, 1100] }],
+    });
+    expect(await stale(db.sql)).toEqual([]);
+    expect(await bursts(db.sql)).toEqual([
+      burst(null, 0, 20),
+      burst(null, 1000, 1100),
+      burst('a1', 10, 20),
+      burst('a1', 1000, 1100),
+    ]);
+  });
+
+  test('the upgrade stores the bursts of a Session whose requests share a time', async () => {
+    await using db = await testDatabase();
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter(({ version }) => version < 56),
+    );
+    await db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
+    // a1's first two requests tie, inside the main conversation's first burst.
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 900, 1201, 1501, 2101, 3001],
+      subagents: [
+        { agentId: 'a0', requests: [314] },
+        { agentId: 'a1', requests: [88, 88] },
+      ],
+    });
+    await migrate(db.sql);
+    expect(await bursts(db.sql)).toEqual([
+      burst(null, 0, 314),
+      burst(null, 900, 900),
+      burst(null, 1201, 1501),
+      burst(null, 2101, 2101),
+      burst(null, 3001, 3001),
+      burst('a0', 314, 314),
+      burst('a1', 88, 88),
+    ]);
+  });
+
+  test('window tool totals read stored counts, and calls when a tool crosses the window or the Session is stale', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 1000],
+      toolCalls: [
+        { at: 0, name: 'Read' },
+        { at: 500, name: 'Read' },
+        { at: 500, name: 'Edit' },
+        { at: 1000, name: 'Bash' },
+      ],
+    });
+    const window = (from: number, to: number) => db.sql`
+      SELECT name, calls::int FROM session_window_tool_totals(
+        'claude-code', 'laptop-1', 'claude-code', 's1', ${at(from)}, ${at(to)})
+      ORDER BY name
+    `;
+    // A stored count the window reads shows as altered here.
+    await db.sql`UPDATE stored_session_tool_totals SET calls = 9 WHERE name = 'Edit'`;
+    expect(await window(0, 1000)).toEqual([
+      { calls: 1, name: 'Bash' },
+      { calls: 9, name: 'Edit' },
+      { calls: 2, name: 'Read' },
+    ]);
+    expect(await window(600, 1000)).toEqual([{ calls: 1, name: 'Bash' }]);
+    // Read's calls cross the window's start, so the Session's calls are read.
+    expect(await window(100, 1000)).toEqual([
+      { calls: 1, name: 'Bash' },
+      { calls: 1, name: 'Edit' },
+      { calls: 1, name: 'Read' },
+    ]);
+
+    // A new call arrives with its Session's row, which marks it stale.
+    await db.sql`
+      INSERT INTO projected_tool_calls (harness, parser_version, system, source, session_id,
+                                        call_id, at, kind, name, generation, byte_offset)
+      SELECT harness, parser_version, system, source, session_id, 's1-call-late', ${at(700)},
+             'tool', 'Grep', generation, 1
+      FROM projected_tool_calls WHERE call_id = 's1-call-0'
+    `;
+    await db.sql`UPDATE projected_sessions SET ended_at = ended_at WHERE session_id = 's1'`;
+    const live = [
+      { calls: 1, name: 'Bash' },
+      { calls: 1, name: 'Edit' },
+      { calls: 1, name: 'Grep' },
+      { calls: 2, name: 'Read' },
+    ];
+    expect(await window(0, 1000)).toEqual(live);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    await db.sql`UPDATE stored_session_tool_totals SET calls = 9 WHERE name = 'Grep'`;
+    expect(await window(0, 1000)).toEqual([
+      ...live.slice(0, 2),
+      { calls: 9, name: 'Grep' },
+      live[3],
+    ]);
+  });
+
+  test('window model totals clip stored intervals and use current prices before the next refresh', async () => {
     await using db = await testDatabase();
     await migrate(
       db.sql,
@@ -142,23 +318,47 @@ describe('refreshing', () => {
       FROM session_window_model_totals('claude-code', 'server-1', 'claude-code', 's1', ${at(160)}, ${at(970)})
       ORDER BY model
     `;
-    const buckets = () => db.sql`
+    const intervals = () => db.sql`
       SELECT sum(priced_cost_usd)::float8 AS cost
-      FROM stored_session_request_buckets WHERE session_id = 's1'
+      FROM stored_session_request_intervals WHERE session_id = 's1'
     `;
     const priced = { model: 'priced-model', priced_cost_usd: 4, requests: 4, unpriced_requests: 0 };
     const unpriced = { model: 'unknown', priced_cost_usd: null, requests: 1, unpriced_requests: 1 };
     const repriced = [{ ...priced, priced_cost_usd: 8 }, unpriced];
 
-    expect(await buckets()).toEqual([{ cost: 6 }]);
+    expect(await intervals()).toEqual([{ cost: 6 }]);
     expect(await window()).toEqual([priced, unpriced]);
     await price(db.sql, 2);
     expect(await window()).toEqual(repriced);
     expect(await stale(db.sql)).toEqual(['s1 totals']);
     expect(await window()).toEqual(repriced);
     expect(await refreshSessionInsight(db.sql)).toBe(1);
-    expect(await buckets()).toEqual([{ cost: 12 }]);
+    expect(await intervals()).toEqual([{ cost: 12 }]);
     expect(await window()).toEqual(repriced);
+  });
+
+  test('window model and tool totals count every request and call of a Session whose stored totals are gone without a stale mark', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [0, 400, 700, 1000],
+      toolCalls: [{ at: 400, name: 'Read' }],
+    });
+    await db.sql`DELETE FROM stored_session_totals WHERE session_id = 's1'`;
+    expect(await stale(db.sql)).toEqual([]);
+
+    expect(
+      await db.sql`
+        SELECT requests::int FROM session_window_model_totals(
+          'claude-code', 'laptop-1', 'claude-code', 's1', ${at(-600)}, ${at(1600)})
+      `,
+    ).toEqual([{ requests: 4 }]);
+    expect(
+      await db.sql`
+        SELECT name, calls::int FROM session_window_tool_totals(
+          'claude-code', 'laptop-1', 'claude-code', 's1', ${at(-600)}, ${at(1600)})
+      `,
+    ).toEqual([{ calls: 1, name: 'Read' }]);
   });
 
   test('the views read a Session as it was at the last refresh, and as computed after the next', async () => {
