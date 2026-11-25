@@ -24,44 +24,13 @@ type SplitRow = {
 
 // The period's cost by role class and seat, in one statement however many
 // Sessions there are. As for the Session totals, a Session wholly inside the
-// period takes its stored split (ADR-0016); one crossing the period's edge has
-// its requests inside the period grouped by conversation and each group put in
-// its conversation's class, which the Hub defines in insight.conversation_roles
-// (ADR-0025), so this read holds no copy of that rule.
+// period takes its stored split (ADR-0016); one crossing the period's edge
+// takes its split over the period, which reuses the stored intervals inside
+// it and puts each other request in its conversation's class, as the Hub
+// defines it in insight.conversation_roles (ADR-0025), so this read holds no
+// copy of that rule.
 const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise<SplitRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })}),
-  -- Each crossing Session's conversations, read once per Session by its key.
-  -- OFFSET 0 keeps the read per Session rather than over every Session's.
-  crossing_roles AS MATERIALIZED (
-    SELECT a.harness, a.system, a.source, a.session_id, a.agent_id, a.role_class, a.seat
-    FROM spans k
-    CROSS JOIN LATERAL (
-      SELECT * FROM insight.conversation_roles a
-      WHERE (a.harness, a.system, a.source, a.session_id)
-          = (k.harness, k.system, k.source, k.session_id)
-      OFFSET 0
-    ) a
-    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
-  ),
-  -- Each crossing Session's requests inside the period, by conversation.
-  -- MATERIALIZED, so the pricing lateral runs once per Session: inlined, the
-  -- planner can drive it from crossing_roles below and run it once per
-  -- conversation.
-  crossing_groups AS MATERIALIZED (
-    SELECT k.harness, k.system, k.source, k.session_id, g.agent_id, g.requests,
-           g.priced_cost_usd, g.unpriced_requests
-    FROM spans k
-    CROSS JOIN LATERAL (
-      SELECT r.agent_id, count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
-             count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests
-      FROM insight.requests r
-      WHERE (r.harness, r.system, r.source, r.session_id)
-          = (k.harness, k.system, k.source, k.session_id)
-        AND r.at >= ${from} AND r.at <= ${to}
-      GROUP BY r.agent_id
-    ) g
-    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
-  )
+  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })})
   SELECT t.role_class, t.seat,
          sum(t.requests)::float8 AS requests,
          coalesce(sum(t.priced_cost_usd), 0)::float8 AS priced_cost_usd,
@@ -74,15 +43,11 @@ const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise
     JOIN insight.sessions s USING (harness, system, source, session_id)
     WHERE k.first_request_at >= ${from} AND k.last_request_at <= ${to}
     UNION ALL
-    -- Joined to the conversations outside any per-Session read. The main
-    -- conversation has no agent id, so the join compares it as a flag.
-    SELECT a.role_class, a.seat, g.requests, g.priced_cost_usd, g.unpriced_requests
-    FROM crossing_groups g
-    JOIN crossing_roles a
-      ON (a.harness, a.system, a.source, a.session_id)
-       = (g.harness, g.system, g.source, g.session_id)
-     AND (a.agent_id IS NULL) = (g.agent_id IS NULL)
-     AND coalesce(a.agent_id, '') = coalesce(g.agent_id, '')
+    SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
+    FROM spans k
+    CROSS JOIN LATERAL session_window_role_totals(k.harness, k.system, k.source, k.session_id,
+      ${from}, ${to}::timestamptz + interval '1 microsecond') x
+    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
   ) t
   GROUP BY t.role_class, t.seat
 `;

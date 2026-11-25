@@ -16,9 +16,12 @@ type DayRow = {
 
 // Each of `days`' cost at list prices, and what it had spent by its cutoff,
 // in one statement however many Sessions there are. As on the Agents page
-// (ADR-0016), a Session within one day, wholly before or wholly after its
-// cutoff, takes its stored total. A Session crossing a midnight or a cutoff
-// reads two windows so each can reuse stored intervals within its bounds.
+// (ADR-0016), a Session within one day takes its stored total, and one
+// crossing a midnight reads the day's window, which a midnight bounds on an
+// interval's edge. What it had spent by the cutoff is that cost when its
+// requests that day end by then, none when they start after it, and else
+// the window up to the cutoff, so only a Session crossing the cutoff prices
+// the requests in the one interval the cutoff cuts.
 // A Session whose first request is at the last day's end joins no day.
 export const readDayCosts = async (
   sql: SQL,
@@ -42,30 +45,30 @@ export const readDayCosts = async (
     ),
     spans AS MATERIALIZED (${sessionSpans(sql, { from, to })}),
     costs AS (
-      SELECT w.i, t.requests, t.priced_cost_usd, t.unpriced_requests, t.by_now_usd
+      SELECT w.i, t.requests, t.priced_cost_usd, t.unpriced_requests,
+             CASE WHEN k.last_request_at <= w.cutoff_at THEN t.priced_cost_usd ELSE b.by_now_usd END
+               AS by_now_usd
       FROM windows w
       JOIN spans k ON k.last_request_at >= w.start_at AND k.first_request_at < w.end_at
       CROSS JOIN LATERAL (
-        SELECT x.requests, x.priced_cost_usd, x.unpriced_requests,
-               CASE WHEN k.last_request_at <= w.cutoff_at THEN x.priced_cost_usd END AS by_now_usd
+        SELECT x.requests, x.priced_cost_usd, x.unpriced_requests
         FROM insight.session_totals x
         WHERE (x.harness, x.system, x.source, x.session_id)
             = (k.harness, k.system, k.source, k.session_id)
           AND k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
-          AND (k.last_request_at <= w.cutoff_at OR k.first_request_at > w.cutoff_at)
         UNION ALL
-        SELECT sum(r.requests)::bigint, sum(r.priced_cost_usd), sum(r.unpriced_requests)::bigint,
-               sum(r.priced_cost_usd) FILTER (WHERE d.by_now)
-        FROM (VALUES
-          (w.start_at, least(w.end_at, w.cutoff_at + interval '1 microsecond'), true),
-          (greatest(w.start_at, w.cutoff_at + interval '1 microsecond'), w.end_at, false)
-        ) d(since, until, by_now)
-        CROSS JOIN LATERAL session_window_model_totals(k.harness, k.system, k.source, k.session_id,
-          d.since, d.until) r
-        WHERE NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
-                   AND (k.last_request_at <= w.cutoff_at OR k.first_request_at > w.cutoff_at))
+        SELECT sum(r.requests)::bigint, sum(r.priced_cost_usd), sum(r.unpriced_requests)::bigint
+        FROM session_window_model_totals(k.harness, k.system, k.source, k.session_id,
+          w.start_at, w.end_at) r
+        WHERE NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at)
         HAVING count(*) > 0
       ) t
+      LEFT JOIN LATERAL (
+        SELECT sum(r.priced_cost_usd) AS by_now_usd
+        FROM session_window_model_totals(k.harness, k.system, k.source, k.session_id,
+          w.start_at, least(w.end_at, w.cutoff_at + interval '1 microsecond')) r
+        WHERE k.first_request_at <= w.cutoff_at AND k.last_request_at > w.cutoff_at
+      ) b ON true
     )
     SELECT coalesce(sum(c.requests), 0)::float8 AS requests,
            coalesce(sum(c.priced_cost_usd), 0)::float8 AS priced_cost_usd,

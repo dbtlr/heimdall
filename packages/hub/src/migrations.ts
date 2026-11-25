@@ -3767,6 +3767,210 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 57,
   },
+  {
+    // Each stored five-minute interval of a model also holds its split by
+    // the class and seat of the conversation that made its requests, as
+    // insight.conversation_roles defines it (ADR-0025), so a read of a
+    // Session's split by role over part of it, such as the Agents page's
+    // split for a Session crossing the period's start, reuses stored prices as
+    // the model totals over a window do. The split is a list on the model's
+    // row rather than rows of its own, so a read by model reads as many rows
+    // as before. Requests of a conversation with no class are in no entry, as
+    // the stored split leaves them out. The refresh replaces the intervals
+    // with the other totals, as before. The fill reads the whole archive, so
+    // it may outlast the connection's timeout.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      TRUNCATE stored_session_request_intervals;
+      -- Each entry: role_class, seat, requests, priced_cost_usd, unpriced_requests.
+      ALTER TABLE stored_session_request_intervals
+        ADD COLUMN roles jsonb NOT NULL DEFAULT '[]';
+
+      -- A conversation's role joins by a key PostgreSQL can hash (a null agent
+      -- id is one key), and the function sets enable_nestloop off: it
+      -- estimates each side at one row and would plan a nested loop, quadratic
+      -- in a Session's subagents.
+      DROP FUNCTION computed_session_request_intervals(text, text, text, text);
+      CREATE FUNCTION computed_session_request_intervals(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (interval_at timestamptz, model text, requests bigint, priced_cost_usd numeric,
+                       unpriced_requests bigint, last_request_at timestamptz, roles jsonb)
+      LANGUAGE sql STABLE SET jit = off SET enable_nestloop = off AS $$
+        WITH conversation_intervals AS (
+          SELECT date_bin('5 minutes', r.at, timestamptz 'epoch') AS interval_at, r.model, r.agent_id,
+                 count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
+                 count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests,
+                 max(r.at) AS last_request_at
+          FROM insight.requests r
+          WHERE (r.harness, r.system, r.source, r.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+          GROUP BY 1, r.model, r.agent_id
+        ), roles AS MATERIALIZED (
+          SELECT c.agent_id, c.role_class, c.seat
+          FROM insight.conversation_roles c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+        ), classed AS (
+          SELECT t.interval_at, t.model, a.role_class, a.seat, sum(t.requests)::bigint AS requests,
+                 sum(t.priced_cost_usd) AS priced_cost_usd,
+                 sum(t.unpriced_requests)::bigint AS unpriced_requests,
+                 max(t.last_request_at) AS last_request_at
+          FROM conversation_intervals t
+          LEFT JOIN roles a ON (a.agent_id IS NULL) = (t.agent_id IS NULL)
+            AND coalesce(a.agent_id, '') = coalesce(t.agent_id, '')
+          GROUP BY t.interval_at, t.model, a.role_class, a.seat
+        )
+        SELECT c.interval_at, c.model, sum(c.requests)::bigint, sum(c.priced_cost_usd),
+               sum(c.unpriced_requests)::bigint, max(c.last_request_at),
+               coalesce(jsonb_agg(jsonb_build_object(
+                 'role_class', c.role_class, 'seat', c.seat, 'requests', c.requests,
+                 'priced_cost_usd', c.priced_cost_usd, 'unpriced_requests', c.unpriced_requests
+               ) ORDER BY c.role_class, c.seat) FILTER (WHERE c.role_class IS NOT NULL), '[]')
+        FROM classed c
+        GROUP BY c.interval_at, c.model
+      $$;
+
+      -- A Session's requests from window_from, inclusive, to window_to,
+      -- exclusive, by the class and seat of their conversation, read as
+      -- session_window_model_totals reads them by model: the stored intervals
+      -- wholly inside the window while session_totals_current holds, and the
+      -- requests in the rest priced and put in their conversation's class.
+      CREATE FUNCTION session_window_role_totals(
+        key_harness text, key_system text, key_source text, key_session_id text,
+        window_from timestamptz, window_to timestamptz
+      ) RETURNS TABLE (role_class text, seat text, requests bigint, priced_cost_usd numeric,
+                       unpriced_requests bigint)
+      LANGUAGE sql STABLE ROWS 3 SET enable_nestloop = off AS $$
+        WITH aligned AS (
+          SELECT date_bin('5 minutes', window_from, timestamptz 'epoch') AS start_bin,
+                 date_bin('5 minutes', window_to, timestamptz 'epoch') AS full_to
+        ), bounds AS (
+          SELECT CASE WHEN start_bin < window_from THEN start_bin + interval '5 minutes'
+                      ELSE start_bin END AS full_from, full_to
+          FROM aligned
+        ), covered AS MATERIALIZED (
+          SELECT full_from, full_to,
+                 full_from < full_to
+                   AND session_totals_current(key_harness, key_system, key_source, key_session_id)
+                   AS use_stored
+          FROM bounds
+        ), live_windows AS (
+          SELECT window_from AS since, CASE WHEN use_stored THEN full_from ELSE window_to END AS until
+          FROM covered
+          UNION ALL
+          SELECT full_to, window_to FROM covered WHERE use_stored
+        ), live_groups AS MATERIALIZED (
+          -- Read per window, so only the requests inside it are priced.
+          SELECT g.agent_id, sum(g.requests) AS requests, sum(g.priced_cost_usd) AS priced_cost_usd,
+                 sum(g.unpriced_requests) AS unpriced_requests
+          FROM live_windows w
+          CROSS JOIN LATERAL (
+            SELECT r.agent_id, count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
+                   count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests
+            FROM insight.requests r
+            WHERE (r.harness, r.system, r.source, r.session_id)
+                = (key_harness, key_system, key_source, key_session_id)
+              AND r.at >= w.since AND r.at < w.until
+            GROUP BY r.agent_id
+          ) g
+          WHERE w.since < w.until
+          GROUP BY g.agent_id
+        ), roles AS MATERIALIZED (
+          SELECT c.agent_id, c.role_class, c.seat
+          FROM insight.conversation_roles c
+          WHERE EXISTS (SELECT 1 FROM live_groups)
+            AND (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+        ), costs AS (
+          SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
+          FROM covered c
+          JOIN stored_session_request_intervals b ON b.interval_at >= c.full_from AND b.interval_at < c.full_to
+          CROSS JOIN LATERAL jsonb_to_recordset(b.roles)
+            AS x (role_class text, seat text, requests bigint, priced_cost_usd numeric,
+                  unpriced_requests bigint)
+          WHERE c.use_stored AND (b.harness, b.system, b.source, b.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+          UNION ALL
+          SELECT a.role_class, a.seat, g.requests, g.priced_cost_usd, g.unpriced_requests
+          FROM live_groups g
+          JOIN roles a ON (a.agent_id IS NULL) = (g.agent_id IS NULL)
+           AND coalesce(a.agent_id, '') = coalesce(g.agent_id, '')
+        )
+        SELECT c.role_class, c.seat, sum(c.requests)::bigint, sum(c.priced_cost_usd),
+               sum(c.unpriced_requests)::bigint
+        FROM costs c GROUP BY c.role_class, c.seat
+      $$;
+
+      -- A Session's requests in each window between consecutive edges, which
+      -- ascend: window i from edges[i], inclusive, to edges[i + 1], exclusive,
+      -- by model, as session_window_model_totals reads one window, so a chart
+      -- reads a Session crossing its bars' edges once. While
+      -- session_totals_current holds, the stored intervals serve except each
+      -- one an edge off a five-minute boundary cuts, whose requests are
+      -- priced; otherwise every request between the first and last edge is.
+      CREATE FUNCTION session_windows_model_totals(
+        key_harness text, key_system text, key_source text, key_session_id text,
+        edges timestamptz[]
+      ) RETURNS TABLE (window_index integer, model text, requests bigint, priced_cost_usd numeric,
+                       unpriced_requests bigint)
+      LANGUAGE sql STABLE ROWS 8 AS $$
+        WITH bounds AS MATERIALIZED (
+          SELECT edges[1] AS first_edge, edges[cardinality(edges)] AS last_edge,
+                 session_totals_current(key_harness, key_system, key_source, key_session_id)
+                   AS use_stored
+        ), cut AS MATERIALIZED (
+          SELECT DISTINCT date_bin('5 minutes', e, timestamptz 'epoch') AS interval_at
+          FROM unnest(edges) e
+          WHERE date_bin('5 minutes', e, timestamptz 'epoch') <> e
+        ), live_windows AS (
+          SELECT greatest(c.interval_at, b.first_edge) AS since,
+                 least(c.interval_at + interval '5 minutes', b.last_edge) AS until
+          FROM cut c, bounds b
+          WHERE b.use_stored
+          UNION ALL
+          SELECT first_edge, last_edge FROM bounds WHERE NOT use_stored
+        ), costs AS (
+          SELECT width_bucket(s.interval_at, edges) AS window_index, s.model,
+                 sum(s.requests) AS requests, sum(s.priced_cost_usd) AS priced_cost_usd,
+                 sum(s.unpriced_requests) AS unpriced_requests
+          FROM bounds c
+          JOIN stored_session_request_intervals s
+            ON s.interval_at >= date_bin('5 minutes', c.first_edge, timestamptz 'epoch')
+           AND s.interval_at < c.last_edge
+          WHERE c.use_stored AND (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+            AND s.interval_at NOT IN (SELECT interval_at FROM cut)
+          GROUP BY 1, s.model
+          UNION ALL
+          SELECT width_bucket(r.at, edges), r.model, count(*), sum(r.cost_usd),
+                 count(*) FILTER (WHERE r.cost_usd IS NULL)
+          FROM live_windows w
+          -- OFFSET 0 reads each window by its time, so only its requests are priced.
+          CROSS JOIN LATERAL (
+            SELECT r.at, r.model, r.cost_usd FROM insight.requests r
+            WHERE (r.harness, r.system, r.source, r.session_id)
+                = (key_harness, key_system, key_source, key_session_id)
+              AND r.at >= w.since AND r.at < w.until
+            OFFSET 0
+          ) r
+          WHERE w.since < w.until
+          GROUP BY 1, r.model
+        )
+        SELECT c.window_index, c.model, sum(c.requests)::bigint, sum(c.priced_cost_usd),
+               sum(c.unpriced_requests)::bigint
+        FROM costs c GROUP BY c.window_index, c.model
+      $$;
+
+      -- Fill the intervals again for Sessions with totals. Their existing
+      -- refresh marks still control when reads can use them.
+      INSERT INTO stored_session_request_intervals
+      SELECT t.harness, t.system, t.source, t.session_id, b.*
+      FROM stored_session_totals t
+      CROSS JOIN LATERAL computed_session_request_intervals(t.harness, t.system, t.source, t.session_id) b;
+    `,
+    version: 58,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

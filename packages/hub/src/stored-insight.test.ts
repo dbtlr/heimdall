@@ -61,6 +61,37 @@ const differences = async (sql: SQL) => [
   `),
 ];
 
+// A row of session_window_role_totals: `requests` priced requests at `usdEach`.
+const roleTotals = (roleClass: string, requests: number, usdEach: number, seat?: string) => ({
+  priced_cost_usd: requests * usdEach,
+  requests,
+  role_class: roleClass,
+  seat: seat ?? null,
+  unpriced_requests: 0,
+});
+
+// A row of session_windows_model_totals: `requests` priced requests at `usdEach`.
+const windowTotals = (index: number, requests: number, usdEach: number) => ({
+  priced_cost_usd: requests * usdEach,
+  requests,
+  window_index: index,
+});
+
+// The window role totals of the Session the window role test stores.
+const windowSplit = (usdEach: number) => [
+  roleTotals('delegated', 1, usdEach),
+  roleTotals('main', 2, usdEach),
+  roleTotals('review', 2, usdEach, 'security'),
+];
+
+// A Session's stored interval of `requests` requests in one class and seat.
+const interval = (seconds: number, roleClass: string, requests: number, seat?: string) => ({
+  interval_at: at(seconds),
+  requests,
+  role_class: roleClass,
+  seat: seat ?? null,
+});
+
 // The Sessions marked stale, once the ranges marked are read as the next
 // refresh reads them.
 const stale = async (sql: SQL): Promise<string[]> => {
@@ -335,6 +366,121 @@ describe('refreshing', () => {
     expect(await refreshSessionInsight(db.sql)).toBe(1);
     expect(await intervals()).toEqual([{ cost: 12 }]);
     expect(await window()).toEqual(repriced);
+  });
+
+  test('each stored interval splits its model by its conversations’ class and seat, and follows a role change from the next refresh', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [10, 20, 400],
+      subagents: [
+        { agentId: 'reviewer', requests: [30] },
+        { agentId: 'helper', requests: [40] },
+      ],
+    });
+    const giveReviewer = (role: string | null, seat: string | null) => db.sql`
+      UPDATE projected_subagents SET role = ${role}, seat = ${seat}, role_source = ${role && 'tag'}
+      WHERE session_id = 's1' AND agent_id = 'reviewer'
+    `;
+    await giveReviewer('review', 'security');
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    const intervals = () => db.sql`
+      SELECT b.interval_at, x.role_class, x.seat, sum(x.requests)::int AS requests
+      FROM stored_session_request_intervals b
+      CROSS JOIN LATERAL jsonb_to_recordset(b.roles) AS x (role_class text, seat text, requests int)
+      WHERE b.session_id = 's1'
+      GROUP BY 1, 2, 3
+      ORDER BY 1, 2, 3
+    `;
+    const reviewed = [
+      interval(0, 'delegated', 1),
+      interval(0, 'main', 2),
+      interval(0, 'review', 1, 'security'),
+      interval(300, 'main', 1),
+    ];
+    expect(await intervals()).toEqual(reviewed);
+
+    await giveReviewer(null, null);
+    expect(await intervals()).toEqual(reviewed);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await intervals()).toEqual([
+      interval(0, 'delegated', 2),
+      interval(0, 'main', 2),
+      interval(300, 'main', 1),
+    ]);
+  });
+
+  test('windows model totals split a Session across edges, pricing only the interval an edge off a boundary cuts until it is stale', async () => {
+    await using db = await database();
+    await price(db.sql, 1);
+    await addSession(db.sql, {
+      id: 's1',
+      inputTokens: 1_000_000,
+      model: 'priced-model',
+      outputTokens: 0,
+      requests: [100, 200, 350, 700, 950],
+    });
+    // 150 s cuts the first interval; 600 s and 900 s are interval edges.
+    const windows = () => db.sql`
+      SELECT window_index, requests::int, priced_cost_usd::float8
+      FROM session_windows_model_totals('claude-code', 'laptop-1', 'claude-code', 's1',
+        ARRAY[${at(150)}, ${at(600)}, ${at(900)}]::timestamptz[])
+      ORDER BY window_index
+    `;
+    expect(await windows()).toEqual([windowTotals(1, 2, 1), windowTotals(2, 1, 1)]);
+
+    // A stored cost the windows read shows as altered here: the cut interval
+    // (0 s) is priced from its requests, so only the whole ones change.
+    await db.sql`UPDATE stored_session_request_intervals SET priced_cost_usd = 50`;
+    expect(await windows()).toEqual([
+      { ...windowTotals(1, 2, 1), priced_cost_usd: 51 },
+      { ...windowTotals(2, 1, 1), priced_cost_usd: 50 },
+    ]);
+
+    await price(db.sql, 2);
+    expect(await windows()).toEqual([windowTotals(1, 2, 2), windowTotals(2, 1, 2)]);
+  });
+
+  test('window role totals read stored intervals by class, and price the clipped interval and a stale Session’s requests by conversation', async () => {
+    await using db = await database();
+    await price(db.sql, 1);
+    await addSession(db.sql, {
+      id: 's1',
+      inputTokens: 1_000_000,
+      model: 'priced-model',
+      outputTokens: 0,
+      requests: [10, 320, 330, { agentId: 'unheld', at: 340 }, 700],
+      subagents: [{ agentId: 'reviewer', requests: [20, 350] }],
+    });
+    await db.sql`
+      UPDATE projected_subagents SET role = 'review', seat = 'security', role_source = 'tag'
+      WHERE session_id = 's1' AND agent_id = 'reviewer'
+    `;
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    // From 15 s: the first interval is clipped, so 20 is priced; the second is stored.
+    const window = () => db.sql`
+      SELECT role_class, seat, requests::int, priced_cost_usd::float8, unpriced_requests::int
+      FROM session_window_role_totals('claude-code', 'laptop-1', 'claude-code', 's1', ${at(15)}, ${at(600)})
+      ORDER BY role_class, seat
+    `;
+    expect(await window()).toEqual(windowSplit(1));
+
+    // A stored cost the window reads shows as altered here: the clipped
+    // interval (0 s) is priced from its requests, so only the whole one changes.
+    await db.sql`
+      UPDATE stored_session_request_intervals SET roles = (
+        SELECT jsonb_agg(jsonb_set(e, '{priced_cost_usd}', '50')) FROM jsonb_array_elements(roles) e
+      )
+      WHERE interval_at = ${at(300)}
+    `;
+    expect(await window()).toEqual([
+      roleTotals('delegated', 1, 50),
+      { ...roleTotals('main', 2, 25), priced_cost_usd: 50 },
+      { ...roleTotals('review', 2, 1, 'security'), priced_cost_usd: 51 },
+    ]);
+
+    await price(db.sql, 2);
+    expect(await window()).toEqual(windowSplit(2));
   });
 
   test('window model and tool totals count every request and call of a Session whose stored totals are gone without a stale mark', async () => {

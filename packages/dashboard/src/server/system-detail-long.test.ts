@@ -9,7 +9,7 @@ import type { Hub } from '@heimdall/hub/testing';
 
 import { localDays } from '../lib/home-agents.ts';
 import { readCostChart } from './agents-costs.ts';
-import { agentsPeriod, sessionsPeriod } from './agents-overview.ts';
+import { agentsPeriod, readSessionDetails, sessionsPeriod } from './agents-overview.ts';
 import { readDayCosts } from './day-costs.ts';
 import { parseBucketInput, readBucket, readSystemDetail } from './system-detail.ts';
 
@@ -290,11 +290,13 @@ const offset = (t: number) => (t - NOW) / 1000;
 // What Agents' cost chart puts on `system` per bar over its 30 days, by the
 // bar's start, read over the period the Agents page reads.
 const agentsCosts = async (h: Hub, timeZone: string, system = 'server-1', now = NOW) => {
+  const period = sessionsPeriod(agentsPeriod({ now, range: '30d', timeZone }), now);
   const chart = await readCostChart(h.db.sql, {
     now,
-    period: sessionsPeriod(agentsPeriod({ now, range: '30d', timeZone }), now),
+    period,
     range: '30d',
     timeZone,
+    whole: readSessionDetails(h.db.sql, period).then(({ whole }) => whole),
   });
   const byStart = new Map<number, number>();
   for (const cell of chart.cells.filter((found) => found.system === system)) {
