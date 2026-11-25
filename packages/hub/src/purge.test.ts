@@ -44,10 +44,12 @@ const TRANSCRIPT_TABLES = new Set([
   'stale_ranges',
   'stale_sessions',
   'stored_session_model_totals',
-  'stored_session_request_buckets',
+  'stored_session_request_intervals',
   'stored_session_role_totals',
+  'stored_session_bursts',
   'stored_session_spans',
   'stored_session_stretches',
+  'stored_session_tool_totals',
   'stored_session_totals',
   'transcript_chunks',
   'transcript_generations',
@@ -291,13 +293,26 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
     })}
   `;
   await sql`
-    INSERT INTO stored_session_request_buckets ${sql({
+    INSERT INTO stored_session_request_intervals ${sql({
       ...session,
-      bucket_at: AT,
+      interval_at: AT,
       last_request_at: AT,
       model: 'claude-opus-5-5',
       requests: 1,
       unpriced_requests: 1,
+    })}
+  `;
+  await sql`
+    INSERT INTO stored_session_bursts ${sql({ ...session, ended_at: AT, started_at: AT })}
+  `;
+  await sql`
+    INSERT INTO stored_session_tool_totals ${sql({
+      ...session,
+      calls: 1,
+      first_call_at: AT,
+      kind: 'tool',
+      last_call_at: AT,
+      name: 'Read',
     })}
   `;
   // Its own Session: marking one rederiving forgets its stored rows.

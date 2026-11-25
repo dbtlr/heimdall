@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { NOW, push, report, startHub, timeline, unpair } from '@heimdall/hub/testing';
 import type { Hub } from '@heimdall/hub/testing';
 
-import { findGaps, laneStatus, projectOf, readFleetGlance } from './fleet-overview.ts';
+import { findGaps, inSnapshot, laneStatus, projectOf, readFleetGlance } from './fleet-overview.ts';
 
 // A test run on its own would otherwise pay for `initdb` within its timeout.
 beforeAll(async () => {
@@ -427,4 +427,15 @@ describe('silences', () => {
     expect(silenced).toEqual(expected);
     expect(silenced.lanes.find((l) => l.name === 'server-1')?.status).toBe('needs_you');
   });
+});
+
+test('a page read in one snapshot runs read-only with JIT off', async () => {
+  await using h = await startHub();
+  const settings = inSnapshot(async (tx, _input: undefined) => {
+    const [row]: { jit: string; readOnly: string }[] =
+      await tx`SELECT current_setting('jit') AS jit, current_setting('transaction_read_only') AS "readOnly"`;
+    return row;
+  });
+
+  expect(await settings(h.db.sql, undefined)).toEqual({ jit: 'off', readOnly: 'on' });
 });

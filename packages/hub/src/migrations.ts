@@ -3188,7 +3188,7 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 53,
   },
   {
-    // Charts and daily costs often slice a Session at bucket boundaries.
+    // Chart bars and daily costs often slice a Session at their edges.
     // Store short intervals with its totals so those reads can reuse prices
     // for requests in complete intervals (ADR-0016). The refresh replaces them
     // with the other stored totals, in the same transaction. A clipped interval
@@ -3200,25 +3200,25 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: `
       SET LOCAL statement_timeout = '10min';
 
-      CREATE TABLE stored_session_request_buckets (
+      CREATE TABLE stored_session_request_intervals (
         harness text NOT NULL,
         system text NOT NULL,
         source text NOT NULL,
         session_id text NOT NULL,
-        bucket_at timestamptz NOT NULL,
+        interval_at timestamptz NOT NULL,
         model text NOT NULL,
         requests bigint NOT NULL,
         priced_cost_usd numeric,
         unpriced_requests bigint NOT NULL,
         last_request_at timestamptz NOT NULL,
-        PRIMARY KEY (harness, system, source, session_id, bucket_at, model),
+        PRIMARY KEY (harness, system, source, session_id, interval_at, model),
         FOREIGN KEY (harness, system, source, session_id)
           REFERENCES stored_session_totals ON DELETE CASCADE
       );
 
-      CREATE FUNCTION computed_session_request_buckets(
+      CREATE FUNCTION computed_session_request_intervals(
         key_harness text, key_system text, key_source text, key_session_id text
-      ) RETURNS TABLE (bucket_at timestamptz, model text, requests bigint, priced_cost_usd numeric,
+      ) RETURNS TABLE (interval_at timestamptz, model text, requests bigint, priced_cost_usd numeric,
                        unpriced_requests bigint, last_request_at timestamptz)
       LANGUAGE sql STABLE SET jit = off AS $$
         SELECT date_bin('5 minutes', r.at, timestamptz 'epoch'), r.model,
@@ -3287,10 +3287,10 @@ export const MIGRATIONS: readonly Migration[] = [
           CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c
           WHERE (t.harness, t.system, t.source, t.session_id)
               = (key_harness, key_system, key_source, key_session_id);
-          INSERT INTO stored_session_request_buckets
+          INSERT INTO stored_session_request_intervals
           SELECT t.harness, t.system, t.source, t.session_id, b.*
           FROM stored_session_totals t
-          CROSS JOIN LATERAL computed_session_request_buckets(t.harness, t.system, t.source, t.session_id) b
+          CROSS JOIN LATERAL computed_session_request_intervals(t.harness, t.system, t.source, t.session_id) b
           WHERE (t.harness, t.system, t.source, t.session_id)
               = (key_harness, key_system, key_source, key_session_id);
         END IF;
@@ -3298,8 +3298,35 @@ export const MIGRATIONS: readonly Migration[] = [
       END
       $$;
 
-      -- This window serves the Hub role. It uses the same half-open bounds
-      -- for the stored buckets and the partial buckets read from requests.
+      -- Whether a read may use a Session's stored totals and the rows stored
+      -- with them: the Hub holds its totals, and they are stale neither by
+      -- key nor by a range of its Harness and System. Every read that picks
+      -- between stored rows and computing from requests asks this.
+      CREATE FUNCTION session_totals_current(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE sql STABLE AS $$
+        SELECT EXISTS (
+                 SELECT 1 FROM stored_session_totals t
+                 WHERE (t.harness, t.system, t.source, t.session_id)
+                     = (key_harness, key_system, key_source, key_session_id)
+               ) AND NOT EXISTS (
+                 SELECT 1 FROM stale_sessions s
+                 WHERE (s.harness, s.system, s.source, s.session_id)
+                     = (key_harness, key_system, key_source, key_session_id)
+                   AND s.totals
+               ) AND NOT EXISTS (
+                 SELECT 1 FROM stale_ranges s
+                 WHERE s.totals AND (s.harness IS NULL OR s.harness = key_harness)
+                   AND (s.system IS NULL OR s.system = key_system)
+               )
+      $$;
+
+      -- A Session's requests from window_from, inclusive, to window_to,
+      -- exclusive, by model. session_window_tool_totals takes both bounds
+      -- inclusive. This window serves the Hub role. It uses the same
+      -- half-open bounds for the stored intervals and the partial intervals
+      -- read from requests.
       CREATE FUNCTION session_window_model_totals(
         key_harness text, key_system text, key_source text, key_session_id text,
         window_from timestamptz, window_to timestamptz
@@ -3315,16 +3342,9 @@ export const MIGRATIONS: readonly Migration[] = [
           FROM aligned
         ), covered AS MATERIALIZED (
           SELECT full_from, full_to,
-                 full_from < full_to AND NOT EXISTS (
-                   SELECT 1 FROM stale_sessions s
-                   WHERE (s.harness, s.system, s.source, s.session_id)
-                       = (key_harness, key_system, key_source, key_session_id)
-                     AND s.totals
-                 ) AND NOT EXISTS (
-                   SELECT 1 FROM stale_ranges s
-                   WHERE s.totals AND (s.harness IS NULL OR s.harness = key_harness)
-                     AND (s.system IS NULL OR s.system = key_system)
-                 ) AS use_stored
+                 full_from < full_to
+                   AND session_totals_current(key_harness, key_system, key_source, key_session_id)
+                   AS use_stored
           FROM bounds
         ), live_windows AS (
           SELECT window_from AS since, CASE WHEN use_stored THEN full_from ELSE window_to END AS until
@@ -3334,7 +3354,7 @@ export const MIGRATIONS: readonly Migration[] = [
         ), costs AS (
           SELECT b.model, b.requests, b.priced_cost_usd, b.unpriced_requests, b.last_request_at
           FROM covered c
-          JOIN stored_session_request_buckets b ON b.bucket_at >= c.full_from AND b.bucket_at < c.full_to
+          JOIN stored_session_request_intervals b ON b.interval_at >= c.full_from AND b.interval_at < c.full_to
           WHERE c.use_stored AND (b.harness, b.system, b.source, b.session_id)
               = (key_harness, key_system, key_source, key_session_id)
           UNION ALL
@@ -3357,10 +3377,10 @@ export const MIGRATIONS: readonly Migration[] = [
 
       -- Fill the intervals for Sessions with totals on upgrade. Their
       -- existing refresh marks still control when reads can use them.
-      INSERT INTO stored_session_request_buckets
+      INSERT INTO stored_session_request_intervals
       SELECT t.harness, t.system, t.source, t.session_id, b.*
       FROM stored_session_totals t
-      CROSS JOIN LATERAL computed_session_request_buckets(t.harness, t.system, t.source, t.session_id) b;
+      CROSS JOIN LATERAL computed_session_request_intervals(t.harness, t.system, t.source, t.session_id) b;
     `,
     version: 54,
   },
@@ -3436,6 +3456,239 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
     version: 55,
+  },
+  {
+    // A Session's bursts: its requests joined into bursts whose requests are
+    // at most 5 minutes apart, the window in which a Session counts as running
+    // (the dashboard's RUNNING_MS). A row with no agent_id holds the
+    // Session's requests in every conversation; a row with one, the own
+    // requests of a subagent the Hub holds, one insight.subagents lists, so
+    // a count of a period's subagents reads the bursts alone. A subagent's row
+    // changing marks its Session stale, so the bursts follow it at the next
+    // refresh. Requests that share a time share a burst. And its tool
+    // calls counted by tool, with the first and last call of each. Both are
+    // stored with the Session's totals and replaced with them (ADR-0016), so
+    // a read of a period, such as a project's active time, its subagents
+    // with a request in it, or its tools, reads a few rows per Session
+    // instead of every request and tool call. A tool call arrives in the
+    // same transaction as its Session's row, which marks the Session stale.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE TABLE stored_session_bursts (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        agent_id text,
+        started_at timestamptz NOT NULL,
+        ended_at timestamptz NOT NULL,
+        UNIQUE NULLS NOT DISTINCT (harness, system, source, session_id, agent_id, started_at),
+        FOREIGN KEY (harness, system, source, session_id)
+          REFERENCES stored_session_totals ON DELETE CASCADE
+      );
+
+      -- A request opens a burst when none came in the 5 minutes before it.
+      -- The running sum counts every request at a time with its peers, so
+      -- requests that share a time share a burst whatever order sorts them.
+      CREATE FUNCTION computed_session_bursts(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (agent_id text, started_at timestamptz, ended_at timestamptz)
+      LANGUAGE sql STABLE AS $$
+        WITH requests AS MATERIALIZED (
+          SELECT r.agent_id, r.at FROM insight.request_agents r
+          WHERE (r.harness, r.system, r.source, r.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+        ),
+        opened AS (
+          SELECT NULL::text AS agent_id, at,
+                 CASE WHEN at - lag(at) OVER (ORDER BY at) <= interval '5 minutes'
+                   THEN 0 ELSE 1 END AS opens
+          FROM requests
+          UNION ALL
+          SELECT agent_id, at,
+                 CASE WHEN at - lag(at) OVER (PARTITION BY agent_id ORDER BY at) <= interval '5 minutes'
+                   THEN 0 ELSE 1 END
+          FROM requests r
+          WHERE r.agent_id IN (
+            SELECT p.agent_id FROM projected_subagents p
+            JOIN current_parsers c ON c.harness = p.harness AND c.version = p.parser_version
+            WHERE (p.harness, p.system, p.source, p.session_id)
+                = (key_harness, key_system, key_source, key_session_id)
+          )
+        ),
+        numbered AS (
+          SELECT agent_id, at,
+                 sum(opens) OVER (PARTITION BY agent_id ORDER BY at RANGE UNBOUNDED PRECEDING) AS burst
+          FROM opened
+        )
+        SELECT agent_id, min(at), max(at) FROM numbered GROUP BY agent_id, burst
+      $$;
+
+      CREATE TABLE stored_session_tool_totals (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        name text NOT NULL,
+        kind text NOT NULL,
+        mcp_server text,
+        skill text,
+        calls bigint NOT NULL,
+        first_call_at timestamptz NOT NULL,
+        last_call_at timestamptz NOT NULL,
+        UNIQUE NULLS NOT DISTINCT (harness, system, source, session_id, name, kind, mcp_server, skill),
+        FOREIGN KEY (harness, system, source, session_id)
+          REFERENCES stored_session_totals ON DELETE CASCADE
+      );
+
+      CREATE FUNCTION computed_session_tool_totals(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (name text, kind text, mcp_server text, skill text, calls bigint,
+                       first_call_at timestamptz, last_call_at timestamptz)
+      LANGUAGE sql STABLE AS $$
+        SELECT t.name, t.kind, t.mcp_server, t.skill, count(*), min(t.at), max(t.at)
+        FROM insight.tool_calls t
+        WHERE (t.harness, t.system, t.source, t.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        GROUP BY t.name, t.kind, t.mcp_server, t.skill
+      $$;
+
+      CREATE OR REPLACE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          DELETE FROM stored_session_model_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_model_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+                 c.priced_cost_usd, c.unpriced_requests
+          FROM computed_session_model_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          -- Each statement reads its own snapshot, so a parser switch between
+          -- the two can give a split to a Session the totals left out.
+          INSERT INTO stored_session_role_totals
+          SELECT c.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_request_intervals
+          SELECT t.harness, t.system, t.source, t.session_id, b.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_request_intervals(t.harness, t.system, t.source, t.session_id) b
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_bursts
+          SELECT t.harness, t.system, t.source, t.session_id, r.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_bursts(t.harness, t.system, t.source, t.session_id) r
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_tool_totals
+          SELECT t.harness, t.system, t.source, t.session_id, c.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_tool_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
+      END
+      $$;
+
+      -- A Session's tool calls from window_from to window_to, both
+      -- inclusive, counted by tool; session_window_model_totals excludes
+      -- window_to. The stored counts serve when each tool's calls lie all
+      -- inside the window or all outside it and session_totals_current holds;
+      -- otherwise its calls in the window are read and counted.
+      CREATE FUNCTION session_window_tool_totals(
+        key_harness text, key_system text, key_source text, key_session_id text,
+        window_from timestamptz, window_to timestamptz
+      ) RETURNS TABLE (name text, kind text, mcp_server text, skill text, calls bigint)
+      LANGUAGE sql STABLE ROWS 8 AS $$
+        WITH covered AS MATERIALIZED (
+          SELECT session_totals_current(key_harness, key_system, key_source, key_session_id)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM stored_session_tool_totals t
+                   WHERE (t.harness, t.system, t.source, t.session_id)
+                       = (key_harness, key_system, key_source, key_session_id)
+                     AND t.first_call_at <= window_to AND t.last_call_at >= window_from
+                     AND (t.first_call_at < window_from OR t.last_call_at > window_to)
+                 ) AS use_stored
+        )
+        SELECT t.name, t.kind, t.mcp_server, t.skill, t.calls
+        FROM covered c
+        JOIN stored_session_tool_totals t
+          ON t.first_call_at >= window_from AND t.last_call_at <= window_to
+        WHERE c.use_stored AND (t.harness, t.system, t.source, t.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        UNION ALL
+        SELECT t.name, t.kind, t.mcp_server, t.skill, count(*)
+        FROM covered c
+        JOIN insight.tool_calls t ON t.at >= window_from AND t.at <= window_to
+        WHERE NOT c.use_stored AND (t.harness, t.system, t.source, t.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        GROUP BY t.name, t.kind, t.mcp_server, t.skill
+      $$;
+
+      INSERT INTO stored_session_bursts
+      SELECT t.harness, t.system, t.source, t.session_id, r.*
+      FROM stored_session_totals t
+      CROSS JOIN LATERAL computed_session_bursts(t.harness, t.system, t.source, t.session_id) r;
+
+      INSERT INTO stored_session_tool_totals
+      SELECT t.harness, t.system, t.source, t.session_id, c.*
+      FROM stored_session_totals t
+      CROSS JOIN LATERAL computed_session_tool_totals(t.harness, t.system, t.source, t.session_id) c;
+
+      CREATE VIEW insight.session_bursts WITH (security_barrier = true) AS
+      SELECT s.* FROM stored_session_bursts s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+    `,
+    version: 56,
   },
 ];
 

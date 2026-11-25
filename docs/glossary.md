@@ -1,5 +1,5 @@
 ---
-description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, package source, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, session tag, role, review seat, launching Session, transcript, source, generation, request, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
+description: "Heimdall's domain vocabulary: fleet, System, provisioner, record, Application, Service, installed version, upstream, available update, package source, Service stop, job, run, Drift, Collector, Hub, dashboard, Report, Vitals, Harness, Harness install, Session, project, subagent, session tag, role, review seat, launching Session, transcript, source, generation, request, burst, Session insight, list-price cost, Harness process, Condition, level, delivery, silence, Last seen, Activity, Pairing, and Pairing code."
 ---
 
 # Glossary
@@ -137,6 +137,10 @@ _Avoid_: version, revision, upload
 **request**:
 One call from a Session or a subagent to its model, with the model and the tokens it used. It is the unit Heimdall counts and prices.
 _Avoid_: turn (a prompt and everything the agent does in reply), message, API call
+
+**burst**:
+A Session's or a subagent's requests joined while each follows the last by at most 5 minutes, the time a Session counts as running after a request; a longer gap starts the next burst. The dashboard draws lanes and active time from a Session's bursts, and counts the subagents with a request in a period from theirs.
+_Avoid_: run (a job's run), streak, spell
 
 **Session insight**:
 What the Hub derives from the transcripts it holds: each Session and subagent, each request, and each tool call, read through the `insight` views. It is a projection of the archive that the Hub rebuilds when a Harness's parser changes, so it never holds a fact the surviving transcripts do not.

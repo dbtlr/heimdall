@@ -4,7 +4,7 @@ title: ADR-0015 - The dashboard is its own app, reading the Hub's database
 description: "M6's dashboard is a separate TypeScript app built with TanStack Start, Tailwind, and shadcn/ui, with shadcn charts on Recharts, that reads the Hub's PostgreSQL database directly as the Hub's role. The Hub ingests what Collectors send and derives from it; the dashboard app serves every read, its pages and the read API alike. It runs as its own Service on the Hub's System and ships in releases beside the binaries."
 status: accepted
 created: 2026-10-13
-modified: 2026-11-10
+modified: 2026-11-25
 ---
 
 # The dashboard is its own app, reading the Hub's database
@@ -47,3 +47,4 @@ Heimdall runs on a single-person tailnet, and [ADR-0009](0009-collectors-pair-wi
 - 2026-10-13: The records read moved to the app in one change, with no period in which the Hub also served it, so its query has one implementation (HMD-86). A provisioner switches to the app's address when it upgrades the Hub.
 - 2026-10-13: The Hub's page is gone; the Hub answers 404 at `/`, and the dashboard serves every page (HMD-92).
 - 2026-11-10: Inter replaces Barlow Semi Condensed as the dashboard's type, with the Slate visual system the redesign chose (HMD-216). It is still bundled from Fontsource and served by the app, so no page loads a font from the network.
+- 2026-11-25: Beside the `insight` views, the dashboard may read Session facts from the Hub's stored rows and the window functions over them: `session_window_model_totals`, `session_window_tool_totals`, `stored_session_bursts`, and `stored_session_tool_totals` ([ADR-0016](0016-session-stretches-and-totals-are-stored-and-refreshed.md)). Their rules read the `insight` views, so a Session's cost and counts keep one definition (HMD-324, HMD-325).

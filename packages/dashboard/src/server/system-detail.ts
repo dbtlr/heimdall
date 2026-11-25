@@ -50,6 +50,7 @@ import type { ChecksRow, RecordRow, RunRow } from './hub-rows.ts';
 import { readMemoryHolders } from './memory-holders.ts';
 import { readServices } from './services.ts';
 import { readSilencedUntil } from './silences.ts';
+import { readSnapshot } from './snapshot.ts';
 import type {
   BucketInspection,
   BucketProcess,
@@ -937,7 +938,7 @@ export const readBucket = (
     timeZone?: string | undefined;
   },
 ): Promise<BucketInspection | undefined> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, false, async (tx) => {
     const [known]: { paired: boolean; system: boolean }[] = await tx`
       SELECT EXISTS (SELECT 1 FROM systems WHERE name = ${name}) AS system,
              EXISTS (SELECT 1 FROM paired_systems WHERE system = ${name}) AS paired
@@ -1175,21 +1176,16 @@ const readSystemRecordsSnapshot = async (
 
 // Current levels and their transitions must come from the same snapshot.
 export const readSystemDetail = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
-    readSystemDetailSnapshot(tx, input),
-  );
+  readSnapshot(sql, false, (tx) => readSystemDetailSnapshot(tx, input));
 
 export const readSystemRecords = (
   sql: SQL,
   input: Parameters<typeof readSystemRecordsSnapshot>[1],
-) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) =>
-    readSystemRecordsSnapshot(tx, input),
-  );
+) => readSnapshot(sql, false, (tx) => readSystemRecordsSnapshot(tx, input));
 
 // Health, history, and attention must describe the same committed judgment.
 export const readSystemPage = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, false, async (tx) => {
     const detail = await readSystemDetailSnapshot(tx, input);
     if (detail === undefined) {
       return undefined;
