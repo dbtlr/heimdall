@@ -48,6 +48,12 @@ export const parseSessionInput = (input: unknown): SessionKey => ({
 // the page's grid does, which is the Hub's 5-minute alignment too.
 const bucketAt = (t: number, widthMs: number) => Math.floor(t / widthMs) * widthMs;
 
+type ConversationRow = {
+  agent_id: string;
+  role_class: string;
+  seat: string | null;
+};
+
 // A conversation's effective role as the insight views give it.
 type RoleColumns = {
   effective_role: string | null;
@@ -526,9 +532,10 @@ const readSessionViewSnapshot = async (
   { harness, sessionId, source, system }: SessionKey,
 ): Promise<SessionView | undefined> => {
   const key = { harness, sessionId, source, system };
-  const [sessions, agents, requests, toolCalls, stretches, totals, main, launched]: [
+  const [sessions, agents, conversations, requests, toolCalls, stretches, totals, main, launched]: [
     SessionRow[],
     AgentRow[],
+    ConversationRow[],
     RequestRow[],
     ToolCallRow[],
     StretchRow[],
@@ -551,6 +558,12 @@ const readSessionViewSnapshot = async (
       WHERE harness = ${harness} AND system = ${system} AND source = ${source}
         AND session_id = ${sessionId}
       ORDER BY started_at, agent_id
+    `,
+    sql`
+      SELECT agent_id, role_class, seat
+      FROM insight.conversation_roles
+      WHERE harness = ${harness} AND system = ${system} AND source = ${source}
+        AND session_id = ${sessionId} AND agent_id IS NOT NULL
     `,
     sql`
       SELECT agent_id, request_id, at, model, input_tokens::float8 AS input_tokens,
@@ -621,6 +634,11 @@ const readSessionViewSnapshot = async (
     agents: agents.map((row) => toAgent(row, span)),
     branch: optional(session.last_git_branch ?? session.first_git_branch),
     bucketMs,
+    conversations: conversations.map((row) => ({
+      agentId: row.agent_id,
+      roleClass: roleClassOf(row.role_class),
+      seat: optional(row.seat),
+    })),
     cpu,
     cwd: optional(session.last_cwd ?? session.first_cwd),
     endedAt: span.endedAt,

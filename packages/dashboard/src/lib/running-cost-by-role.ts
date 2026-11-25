@@ -1,7 +1,11 @@
 // The Session page's running cost split by effective role (ADR-0025): the main
 // conversation, then its subagents by review seat, then delegated subagents.
 
-import type { SessionAgent, SessionLaunch, SessionRequest } from '../server/session-view-types.ts';
+import type {
+  SessionConversation,
+  SessionLaunch,
+  SessionRequest,
+} from '../server/session-view-types.ts';
 import { costClassColor, listSeats, roleText } from './cost-roles.ts';
 
 /** One stacked series of the running cost, bottom first. */
@@ -23,25 +27,20 @@ type Group = { kind: 'delegated' } | { kind: 'main' } | { kind: 'review'; seat: 
 const MAIN = 'main';
 const DELEGATED = 'delegated';
 
-// Which part of the split a request counts under: a held subagent's class as
-// the Hub gives it. A subagent the Hub holds no row for takes the main
-// conversation's role, as the Hub's split does.
+// Which part of the split a request counts under: its conversation's class as
+// the Hub gives it (insight.conversation_roles), which also covers a subagent
+// the Hub holds no row for. A conversation with no class from the Hub counts as
+// delegated.
 const groupOf = (
   request: Pick<SessionRequest, 'agentId'>,
-  agents: ReadonlyMap<string, SessionAgent>,
-  launch: Pick<SessionLaunch, 'effectiveRole' | 'effectiveSeat'>,
+  classes: ReadonlyMap<string, Pick<SessionConversation, 'roleClass' | 'seat'>>,
 ): Group => {
   if (request.agentId === undefined) {
     return { kind: 'main' };
   }
-  const agent = agents.get(request.agentId);
-  if (agent !== undefined) {
-    return agent.roleClass === 'review'
-      ? { kind: 'review', seat: agent.effectiveSeat ?? null }
-      : { kind: 'delegated' };
-  }
-  return launch.effectiveRole === 'review'
-    ? { kind: 'review', seat: launch.effectiveSeat ?? null }
+  const found = classes.get(request.agentId);
+  return found?.roleClass === 'review'
+    ? { kind: 'review', seat: found.seat ?? null }
     : { kind: 'delegated' };
 };
 
@@ -59,12 +58,18 @@ export const mainLabel = (launch: Pick<SessionLaunch, 'role' | 'seat'>): string 
  */
 export const roleRunningCost = (
   requests: readonly SessionRequest[],
-  agents: readonly SessionAgent[],
-  launch: Pick<SessionLaunch, 'effectiveRole' | 'effectiveSeat' | 'role' | 'seat'>,
+  launch: Pick<SessionLaunch, 'role' | 'seat'>,
+  conversations: readonly SessionConversation[],
 ): RoleRunningCost => {
-  const byId = new Map(agents.map((agent) => [agent.agentId, agent]));
+  // The Hub's class for each subagent conversation, held or not.
+  const byId = new Map(
+    conversations.map((conversation): [string, SessionConversation] => [
+      conversation.agentId,
+      conversation,
+    ]),
+  );
   const sorted = requests.toSorted((a, b) => a.at - b.at);
-  const groups = sorted.map((request) => groupOf(request, byId, launch));
+  const groups = sorted.map((request) => groupOf(request, byId));
   const seatCosts = new Map<string | null, number>();
   for (const [index, group] of groups.entries()) {
     if (group.kind === 'review') {

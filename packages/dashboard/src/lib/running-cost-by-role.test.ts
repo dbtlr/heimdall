@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { SessionAgent, SessionRequest } from '../server/session-view-types.ts';
+import type { SessionConversation, SessionRequest } from '../server/session-view-types.ts';
 import { SEATS_LISTED } from './cost-roles.ts';
 import { mainLabel, roleRunningCost, roleSplitNote } from './running-cost-by-role.ts';
 
@@ -25,31 +25,13 @@ const request = (at: number, costUsd: number | undefined, agentId?: string): Ses
   stopReason: 'end_turn',
 });
 
-const agent = (
+const conversation = (
   agentId: string,
-  effectiveRole: string | undefined,
-  effectiveSeat?: string,
-  roleClass: SessionAgent['roleClass'] = effectiveRole === 'review' ? 'review' : 'delegated',
-): SessionAgent => ({
-  agentId,
-  agentType: undefined,
-  depth: 1,
-  effectiveRole,
-  effectiveSeat,
-  endedAt: 0,
-  parentAgentId: undefined,
-  roleClass,
-  startedAt: 0,
-  workflowPhase: undefined,
-  workflowRun: undefined,
-});
+  roleClass: SessionConversation['roleClass'],
+  seat?: string,
+): SessionConversation => ({ agentId, roleClass, seat });
 
-const IMPLEMENTATION = {
-  effectiveRole: 'implementation',
-  effectiveSeat: undefined,
-  role: 'implementation',
-  seat: undefined,
-};
+const IMPLEMENTATION = { role: 'implementation', seat: undefined };
 
 describe('roleRunningCost', () => {
   test('stacks the main conversation, each review seat, then delegated subagents', () => {
@@ -61,12 +43,12 @@ describe('roleRunningCost', () => {
         request(4, 4, 'brk'),
         request(5, 5, 'arch'),
       ],
-      [
-        agent('arch', 'review', 'architect'),
-        agent('brk', 'review', 'breaker'),
-        agent('plain', 'implementation'),
-      ],
       IMPLEMENTATION,
+      [
+        conversation('arch', 'review', 'architect'),
+        conversation('brk', 'review', 'breaker'),
+        conversation('plain', 'delegated'),
+      ],
     );
 
     expect(split.series).toEqual([
@@ -82,23 +64,23 @@ describe('roleRunningCost', () => {
   test('a review Session’s untagged subagents count under its seat', () => {
     const split = roleRunningCost(
       [request(1, 1), request(2, 2, 'plain'), request(3, 4, 'unheld')],
-      [agent('plain', 'review', 'breaker')],
-      { effectiveRole: 'review', effectiveSeat: 'breaker', role: 'review', seat: 'breaker' },
+      { role: 'review', seat: 'breaker' },
+      [conversation('plain', 'review', 'breaker'), conversation('unheld', 'review', 'breaker')],
     );
 
     expect(split.series.map((series) => series.label)).toEqual([
       'main conversation · review · breaker',
       'review · breaker',
     ]);
-    // A subagent the Hub holds no row for takes the Session's role.
+    // Each subagent counts under the class and seat the Hub's conversations give it.
     expect(split.points.at(-1)).toEqual({ main: 1, s0: 6, t: 3 });
   });
 
   test('an unknown seat is its own series, hatched and last among the seats', () => {
     const split = roleRunningCost(
       [request(1, 9, 'unknown'), request(2, 1, 'arch')],
-      [agent('unknown', 'review'), agent('arch', 'review', 'architect')],
       IMPLEMENTATION,
+      [conversation('unknown', 'review'), conversation('arch', 'review', 'architect')],
     );
 
     expect(split.series.slice(1)).toEqual([
@@ -111,8 +93,11 @@ describe('roleRunningCost', () => {
     const seats = Array.from({ length: SEATS_LISTED + 1 }, (_, index) => `seat-${String(index)}`);
     const split = roleRunningCost(
       [...seats.map((seat, index) => request(index, 100 - index, seat)), request(10, 1, 'unknown')],
-      [...seats.map((seat) => agent(seat, 'review', seat)), agent('unknown', 'review')],
       IMPLEMENTATION,
+      [
+        ...seats.map((seat) => conversation(seat, 'review', seat)),
+        conversation('unknown', 'review'),
+      ],
     );
 
     expect(split.series.slice(5)).toEqual([
@@ -124,22 +109,19 @@ describe('roleRunningCost', () => {
   });
 
   test('a held subagent counts under the class the Hub gives it', () => {
-    const split = roleRunningCost(
-      [request(1, 2, 'odd')],
-      [agent('odd', 'review', 'breaker', 'delegated')],
-      IMPLEMENTATION,
-    );
+    const split = roleRunningCost([request(1, 2, 'odd')], IMPLEMENTATION, [
+      conversation('odd', 'delegated', 'breaker'),
+    ]);
 
     expect(split.points.at(-1)).toEqual({ delegated: 2, main: 0, t: 1 });
   });
 
   test('a Session with no role has a plain main series and no empty ones', () => {
-    const split = roleRunningCost([request(1, 1), request(2, undefined)], [], {
-      effectiveRole: undefined,
-      effectiveSeat: undefined,
-      role: undefined,
-      seat: undefined,
-    });
+    const split = roleRunningCost(
+      [request(1, 1), request(2, undefined)],
+      { role: undefined, seat: undefined },
+      [],
+    );
 
     expect(split.series).toEqual([
       { color: 'var(--plot)', key: 'main', label: 'main conversation' },
@@ -148,7 +130,7 @@ describe('roleRunningCost', () => {
   });
 
   test('points follow time, not input order', () => {
-    const split = roleRunningCost([request(5, 2), request(1, 1)], [], IMPLEMENTATION);
+    const split = roleRunningCost([request(5, 2), request(1, 1)], IMPLEMENTATION, []);
 
     expect(split.points).toEqual([
       { main: 1, t: 1 },
