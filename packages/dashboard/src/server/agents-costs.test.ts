@@ -4,7 +4,7 @@ import { NOW, refreshSessionInsight, startHub, timeline } from '@heimdall/hub/te
 import type { SQL } from 'bun';
 
 import { readCostChart } from './agents-costs.ts';
-import { readAgentsOverview, todayPeriod } from './agents-overview.ts';
+import { readAgentsOverview, readSessionDetails, todayPeriod } from './agents-overview.ts';
 
 beforeAll(async () => {
   await using _h = await startHub();
@@ -206,6 +206,55 @@ test('a Session that began before Today charts its request at exactly the period
   expect(chart.cells).toEqual([expect.objectContaining({ pricedCostUsd: 1, unpricedRequests: 0 })]);
 });
 
+test('a Session whose last request is exactly at a bar’s end is charted once, a request in each bar', async () => {
+  await using h = await start();
+  // The bars are UTC days, so midnight, 12 hours before NOW, ends the one
+  // before the last and starts the last.
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'on-the-edge',
+    requests: [-14 * HOUR_S, -12 * HOUR_S],
+    system: 'server-1',
+  });
+
+  const { chart, totals } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+
+  expect(totals.pricedCostUsd).toBe(2);
+  expect(
+    chart.cells
+      .map(({ bucket, pricedCostUsd }) => ({ bucket, pricedCostUsd }))
+      .toSorted((a, b) => a.bucket - b.bucket),
+  ).toEqual([
+    { bucket: 6, pricedCostUsd: 1 },
+    { bucket: 7, pricedCostUsd: 1 },
+  ]);
+});
+
+test('a bar ending after the period charts no request after the period’s end', async () => {
+  await using h = await start();
+  // The last 7d bar runs to midnight, but the period ends 300 s of clock
+  // tolerance after NOW, so the request at 400 s is in neither it nor the total.
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'beyond',
+    requests: [-3 * 24 * HOUR_S, -HOUR_S, 400],
+    system: 'server-1',
+  });
+
+  const { chart, totals } = await readAgentsOverview(h.db.sql, {
+    now: NOW,
+    range: '7d',
+    timeZone: 'UTC',
+  });
+
+  expect(totals.pricedCostUsd).toBe(2);
+  expect(chart.cells.reduce((sum, cell) => sum + cell.pricedCostUsd, 0)).toBe(2);
+});
+
 test('cells merge working directories that name one project, and keep Systems apart', async () => {
   await using h = await start();
   for (const [id, system, lastCwd] of [
@@ -288,7 +337,13 @@ test.each(['today', '30d'] as const)(
 
     expect(
       await requestsExamined(h.db.sql, (tx) =>
-        readCostChart(tx, { now: NOW, period, range, timeZone: 'UTC' }),
+        readCostChart(tx, {
+          now: NOW,
+          period,
+          range,
+          timeZone: 'UTC',
+          whole: readSessionDetails(tx, period).then(({ whole }) => whole),
+        }),
       ),
     ).toBeLessThan(HISTORY / 10);
   },

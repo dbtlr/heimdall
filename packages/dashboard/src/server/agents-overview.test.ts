@@ -69,7 +69,7 @@ test('Running and the table mark the same Sessions running: a request up to 5 mi
 
 const view = (h: Hub) => read(h, { now: NOW, range: '7d', timeZone: 'UTC' });
 
-test('the parallel 30-day read keeps its snapshot when the second connection opens later', async () => {
+test('the 30-day read reads on one connection, so it settles while the pool holds no other', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
     id: 'snapshot',
@@ -78,61 +78,23 @@ test('the parallel 30-day read keeps its snapshot when the second connection ope
     outputTokens: 0,
     requests: [-3600],
   });
-  const pool = new SQL(h.db.url, {
-    connection: { application_name: 'agents-snapshot-test' },
-    max: 3,
-  });
-  // One connection is busy elsewhere, and the read takes the last free one
-  // before it borrows its second.
-  const busy = await pool.reserve();
-  const reserved = await pool.reserve();
+  const pool = new SQL(h.db.url, { max: 3 });
+  // Every connection but the read's own is busy elsewhere until it settles.
+  const busy = [await pool.reserve(), await pool.reserve()];
   try {
-    const pending = Promise.allSettled([
-      readAgentsOverview(pool, { now: NOW, range: '30d', timeZone: 'UTC' }),
-    ]);
-    // A read that borrows waits for the reserved connection, so it cannot
-    // settle before the release; one that reads on one connection can.
-    let settledBeforeRelease = false;
-    let waitedForRelease = false;
-    const watching = (async () => {
-      await pending;
-      settledBeforeRelease = true;
+    const overview = readAgentsOverview(pool, { now: NOW, range: '30d', timeZone: 'UTC' });
+    const waited = (async () => {
+      await Bun.sleep(5000);
+      return 'waited';
     })();
-    let snapshotTaken = false;
-    try {
-      const deadline = performance.now() + 2000;
-      while (!snapshotTaken && performance.now() < deadline) {
-        // oxlint-disable-next-line no-await-in-loop -- wait for the first connection to take its snapshot.
-        const [row]: { taken: boolean }[] = await h.db.sql`
-          SELECT EXISTS (
-            SELECT 1 FROM pg_stat_activity
-            WHERE datname = current_database() AND application_name = 'agents-snapshot-test'
-              AND backend_xmin IS NOT NULL
-          ) AS taken
-        `;
-        snapshotTaken = row?.taken ?? false;
-        // oxlint-disable-next-line no-await-in-loop -- bound how often the check runs.
-        await Bun.sleep(10);
-      }
-      await h.db.sql`
-        UPDATE stored_session_role_totals SET priced_cost_usd = 9 WHERE session_id = 'snapshot'
-      `;
-      await Bun.sleep(200);
-    } finally {
-      waitedForRelease = !settledBeforeRelease;
-      await reserved.release();
+    const settled = await Promise.race([overview, waited]);
+    if (typeof settled === 'string') {
+      throw new Error('the 30-day read waited for a second connection');
     }
-    const [result] = await pending;
-    await watching;
-    expect(waitedForRelease).toBe(true);
-    expect(snapshotTaken).toBe(true);
-    if (result.status === 'rejected') {
-      throw result.reason;
-    }
-    expect(result.value.totals.pricedCostUsd).toBe(1);
-    expect(result.value.roleSplit.classes.main.pricedCostUsd).toBe(1);
+    expect(settled.totals.pricedCostUsd).toBe(1);
+    expect(settled.roleSplit.classes.main.pricedCostUsd).toBe(1);
   } finally {
-    await busy.release();
+    await Promise.all(busy.map((connection) => connection.release()));
     await pool.close();
   }
 });
