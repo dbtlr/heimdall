@@ -101,6 +101,66 @@ const linkedSession = async (sql: SQL) => {
 };
 
 describe('refreshing', () => {
+  test('a Session’s stored bounds follow an earlier stretch when it is added and removed', async () => {
+    await using db = await database();
+    await addSession(db.sql, { id: 's1', requests: [60, 120] });
+    const bounds = () => db.sql`
+      SELECT first_request_at, last_request_at FROM insight.session_spans WHERE session_id = 's1'
+    `;
+    expect(await bounds()).toEqual([{ first_request_at: at(60), last_request_at: at(120) }]);
+
+    await db.sql`
+      INSERT INTO stored_session_stretches (harness, system, source, session_id, started_at,
+                                            ended_at, requests, link, candidates)
+      VALUES ('claude-code', 'laptop-1', 'claude-code', 's1', ${at(-120)}, ${at(-60)}, 1,
+              'unmatched', 0)
+    `;
+    expect(await bounds()).toEqual([{ first_request_at: at(-120), last_request_at: at(120) }]);
+    await db.sql`DELETE FROM stored_session_stretches WHERE session_id = 's1' AND started_at = ${at(-120)}`;
+    expect(await bounds()).toEqual([{ first_request_at: at(60), last_request_at: at(120) }]);
+  });
+
+  test('window model totals clip stored buckets and use current prices before the next refresh', async () => {
+    await using db = await testDatabase();
+    await migrate(
+      db.sql,
+      MIGRATIONS.filter(({ version }) => version < 54),
+    );
+    await db.sql`INSERT INTO systems (name) VALUES ('server-1')`;
+    await price(db.sql, 1);
+    await addSession(db.sql, {
+      id: 's1',
+      inputTokens: 1_000_000,
+      model: 'priced-model',
+      outputTokens: 0,
+      requests: [100, 165, 420, { at: 540, model: 'unknown' }, 660, 969, 970],
+      system: 'server-1',
+    });
+    await migrate(db.sql);
+    const window = () => db.sql`
+      SELECT model, requests::int, priced_cost_usd::float8, unpriced_requests::int
+      FROM session_window_model_totals('claude-code', 'server-1', 'claude-code', 's1', ${at(160)}, ${at(970)})
+      ORDER BY model
+    `;
+    const buckets = () => db.sql`
+      SELECT sum(priced_cost_usd)::float8 AS cost
+      FROM stored_session_request_buckets WHERE session_id = 's1'
+    `;
+    const priced = { model: 'priced-model', priced_cost_usd: 4, requests: 4, unpriced_requests: 0 };
+    const unpriced = { model: 'unknown', priced_cost_usd: null, requests: 1, unpriced_requests: 1 };
+    const repriced = [{ ...priced, priced_cost_usd: 8 }, unpriced];
+
+    expect(await buckets()).toEqual([{ cost: 6 }]);
+    expect(await window()).toEqual([priced, unpriced]);
+    await price(db.sql, 2);
+    expect(await window()).toEqual(repriced);
+    expect(await stale(db.sql)).toEqual(['s1 totals']);
+    expect(await window()).toEqual(repriced);
+    expect(await refreshSessionInsight(db.sql)).toBe(1);
+    expect(await buckets()).toEqual([{ cost: 12 }]);
+    expect(await window()).toEqual(repriced);
+  });
+
   test('the views read a Session as it was at the last refresh, and as computed after the next', async () => {
     await using db = await database();
     await linkedSession(db.sql);

@@ -3,7 +3,7 @@ import type { SQL } from 'bun';
 import { roleClassOf } from '../lib/cost-roles.ts';
 import type { CostClass } from '../lib/cost-roles.ts';
 import type { PeriodTotals } from './agents-overview-types.ts';
-import type { MissedTags, RoleSplit, SeatTotals } from './role-split-types.ts';
+import type { RoleSplit, SeatTotals } from './role-split-types.ts';
 import { sessionSpans } from './session-spans.ts';
 
 // The period whose requests count, and which Sessions: a project's, or, with
@@ -68,19 +68,10 @@ const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise
   FROM (
     SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
     FROM spans k
-    CROSS JOIN LATERAL (
-      SELECT x.role_class, x.seat, x.requests, x.priced_cost_usd, x.unpriced_requests
-      FROM insight.session_role_totals x
-      WHERE (x.harness, x.system, x.source, x.session_id)
-          = (k.harness, k.system, k.source, k.session_id)
-        AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
-        -- Only a Session the headline lists, so the classes sum to its total.
-        AND EXISTS (
-          SELECT 1 FROM insight.sessions s
-          WHERE (s.harness, s.system, s.source, s.session_id)
-              = (k.harness, k.system, k.source, k.session_id)
-        )
-    ) x
+    JOIN insight.session_role_totals x USING (harness, system, source, session_id)
+    -- Only a visible Session, so the classes sum to the headline's total.
+    JOIN insight.sessions s USING (harness, system, source, session_id)
+    WHERE k.first_request_at >= ${from} AND k.last_request_at <= ${to}
     UNION ALL
     -- Joined to the subagents outside any per-Session read, so the planner
     -- hashes them once instead of scanning them for every group.
@@ -137,48 +128,7 @@ const splitOf = (rows: readonly SplitRow[]): RoleSplit => {
 
 // The scope's list-price cost by role class and review seat, counting the
 // same Sessions and requests as the Agents page's totals, so the classes sum
-// to them. Call it inside a snapshot. JIT compiling the split's lateral reads
-// costs more than running them, so it turns JIT off for the rest of the
-// transaction, as migration 51's tree functions do for themselves.
-export const readRoleSplit = async (sql: SQL, scope: RoleSplitScope): Promise<RoleSplit> => {
-  await sql`SET LOCAL jit = off`;
-  return splitOf(await readSplitRows(sql, scope));
-};
-
-// How many of the scope's Sessions took their role from a session tag or T3's
-// preamble, and how many of those from the preamble. A Session counts when it
-// counts in the period's totals: wholly inside the period with its totals
-// stored, or with a request inside it. Call it inside a snapshot.
-export const readMissedTags = async (
-  sql: SQL,
-  { from, project, to }: RoleSplitScope,
-): Promise<MissedTags> => {
-  const [row]: { missed: number; with_role: number }[] = await sql`
-    WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })})
-    SELECT count(*) FILTER (WHERE s.role_source = 'preamble')::float8 AS missed,
-           count(*) FILTER (WHERE s.role_source IS NOT NULL)::float8 AS with_role
-    FROM spans k
-    CROSS JOIN LATERAL (
-      SELECT x.role_source
-      FROM insight.sessions x
-      WHERE (x.harness, x.system, x.source, x.session_id)
-          = (k.harness, k.system, k.source, k.session_id)
-      OFFSET 0
-    ) s
-    WHERE CASE
-      WHEN k.first_request_at >= ${from} AND k.last_request_at <= ${to} THEN EXISTS (
-        SELECT 1 FROM insight.session_totals x
-        WHERE (x.harness, x.system, x.source, x.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-          AND x.requests > 0
-      )
-      ELSE EXISTS (
-        SELECT 1 FROM insight.requests r
-        WHERE (r.harness, r.system, r.source, r.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-          AND r.at >= ${from} AND r.at <= ${to}
-      )
-    END
-  `;
-  return { missed: row?.missed ?? 0, withRole: row?.with_role ?? 0 };
-};
+// to them. Call it inside a snapshot with JIT off: compiling the split's
+// lateral reads costs more than running them.
+export const readRoleSplit = async (sql: SQL, scope: RoleSplitScope): Promise<RoleSplit> =>
+  splitOf(await readSplitRows(sql, scope));

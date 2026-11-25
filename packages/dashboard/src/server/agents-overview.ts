@@ -17,13 +17,20 @@ import type {
 } from './agents-overview-types.ts';
 import { readDayCosts, USUAL_DAYS } from './day-costs.ts';
 import { projectOf } from './fleet-overview.ts';
-import { readMissedTags, readRoleSplit } from './role-split.ts';
+import type { MissedTags } from './role-split-types.ts';
+import { readRoleSplit } from './role-split.ts';
 import { sessionSpans } from './session-spans.ts';
+import { readSnapshot, settleAll, settleBoth } from './snapshot.ts';
 
 // The period whose requests count, and the earliest latest request that
 // selects a Session, `from` unless given: Home's running Sessions are those
 // with a recent request, each priced over all of its requests.
-export type Period = { from: Date; lastRequestFrom?: Date; project?: string | undefined; to: Date };
+export type Period = {
+  from: Date;
+  lastRequestFrom?: Date;
+  project?: string | undefined;
+  to: Date;
+};
 
 type SessionRow = {
   first_cwd: string | null;
@@ -33,158 +40,148 @@ type SessionRow = {
   last_cwd: string | null;
   last_git_branch: string | null;
   last_request_at: Date;
+  models: ModelRow[] | null;
   priced_cost_usd: number;
   repository: string | null;
   requests: number;
+  role_source: string | null;
   session_id: string;
   source: string;
   system: string;
   unpriced_requests: number;
 };
 
-type ModelRow = {
-  harness: string;
-  model: string;
-  priced_cost_usd: number;
-  requests: number;
-  session_id: string;
-  source: string;
-  system: string;
-  unpriced_requests: number;
-};
+type ModelRow = [
+  model: string,
+  requests: number,
+  pricedCostUsd: number | null,
+  unpricedRequests: number,
+];
 
-const sessionIdentity = (row: Pick<SessionRow, 'harness' | 'session_id' | 'source' | 'system'>) =>
-  JSON.stringify([row.system, row.harness, row.source, row.session_id]);
-
-// Stored stretches include subagents. Only Sessions crossing a boundary need
-// request pricing; whole-Session totals retain the Hub's refresh semantics.
+// Stored stretches include subagents. Whole Sessions take the Hub's stored
+// Session and model totals. When a Session crosses a boundary, the same
+// window model totals supply both figures and can reuse stored intervals.
 const readSessionRows = (
   sql: SQL,
   { from, lastRequestFrom = from, project, to }: Period,
-): Promise<SessionRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, project, to })})
-  SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at,
-         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository,
+): Promise<SessionRow[]> => {
+  // The brief windows for Today and Running have few keys. Keep each totals
+  // read on its key even when the archive's statistics favor a table scan.
+  const narrow =
+    to.getTime() - lastRequestFrom.getTime() <= 25 * 3_600_000 + FUTURE_SAMPLE_TOLERANCE_MS;
+  const sessionTotals = narrow
+    ? sql`CROSS JOIN LATERAL (
+            SELECT x.requests, x.priced_cost_usd, x.unpriced_requests FROM insight.session_totals x
+            WHERE (x.harness, x.system, x.source, x.session_id)
+                = (k.harness, k.system, k.source, k.session_id)
+            OFFSET 0
+          ) x`
+    : sql`JOIN insight.session_totals x USING (harness, system, source, session_id)`;
+  return sql`
+  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, project, to })}),
+  totals AS (
+    SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at, k.last_request_at,
+           x.requests, x.priced_cost_usd, x.unpriced_requests,
+           (SELECT json_agg(json_build_array(m.model, m.requests, m.priced_cost_usd, m.unpriced_requests))
+            FROM insight.session_model_totals m
+            WHERE (m.harness, m.system, m.source, m.session_id)
+                = (k.harness, k.system, k.source, k.session_id) AND m.requests > 0) AS models
+    FROM spans k
+    ${sessionTotals}
+    WHERE k.first_request_at >= ${from} AND k.last_request_at <= ${to}
+      AND x.requests > 0
+    UNION ALL
+    SELECT k.harness, k.system, k.source, k.session_id, k.first_request_at, t.last_request_at,
+           t.requests, t.priced_cost_usd, t.unpriced_requests, t.models
+    FROM spans k
+    CROSS JOIN LATERAL (
+      SELECT sum(r.requests)::bigint AS requests, sum(r.priced_cost_usd) AS priced_cost_usd,
+             sum(r.unpriced_requests)::bigint AS unpriced_requests,
+             max(r.last_request_at) AS last_request_at,
+             json_agg(json_build_array(r.model, r.requests, r.priced_cost_usd, r.unpriced_requests)) AS models
+      FROM session_window_model_totals(k.harness, k.system, k.source, k.session_id,
+        ${from}, ${to}::timestamptz + interval '1 microsecond') r
+      HAVING count(*) > 0
+    ) t
+    WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
+  )
+  SELECT t.harness, t.system, t.source, t.session_id, t.first_request_at, t.last_request_at,
+         s.first_cwd, s.last_cwd, s.first_git_branch, s.last_git_branch, s.repository, s.role_source,
          t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
-         t.unpriced_requests::float8 AS unpriced_requests, t.last_request_at
-  FROM spans k
+         t.unpriced_requests::float8 AS unpriced_requests, t.models
+  FROM totals t
   CROSS JOIN LATERAL (
-    SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository
+    SELECT x.first_cwd, x.last_cwd, x.first_git_branch, x.last_git_branch, x.repository, x.role_source
     FROM insight.sessions x
     WHERE (x.harness, x.system, x.source, x.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
+        = (t.harness, t.system, t.source, t.session_id)
     OFFSET 0
   ) s
-  CROSS JOIN LATERAL (
-    SELECT x.requests, x.priced_cost_usd, x.unpriced_requests, k.last_request_at
-    FROM insight.session_totals x
-    WHERE (x.harness, x.system, x.source, x.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-      AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
-    UNION ALL
-    SELECT count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL), max(r.at)
-    FROM insight.requests r
-    WHERE (r.harness, r.system, r.source, r.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-      AND NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
-      AND r.at >= ${from} AND r.at <= ${to}
-    HAVING count(*) > 0
-  ) t
-  WHERE t.requests > 0
-  ORDER BY coalesce(t.priced_cost_usd, 0) DESC, k.system, k.harness, k.source, k.session_id
+  ORDER BY coalesce(t.priced_cost_usd, 0) DESC, t.system, t.harness, t.source, t.session_id
 `;
+};
 
-// A model's totals per Session in the period: the Hub's stored model totals
-// for a Session wholly inside it, and request pricing for one crossing a
-// boundary, as for the Session totals. Like them, stored model totals lag a
-// change until the Hub's refresh (ADR-0016). The spans are the Session
-// query's.
-const readModelRows = (
-  sql: SQL,
-  { from, lastRequestFrom = from, project, to }: Period,
-): Promise<ModelRow[]> => sql`
-  WITH spans AS MATERIALIZED (${sessionSpans(sql, { from: lastRequestFrom, project, to })})
-  SELECT k.harness, k.system, k.source, k.session_id,
-         t.model,
-         t.requests::float8 AS requests, coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
-         t.unpriced_requests::float8 AS unpriced_requests
-  FROM spans k
-  CROSS JOIN LATERAL (
-    SELECT x.model, x.requests, x.priced_cost_usd, x.unpriced_requests
-    FROM insight.session_model_totals x
-    WHERE (x.harness, x.system, x.source, x.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-      AND k.first_request_at >= ${from} AND k.last_request_at <= ${to}
-    UNION ALL
-    SELECT r.model, count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL)
-    FROM insight.requests r
-    WHERE (r.harness, r.system, r.source, r.session_id)
-        = (k.harness, k.system, k.source, k.session_id)
-      AND NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
-      AND r.at >= ${from} AND r.at <= ${to}
-    GROUP BY r.model
-  ) t
-  WHERE t.requests > 0
-`;
-
-// The fleet's model totals over the Sessions listed, each Session's models,
-// and the model each made the most requests with, the first in code unit
-// order on a tie.
-const modelBreakdown = (rows: ModelRow[], sessions: SessionRow[]) => {
-  const listed = new Set(sessions.map(sessionIdentity));
+// The listed Sessions supply the model breakdown and the count of session tags.
+const readSessionDetails = async (sql: SQL, period: Period) => {
+  const rows = await readSessionRows(sql, period);
   const totals = new Map<string, ModelTotals>();
-  const used = new Map<string, Set<string>>();
-  const top = new Map<string, { model: string; requests: number }>();
-  for (const row of rows.filter((candidate) => listed.has(sessionIdentity(candidate)))) {
-    const total = totals.get(row.model) ?? {
-      model: row.model,
-      pricedCostUsd: 0,
-      requests: 0,
-      unpricedRequests: 0,
-    };
-    total.pricedCostUsd += row.priced_cost_usd;
-    total.requests += row.requests;
-    total.unpricedRequests += row.unpriced_requests;
-    totals.set(row.model, total);
-    const identity = sessionIdentity(row);
-    used.set(identity, (used.get(identity) ?? new Set<string>()).add(row.model));
-    const leader = top.get(identity);
-    if (
-      leader === undefined ||
-      row.requests > leader.requests ||
-      (row.requests === leader.requests && row.model < leader.model)
-    ) {
-      top.set(identity, { model: row.model, requests: row.requests });
+  const missedTags: MissedTags = { missed: 0, withRole: 0 };
+  const sessions: AgentsSession[] = [];
+  for (const row of rows) {
+    if (row.role_source !== null) {
+      missedTags.withRole += 1;
+      if (row.role_source === 'preamble') {
+        missedTags.missed += 1;
+      }
     }
+    const used = row.models ?? [];
+    let top: { model: string; requests: number } | undefined;
+    for (const [model, requests, pricedCostUsd, unpricedRequests] of used) {
+      const total = totals.get(model) ?? {
+        model,
+        pricedCostUsd: 0,
+        requests: 0,
+        unpricedRequests: 0,
+      };
+      total.pricedCostUsd += pricedCostUsd ?? 0;
+      total.requests += requests;
+      total.unpricedRequests += unpricedRequests;
+      totals.set(model, total);
+      if (
+        top === undefined ||
+        requests > top.requests ||
+        (requests === top.requests && model < top.model)
+      ) {
+        top = { model, requests };
+      }
+    }
+    sessions.push({
+      branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
+      firstRequestAt: row.first_request_at.getTime(),
+      harness: row.harness,
+      lastRequestAt: row.last_request_at.getTime(),
+      models: used.map(([model]) => model).toSorted(),
+      pricedCostUsd: row.priced_cost_usd,
+      project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
+      requests: row.requests,
+      sessionId: row.session_id,
+      source: row.source,
+      system: row.system,
+      topModel: top?.model,
+      unpricedRequests: row.unpriced_requests,
+    });
   }
-  return { models: [...totals.values()], top, used };
+  return { missedTags, models: [...totals.values()], sessions };
 };
 
 // The Sessions with a request in the period, most expensive first, each with
 // what its requests in the period cost, and the fleet's model totals over
-// them. Two statements, however many Sessions there are. Call it inside a
-// snapshot.
+// them. Call it inside a snapshot.
 export const readPeriodSessions = async (
   sql: SQL,
   period: Period,
 ): Promise<{ models: ModelTotals[]; sessions: AgentsSession[] }> => {
-  const rows = await readSessionRows(sql, period);
-  const { models, top, used } = modelBreakdown(await readModelRows(sql, period), rows);
-  const sessions = rows.map((row) => ({
-    branch: row.last_git_branch ?? row.first_git_branch ?? undefined,
-    firstRequestAt: row.first_request_at.getTime(),
-    harness: row.harness,
-    lastRequestAt: row.last_request_at.getTime(),
-    models: [...(used.get(sessionIdentity(row)) ?? [])].toSorted(),
-    pricedCostUsd: row.priced_cost_usd,
-    project: projectOf(row.repository, row.last_cwd ?? row.first_cwd),
-    requests: row.requests,
-    sessionId: row.session_id,
-    source: row.source,
-    system: row.system,
-    topModel: top.get(sessionIdentity(row))?.model,
-    unpricedRequests: row.unpriced_requests,
-  }));
+  const { models, sessions } = await readSessionDetails(sql, period);
   return { models, sessions };
 };
 
@@ -257,15 +254,15 @@ export const agentsPeriod = ({
 }): Period =>
   range === 'today'
     ? todayPeriod(now, timeZone)
-    : { from: new Date(now - 86_400_000 * (range === '7d' ? 7 : 30)), to: new Date(now) };
+    : {
+        from: new Date(now - 86_400_000 * (range === '7d' ? 7 : 30)),
+        to: new Date(now),
+      };
 
-// The period's Sessions, of one project when given, are read whole, since the
-// totals, the breakdown, and the running count cover all of them, and leave
-// as sums and one page of the table. `table` is the table's query, the page's
-// default unless given. It answers the period it read too, so the reads that
-// must count the same requests take it rather than work it out again. Call it
-// inside a snapshot.
-export const readPeriodOverview = async (
+const readEarlierDays = (sql: SQL, now: number, timeZone: string) =>
+  readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1));
+
+const readPeriodDetails = async (
   sql: SQL,
   {
     now,
@@ -280,18 +277,17 @@ export const readPeriodOverview = async (
     table?: SessionsQuery;
     timeZone: string;
   },
-): Promise<{ overview: PeriodOverview; period: Period }> => {
+  earlierDays?: ReturnType<typeof readEarlierDays>,
+) => {
   // A project's dossier reads the rest of its figures up to `now`, so its table
   // and chart stay at the period's own end to agree with them.
   const period = { ...agentsPeriod({ now, range, timeZone }), project };
   const listed = project === undefined ? sessionsPeriod(period, now) : period;
-  const [{ models, sessions }, running, chart, earlier] = await Promise.all([
-    readPeriodSessions(sql, listed),
+  const [{ missedTags, models, sessions }, running, chart, earlier] = await settleAll([
+    readSessionDetails(sql, listed),
     readRunningSessions(sql, { now, project }),
     readCostChart(sql, { now, period: listed, range, timeZone }),
-    project === undefined
-      ? readDayCosts(sql, localDays(now, timeZone, USUAL_DAYS + 1).slice(0, -1))
-      : [],
+    earlierDays ?? (project === undefined ? readEarlierDays(sql, now, timeZone) : []),
   ]);
   const overview: PeriodOverview = {
     breakdown: breakdownTotals(sessions, models),
@@ -307,25 +303,55 @@ export const readPeriodOverview = async (
     totals: periodTotals(sessions),
     usualByNow: usualByNow(earlier),
   };
-  return { overview, period: listed };
+  return { missedTags, overview, period: listed };
 };
 
-// The Agents page's snapshot: the fleet's period, its cost by role over the
-// period the table reads, and Today's total, which is the period's own on the
-// Today range.
-const readAgentsSnapshot = async (
+// Totals and breakdowns use every Session in the period. The table returns
+// the page its query asks for. Call it inside readSnapshot, which turns JIT
+// off, since the indexed reads finish faster than PostgreSQL can compile them.
+export const readPeriodOverview = async (
   sql: SQL,
-  input: { now: number; range: AgentsRange; table?: SessionsQuery; timeZone: string },
-): Promise<AgentsOverview> => {
+  input: Parameters<typeof readPeriodDetails>[1],
+) => {
+  const { overview, period } = await readPeriodDetails(sql, input);
+  return { overview, period };
+};
+
+type AgentsInput = {
+  now: number;
+  range: AgentsRange;
+  table?: SessionsQuery;
+  timeZone: string;
+};
+
+const readAgentsFigures = async (sql: SQL, input: AgentsInput) => {
   const { now, range, timeZone } = input;
-  const [{ overview, period }, todays] = await Promise.all([
-    readPeriodOverview(sql, input),
-    range === 'today' ? undefined : readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
-  ]);
-  const [roleSplit, missedTags] = await Promise.all([
+  const period = sessionsPeriod(agentsPeriod(input), now);
+  const [roleSplit, todays, earlier] = await settleAll([
     readRoleSplit(sql, period),
-    readMissedTags(sql, period),
+    range === 'today' ? undefined : readPeriodSessions(sql, todaySessionsPeriod(now, timeZone)),
+    readEarlierDays(sql, now, timeZone),
   ]);
+  return { earlier, roleSplit, todays };
+};
+
+// All Agents figures read the same snapshot. The 30-day read borrows a second
+// connection for the role split and the earlier days.
+const readAgentsSnapshot = async (
+  tx: SQL,
+  side: SQL,
+  input: AgentsInput,
+): Promise<AgentsOverview> => {
+  const figures = readAgentsFigures(side, input);
+  const [period, { roleSplit, todays }] = await settleBoth(
+    readPeriodDetails(
+      tx,
+      input,
+      figures.then(({ earlier }) => earlier),
+    ),
+    figures,
+  );
+  const { missedTags, overview } = period;
   return {
     ...overview,
     missedTags,
@@ -334,7 +360,10 @@ const readAgentsSnapshot = async (
   };
 };
 
-// Read one database snapshot. Stored totals can lag request pricing until the
-// Hub refreshes them (ADR-0016); the fleet total sums the displayed amounts.
-export const readAgentsOverview = (sql: SQL, input: Parameters<typeof readAgentsSnapshot>[1]) =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readAgentsSnapshot(tx, input));
+// Stored totals can lag request pricing until the Hub refreshes them
+// (ADR-0016). The 30-day read borrows a second connection because on one it
+// takes about 0.8 s at production scale (10,000 Sessions), too close to a
+// second: every read passes over all its Sessions, and a Session crossing the
+// period's start or an earlier day's cutoff has requests priced one by one.
+export const readAgentsOverview = (sql: SQL, input: AgentsInput) =>
+  readSnapshot(sql, input.range === '30d', (tx, side) => readAgentsSnapshot(tx, side, input));

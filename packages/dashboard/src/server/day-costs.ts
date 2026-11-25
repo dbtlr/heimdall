@@ -17,9 +17,9 @@ type DayRow = {
 // Each of `days`' cost at list prices, and what it had spent by its cutoff,
 // in one statement however many Sessions there are. As on the Agents page
 // (ADR-0016), a Session within one day, wholly before or wholly after its
-// cutoff, takes its stored total; only a Session crossing a midnight or a
-// cutoff is priced request by request. A Session whose first request is at
-// the last day's end is a span but joins no day, since each day ends before it.
+// cutoff, takes its stored total. A Session crossing a midnight or a cutoff
+// reads two windows so each can reuse stored intervals within its bounds.
+// A Session whose first request is at the last day's end joins no day.
 export const readDayCosts = async (
   sql: SQL,
   days: readonly LocalDay[],
@@ -54,14 +54,16 @@ export const readDayCosts = async (
           AND k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
           AND (k.last_request_at <= w.cutoff_at OR k.first_request_at > w.cutoff_at)
         UNION ALL
-        SELECT count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL),
-               sum(r.cost_usd) FILTER (WHERE r.at <= w.cutoff_at)
-        FROM insight.requests r
-        WHERE (r.harness, r.system, r.source, r.session_id)
-            = (k.harness, k.system, k.source, k.session_id)
-          AND NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
+        SELECT sum(r.requests)::bigint, sum(r.priced_cost_usd), sum(r.unpriced_requests)::bigint,
+               sum(r.priced_cost_usd) FILTER (WHERE d.by_now)
+        FROM (VALUES
+          (w.start_at, least(w.end_at, w.cutoff_at + interval '1 microsecond'), true),
+          (greatest(w.start_at, w.cutoff_at + interval '1 microsecond'), w.end_at, false)
+        ) d(since, until, by_now)
+        CROSS JOIN LATERAL session_window_model_totals(k.harness, k.system, k.source, k.session_id,
+          d.since, d.until) r
+        WHERE NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
                    AND (k.last_request_at <= w.cutoff_at OR k.first_request_at > w.cutoff_at))
-          AND r.at >= w.start_at AND r.at < w.end_at
         HAVING count(*) > 0
       ) t
     )

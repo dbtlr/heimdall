@@ -44,7 +44,9 @@ const TRANSCRIPT_TABLES = new Set([
   'stale_ranges',
   'stale_sessions',
   'stored_session_model_totals',
+  'stored_session_request_buckets',
   'stored_session_role_totals',
+  'stored_session_spans',
   'stored_session_stretches',
   'stored_session_totals',
   'transcript_chunks',
@@ -285,6 +287,16 @@ const seedSystem = async (sql: SQL, system: string, generation: number) => {
       ...session,
       requests: 1,
       role_class: 'main',
+      unpriced_requests: 1,
+    })}
+  `;
+  await sql`
+    INSERT INTO stored_session_request_buckets ${sql({
+      ...session,
+      bucket_at: AT,
+      last_request_at: AT,
+      model: 'claude-opus-5-5',
+      requests: 1,
       unpriced_requests: 1,
     })}
   `;

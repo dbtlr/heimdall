@@ -3187,6 +3187,256 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 53,
   },
+  {
+    // Charts and daily costs often slice a Session at bucket boundaries.
+    // Store short intervals with its totals so those reads can reuse prices
+    // for requests in complete intervals (ADR-0016). The refresh replaces them
+    // with the other stored totals, in the same transaction. A clipped interval
+    // or a stale Session still reads current request prices. Five minutes
+    // divides every real time-zone offset, so a local hour's or day's edge is
+    // always an interval's edge; that costs more rows than 15 minutes would.
+    // The fill reads the whole archive, so it may outlast the connection's
+    // timeout.
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE TABLE stored_session_request_buckets (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        bucket_at timestamptz NOT NULL,
+        model text NOT NULL,
+        requests bigint NOT NULL,
+        priced_cost_usd numeric,
+        unpriced_requests bigint NOT NULL,
+        last_request_at timestamptz NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id, bucket_at, model),
+        FOREIGN KEY (harness, system, source, session_id)
+          REFERENCES stored_session_totals ON DELETE CASCADE
+      );
+
+      CREATE FUNCTION computed_session_request_buckets(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (bucket_at timestamptz, model text, requests bigint, priced_cost_usd numeric,
+                       unpriced_requests bigint, last_request_at timestamptz)
+      LANGUAGE sql STABLE SET jit = off AS $$
+        SELECT date_bin('5 minutes', r.at, timestamptz 'epoch'), r.model,
+               count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL), max(r.at)
+        FROM insight.requests r
+        WHERE (r.harness, r.system, r.source, r.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        GROUP BY 1, r.model
+      $$;
+
+      CREATE OR REPLACE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          DELETE FROM stored_session_model_totals s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_model_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+                 c.priced_cost_usd, c.unpriced_requests
+          FROM computed_session_model_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          -- Each statement reads its own snapshot, so a parser switch between
+          -- the two can give a split to a Session the totals left out.
+          INSERT INTO stored_session_role_totals
+          SELECT c.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          INSERT INTO stored_session_request_buckets
+          SELECT t.harness, t.system, t.source, t.session_id, b.*
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_request_buckets(t.harness, t.system, t.source, t.session_id) b
+          WHERE (t.harness, t.system, t.source, t.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        RETURN true;
+      END
+      $$;
+
+      -- This window serves the Hub role. It uses the same half-open bounds
+      -- for the stored buckets and the partial buckets read from requests.
+      CREATE FUNCTION session_window_model_totals(
+        key_harness text, key_system text, key_source text, key_session_id text,
+        window_from timestamptz, window_to timestamptz
+      ) RETURNS TABLE (model text, requests bigint, priced_cost_usd numeric,
+                       unpriced_requests bigint, last_request_at timestamptz)
+      LANGUAGE sql STABLE ROWS 4 AS $$
+        WITH aligned AS (
+          SELECT date_bin('5 minutes', window_from, timestamptz 'epoch') AS start_bin,
+                 date_bin('5 minutes', window_to, timestamptz 'epoch') AS full_to
+        ), bounds AS (
+          SELECT CASE WHEN start_bin < window_from THEN start_bin + interval '5 minutes'
+                      ELSE start_bin END AS full_from, full_to
+          FROM aligned
+        ), covered AS MATERIALIZED (
+          SELECT full_from, full_to,
+                 full_from < full_to AND NOT EXISTS (
+                   SELECT 1 FROM stale_sessions s
+                   WHERE (s.harness, s.system, s.source, s.session_id)
+                       = (key_harness, key_system, key_source, key_session_id)
+                     AND s.totals
+                 ) AND NOT EXISTS (
+                   SELECT 1 FROM stale_ranges s
+                   WHERE s.totals AND (s.harness IS NULL OR s.harness = key_harness)
+                     AND (s.system IS NULL OR s.system = key_system)
+                 ) AS use_stored
+          FROM bounds
+        ), live_windows AS (
+          SELECT window_from AS since, CASE WHEN use_stored THEN full_from ELSE window_to END AS until
+          FROM covered
+          UNION ALL
+          SELECT full_to, window_to FROM covered WHERE use_stored
+        ), costs AS (
+          SELECT b.model, b.requests, b.priced_cost_usd, b.unpriced_requests, b.last_request_at
+          FROM covered c
+          JOIN stored_session_request_buckets b ON b.bucket_at >= c.full_from AND b.bucket_at < c.full_to
+          WHERE c.use_stored AND (b.harness, b.system, b.source, b.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+          UNION ALL
+          SELECT r.*
+          FROM live_windows w
+          CROSS JOIN LATERAL (
+            SELECT r.model, count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL), max(r.at)
+            FROM insight.requests r
+            WHERE (r.harness, r.system, r.source, r.session_id)
+                = (key_harness, key_system, key_source, key_session_id)
+              AND r.at >= w.since AND r.at < w.until
+            GROUP BY r.model
+          ) r
+          WHERE w.since < w.until
+        )
+        SELECT c.model, sum(c.requests)::bigint, sum(c.priced_cost_usd),
+               sum(c.unpriced_requests)::bigint, max(c.last_request_at)
+        FROM costs c GROUP BY c.model
+      $$;
+
+      -- Fill the intervals for Sessions with totals on upgrade. Their
+      -- existing refresh marks still control when reads can use them.
+      INSERT INTO stored_session_request_buckets
+      SELECT t.harness, t.system, t.source, t.session_id, b.*
+      FROM stored_session_totals t
+      CROSS JOIN LATERAL computed_session_request_buckets(t.harness, t.system, t.source, t.session_id) b;
+    `,
+    version: 54,
+  },
+  {
+    // Period reads select Sessions by the end of their latest stretch. Keep
+    // both bounds in one row so each read can use the time index directly.
+    sql: `
+      CREATE TABLE stored_session_spans (
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        first_request_at timestamptz NOT NULL,
+        last_request_at timestamptz NOT NULL,
+        PRIMARY KEY (harness, system, source, session_id)
+      );
+      CREATE INDEX stored_session_spans_by_end ON stored_session_spans (last_request_at)
+        INCLUDE (harness, system, source, session_id, first_request_at);
+
+      CREATE FUNCTION keep_stored_session_span() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        earliest timestamptz;
+        latest timestamptz;
+      BEGIN
+        IF TG_OP <> 'INSERT' THEN
+          -- Serialize a bound that has shrunk with other changes to that key.
+          PERFORM 1 FROM stored_session_spans s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (OLD.harness, OLD.system, OLD.source, OLD.session_id)
+          FOR UPDATE;
+          IF FOUND THEN
+            SELECT min(s.started_at), max(s.ended_at) INTO earliest, latest
+            FROM stored_session_stretches s
+            WHERE (s.harness, s.system, s.source, s.session_id)
+                = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            IF earliest IS NULL THEN
+              DELETE FROM stored_session_spans s
+              WHERE (s.harness, s.system, s.source, s.session_id)
+                  = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            ELSE
+              UPDATE stored_session_spans s SET first_request_at = earliest, last_request_at = latest
+              WHERE (s.harness, s.system, s.source, s.session_id)
+                  = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            END IF;
+          END IF;
+        END IF;
+        IF TG_OP <> 'DELETE' THEN
+          INSERT INTO stored_session_spans AS s
+          VALUES (NEW.harness, NEW.system, NEW.source, NEW.session_id, NEW.started_at, NEW.ended_at)
+          ON CONFLICT (harness, system, source, session_id) DO UPDATE
+          SET first_request_at = least(s.first_request_at, excluded.first_request_at),
+              last_request_at = greatest(s.last_request_at, excluded.last_request_at);
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+
+      CREATE TRIGGER keep_stored_session_span_after_change
+        AFTER INSERT OR UPDATE OR DELETE ON stored_session_stretches
+        FOR EACH ROW EXECUTE FUNCTION keep_stored_session_span();
+
+      INSERT INTO stored_session_spans
+      SELECT harness, system, source, session_id, min(started_at), max(ended_at)
+      FROM stored_session_stretches GROUP BY harness, system, source, session_id;
+
+      CREATE VIEW insight.session_spans WITH (security_barrier = true) AS
+      SELECT s.* FROM stored_session_spans s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (s.harness, s.system, s.source, s.session_id)
+      );
+    `,
+    version: 55,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

@@ -20,13 +20,11 @@ type CellRow = {
 
 // What requests in the period cost in each of `buckets`, per Harness, System,
 // model, and working directory, in one statement however many Sessions there
-// are. As for the Session and model totals (ADR-0016), a Session whose
-// requests in the period all fall in one bucket takes its stored model totals;
-// only a Session crossing a bucket's edge or the period's is priced request by
-// request, and only its requests in that bucket, read through its key and
-// time. The Sessions are the spans' (see sessionSpans), so the cost follows
-// the period's Sessions and not the archive; with `system`, that System's
-// alone, as its System page counts them. Call it inside a snapshot.
+// are. As for the Session and model totals (ADR-0016), a Session whose whole
+// span starts and ends inside one bucket takes its stored model totals. A
+// Session that starts before the period or crosses a bucket's edge uses the
+// window's model totals, which can reuse the stored intervals inside it. The spans select the Sessions from the
+// period and limit them to `system` for a System page. Call it inside a snapshot.
 export const readCells = async (
   sql: SQL,
   { from, project, to }: Period,
@@ -57,8 +55,8 @@ export const readCells = async (
       ) s
     )
     SELECT w.i AS bucket, k.harness, k.system, t.model, k.repository, k.cwd,
-           coalesce(t.priced_cost_usd, 0)::float8 AS priced_cost_usd,
-           t.unpriced_requests::float8 AS unpriced_requests
+           coalesce(sum(t.priced_cost_usd), 0)::float8 AS priced_cost_usd,
+           sum(t.unpriced_requests)::float8 AS unpriced_requests
     FROM windows w
     JOIN spans k ON k.last_request_at >= w.start_at AND k.first_request_at < w.end_at
     CROSS JOIN LATERAL (
@@ -69,16 +67,14 @@ export const readCells = async (
         AND k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
         AND k.last_request_at <= ${to}
       UNION ALL
-      SELECT r.model, count(*), sum(r.cost_usd), count(*) FILTER (WHERE r.cost_usd IS NULL)
-      FROM insight.requests r
-      WHERE (r.harness, r.system, r.source, r.session_id)
-          = (k.harness, k.system, k.source, k.session_id)
-        AND NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
+      SELECT r.model, r.requests, r.priced_cost_usd, r.unpriced_requests
+      FROM session_window_model_totals(k.harness, k.system, k.source, k.session_id,
+        w.start_at, least(w.end_at, ${to}::timestamptz + interval '1 microsecond')) r
+      WHERE NOT (k.first_request_at >= w.start_at AND k.last_request_at < w.end_at
                  AND k.last_request_at <= ${to})
-        AND r.at >= w.start_at AND r.at < w.end_at AND r.at <= ${to}
-      GROUP BY r.model
     ) t
     WHERE t.requests > 0
+    GROUP BY w.i, k.harness, k.system, t.model, k.repository, k.cwd
   `;
 };
 
