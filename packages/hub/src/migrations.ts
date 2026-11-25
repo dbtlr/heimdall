@@ -3169,6 +3169,24 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 52,
   },
+  {
+    // Which conversation made each request, and when, without its price.
+    // insight.requests prices every request it returns, and a read that only
+    // asks who made requests in a period, such as a project's subagent count,
+    // paid that per request.
+    sql: `
+      CREATE VIEW insight.request_agents WITH (security_barrier = true) AS
+      SELECT r.harness, r.system, r.source, r.session_id, r.agent_id, r.at
+      FROM projected_requests r
+      JOIN current_parsers c ON c.harness = r.harness AND c.version = r.parser_version
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE x.harness = r.harness AND x.system = r.system AND x.source = r.source
+          AND x.session_id = r.session_id
+      );
+    `,
+    version: 53,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

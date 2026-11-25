@@ -176,14 +176,16 @@ export const readProjectView = (
         CROSS JOIN LATERAL (
           SELECT count(*)::int AS n FROM insight.subagents x
           -- Like its Session, a subagent counts only with a request in the
-          -- period, probed per subagent as the spans probe per Session.
-          CROSS JOIN LATERAL (
-            SELECT 1 FROM insight.requests q
-            WHERE (q.harness, q.system, q.source, q.session_id) = (x.harness, x.system, x.source, x.session_id)
-              AND q.agent_id = x.agent_id AND q.at >= ${from} AND q.at <= ${to}
-            LIMIT 1
-          ) e
+          -- period. The Session's period requests are read once and grouped
+          -- by agent, unpriced, not probed per subagent: a Session holds dozens.
           WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
+            AND x.agent_id IN (
+              SELECT q.agent_id FROM insight.request_agents q
+              WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
+                AND q.at >= ${from} AND q.at <= ${to}
+              GROUP BY q.agent_id
+              OFFSET 0
+            )
         ) a
         WHERE a.n > 0
       ` as Promise<(Key & { n: number })[]>,
