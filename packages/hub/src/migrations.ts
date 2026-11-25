@@ -3690,6 +3690,83 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 56,
   },
+  {
+    // The class of every conversation a Session has requests or a subagent
+    // row for, defined once (ADR-0025): the main conversation, which every
+    // Session has a row for, even one with no requests, takes the
+    // Session's class, a subagent the Hub holds its own, and an agent id the
+    // Hub holds no subagent for takes the main conversation's effective role,
+    // read as a subagent's. The Session's totals, the Agents page's split, and
+    // the Session page's running cost read it instead of each re-deriving the
+    // rule. A read by Session key reads that Session's requests by their
+    // key index, so it costs in proportion to the Session.
+    sql: `
+      CREATE VIEW insight.conversation_roles WITH (security_barrier = true) AS
+      SELECT a.harness, a.system, a.source, a.session_id, a.agent_id,
+             a.role_class, a.effective_seat AS seat
+      FROM insight.subagents a
+      UNION ALL
+      SELECT s.harness, s.system, s.source, s.session_id, c.agent_id,
+             CASE WHEN c.agent_id IS NULL THEN s.role_class
+                  WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END,
+             s.effective_seat
+      FROM insight.sessions s
+      CROSS JOIN LATERAL (
+        SELECT NULL::text AS agent_id
+        UNION ALL
+        SELECT g.agent_id
+        FROM (
+          SELECT DISTINCT r.agent_id FROM insight.request_agents r
+          WHERE (r.harness, r.system, r.source, r.session_id)
+              = (s.harness, s.system, s.source, s.session_id)
+            AND r.agent_id IS NOT NULL
+        ) g
+        -- Probes the Session's subagent rows by key rather than through
+        -- insight.subagents, which would walk the whole Session per agent id.
+        -- The outer insight.sessions already excludes a re-deriving Session, so
+        -- the current parser is the only other filter insight.subagents applies.
+        WHERE NOT EXISTS (
+          SELECT 1 FROM projected_subagents a
+          JOIN current_parsers cp ON (cp.harness, cp.version) = (a.harness, a.parser_version)
+          WHERE (a.harness, a.system, a.source, a.session_id)
+              = (s.harness, s.system, s.source, s.session_id)
+            AND a.agent_id = g.agent_id
+        )
+      ) c;
+
+      CREATE OR REPLACE FUNCTION computed_session_role_totals(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS TABLE (
+        harness text, system text, source text, session_id text, role_class text, seat text,
+        requests bigint, cost_usd numeric, priced_cost_usd numeric, unpriced_requests bigint
+      )
+      LANGUAGE sql STABLE SET jit = off SET enable_nestloop = off AS $$
+        WITH conversation_totals AS (
+          SELECT r.agent_id, count(*) AS requests, sum(r.cost_usd) AS priced_cost_usd,
+                 count(*) FILTER (WHERE r.cost_usd IS NULL) AS unpriced_requests
+          FROM insight.requests r
+          WHERE (r.harness, r.system, r.source, r.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+          GROUP BY r.agent_id
+        ), roles AS MATERIALIZED (
+          SELECT c.agent_id, c.role_class, c.seat
+          FROM insight.conversation_roles c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id)
+        )
+        SELECT key_harness, key_system, key_source, key_session_id, a.role_class, a.seat,
+               sum(t.requests)::bigint,
+               CASE WHEN sum(t.unpriced_requests) = 0 THEN sum(t.priced_cost_usd) END,
+               sum(t.priced_cost_usd),
+               sum(t.unpriced_requests)::bigint
+        FROM conversation_totals t
+        JOIN roles a ON (a.agent_id IS NULL) = (t.agent_id IS NULL)
+        AND coalesce(a.agent_id, '') = coalesce(t.agent_id, '')
+        GROUP BY a.role_class, a.seat
+      $$;
+    `,
+    version: 57,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is

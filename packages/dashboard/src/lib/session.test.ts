@@ -105,6 +105,7 @@ const view = (overrides: Partial<SessionView> = {}): SessionView => ({
   agents: [],
   branch: undefined,
   bucketMs: MINUTE,
+  conversations: [],
   cpu: [],
   cwd: undefined,
   endedAt: at(60),

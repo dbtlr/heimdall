@@ -27,6 +27,15 @@ export type SessionAgent = EffectiveRole & {
   workflowRun: string | undefined;
 };
 
+// A conversation's class as the Hub defines it (insight.conversation_roles),
+// including a subagent the Hub holds no row for.
+export type SessionConversation = {
+  agentId: string;
+  roleClass: CostClass;
+  // The review seat; undefined for a class other than review or an unknown seat.
+  seat: string | undefined;
+};
+
 // One request, its cost at list price split by token kind. Every cost is
 // undefined when the model is unpriced.
 export type SessionRequest = {
@@ -93,6 +102,8 @@ export type SessionTotals = {
 
 export type SessionView = SessionKey & {
   agents: SessionAgent[];
+  // The class of each subagent conversation with requests or a row.
+  conversations: SessionConversation[];
   branch: string | undefined;
   // CPU busy over the span, in buckets `bucketMs` wide from the raw samples,
   // or the 5-minute rollups once the samples are pruned.

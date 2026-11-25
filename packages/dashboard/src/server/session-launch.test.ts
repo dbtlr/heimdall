@@ -169,6 +169,37 @@ describe('the Session’s role', () => {
     expect(found.roleSource).toBeUndefined();
   });
 
+  test('each conversation carries its class and seat, including an agent id with no subagent row', async () => {
+    await using h = await start();
+    await addSession(h.db.sql, {
+      id: 's1',
+      model: PRICED,
+      requests: [-600],
+      subagents: [
+        { agentId: 'held-review', requests: [-500] },
+        { agentId: 'held-plain', requests: [-400] },
+        { agentId: 'unheld', requests: [-300] },
+      ],
+    });
+    await h.db.sql`
+      UPDATE projected_subagents SET role = 'implementation' WHERE agent_id = 'held-plain'
+    `;
+    await h.db.sql`
+      UPDATE projected_subagents SET role = 'review', seat = 'architect'
+      WHERE agent_id = 'held-review'
+    `;
+    await h.db.sql`DELETE FROM projected_subagents WHERE agent_id = 'unheld'`;
+    await tag(h, 's1', { role: 'review', seat: 'breaker' });
+
+    const found = await readSessionView(h.db.sql, KEY);
+    expect(found?.conversations.toSorted((a, b) => a.agentId.localeCompare(b.agentId))).toEqual([
+      { agentId: 'held-plain', roleClass: 'delegated', seat: undefined },
+      { agentId: 'held-review', roleClass: 'review', seat: 'architect' },
+      // The Hub holds no subagent for it, so it takes the Session's role.
+      { agentId: 'unheld', roleClass: 'review', seat: 'breaker' },
+    ]);
+  });
+
   test('each subagent carries its effective role, its own or the Session’s', async () => {
     await using h = await start();
     await addSession(h.db.sql, {

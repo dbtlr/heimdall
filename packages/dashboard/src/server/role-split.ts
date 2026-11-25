@@ -26,19 +26,17 @@ type SplitRow = {
 // Sessions there are. As for the Session totals, a Session wholly inside the
 // period takes its stored split (ADR-0016); one crossing the period's edge has
 // its requests inside the period grouped by conversation and each group put in
-// its conversation's class, as the Hub's own split does (ADR-0025): the main
-// conversation's, the subagent's, or for a subagent the Hub does not hold, the
-// main conversation's role read as a subagent's.
+// its conversation's class, which the Hub defines in insight.conversation_roles
+// (ADR-0025), so this read holds no copy of that rule.
 const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise<SplitRow[]> => sql`
   WITH spans AS MATERIALIZED (${sessionSpans(sql, { from, project, to })}),
-  -- Each crossing Session's subagents, read once per Session by its key: the
-  -- Hub walks a Session's subagents to find their effective roles. OFFSET 0
-  -- keeps the read per Session rather than over every Session's subagents.
-  crossing_subagents AS MATERIALIZED (
-    SELECT a.harness, a.system, a.source, a.session_id, a.agent_id, a.role_class, a.effective_seat
+  -- Each crossing Session's conversations, read once per Session by its key.
+  -- OFFSET 0 keeps the read per Session rather than over every Session's.
+  crossing_roles AS MATERIALIZED (
+    SELECT a.harness, a.system, a.source, a.session_id, a.agent_id, a.role_class, a.seat
     FROM spans k
     CROSS JOIN LATERAL (
-      SELECT * FROM insight.subagents a
+      SELECT * FROM insight.conversation_roles a
       WHERE (a.harness, a.system, a.source, a.session_id)
           = (k.harness, k.system, k.source, k.session_id)
       OFFSET 0
@@ -46,7 +44,10 @@ const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise
     WHERE NOT (k.first_request_at >= ${from} AND k.last_request_at <= ${to})
   ),
   -- Each crossing Session's requests inside the period, by conversation.
-  crossing_groups AS (
+  -- MATERIALIZED, so the pricing lateral runs once per Session: inlined, the
+  -- planner can drive it from crossing_roles below and run it once per
+  -- conversation.
+  crossing_groups AS MATERIALIZED (
     SELECT k.harness, k.system, k.source, k.session_id, g.agent_id, g.requests,
            g.priced_cost_usd, g.unpriced_requests
     FROM spans k
@@ -73,23 +74,15 @@ const readSplitRows = (sql: SQL, { from, project, to }: RoleSplitScope): Promise
     JOIN insight.sessions s USING (harness, system, source, session_id)
     WHERE k.first_request_at >= ${from} AND k.last_request_at <= ${to}
     UNION ALL
-    -- Joined to the subagents outside any per-Session read, so the planner
-    -- hashes them once instead of scanning them for every group.
-    SELECT CASE WHEN g.agent_id IS NULL THEN s.role_class
-                WHEN a.agent_id IS NOT NULL THEN a.role_class
-                WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END,
-           CASE WHEN a.agent_id IS NOT NULL THEN a.effective_seat ELSE s.effective_seat END,
-           g.requests, g.priced_cost_usd, g.unpriced_requests
+    -- Joined to the conversations outside any per-Session read. The main
+    -- conversation has no agent id, so the join compares it as a flag.
+    SELECT a.role_class, a.seat, g.requests, g.priced_cost_usd, g.unpriced_requests
     FROM crossing_groups g
-    CROSS JOIN LATERAL (
-      SELECT s.role_class, s.effective_role, s.effective_seat FROM insight.sessions s
-      WHERE (s.harness, s.system, s.source, s.session_id)
-          = (g.harness, g.system, g.source, g.session_id)
-      OFFSET 0
-    ) s
-    LEFT JOIN crossing_subagents a
-      ON (a.harness, a.system, a.source, a.session_id, a.agent_id)
-       = (g.harness, g.system, g.source, g.session_id, g.agent_id)
+    JOIN crossing_roles a
+      ON (a.harness, a.system, a.source, a.session_id)
+       = (g.harness, g.system, g.source, g.session_id)
+     AND (a.agent_id IS NULL) = (g.agent_id IS NULL)
+     AND coalesce(a.agent_id, '') = coalesce(g.agent_id, '')
   ) t
   GROUP BY t.role_class, t.seat
 `;

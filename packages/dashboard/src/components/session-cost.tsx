@@ -88,7 +88,7 @@ function PaidFor({ view }: { view: SessionView }) {
 // fill, and the process link.
 function RunningCost({ lanes, view }: { lanes: readonly AgentLane[]; view: SessionView }) {
   const window = sessionWindow(view);
-  const { points, series } = roleRunningCost(view.requests, view.agents, view.launch);
+  const { points, series } = roleRunningCost(view.requests, view.launch, view.conversations);
   const context = contextFill(view.requests);
   const commands = commandMarks(view.requests, view.toolCalls);
   const compactions = commands.filter((command) => command.after !== undefined);
