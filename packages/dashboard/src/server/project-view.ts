@@ -7,8 +7,7 @@ import type { AgentsRange, AgentsSession } from './agents-overview-types.ts';
 import { agentsPeriod, readPeriodOverview } from './agents-overview.ts';
 import { projectNameSql, sessionProjectSql } from './project-sql.ts';
 import { readRoleSplit } from './role-split.ts';
-import { sessionSpans } from './session-spans.ts';
-import { readSnapshot, settleAll, settleBoth } from './snapshot.ts';
+import { readSnapshot, settleAll } from './snapshot.ts';
 
 // One stretch of a Session's request activity on the dossier's lanes.
 export type ActivityLane = {
@@ -44,20 +43,18 @@ const keyOf = (row: Pick<AgentsSession, 'harness' | 'sessionId' | 'source' | 'sy
   JSON.stringify([row.system, row.harness, row.source, row.sessionId]);
 const rowKey = (row: Key) => JSON.stringify([row.system, row.harness, row.source, row.session_id]);
 
-// A dossier reads one snapshot. As on the Agents page, the 30-day read
-// borrows a second connection on that snapshot for the project's activity,
-// which runs beside the header and the cost overview: at production scale
-// (9,000 Sessions in the period) the reads take about 0.7 s on two
-// connections and about 1.25 s median, 1.5 s p90, on one. Only the header's
-// history (the first Session, the last request, the Systems, and whether a
-// repository was resolved) reads the project's Sessions over the whole
-// archive, once. Every other read starts
-// from the project's Sessions with a request in the period, found as Agents
-// finds its Sessions (session-spans.ts), kept to those with such a request.
-// They are picked once, and each later statement takes their keys, so the plan
-// reaches tool counts, bursts, and subagents by Session key and never re-runs
-// the project filter. One rule holds for the whole page: only requests in the period
-// count, and a Session with none adds nothing.
+// A dossier reads one snapshot, on one connection. At production scale
+// (9,000 Sessions in the period, the heavy scenario) its 30-day read takes
+// about 0.63 to 0.70 s p90 on one connection. The previous default read took
+// about 0.81 s p90 by borrowing a second connection, and about 1.1 to 1.3 s on
+// one. The cost overview, shared with the Agents page, takes about half. One statement reads the header's history over the whole
+// archive and picks the project's Sessions with a request in the period,
+// found as Agents finds its Sessions (session-spans.ts), kept to those with
+// such a request (readPlace), so the project filter runs once. Each later
+// statement takes the picked Sessions' keys (session_keys), so it matches
+// the stored bursts and tool counts by one integer and never re-runs the
+// project filter. One rule holds for the whole page: only requests in the
+// period count, and a Session with none adds nothing.
 //
 // Active time is the union, over the project's Sessions, of the 5 minutes
 // after each request in the period (the window in which a Session counts as
@@ -65,9 +62,10 @@ const rowKey = (row: Key) => JSON.stringify([row.system, row.harness, row.source
 // period never holds more active time than its length. The lanes draw the
 // same windows, one Session's at a time. Both read the Sessions' bursts the Hub
 // stores at each refresh (ADR-0016), so like the totals they can lag new
-// requests until the next refresh, and so does the subagent count. The tools
-// read the counts stored with the bursts, or a Session's calls in the period
-// when a tool's calls cross its edge or the Session awaits a refresh.
+// requests until the next refresh, and so does the subagent count, read from
+// the count stored with the totals or, at the period's edge, the bursts. The
+// tools read the counts stored with the bursts, or a Session's calls in the
+// period when a tool's calls cross its edge or the Session awaits a refresh.
 //
 // The cost by role reads the period the cost figure reads, ending at `now`,
 // and picks the project's Sessions as the figure's totals do, so its classes
@@ -85,52 +83,25 @@ export const readProjectView = (
   if (name === '') {
     return Promise.resolve(undefined);
   }
-  return readSnapshot(sql, input.range === '30d', async (tx, side) => {
+  return readSnapshot(sql, false, async (tx) => {
     // Every statement is planned for its own values: the activity's take
     // thousands of Session keys as arrays, and a generic plan, which
     // PostgreSQL may switch a prepared statement to after five runs, would
     // plan for ten.
     await tx`SET LOCAL plan_cache_mode = force_custom_plan`;
-    if (side !== tx) {
-      await side`SET LOCAL plan_cache_mode = force_custom_plan`;
-    }
-    // The period the overview reads for a project, which ends at `now`. The
-    // project's own activity is read beside the header and the overview.
+    // The period the overview reads for a project, which ends at `now`.
     const { from, to } = agentsPeriod(input);
-    const [header, activity] = await settleBoth(
-      (async () => {
-        const history: {
-          first: Date;
-          last: Date | null;
-          repository: boolean;
-          systems: string[];
-        }[] = await tx`
-        SELECT min(s.started_at) AS first, max(k.last_request_at) AS last,
-               bool_or(s.repository IS NOT NULL) AS repository,
-               array_agg(DISTINCT s.system ORDER BY s.system) AS systems
-        FROM insight.sessions s
-        LEFT JOIN insight.session_spans k
-          ON (k.harness, k.system, k.source, k.session_id) = (s.harness, s.system, s.source, s.session_id)
-        WHERE ${sessionProjectSql(tx)} = ${name}
-        HAVING count(*) > 0
-      `;
-        const place = history[0];
-        if (place === undefined) {
-          return undefined;
-        }
-        const [{ overview }, split] = await settleBoth(
-          readPeriodOverview(tx, { ...input, project: name }),
-          readRoleSplit(tx, { from, project: name, to }),
-        );
-        return { overview, place, split };
-      })(),
-      readActivity(side, { from, name, to }),
-    );
-    if (header === undefined) {
+    const place = await readPlace(tx, { from, name, to });
+    if (place === undefined) {
       return undefined;
     }
-    const { overview, place, split } = header;
-    const { branches, processes, subagents, toolCount, tools, windows } = activity;
+    const [{ overview }, split, activity] = await settleAll([
+      readPeriodOverview(tx, { ...input, project: name }),
+      readRoleSplit(tx, { from, project: name, to }),
+      readActivity(tx, { from, name, picked: place.picked, to }),
+    ]);
+    const { processes, toolCount, tools, windows } = activity;
+    const { sessions } = place.picked;
     const lanes: ActivityLane[] = windows.map((row) => ({
       end: row.end.getTime(),
       harness: row.harness,
@@ -139,11 +110,11 @@ export const readProjectView = (
       start: row.start.getTime(),
       system: row.system,
     }));
-    const subagentsOf = new Map(subagents.map((row) => [rowKey(row), row.n]));
+    const subagentsOf = new Map(sessions.map((row) => [rowKey(row), row.subagents]));
     const [cpu] = processes;
     return {
       activeMs: unionMs(lanes),
-      branches,
+      branches: place.branches,
       cpuSeconds: cpu?.seconds ?? 0,
       firstSessionAt: place.first.getTime(),
       lanes,
@@ -155,7 +126,7 @@ export const readProjectView = (
       repository: place.repository || cpu?.repository === true,
       // The period's cost by role, summing to `overview.totals`.
       roleSplit: split,
-      subagents: subagents.reduce((sum, row) => sum + row.n, 0),
+      subagents: sessions.reduce((sum, row) => sum + row.subagents, 0),
       systems: place.systems,
       // The newest Sessions, running first, each with its subagents in the period.
       tail: overview.table.sessions.slice(0, SESSIONS_TAIL).map((session) => ({
@@ -169,41 +140,203 @@ export const readProjectView = (
 };
 export type ProjectView = NonNullable<Awaited<ReturnType<typeof readProjectView>>>;
 
-// The project's activity in the period: its lanes, branches, tools,
-// subagents, and processes, read from its Sessions with a request in it.
+// The project's Sessions with a request in the period, each as its parts.
+type Picked = {
+  // Each picked Session's key, and its subagents with a request in the period.
+  sessions: (Key & { subagents: number })[];
+  // The stored keys of the Sessions whose tools are their stored counts.
+  storedTools: string[];
+  // The Sessions whose tools are counted from their calls in the period.
+  countedTools: Key[];
+  // The stored keys of the picked Sessions the Hub holds totals for.
+  sessionKeys: string[];
+};
+
+// The header's history, the project's Sessions with a request in the period,
+// and what the page reads once per Session, in one statement, so the project
+// filter runs once. The history (the first Session, the last request, the
+// Systems, and whether a repository was resolved) reads the project's
+// Sessions over the whole archive.
+//
+// A Session is picked when it has a request in the period: one of its
+// stored bursts reaches into the period with its first or last request inside
+// it, or, crossing the whole period, holds a request in it, which only a
+// period shorter than the bursts' 5-minute gap can miss. A Session whose
+// first and last request lie inside the period has such a burst, as its
+// bursts hold the requests its bounds do (ADR-0016), so only a Session
+// crossing an edge has its bursts read. That holds only for a Session with a
+// stored totals row, which is stored with its bursts: a Session with stretches
+// but no totals has no bursts, so the shortcut would pick a Session that the
+// bursts alone do not. Each branch counts its picked Sessions.
+//
+// Like its Session, a subagent counts only with a request in the period, by
+// the same rule over its own bursts. Only a subagent the Hub holds has bursts
+// of its own, so the bursts alone give the count. A Session whose subagents'
+// bursts all lie in the period counts each of them, as stored with its totals
+// (migration 59); only one at an edge reads its subagents' bursts.
+//
+// A Session's tools in the period are its stored counts while
+// session_window_tool_totals would take them: the Hub holds its totals, they
+// are not stale by key or by a range, and no tool's calls cross an edge of
+// the period, which only a Session whose calls do not all lie in the period
+// can have. The check copies session_totals_current (migration 54), its twin:
+// PostgreSQL does not inline a function holding subqueries, and calling it for
+// each Session measured about a quarter slower. Every other Session's tools go
+// through the function, which counts its calls.
+const readPlace = async (tx: SQL, { from, name, to }: { from: Date; name: string; to: Date }) => {
+  const rows: {
+    branch_names: string[] | null;
+    branch_sessions: number[] | null;
+    counted: boolean[] | null;
+    first: Date;
+    harnesses: string[] | null;
+    last: Date | null;
+    picked_systems: string[] | null;
+    repository: boolean;
+    session_ids: string[] | null;
+    sources: string[] | null;
+    subagents: number[] | null;
+    systems: string[];
+    session_keys: (string | null)[] | null;
+  }[] = await tx`
+    WITH project AS MATERIALIZED (
+      SELECT s.harness, s.system, s.source, s.session_id, s.started_at,
+             s.repository IS NOT NULL AS repository,
+             coalesce(s.last_git_branch, s.first_git_branch) AS branch,
+             k.first_request_at, k.last_request_at, tt.session_key IS NOT NULL AS has_totals
+      FROM insight.sessions s
+      LEFT JOIN insight.session_spans k
+        ON (k.harness, k.system, k.source, k.session_id) = (s.harness, s.system, s.source, s.session_id)
+      LEFT JOIN stored_session_totals tt
+        ON (tt.harness, tt.system, tt.source, tt.session_id) = (s.harness, s.system, s.source, s.session_id)
+      WHERE ${sessionProjectSql(tx)} = ${name}
+    ),
+    picked AS MATERIALIZED (
+      SELECT k.harness, k.system, k.source, k.session_id, k.branch
+      FROM project k
+      WHERE k.last_request_at >= ${from} AND k.first_request_at <= ${to}
+        AND ((k.first_request_at >= ${from} AND k.last_request_at <= ${to} AND k.has_totals)
+             OR EXISTS (
+          SELECT 1 FROM insight.session_bursts a
+          WHERE (a.harness, a.system, a.source, a.session_id) = (k.harness, k.system, k.source, k.session_id)
+            AND a.agent_id IS NULL AND a.started_at <= ${to} AND a.ended_at >= ${from}
+            AND (a.started_at >= ${from} OR a.ended_at <= ${to} OR EXISTS (
+              SELECT 1 FROM insight.request_agents q
+              WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
+                AND q.at >= ${from} AND q.at <= ${to}
+            ))
+        ))
+    ),
+    -- The keys come from insight.session_spans, which already leaves out a
+    -- Session being re-derived, so the stored rows are read from their tables.
+    sessions AS MATERIALIZED (
+      SELECT k.harness, k.system, k.source, k.session_id, t.session_key::text AS session_key,
+             CASE
+               WHEN t.session_key IS NULL OR t.subagents = 0 THEN 0
+               WHEN t.subagents_first_at >= ${from} AND t.subagents_last_at <= ${to} THEN t.subagents
+               ELSE (
+                 SELECT count(DISTINCT a.agent_id)::int FROM stored_session_bursts a
+                 WHERE a.session_key = t.session_key
+                   AND a.agent_id IS NOT NULL AND a.started_at <= ${to} AND a.ended_at >= ${from}
+                   AND (a.started_at >= ${from} OR a.ended_at <= ${to} OR EXISTS (
+                     SELECT 1 FROM insight.request_agents q
+                     WHERE (q.harness, q.system, q.source, q.session_id)
+                         = (k.harness, k.system, k.source, k.session_id)
+                       AND q.agent_id = a.agent_id AND q.at >= ${from} AND q.at <= ${to}
+                   ))
+               )
+             END AS subagents,
+             t.session_key IS NULL OR x.totals OR EXISTS (
+               SELECT 1 FROM stale_ranges s
+               WHERE s.totals AND (s.harness IS NULL OR s.harness = k.harness)
+                 AND (s.system IS NULL OR s.system = k.system)
+             ) OR (
+               NOT coalesce(t.tools_first_at >= ${from} AND t.tools_last_at <= ${to}, true)
+               AND EXISTS (
+                 SELECT 1 FROM stored_session_tool_totals c
+                 WHERE c.session_key = t.session_key
+                   AND c.first_call_at <= ${to} AND c.last_call_at >= ${from}
+                   AND (c.first_call_at < ${from} OR c.last_call_at > ${to})
+               )
+             ) AS counted
+      FROM picked k
+      LEFT JOIN stored_session_totals t
+        ON (t.harness, t.system, t.source, t.session_id) = (k.harness, k.system, k.source, k.session_id)
+      LEFT JOIN stale_sessions x
+        ON (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
+       AND x.totals
+    )
+    SELECT h.first, h.last, h.repository, h.systems, p.harnesses, p.picked_systems, p.sources,
+           p.session_ids, p.session_keys, p.subagents, p.counted, b.branch_names, b.branch_sessions
+    FROM (
+      SELECT min(started_at) AS first, max(last_request_at) AS last, bool_or(repository) AS repository,
+             array_agg(DISTINCT system ORDER BY system) AS systems
+      FROM project
+      HAVING count(*) > 0
+    ) h
+    CROSS JOIN (
+      SELECT array_agg(harness) AS harnesses, array_agg(system) AS picked_systems,
+             array_agg(source) AS sources, array_agg(session_id) AS session_ids,
+             array_agg(session_key) AS session_keys, array_agg(subagents) AS subagents,
+             array_agg(counted) AS counted
+      FROM sessions
+    ) p
+    CROSS JOIN (
+      SELECT array_agg(name ORDER BY sessions DESC, name COLLATE "C") AS branch_names,
+             array_agg(sessions ORDER BY sessions DESC, name COLLATE "C") AS branch_sessions
+      FROM (
+        SELECT branch AS name, count(*)::int AS sessions FROM picked
+        WHERE branch IS NOT NULL GROUP BY branch
+      ) c
+    ) b
+  `;
+  const [row] = rows;
+  if (row === undefined) {
+    return undefined;
+  }
+  const names = row.branch_names ?? [];
+  const counts = row.branch_sessions ?? [];
+  const picked: Picked = { countedTools: [], sessionKeys: [], sessions: [], storedTools: [] };
+  for (const [i, session_id] of (row.session_ids ?? []).entries()) {
+    const key: Key = {
+      harness: row.harnesses?.[i] ?? '',
+      session_id,
+      source: row.sources?.[i] ?? '',
+      system: row.picked_systems?.[i] ?? '',
+    };
+    const sessionKey = row.session_keys?.[i] ?? null;
+    picked.sessions.push({ ...key, subagents: row.subagents?.[i] ?? 0 });
+    if (sessionKey !== null) {
+      picked.sessionKeys.push(sessionKey);
+    }
+    if (row.counted?.[i] === true || sessionKey === null) {
+      picked.countedTools.push(key);
+    } else {
+      picked.storedTools.push(sessionKey);
+    }
+  }
+  return {
+    branches: names.map((branch, i): Count => ({ name: branch, sessions: counts[i] ?? 0 })),
+    first: row.first,
+    last: row.last,
+    picked,
+    repository: row.repository,
+    systems: row.systems,
+  };
+};
+
+// The project's activity in the period: its lanes, tools, and processes, read
+// from its picked Sessions.
 const readActivity = async (
   tx: SQL,
-  { from, name, to }: { from: Date; name: string; to: Date },
+  { from, name, picked, to }: { from: Date; name: string; picked: Picked; to: Date },
 ) => {
-  // The project's Sessions with a request in the period: one of a Session's
-  // stored bursts reaches into the period with its first or last request
-  // inside it, or, crossing the whole period, holds a request in it, which
-  // only a period shorter than the bursts' 5-minute gap can miss. A Session
-  // holds a few bursts, so this reads no requests but those. The pick runs
-  // once, and each read below takes its keys.
-  const picked: Key[] = await tx`
-    SELECT k.harness, k.system, k.source, k.session_id
-    FROM (${sessionSpans(tx, { from, project: name, to })}) k
-    WHERE EXISTS (
-      SELECT 1 FROM insight.session_bursts a
-      WHERE (a.harness, a.system, a.source, a.session_id) = (k.harness, k.system, k.source, k.session_id)
-        AND a.agent_id IS NULL AND a.started_at <= ${to} AND a.ended_at >= ${from}
-        AND (a.started_at >= ${from} OR a.ended_at <= ${to} OR EXISTS (
-          SELECT 1 FROM insight.request_agents q
-          WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
-            AND q.at >= ${from} AND q.at <= ${to}
-        ))
-    )
-  `;
-  // The keys go as arrays, whose length the planner reads in a plan made for
-  // the statement's values (see readProjectView), so it hashes thousands of
-  // Sessions and probes a few by index.
-  const spans = tx`
-    SELECT * FROM unnest(${picked.map((k) => k.harness)}::text[], ${picked.map((k) => k.system)}::text[],
-                         ${picked.map((k) => k.source)}::text[], ${picked.map((k) => k.session_id)}::text[])
-      AS k (harness, system, source, session_id)
-  `;
-  const [windows, branches, tools, subagents, processes] = await settleAll([
+  // A Session's stored rows are matched by its key in session_keys, which
+  // every stored row carries, given as an array whose length the planner
+  // reads in a plan made for the statement's values (see readProjectView):
+  // it hashes thousands and scans the rows once, or probes a few by index.
+  const counted = picked.countedTools;
+  const [windows, tools, processes] = await settleAll([
     // Each Session's requests in the period, merged into lanes whose
     // requests are at most 5 minutes apart: its stored bursts (of requests at
     // most RUNNING_MS apart) that reach into the period. The requests of a
@@ -212,16 +345,11 @@ const readActivity = async (
     // within the burst, and one that holds none, its gap spanning a short
     // period or its requests changed since the refresh, is dropped.
     tx`
-      WITH spans AS MATERIALIZED (${spans}),
-      bursts AS MATERIALIZED (
-        SELECT k.system, k.harness, k.source, k.session_id, a.started_at, a.ended_at
-        FROM spans k
-        CROSS JOIN LATERAL (
-          SELECT x.started_at, x.ended_at FROM insight.session_bursts x
-          WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
-            AND x.agent_id IS NULL AND x.started_at <= ${to} AND x.ended_at >= ${from}
-          OFFSET 0
-        ) a
+      WITH bursts AS MATERIALIZED (
+        SELECT x.system, x.harness, x.source, x.session_id, x.started_at, x.ended_at
+        FROM stored_session_bursts x
+        WHERE x.session_key = ANY(${picked.sessionKeys}::bigint[]) AND x.agent_id IS NULL
+          AND x.started_at <= ${to} AND x.ended_at >= ${from}
       ),
       lanes AS (
         SELECT a.system, a.harness, a.source, a.session_id,
@@ -245,70 +373,19 @@ const readActivity = async (
       WHERE start <= ${to} AND last IS NOT NULL
       ORDER BY start, system, harness, source, session_id
     ` as Promise<(Key & { start: Date; end: Date })[]>,
-    // Each branch's Sessions with a request in the period.
-    tx`
-      WITH spans AS MATERIALIZED (${spans})
-      SELECT s.branch AS name, count(*)::int AS sessions
-      FROM spans k
-      CROSS JOIN LATERAL (
-        SELECT coalesce(x.last_git_branch, x.first_git_branch) AS branch FROM insight.sessions x
-        WHERE (x.harness, x.system, x.source, x.session_id) = (k.harness, k.system, k.source, k.session_id)
-        OFFSET 0
-      ) s
-      WHERE s.branch IS NOT NULL
-      GROUP BY s.branch ORDER BY sessions DESC, s.branch COLLATE "C"
-    ` as Promise<Count[]>,
     // Names compare in code unit order, so the order holds in any locale.
-    // A Session's tools in the period are its stored counts while
-    // session_window_tool_totals would take them: the Hub holds its totals,
-    // they are not stale by key or by a range, and no tool's calls cross an
-    // edge of the period. Those Sessions' counts are read from the table by
-    // key, without the function's checks for each Session; only the others go
-    // through the function, which counts their calls. A join over every
-    // Session's tool rows sorts or hashes their four-part keys, and at 9,000
-    // Sessions it measured slower than reading each Session by its key. The
-    // first branch of `counted` copies session_totals_current (migration 54),
-    // its twin: PostgreSQL does not inline a function holding subqueries, and
-    // calling it for each Session measured about a quarter slower.
+    // The stored counts inside the period, summed from one pass over the
+    // stored rows, and each counted Session's calls in it (see readPlace).
     tx`
-      WITH spans AS MATERIALIZED (${spans}),
-      counted AS MATERIALIZED (
-        SELECT k.harness, k.system, k.source, k.session_id FROM spans k
-        WHERE NOT EXISTS (
-                SELECT 1 FROM stored_session_totals t
-                WHERE (t.harness, t.system, t.source, t.session_id)
-                    = (k.harness, k.system, k.source, k.session_id)
-              ) OR EXISTS (
-                SELECT 1 FROM stale_sessions s
-                WHERE (s.harness, s.system, s.source, s.session_id)
-                    = (k.harness, k.system, k.source, k.session_id)
-                  AND s.totals
-              ) OR EXISTS (
-                SELECT 1 FROM stale_ranges s
-                WHERE s.totals AND (s.harness IS NULL OR s.harness = k.harness)
-                  AND (s.system IS NULL OR s.system = k.system)
-              )
-        UNION
-        SELECT k.harness, k.system, k.source, k.session_id FROM spans k
-        JOIN stored_session_tool_totals t USING (harness, system, source, session_id)
-        WHERE t.first_call_at <= ${to} AND t.last_call_at >= ${from}
-          AND (t.first_call_at < ${from} OR t.last_call_at > ${to})
-      ),
-      calls AS (
-        SELECT t.name, t.kind, t.mcp_server, t.skill, t.calls FROM spans k
-        CROSS JOIN LATERAL (
-          SELECT t.name, t.kind, t.mcp_server, t.skill, t.calls FROM stored_session_tool_totals t
-          WHERE (t.harness, t.system, t.source, t.session_id) = (k.harness, k.system, k.source, k.session_id)
-            AND t.first_call_at >= ${from} AND t.last_call_at <= ${to}
-          OFFSET 0
-        ) t
-        WHERE NOT EXISTS (
-          SELECT 1 FROM counted c
-          WHERE (c.harness, c.system, c.source, c.session_id) = (k.harness, k.system, k.source, k.session_id)
-        )
+      WITH calls AS (
+        SELECT t.name, t.kind, t.mcp_server, t.skill, t.calls FROM stored_session_tool_totals t
+        WHERE t.session_key = ANY(${picked.storedTools}::bigint[])
+          AND t.first_call_at >= ${from} AND t.last_call_at <= ${to}
         UNION ALL
         SELECT t.name, t.kind, t.mcp_server, t.skill, t.calls
-        FROM counted k
+        FROM unnest(${counted.map((k) => k.harness)}::text[], ${counted.map((k) => k.system)}::text[],
+                    ${counted.map((k) => k.source)}::text[], ${counted.map((k) => k.session_id)}::text[])
+          AS k (harness, system, source, session_id)
         CROSS JOIN LATERAL session_window_tool_totals(
           k.harness, k.system, k.source, k.session_id, ${from}, ${to}) t
       )
@@ -320,31 +397,6 @@ const readActivity = async (
                t.mcp_server COLLATE "C" NULLS FIRST, t.skill COLLATE "C" NULLS FIRST
       LIMIT ${TOOLS_LISTED}
     ` as Promise<(ToolCount & { listed: number })[]>,
-    // Like its Session, a subagent counts only with a request in the period:
-    // one of its stored bursts reaches into the period with its first or last
-    // request inside it, or, crossing the whole period, holds a request in
-    // it, which only a period shorter than the bursts' 5-minute gap can miss.
-    // Only a subagent the Hub holds has bursts of its own, so the bursts alone
-    // give the count. The keys come from insight.session_spans, which already
-    // leaves out a Session being re-derived, so the bursts are read from their
-    // table, not through insight.session_bursts, which checks that again for
-    // every burst.
-    tx`
-      WITH spans AS MATERIALIZED (${spans})
-      SELECT k.system, k.harness, k.source, k.session_id, a.n
-      FROM spans k
-      CROSS JOIN LATERAL (
-        SELECT count(DISTINCT a.agent_id)::int AS n FROM stored_session_bursts a
-        WHERE (a.harness, a.system, a.source, a.session_id) = (k.harness, k.system, k.source, k.session_id)
-          AND a.agent_id IS NOT NULL AND a.started_at <= ${to} AND a.ended_at >= ${from}
-          AND (a.started_at >= ${from} OR a.ended_at <= ${to} OR EXISTS (
-            SELECT 1 FROM insight.request_agents q
-            WHERE (q.harness, q.system, q.source, q.session_id) = (k.harness, k.system, k.source, k.session_id)
-              AND q.agent_id = a.agent_id AND q.at >= ${from} AND q.at <= ${to}
-          ))
-      ) a
-      WHERE a.n > 0
-    ` as Promise<(Key & { n: number })[]>,
     // A process counts under its own working directory's project. Its CPU
     // and its peak are those of its 5-minute rollups that overlap the period:
     // the CPU between its first and last reading in them, so none is lost
@@ -367,9 +419,7 @@ const readActivity = async (
       ` as Promise<{ peak: number | null; repository: boolean; seconds: number }[]>,
   ]);
   return {
-    branches,
     processes,
-    subagents,
     // How many distinct tools were called, of which `tools` lists the most called.
     toolCount: tools[0]?.listed ?? 0,
     tools: tools.map(({ calls, kind, mcpServer, name: tool, skill }) => ({

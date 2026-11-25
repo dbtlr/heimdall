@@ -270,10 +270,31 @@ const deleteOnce = (
       }
       marked.push(...pass);
     }
-    // Nothing derived outlives its transcript (ADR-0014).
     await forgetDeletedGenerations(tx);
+    // Nothing derived outlives its transcript (ADR-0013, ADR-0014). A Session
+    // left with no generation loses its key, and its stored rows with it.
+    // Runs after the relinking above, so it reads where each generation's
+    // progress rows ended up.
+    await deleteKeysOfSessionsLeftBare(tx);
     return removedOf(marked);
   });
+
+// Deletes the key of each Session with no surviving generation, so its stored
+// rows cascade away. That includes a Codex thread keyed while it was a root
+// Session and later linked under its parent, whose progress rows moved to the
+// parent's root. A Session that keeps a generation keeps its key.
+const deleteKeysOfSessionsLeftBare = async (sql: SQL) => {
+  await sql`
+    DELETE FROM session_keys k
+    WHERE NOT EXISTS (
+      SELECT 1 FROM parse_progress p
+      JOIN transcript_generations g ON g.id = p.generation
+      WHERE g.deleted_at IS NULL
+        AND (p.harness, g.system, g.source, p.session_id)
+          = (k.harness, k.system, k.source, k.session_id)
+    )
+  `;
+};
 
 const removedOf = (rows: Matched[]): Removed => ({
   bytes: rows.reduce((sum, row) => sum + Number(row.stored_bytes), 0),

@@ -3971,6 +3971,306 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     version: 58,
   },
+  {
+    // Each Session gets one integer key in session_keys, which every stored
+    // table of it carries as `session_key`, so a read of thousands of
+    // Sessions' rows, such as the project page's lanes and tools, matches one
+    // integer per row against a list of keys instead of joining on the
+    // four-part key, which the planner estimates at a row or so. A Session's
+    // first refresh assigns its key, and refreshes and re-derivation keep it:
+    // they replace the stored rows, never the key. A purge deletes it, and so
+    // does a transcript delete that leaves the Session no generation
+    // (ADR-0013); its stored rows go with it. The totals row also holds what a
+    // period's read needs once per Session: how many subagents have bursts of
+    // their own, the first and last of those bursts, and the first and last
+    // tool call. A period holding all of a Session's subagent bursts counts
+    // each of those subagents, and one holding all of its tool calls has no
+    // tool crossing its edge, so only a Session at an edge has its rows read
+    // again (ADR-0016).
+    sql: `
+      SET LOCAL statement_timeout = '10min';
+
+      CREATE TABLE session_keys (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        harness text NOT NULL,
+        system text NOT NULL,
+        source text NOT NULL,
+        session_id text NOT NULL,
+        UNIQUE (harness, system, source, session_id)
+      );
+
+      -- Every stored row's Session gets its key; the other tables' rows hang
+      -- off totals or stretches.
+      INSERT INTO session_keys (harness, system, source, session_id)
+      SELECT harness, system, source, session_id FROM stored_session_totals
+      UNION
+      SELECT harness, system, source, session_id FROM stored_session_stretches
+      UNION
+      SELECT harness, system, source, session_id FROM stored_session_model_totals
+      ORDER BY harness, system, source, session_id;
+
+      -- The span follows the stretches' bounds, which this leaves alone.
+      ALTER TABLE stored_session_stretches DISABLE TRIGGER keep_stored_session_span_after_change;
+
+      ALTER TABLE stored_session_stretches ADD COLUMN session_key bigint;
+      UPDATE stored_session_stretches x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_spans ADD COLUMN session_key bigint;
+      UPDATE stored_session_spans x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_totals ADD COLUMN session_key bigint;
+      UPDATE stored_session_totals x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_model_totals ADD COLUMN session_key bigint;
+      UPDATE stored_session_model_totals x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_role_totals ADD COLUMN session_key bigint;
+      UPDATE stored_session_role_totals x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_request_intervals ADD COLUMN session_key bigint;
+      UPDATE stored_session_request_intervals x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_bursts ADD COLUMN session_key bigint;
+      UPDATE stored_session_bursts x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+      ALTER TABLE stored_session_tool_totals ADD COLUMN session_key bigint;
+      UPDATE stored_session_tool_totals x SET session_key = k.id FROM session_keys k
+      WHERE (k.harness, k.system, k.source, k.session_id) = (x.harness, x.system, x.source, x.session_id);
+
+      ALTER TABLE stored_session_stretches ENABLE TRIGGER keep_stored_session_span_after_change;
+
+      -- Each table is indexed on its key, which a purge's cascade and the
+      -- reads by key use.
+      ALTER TABLE stored_session_stretches ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_stretches_by_key ON stored_session_stretches (session_key);
+      ALTER TABLE stored_session_spans ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE UNIQUE INDEX stored_session_spans_by_key ON stored_session_spans (session_key);
+      ALTER TABLE stored_session_totals ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE UNIQUE INDEX stored_session_totals_by_key ON stored_session_totals (session_key);
+      ALTER TABLE stored_session_model_totals ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_model_totals_by_key ON stored_session_model_totals (session_key);
+      ALTER TABLE stored_session_role_totals ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_role_totals_by_key ON stored_session_role_totals (session_key);
+      ALTER TABLE stored_session_request_intervals ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_request_intervals_by_key ON stored_session_request_intervals (session_key);
+      ALTER TABLE stored_session_bursts ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_bursts_by_key ON stored_session_bursts (session_key);
+      ALTER TABLE stored_session_tool_totals ALTER COLUMN session_key SET NOT NULL,
+        ADD FOREIGN KEY (session_key) REFERENCES session_keys ON DELETE CASCADE;
+      CREATE INDEX stored_session_tool_totals_by_key ON stored_session_tool_totals (session_key);
+
+      ALTER TABLE stored_session_totals
+        ADD COLUMN subagents integer NOT NULL DEFAULT 0,
+        ADD COLUMN subagents_first_at timestamptz,
+        ADD COLUMN subagents_last_at timestamptz,
+        ADD COLUMN tools_first_at timestamptz,
+        ADD COLUMN tools_last_at timestamptz;
+
+      -- A Session's key, assigned the first time it is asked for.
+      CREATE FUNCTION session_key(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS bigint
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        key bigint;
+      BEGIN
+        SELECT k.id INTO key FROM session_keys k
+        WHERE (k.harness, k.system, k.source, k.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+        IF NOT FOUND THEN
+          INSERT INTO session_keys (harness, system, source, session_id)
+          VALUES (key_harness, key_system, key_source, key_session_id)
+          ON CONFLICT DO NOTHING
+          RETURNING id INTO key;
+          -- Another transaction assigned it first.
+          IF key IS NULL THEN
+            SELECT k.id INTO key FROM session_keys k
+            WHERE (k.harness, k.system, k.source, k.session_id)
+                = (key_harness, key_system, key_source, key_session_id);
+          END IF;
+        END IF;
+        RETURN key;
+      END
+      $$;
+
+      -- The span carries its stretches' key.
+      CREATE OR REPLACE FUNCTION keep_stored_session_span() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        earliest timestamptz;
+        latest timestamptz;
+      BEGIN
+        IF TG_OP <> 'INSERT' THEN
+          -- Serialize a bound that has shrunk with other changes to that key.
+          PERFORM 1 FROM stored_session_spans s
+          WHERE (s.harness, s.system, s.source, s.session_id)
+              = (OLD.harness, OLD.system, OLD.source, OLD.session_id)
+          FOR UPDATE;
+          IF FOUND THEN
+            SELECT min(s.started_at), max(s.ended_at) INTO earliest, latest
+            FROM stored_session_stretches s
+            WHERE (s.harness, s.system, s.source, s.session_id)
+                = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            IF earliest IS NULL THEN
+              DELETE FROM stored_session_spans s
+              WHERE (s.harness, s.system, s.source, s.session_id)
+                  = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            ELSE
+              UPDATE stored_session_spans s SET first_request_at = earliest, last_request_at = latest
+              WHERE (s.harness, s.system, s.source, s.session_id)
+                  = (OLD.harness, OLD.system, OLD.source, OLD.session_id);
+            END IF;
+          END IF;
+        END IF;
+        IF TG_OP <> 'DELETE' THEN
+          INSERT INTO stored_session_spans AS s
+            (harness, system, source, session_id, first_request_at, last_request_at, session_key)
+          VALUES (NEW.harness, NEW.system, NEW.source, NEW.session_id, NEW.started_at, NEW.ended_at,
+                  NEW.session_key)
+          ON CONFLICT (harness, system, source, session_id) DO UPDATE
+          SET first_request_at = least(s.first_request_at, excluded.first_request_at),
+              last_request_at = greatest(s.last_request_at, excluded.last_request_at);
+        END IF;
+        RETURN NULL;
+      END
+      $$;
+
+      -- Fills a Session's per-period summary on its totals row from the
+      -- bursts and tool counts stored with it.
+      CREATE FUNCTION store_session_summary(key bigint) RETURNS void
+      LANGUAGE sql AS $$
+        UPDATE stored_session_totals t
+        SET subagents = b.subagents, subagents_first_at = b.first_at, subagents_last_at = b.last_at,
+            tools_first_at = c.first_at, tools_last_at = c.last_at
+        FROM (
+          SELECT count(DISTINCT a.agent_id)::int AS subagents, min(a.started_at) AS first_at,
+                 max(a.ended_at) AS last_at
+          FROM stored_session_bursts a
+          WHERE a.session_key = key AND a.agent_id IS NOT NULL
+        ) b, (
+          SELECT min(x.first_call_at) AS first_at, max(x.last_call_at) AS last_at
+          FROM stored_session_tool_totals x
+          WHERE x.session_key = key
+        ) c
+        WHERE t.session_key = key
+      $$;
+
+      UPDATE stored_session_totals t
+      SET subagents = b.subagents, subagents_first_at = b.first_at, subagents_last_at = b.last_at
+      FROM (
+        SELECT a.session_key, count(DISTINCT a.agent_id)::int AS subagents,
+               min(a.started_at) AS first_at, max(a.ended_at) AS last_at
+        FROM stored_session_bursts a
+        WHERE a.agent_id IS NOT NULL
+        GROUP BY a.session_key
+      ) b
+      WHERE t.session_key = b.session_key;
+      UPDATE stored_session_totals t
+      SET tools_first_at = c.first_at, tools_last_at = c.last_at
+      FROM (
+        SELECT x.session_key, min(x.first_call_at) AS first_at, max(x.last_call_at) AS last_at
+        FROM stored_session_tool_totals x
+        GROUP BY x.session_key
+      ) c
+      WHERE t.session_key = c.session_key;
+
+      CREATE OR REPLACE FUNCTION refresh_stale_session(
+        key_harness text, key_system text, key_source text, key_session_id text
+      ) RETURNS boolean
+      LANGUAGE plpgsql AS $$
+      DECLARE
+        stale record;
+        key bigint;
+      BEGIN
+        SELECT x.stretches, x.totals INTO stale FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id)
+        FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+          RETURN false;
+        END IF;
+        DELETE FROM stale_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+        SELECT k.id INTO key FROM session_keys k
+        WHERE (k.harness, k.system, k.source, k.session_id)
+            = (key_harness, key_system, key_source, key_session_id);
+        IF key IS NULL THEN
+          -- A Session with nothing to store, such as one a transcript delete
+          -- left no generation, gets no key (ADR-0013).
+          IF NOT EXISTS (
+            SELECT 1 FROM computed_session_totals c
+            WHERE (c.harness, c.system, c.source, c.session_id)
+                = (key_harness, key_system, key_source, key_session_id)
+          ) THEN
+            RETURN true;
+          END IF;
+          key := session_key(key_harness, key_system, key_source, key_session_id);
+        END IF;
+
+        IF stale.stretches THEN
+          DELETE FROM stored_session_stretches s WHERE s.session_key = key;
+          INSERT INTO stored_session_stretches
+          SELECT c.harness, c.system, c.source, c.session_id, c.started_at, c.ended_at,
+                 c.requests, c.link, c.process_id, c.pid, c.candidates, key
+          FROM computed_session_stretches c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+        END IF;
+        IF stale.totals THEN
+          DELETE FROM stored_session_totals s WHERE s.session_key = key;
+          INSERT INTO stored_session_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.requests, c.input_tokens,
+                 c.output_tokens, c.reasoning_tokens, c.cache_read_tokens, c.cache_write_tokens,
+                 c.cache_write_5m_tokens, c.cache_write_1h_tokens, c.cost_usd, c.priced_cost_usd,
+                 c.unpriced_requests, key
+          FROM computed_session_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          DELETE FROM stored_session_model_totals s WHERE s.session_key = key;
+          INSERT INTO stored_session_model_totals
+          SELECT c.harness, c.system, c.source, c.session_id, c.model, c.requests,
+                 c.priced_cost_usd, c.unpriced_requests, key
+          FROM computed_session_model_totals c
+          WHERE (c.harness, c.system, c.source, c.session_id)
+              = (key_harness, key_system, key_source, key_session_id);
+          -- Each statement reads its own snapshot, so a parser switch between
+          -- the two can give a split to a Session the totals left out.
+          INSERT INTO stored_session_role_totals
+          SELECT c.*, key
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_role_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE t.session_key = key;
+          INSERT INTO stored_session_request_intervals
+          SELECT t.harness, t.system, t.source, t.session_id, b.*, key
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_request_intervals(t.harness, t.system, t.source, t.session_id) b
+          WHERE t.session_key = key;
+          INSERT INTO stored_session_bursts
+          SELECT t.harness, t.system, t.source, t.session_id, r.*, key
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_bursts(t.harness, t.system, t.source, t.session_id) r
+          WHERE t.session_key = key;
+          INSERT INTO stored_session_tool_totals
+          SELECT t.harness, t.system, t.source, t.session_id, c.*, key
+          FROM stored_session_totals t
+          CROSS JOIN LATERAL computed_session_tool_totals(t.harness, t.system, t.source, t.session_id) c
+          WHERE t.session_key = key;
+          PERFORM store_session_summary(key);
+        END IF;
+        RETURN true;
+      END
+      $$;
+    `,
+    version: 59,
+  },
 ];
 
 // Serializes Hubs that start against the same database at once. The name is
