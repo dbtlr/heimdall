@@ -21,10 +21,13 @@ const execWord = (value: string) =>
     .replaceAll('$', '$$$$')}"`;
 
 // The systemd user unit for a Service. It restarts the binary 10 seconds after
-// any exit and never gives up, starts with the user manager, and appends both
-// output streams to the log, which the binary rotates itself. Loom ends the
-// process by the signal itself, which systemd counts as a clean stop; 143 and
-// 130, the codes for SIGTERM and SIGINT, count as one too.
+// any exit but 2 and never gives up, starts with the user manager, and appends
+// both output streams to the log, which the binary rotates itself. Loom exits 2
+// only when it refuses the invocation or the config file, before the binary's
+// own rotation runs, so restarting would grow the log with the same refusal
+// until `service install` or `restart` starts it again. Loom ends the process
+// by the signal itself, which systemd counts as a clean stop; 143 and 130, the
+// codes for SIGTERM and SIGINT, count as one too.
 export const renderSystemdUnit = (definition: ServiceDefinition): string => {
   const log = plain(definition.log);
   // The arguments are a fixed command name and flag, so only the executable needs quoting.
@@ -40,6 +43,7 @@ StandardOutput=append:${log}
 StandardError=append:${log}
 Restart=always
 RestartSec=10
+RestartPreventExitStatus=2
 SuccessExitStatus=130 143
 
 [Install]

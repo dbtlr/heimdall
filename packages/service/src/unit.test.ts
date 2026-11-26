@@ -41,11 +41,28 @@ StandardOutput=append:/home/operator/.local/state/heimdall/hub.log
 StandardError=append:/home/operator/.local/state/heimdall/hub.log
 Restart=always
 RestartSec=10
+RestartPreventExitStatus=2
 SuccessExitStatus=130 143
 
 [Install]
 WantedBy=default.target
 `);
+});
+
+// Loom exits 2 only when it refuses the invocation or the config file, which no
+// restart can fix, and every restart appends the refusal to the log before the
+// binary's own rotation runs. Every other failure exits 1 and may pass.
+test('a unit stops restarting after exit 2 and restarts after any other exit', () => {
+  const unit = renderSystemdUnit(
+    serviceDefinition({
+      binary: 'collector',
+      executable: '/opt/heimdall/bin/heimdall-collector',
+      home: HOME,
+    }),
+  );
+
+  expect(unit).toContain('\nRestart=always\n');
+  expect(unit.match(/^RestartPreventExitStatus=.*$/gmu)).toEqual(['RestartPreventExitStatus=2']);
 });
 
 test('the Collector unit runs run -v and carries no environment', () => {
