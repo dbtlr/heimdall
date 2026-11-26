@@ -1,1 +1,0 @@
-- **Activity dates a line's alert and recovery times against its day heading** (HMD-313). When changes merge into one line, a time on a later day than the line's heading, such as an alert pushed just after midnight, now names its day.
