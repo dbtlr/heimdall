@@ -1,1 +1,0 @@
-- **A bad `[conditions]` value stops the Hub with one sentence** (HMD-311). The error names the setting, such as `conditions.disk.noet: not a setting`, as `[delivery]` errors already do, instead of a JSON issue list.
