@@ -8,6 +8,7 @@ import { joinPhrases, whenAt } from '../lib/phrase.ts';
 import type { Moment, Phrase } from '../lib/phrase.ts';
 import { formatSpanShort } from '../lib/time.ts';
 import type { HubCheck, HubRuntime, HubStatus, HubTable } from './hub-status-types.ts';
+import { readSnapshot } from './snapshot.ts';
 
 // The gap in the Hub's listening record that counts as an outage, as the Hub
 // judges it (LISTENING_GAP_MS in packages/hub/src/listening.ts). Only an older
@@ -168,8 +169,7 @@ export const readHubVersion = async (sql: SQL) => (await readRuntime(sql)).row?.
 // browser.
 export const readHubStatus = async (sql: SQL, now: number): Promise<HubStatus> => {
   const runtime = await readRuntime(sql);
-  return sql.begin(async (tx) => {
-    await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`;
+  return readSnapshot(sql, async (tx) => {
     const checks: HubCheck[] = [];
     const add = (part: string, state: HubCheck['state'], text: Phrase, detail: Phrase = []) => {
       checks.push({ detail, part, state, text });

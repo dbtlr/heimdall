@@ -601,6 +601,26 @@ describe('refreshing', () => {
     ]);
   });
 
+  test('a stored interval lists only the conversations that have a class', async () => {
+    await using db = await database();
+    await addSession(db.sql, {
+      id: 's1',
+      requests: [10],
+      system: 'server-1',
+    });
+    // A Session the Hub does not list, as around a parser switch, has no
+    // conversation with a class, so its interval has no split entry.
+    await db.sql`DELETE FROM projected_sessions WHERE session_id = 's1'`;
+
+    expect(
+      await db.sql`
+        SELECT requests::int, roles FROM computed_session_request_intervals(
+          'claude-code', 'server-1', 'claude-code', 's1'
+        )
+      `,
+    ).toEqual([{ requests: 1, roles: [] }]);
+  });
+
   test('windows model totals split a Session across edges, pricing only the interval an edge off a boundary cuts until it is stale', async () => {
     await using db = await database();
     await price(db.sql, 1);

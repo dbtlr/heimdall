@@ -9,6 +9,7 @@ import type {
 import type { SQL } from 'bun';
 
 import { plain, UNAVAILABLE, unpairedParam } from './read-answer.ts';
+import { readSnapshot } from './snapshot.ts';
 
 // Orders text by UTF-16 code unit, the same in every locale, as the Hub orders
 // the records it mirrors.
@@ -167,7 +168,7 @@ export const readRecords = (
   sql: SQL,
   { includeUnpaired }: { includeUnpaired: boolean },
 ): Promise<Entry[]> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const sets: SetRow[] = await tx`
       SELECT s.name, s.time_zone,
              r.sent_at, r.received_at, r.unreadable, r.over_budget_bytes,

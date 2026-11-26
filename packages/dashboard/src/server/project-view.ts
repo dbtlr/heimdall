@@ -45,9 +45,8 @@ const rowKey = (row: Key) => JSON.stringify([row.system, row.harness, row.source
 
 // A dossier reads one snapshot, on one connection. At production scale
 // (9,000 Sessions in the period, the heavy scenario) its 30-day read takes
-// about 0.63 to 0.70 s p90 on one connection. The previous default read took
-// about 0.81 s p90 by borrowing a second connection, and about 1.1 to 1.3 s on
-// one. The cost overview, shared with the Agents page, takes about half. One statement reads the header's history over the whole
+// about 0.63 to 0.70 s p90. The cost overview, shared with the Agents page,
+// takes about half. One statement reads the header's history over the whole
 // archive and picks the project's Sessions with a request in the period,
 // found as Agents finds its Sessions (session-spans.ts), kept to those with
 // such a request (readPlace), so the project filter runs once. Each later
@@ -83,7 +82,7 @@ export const readProjectView = (
   if (name === '') {
     return Promise.resolve(undefined);
   }
-  return readSnapshot(sql, false, async (tx) => {
+  return readSnapshot(sql, async (tx) => {
     // Every statement is planned for its own values: the activity's take
     // thousands of Session keys as arrays, and a generic plan, which
     // PostgreSQL may switch a prepared statement to after five runs, would

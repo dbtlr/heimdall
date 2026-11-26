@@ -15,35 +15,33 @@ import type { HomeAgents } from './home-types.ts';
 const BAR_DAYS = 7;
 
 // The newest request of any Session stamped no later than `periodEnd(now)`,
-// so it ignores a request Running ignores. A stretch ending by then gives its
-// end: the planner cannot read the view in the order of its index, so the
-// newest stored end, the index's last entry by then, bounds what the view
-// reads. A Session being derived again has no stored stretches, so that end
-// is the view's; should the view hide it anyway, every stretch ending by then
-// is read. A stretch ending later, of which there are few, gives its latest
+// so it ignores a request Running ignores. A Session whose last request is by
+// then gives it from the stored spans' end-time index, newest first, with
+// insight.session_spans' filter applied by hand: the view is a security
+// barrier, so the planner cannot read it in the index's order. A Session
+// whose last request is later, of which there are few, gives its latest
 // request by then, read through its key and time.
 const readLatestRequestAt = async (sql: SQL, now: number): Promise<number | undefined> => {
   const to = periodEnd(now);
   const [row]: { at: Date | null }[] = await sql`
     SELECT greatest(
-      coalesce(
-        (SELECT v.at
-         FROM (SELECT max(ended_at) AS newest FROM stored_session_stretches WHERE ended_at <= ${to}) b
-         CROSS JOIN LATERAL (
-           SELECT max(x.ended_at) AS at FROM insight.session_stretches x
-           WHERE x.ended_at >= b.newest AND x.ended_at <= ${to}
-         ) v),
-        (SELECT max(ended_at) FROM insight.session_stretches WHERE ended_at <= ${to})
-      ),
+      (SELECT k.last_request_at FROM stored_session_spans k
+       WHERE k.last_request_at <= ${to}
+         AND NOT EXISTS (
+           SELECT 1 FROM rederiving_sessions x
+           WHERE (x.harness, x.system, x.source, x.session_id)
+               = (k.harness, k.system, k.source, k.session_id)
+         )
+       ORDER BY k.last_request_at DESC LIMIT 1),
       (SELECT max(r.at)
-       FROM insight.session_stretches x
+       FROM insight.session_spans k
        CROSS JOIN LATERAL (
          SELECT max(y.at) AS at FROM insight.requests y
          WHERE (y.harness, y.system, y.source, y.session_id)
-             = (x.harness, x.system, x.source, x.session_id)
-           AND y.at >= x.started_at AND y.at <= ${to}
+             = (k.harness, k.system, k.source, k.session_id)
+           AND y.at >= k.first_request_at AND y.at <= ${to}
        ) r
-       WHERE x.ended_at > ${to} AND x.started_at <= ${to})
+       WHERE k.last_request_at > ${to} AND k.first_request_at <= ${to})
     ) AS at
   `;
   return row?.at?.getTime();

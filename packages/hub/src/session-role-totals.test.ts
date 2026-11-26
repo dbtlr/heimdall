@@ -209,6 +209,38 @@ test('a role above a role: each subagent takes the nearest one', async () => {
   ]);
 });
 
+test('an untagged subagent below a tagged role below a tagged role counts under the nearer one in the split', async () => {
+  await using db = await migratedDatabase();
+  await setup(db.sql).simple();
+  // The walk from the upper role stops at the lower one, so the untagged
+  // subagent below both is reached once, from the lower role: a walk that
+  // went past a tagged subagent would reach it from both and read only one of
+  // the two roles. 'a role above a role' guards the stop in the view; this
+  // guards it in the stored split.
+  await addSession(db.sql, {
+    id: 's1',
+    requests: [10],
+    subagents: [
+      { agentId: 'a1', requests: [20] },
+      { agentId: 'a2', parentAgentId: 'a1', requests: [30, 31] },
+      { agentId: 'a3', parentAgentId: 'a2', requests: [40, 41, 42, 43] },
+    ],
+  });
+  await db.sql`
+    UPDATE projected_subagents SET role = 'implementation', role_source = 'tag'
+    WHERE agent_id = 'a1';
+    UPDATE projected_subagents SET role = 'review', seat = 'verifier', role_source = 'tag'
+    WHERE agent_id = 'a2';
+  `.simple();
+  await refreshSessionInsight(db.sql);
+
+  expect(await roleCounts(db.sql)).toEqual([
+    { requests: 1, role_class: 'delegated', seat: null },
+    { requests: 1, role_class: 'main', seat: null },
+    { requests: 6, role_class: 'review', seat: 'verifier' },
+  ]);
+});
+
 test('a preamble-only review has an unknown seat even when its Session names a seat', async () => {
   await using db = await migratedDatabase();
   await setup(db.sql).simple();

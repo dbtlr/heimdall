@@ -292,9 +292,11 @@ const readReboots = async (
 };
 
 // The list-price cost of System `name`'s requests up to `periodEnd(now)` in
-// each bucket of `edges`, per Harness, read and priced as the Agents chart
-// reads and prices a bar (see readCells and throughPeriodEnd), so a bar here
-// and Agents' bar for the System on that day agree.
+// each bucket of `edges`, per Harness, read and priced bar by bar through
+// readCells (and throughPeriodEnd). The Agents chart prices the same bars
+// once per Session through readCrossingCells and wholeCells; the
+// system-detail-long tests keep a bar here and Agents' bar for the System on
+// that day in agreement.
 const readCostBuckets = async (
   sql: SQL,
   { edges, name, now }: { edges: readonly number[]; name: string; now: number },
@@ -938,7 +940,7 @@ export const readBucket = (
     timeZone?: string | undefined;
   },
 ): Promise<BucketInspection | undefined> =>
-  readSnapshot(sql, false, async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const [known]: { paired: boolean; system: boolean }[] = await tx`
       SELECT EXISTS (SELECT 1 FROM systems WHERE name = ${name}) AS system,
              EXISTS (SELECT 1 FROM paired_systems WHERE system = ${name}) AS paired
@@ -1176,16 +1178,16 @@ const readSystemRecordsSnapshot = async (
 
 // Current levels and their transitions must come from the same snapshot.
 export const readSystemDetail = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
-  readSnapshot(sql, false, (tx) => readSystemDetailSnapshot(tx, input));
+  readSnapshot(sql, (tx) => readSystemDetailSnapshot(tx, input));
 
 export const readSystemRecords = (
   sql: SQL,
   input: Parameters<typeof readSystemRecordsSnapshot>[1],
-) => readSnapshot(sql, false, (tx) => readSystemRecordsSnapshot(tx, input));
+) => readSnapshot(sql, (tx) => readSystemRecordsSnapshot(tx, input));
 
 // Health, history, and attention must describe the same committed judgment.
 export const readSystemPage = (sql: SQL, input: Parameters<typeof readSystemDetailSnapshot>[1]) =>
-  readSnapshot(sql, false, async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const detail = await readSystemDetailSnapshot(tx, input);
     if (detail === undefined) {
       return undefined;

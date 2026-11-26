@@ -7,6 +7,7 @@ import type { ActivityPage, ActivityRange, AxisStretch } from './activity-types.
 import { readActivitySnapshot } from './activity.ts';
 import { readConditionLimitsOf } from './condition-limits.ts';
 import { readCpuBuckets, toBucket } from './fleet-overview.ts';
+import { readSnapshot } from './snapshot.ts';
 
 // The axis draws about this many CPU buckets across, whatever the range, so
 // the read returns what the axis shows and not what the range holds.
@@ -64,7 +65,7 @@ export const readActivityPage = (
   sql: SQL,
   { now, range }: { now: number; range: ActivityRange },
 ): Promise<ActivityPage> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const from = now - ACTIVITY_RANGE_MS[range];
     const [activity, stretches] = await Promise.all([
       readActivitySnapshot(tx, { now, range }),

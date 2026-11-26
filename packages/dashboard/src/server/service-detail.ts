@@ -16,6 +16,7 @@ import { field, text } from './hub-rows.ts';
 import type { ChecksRow, RecordRow } from './hub-rows.ts';
 import type { ServiceDetail, ServiceDownTransition, ServiceStop } from './service-detail-types.ts';
 import { readServiceStops } from './service-stops.ts';
+import { readSnapshot } from './snapshot.ts';
 import { recordedService } from './system-detail.ts';
 import { parseUpdateObservations, upstreamCheckOf } from './update-observations.ts';
 import type { UpstreamCheckRow } from './update-observations.ts';
@@ -142,7 +143,7 @@ export const readServiceDetail = (
     system,
   }: { now: number; service: string; stop?: number | undefined; system: string },
 ): Promise<ServiceDetail | undefined> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const [known]: { name: string }[] = await tx`
       SELECT name FROM systems WHERE name = ${system}
       UNION
