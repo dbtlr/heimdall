@@ -3701,6 +3701,75 @@ export const MIGRATIONS: readonly Migration[] = [
     // rule. A read by Session key reads that Session's requests by their
     // key index, so it costs in proportion to the Session.
     sql: `
+      -- The class of a conversation read as a subagent's, by its effective
+      -- role: review for a review, else delegated (ADR-0025). Both the
+      -- subagent view and the conversation view below read it, so the rule for
+      -- a subagent is written once. A Session's own class, in insight.sessions
+      -- (migration 52), still states the same branch for a tagged Session.
+      -- The view is replaced here to read it; its other columns are as
+      -- migration 52 defined them.
+      CREATE FUNCTION subagent_role_class(effective_role text) RETURNS text
+      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+        SELECT CASE WHEN effective_role = 'review' THEN 'review' ELSE 'delegated' END
+      $$;
+
+      CREATE OR REPLACE VIEW insight.subagents WITH (security_barrier = true) AS
+      SELECT k.harness, k.system, k.source, k.session_id, a.agent_id, a.parent_agent_id,
+             a.agent_type, a.depth, a.tool_use_id, a.workflow_run, a.workflow_phase,
+             a.path, a.started_at, a.ended_at, k.parser_version,
+             a.role, a.seat, a.launching_session_id, a.role_source,
+             COALESCE(a.walked_role, s.role) AS effective_role,
+             CASE WHEN a.walked_role IS NOT NULL THEN a.walked_seat
+                  WHEN s.role = 'review' THEN s.seat END AS effective_seat,
+             subagent_role_class(COALESCE(a.walked_role, s.role)) AS role_class
+      FROM (
+        -- The Session's key comes from here, so a filter on it picks the
+        -- Sessions before any walk runs.
+        SELECT DISTINCT p.harness, p.parser_version, p.system, p.source, p.session_id
+        FROM projected_subagents p
+        JOIN current_parsers c ON c.harness = p.harness AND c.version = p.parser_version
+      ) k
+      LEFT JOIN projected_sessions s
+        ON (s.harness, s.parser_version, s.system, s.source, s.session_id)
+         = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+      CROSS JOIN LATERAL (
+        WITH RECURSIVE conversations AS (
+          SELECT p.agent_id, COALESCE(p.parent_agent_id, p.spawning_agent_id) AS parent_agent_id,
+                 p.role, p.seat
+          FROM projected_subagents p
+          WHERE (p.harness, p.parser_version, p.system, p.source, p.session_id)
+              = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+        ), walk (agent_id, role, seat) AS (
+          -- Its seat can be unknown even when a review above it has a seat.
+          SELECT n.agent_id, n.role, CASE WHEN n.role = 'review' THEN n.seat END
+          FROM conversations n WHERE n.role IS NOT NULL
+          UNION ALL
+          SELECT n.agent_id, w.role, w.seat
+          FROM walk w JOIN conversations n ON n.parent_agent_id = w.agent_id
+          WHERE n.role IS NULL
+        )
+        SELECT p.agent_id, COALESCE(p.parent_agent_id, p.spawning_agent_id) AS parent_agent_id,
+               p.agent_type, p.depth, p.tool_use_id, p.workflow_run, p.workflow_phase,
+               p.path, p.started_at, p.ended_at,
+               p.role, p.seat, p.launching_session_id, p.role_source,
+               w.role AS walked_role, w.seat AS walked_seat
+        FROM projected_subagents p
+        -- The walk reaches each subagent once, so grouping changes no row; it
+        -- proves the join adds none, which lets the planner drop the join, and
+        -- with it the walk, from a read that selects no effective column.
+        LEFT JOIN (
+          SELECT w.agent_id, min(w.role) AS role, min(w.seat) AS seat
+          FROM walk w GROUP BY w.agent_id
+        ) w ON w.agent_id = p.agent_id
+        WHERE (p.harness, p.parser_version, p.system, p.source, p.session_id)
+            = (k.harness, k.parser_version, k.system, k.source, k.session_id)
+      ) a
+      WHERE NOT EXISTS (
+        SELECT 1 FROM rederiving_sessions x
+        WHERE (x.harness, x.system, x.source, x.session_id)
+            = (k.harness, k.system, k.source, k.session_id)
+      );
+
       CREATE VIEW insight.conversation_roles WITH (security_barrier = true) AS
       SELECT a.harness, a.system, a.source, a.session_id, a.agent_id,
              a.role_class, a.effective_seat AS seat
@@ -3708,7 +3777,7 @@ export const MIGRATIONS: readonly Migration[] = [
       UNION ALL
       SELECT s.harness, s.system, s.source, s.session_id, c.agent_id,
              CASE WHEN c.agent_id IS NULL THEN s.role_class
-                  WHEN s.effective_role = 'review' THEN 'review' ELSE 'delegated' END,
+                  ELSE subagent_role_class(s.effective_role) END,
              s.effective_seat
       FROM insight.sessions s
       CROSS JOIN LATERAL (
@@ -3760,6 +3829,10 @@ export const MIGRATIONS: readonly Migration[] = [
                sum(t.priced_cost_usd),
                sum(t.unpriced_requests)::bigint
         FROM conversation_totals t
+        -- A key PostgreSQL can hash: the main conversation has no agent id,
+        -- so it is compared as a flag. With the nested loop switched off for
+        -- this function, the join grows with the Session's conversations, not
+        -- their square, as in migration 58's interval functions.
         JOIN roles a ON (a.agent_id IS NULL) = (t.agent_id IS NULL)
         AND coalesce(a.agent_id, '') = coalesce(t.agent_id, '')
         GROUP BY a.role_class, a.seat

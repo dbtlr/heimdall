@@ -13,6 +13,7 @@ import type {
 } from './activity-types.ts';
 import { readServiceChanges } from './home-cards.ts';
 import { conditionKind } from './hub-rows.ts';
+import { readSnapshot } from './snapshot.ts';
 
 type TransitionRow = {
   action: ConditionActivity['action'];
@@ -160,4 +161,4 @@ export const readActivitySnapshot = async (
 
 // Every change in the range, read in one snapshot.
 export const readActivity = (sql: SQL, input: ActivityInput): Promise<Activity> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readActivitySnapshot(tx, input));
+  readSnapshot(sql, (tx) => readActivitySnapshot(tx, input));

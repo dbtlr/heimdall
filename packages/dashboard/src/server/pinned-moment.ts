@@ -4,6 +4,7 @@ import { RUNNING_MS } from '../lib/home-agents.ts';
 import { projectOf } from './fleet-overview.ts';
 import type { MomentSession, MomentVitals, PinnedMoment } from './pinned-moment-types.ts';
 import { sessionSpans } from './session-spans.ts';
+import { readSnapshot } from './snapshot.ts';
 
 type SessionRow = {
   cost_usd: string | null;
@@ -122,7 +123,7 @@ export const readPinnedMoment = (
   sql: SQL,
   { at, system }: { at: number; system: string | undefined },
 ): Promise<PinnedMoment> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', async (tx) => {
+  readSnapshot(sql, async (tx) => {
     const [sessions, vitals] = await Promise.all([
       readSessionsRunning(tx, at),
       system === undefined ? undefined : readVitalsAt(tx, { at, system }),

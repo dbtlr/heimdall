@@ -164,7 +164,7 @@ const readCrossingCells = async (
 // one bucket, from their stored model totals, as readCells reads them. A
 // timestamp read in milliseconds compares with a bucket's edges, which are
 // whole milliseconds, as PostgreSQL compares it.
-export const wholeCells = (
+const wholeCells = (
   sessions: readonly WholeSession[],
   buckets: CostChart['buckets'],
   from: Date,

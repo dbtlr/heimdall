@@ -945,7 +945,7 @@ test('a burst whose requests moved since the refresh draws no lane across the ed
   expect(view?.activeMs).toBe(0);
 });
 
-test('the 30-day read takes one connection, so it finishes while the pool lends no other', async () => {
+test('the 30-day read takes one connection, so it finishes while the pool’s other connections are held', async () => {
   await using h = await startHub();
   await h.db.sql`INSERT INTO systems (name) VALUES ('laptop-1')`;
   await addSession(h.db.sql, {
@@ -956,7 +956,7 @@ test('the 30-day read takes one connection, so it finishes while the pool lends 
   });
   const pool = new SQL(h.db.url, { max: 3 });
   // Two of the pool's three connections are held elsewhere, so a read that
-  // borrowed a second would wait for one of them.
+  // took a second would wait for one of them.
   const busy = await pool.reserve();
   const reserved = await pool.reserve();
   try {

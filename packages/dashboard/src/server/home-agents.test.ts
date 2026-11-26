@@ -215,6 +215,27 @@ test("an earlier day takes a Session's stored total when the Session lies within
   expect(agents.usualByNow).toBe(1);
 });
 
+test('the latest request ignores a request stamped far ahead of the clock, and reads the Session’s newest request before it', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'skewed',
+    requests: [-3 * HOUR_S, -2 * HOUR_S, 24 * HOUR_S],
+    system: 'server-1',
+  });
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'older',
+    requests: [-5 * HOUR_S],
+    system: 'laptop-1',
+  });
+
+  const agents = await agentsOf(h, 'UTC');
+
+  expect(agents.running).toEqual([]);
+  expect(agents.latestRequestAt).toBe(NOW - 2 * HOUR_S * 1000);
+});
+
 test('with no Session ever recorded, Home reads no cost, nothing running, and no latest request', async () => {
   await using h = await start();
 

@@ -21,6 +21,7 @@ import type {
   SessionView,
   TreeMember,
 } from './session-view-types.ts';
+import { readSnapshot } from './snapshot.ts';
 import type { ProcessSeries } from './system-detail-types.ts';
 import { linkOf, toProcesses } from './system-detail.ts';
 import type { CoresRow } from './system-detail.ts';
@@ -525,7 +526,7 @@ export const readLaunched = async (sql: SQL, key: SessionKey): Promise<Launched>
 // Undefined for a Session the Hub does not hold. Every query looks the Session
 // up by its key, and reads no transcript content.
 export const readSessionView = (sql: SQL, key: SessionKey): Promise<SessionView | undefined> =>
-  sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (tx) => readSessionViewSnapshot(tx, key));
+  readSnapshot(sql, (tx) => readSessionViewSnapshot(tx, key));
 
 const readSessionViewSnapshot = async (
   sql: SQL,

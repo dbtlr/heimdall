@@ -385,4 +385,4 @@ const readAgentsSnapshot = async (tx: SQL, input: AgentsInput): Promise<AgentsOv
 // Session crossing an edge reads the stored intervals, by model or by role,
 // pricing only the requests in an interval the edge cuts.
 export const readAgentsOverview = (sql: SQL, input: AgentsInput) =>
-  readSnapshot(sql, false, (tx) => readAgentsSnapshot(tx, input));
+  readSnapshot(sql, (tx) => readAgentsSnapshot(tx, input));

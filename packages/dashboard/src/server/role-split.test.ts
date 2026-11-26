@@ -5,7 +5,7 @@ import type { SQL } from 'bun';
 
 import { readAgentsOverview } from './agents-overview.ts';
 import { readRoleSplit } from './role-split.ts';
-import { readSnapshot, settleBoth } from './snapshot.ts';
+import { readSnapshot } from './snapshot.ts';
 
 beforeAll(async () => {
   await using _h = await startHub();
@@ -139,6 +139,39 @@ test('requests past the period’s end count in no class, whether the Session’
   });
 });
 
+// A period ending off a five-minute boundary, so its last interval is partial:
+// the stored intervals stop before it and its requests are priced from the
+// requests themselves.
+const offBoundary = { from: week.from, to: new Date(NOW + 2 * 60_000) };
+
+test('a Session crossing the period counts its requests in the period’s last partial five minutes', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'crossing',
+    requests: [-8 * 24 * HOUR_S, 60],
+  });
+  await refreshed(h.db.sql);
+
+  const split = await readRoleSplit(h.db.sql, offBoundary);
+
+  expect(split.classes).toEqual({ delegated: none, main: cost(1), review: none });
+});
+
+test('a Session crossing the period counts a request stamped exactly at the period’s end', async () => {
+  await using h = await start();
+  await addSession(h.db.sql, {
+    ...dollar,
+    id: 'crossing',
+    requests: [-8 * 24 * HOUR_S, 120],
+  });
+  await refreshed(h.db.sql);
+
+  const split = await readRoleSplit(h.db.sql, offBoundary);
+
+  expect(split.classes).toEqual({ delegated: none, main: cost(1), review: none });
+});
+
 test('a review Session crossing the period puts its main conversation and its unheld subagents in review under its seat', async () => {
   await using h = await start();
   await addSession(h.db.sql, {
@@ -228,21 +261,15 @@ test('a period with no review cost has no seats', async () => {
   });
 });
 
-test('the snapshot a page reads its split in has JIT off on both of its connections', async () => {
+test('the snapshot a page reads its split in has JIT off', async () => {
   await using h = await start();
 
-  type Probe = { jit: string; pid: number }[];
-  const [first, second] = await readSnapshot(h.db.sql, true, async (tx, side) => {
+  const [probe] = await readSnapshot(h.db.sql, async (tx) => {
     await readRoleSplit(tx, week);
-    return settleBoth<Probe, Probe>(
-      tx`SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid`,
-      side`SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid`,
-    );
+    return tx`SELECT current_setting('jit') AS jit`;
   });
 
-  // Two connections, so the second one's setting is its own.
-  expect(first[0]?.pid).not.toBe(second[0]?.pid);
-  expect([first[0]?.jit, second[0]?.jit]).toEqual(['off', 'off']);
+  expect(probe?.jit).toBe('off');
 });
 
 test('a project’s split counts only its Sessions', async () => {

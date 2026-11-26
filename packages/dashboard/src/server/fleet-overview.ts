@@ -362,6 +362,6 @@ export const readGlanceSnapshot = async (
 export const inSnapshot =
   <I, O>(read: (sql: SQL, input: I) => Promise<O>) =>
   (sql: SQL, input: I) =>
-    readSnapshot(sql, false, (tx) => read(tx, input));
+    readSnapshot(sql, (tx) => read(tx, input));
 
 export const readFleetGlance = inSnapshot(readGlanceSnapshot);
